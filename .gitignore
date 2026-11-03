@@ -1,16 +1,9 @@
-.idea
-.gradle
-target
-nbproject
-*.DS_Store
-*.iml
-build
-out/
-**/*.gpg
-/docs/python/.buildinfo
-codegen/out
-Pipfile.lock
-
 # Rust build output
-/rust/target/
-/rust/book/book/
+/target/
+/book/book/
+
+# Editors and OS files
+.idea
+*.iml
+.vscode
+*.DS_Store

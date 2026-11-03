@@ -1,0 +1,14 @@
+syntax = "proto3";
+
+package mir;
+
+import "io/improbable/mir/BayesNet.proto";
+
+message ProtoModel {
+    Graph graph = 1;
+    ModelMetadata metadata = 2;
+}
+
+message ModelMetadata {
+    map<string, string> metadataInfo = 1;
+}

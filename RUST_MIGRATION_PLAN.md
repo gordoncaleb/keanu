@@ -1,7 +1,9 @@
 # Keanu → Rust migration plan
 
-Status: proposal. Written once the Java code base had been reduced to a pure JVM implementation (ND4J, OpenBLAS and
-the Python bindings removed) and the known correctness bugs fixed (see `release_notes.md`, "Unreleased").
+**Status: Phases 0–8 are done. The repository is Rust only.** What remains is listed under
+[Remaining](#remaining). The plan was written once the Java code base had been reduced to a pure JVM implementation
+(ND4J, OpenBLAS and the Python bindings removed) and its known correctness bugs fixed (see `CHANGELOG.md`). The
+Java implementation is at the `java-final` tag; paths below that name Java modules refer to that tag.
 
 ## End state
 
@@ -150,7 +152,7 @@ Each phase ends with its exit criteria passing in CI.
 
 ### Phase 0: Prepare the Java side (Java)
 
-**Status: done.** The exporter (`keanu-golden`) and the vectors are in [`golden-vectors/`](golden-vectors/README.md),
+**Status: done.** The exporter (`keanu-golden`) and the vectors are in `golden-vectors/` (now frozen in [`keanu-parity/fixtures/golden-vectors`](keanu-parity/fixtures/golden-vectors/README.md)),
 and `verifyGoldenVectors` runs as part of `check`. The scope decisions are recorded in the vectors README. Every
 Java defect the exporter found was fixed in Java with a regression test, and there are no known issues outstanding.
 
@@ -168,7 +170,7 @@ Java defect the exporter found was fixed in Java with a regression test, and the
 
 ### Phase 1: `keanu-tensor`
 
-**Status: done.** `rust/keanu-tensor` is an in-house tensor (decision record: `rust/docs/decisions/0001-tensor-library.md`),
+**Status: done.** `keanu-tensor` is an in-house tensor (decision record: `docs/decisions/0001-tensor-library.md`),
 with `faer` for matmul and Cholesky. It passes every case in `golden-vectors/tensors.json` except two i32-overflow
 cases, which don't apply now that integers are 64-bit. It also has property tests for broadcasting, slicing,
 permute, reshape and reductions. Differences from Java that are intentional:
@@ -184,7 +186,7 @@ permute, reshape and reductions. Differences from Java that are intentional:
 
 ### Phase 2: `keanu-distributions`
 
-**Status: done.** `rust/keanu-distributions` ports every distribution: 16 continuous, 7 discrete, plus HalfGaussian,
+**Status: done.** `keanu-distributions` ports every distribution: 16 continuous, 7 discrete, plus HalfGaussian,
 HalfCauchy and KDE. Each has an element-wise `log_prob`, a typed gradient struct, and Keanu's own samplers on
 `KeanuRng` (ChaCha8 with polar Box–Muller Gaussians, passed explicitly with no global state).
 
@@ -206,7 +208,7 @@ Intentional differences from Java:
 
 ### Phase 3: `keanu-graph`
 
-**Status: done** (design: `rust/docs/decisions/0002-graph-design.md`). `rust/keanu-graph` has:
+**Status: done** (design: `docs/decisions/0002-graph-design.md`). `keanu-graph` has:
 
 - the immutable arena `Graph` (`Send + Sync`) and a separate, cloneable `State`;
 - `GraphBuilder`, whose typed `DoubleVar`/`IntVar`/`BoolVar` handles support `std::ops`, and which defers
@@ -297,7 +299,7 @@ Differences from Java that are intentional:
     them either); max, min and standard deviation over some axes, and equality masks (no Java vertex); MIR
     (deferred).
   - Non-finite doubles in JSON are written as `"NaN"` / `"Infinity"` / `"-Infinity"`, as Java does.
-- **Java bugs fixed** (see `release_notes.md`):
+- **Java bugs fixed** (see `CHANGELOG.md`):
   - array parameters couldn't be saved
   - nullable arg-reduction and ellipsis parameters weren't nullable
   - `KDEVertex` failed at its own scalar shape
@@ -311,7 +313,7 @@ Differences from Java that are intentional:
 
 ### Phase 5: `keanu-algorithms`
 
-**Status: done.** `rust/keanu-algorithms` has:
+**Status: done.** `keanu-algorithms` has:
 
 - **Samples:** `NetworkSamples`, `NetworkSample` and `Samples`, with drop, down-sampling (keeping ceil(n / k)
   samples), mean, variance, mode, probability, autocorrelation, effective sample size, stacking and the most
@@ -418,7 +420,7 @@ Intentional differences:
 - **The `keanu` facade crate** re-exports each layer (`tensor`, `distributions`, `graph`, `algorithms`, `io`) and
   forwards the features (`json` by default, `protobuf`, `dot`, `parallel`). It has a unified `keanu::Error`, a
   `prelude`, and a crate-level quick start that runs as a doctest.
-- **The examples** (`rust/keanu/examples`) cover the coal mining disasters, all four *Bayesian Methods for Hackers*
+- **The examples** (`keanu/examples`) cover the coal mining disasters, all four *Bayesian Methods for Hackers*
   examples, and the custom distribution example. `tests/examples.rs` checks each against what the Java tests assert:
   - **Longer chains.** With a different random number generator, the Java examples' chain lengths only converge
     for particular seeds (checked across seeds), so the tests use 20× longer chains with the Java tolerances.
@@ -429,11 +431,11 @@ Intentional differences:
 - **`keanu-graph` gained `CustomDistribution`**, the equivalent of a custom Java vertex: a log prob plus an
   optional gradient and sampler. It also gained `Model::probe_for_non_zero_probability` (Java's
   `probeForNonZeroProbability`), which also evaluates missing values.
-- **The guide** is an mdBook in `rust/book`, with 14 chapters ported from `docs/doc_templates`. Every code sample is
-  `{{#include}}`d from `rust/keanu/tests/book.rs` or the examples, so the samples compile and run as tests.
+- **The guide** is an mdBook in `book`, with 14 chapters ported from `docs/doc_templates`. Every code sample is
+  `{{#include}}`d from `keanu/tests/book.rs` or the examples, so the samples compile and run as tests.
   `#![warn(missing_docs)]` is on in every published crate, and every public item is documented.
-- **The benchmarks** (`rust/keanu/benches`) mirror every Java JMH benchmark, plus a `ModelBenchmark` (log prob,
-  gradient and Metropolis–Hastings on the golden models) added on both sides. `rust/docs/benchmarks.md` has the
+- **The benchmarks** (`keanu/benches`) mirror every Java JMH benchmark, plus a `ModelBenchmark` (log prob,
+  gradient and Metropolis–Hastings on the golden models) added on both sides. `docs/benchmarks.md` has the
   Java vs Rust comparison. Tensors are 1.4–2.6× faster in Rust (geometric means). Graph evaluation and
   Metropolis–Hastings are about level. Gradients are 2–8× slower, which makes NUTS 2× slower; that's the main
   performance item for Phase 7.
@@ -463,8 +465,8 @@ deleted (Phase 8).
   - the optimizers (conjugate gradient 1.9×, BOBYQA 1.1×, Adam 5×) and Metropolis–Hastings
 
   The one exception is Metropolis–Hastings on thermometers, which is level, and results are unchanged. The
-  remaining gaps are tiny-tensor and tiny-matrix call overheads; see `rust/docs/benchmarks.md`.
-- **Step b, hardening:** recorded in `rust/docs/api-review.md`, with every check command in `rust/CONTRIBUTING.md`.
+  remaining gaps are tiny-tensor and tiny-matrix call overheads; see `docs/benchmarks.md`.
+- **Step b, hardening:** recorded in `docs/api-review.md`, with every check command in `CONTRIBUTING.md`.
   - `#[non_exhaustive]` on the growable enums, settings structs and result structs; the settings structs have
     `with_*` setters.
   - The prost-generated types are no longer public.
@@ -474,7 +476,7 @@ deleted (Phase 8).
   - `#![deny(missing_docs)]` is set on every published crate.
   - The feature powerset is clean under `cargo hack` (check and clippy, all targets).
   - The MSRV is 1.85, verified for every feature combination.
-  - `cargo deny` passes (`rust/deny.toml`).
+  - `cargo deny` passes (`deny.toml`).
   - `faer` now uses only the features Keanu needs, cutting 26 dependencies.
   - Package metadata, licence files and `include` lists are in place, and each crate packages and verifies
     locally (20–73 KiB).
@@ -510,7 +512,7 @@ release used in practice.
    rerun, and say in the README how to get it.
 3. **Delete** `keanu-project`, `keanu-golden`, `keanu-examples` (already ported), `benchmarks` (already ported),
    the Java/Kotlin docs snippets, `build.gradle`, `settings.gradle`, `gradle.properties`, `gradle/`, `gradlew*`,
-   the Gradle and Java CI configuration, and `release_notes.md`. The latter is replaced by `CHANGELOG.md`.
+   the Gradle and Java CI configuration, and `CHANGELOG.md`. The latter is replaced by `CHANGELOG.md`.
 4. **Replace CI** with Cargo:
    - `cargo fmt --check`
    - `cargo clippy -D warnings`
@@ -528,6 +530,22 @@ release used in practice.
 - `git ls-files` contains no `.java`, `.kt` or Gradle files.
 - CI is Cargo only.
 - `cargo test` checks the frozen golden vectors.
+
+**Status: done.**
+- **Used in practice:** before deleting Java, a separate Rust project depending on the `keanu` facade built an
+  eight-schools hierarchical model (MAP, NUTS, posterior summary, JSON and protobuf round trips, DOT export) and a
+  discrete switchpoint model (Metropolis–Hastings). Its posteriors matched the known results.
+- **Tagged:** `java-final` is the last commit with the Java implementation.
+- **Frozen:** the vectors were regenerated one last time (no diff) and moved to `keanu-parity/fixtures/golden-vectors`.
+  The diabetes dataset used by the regression tests moved to `keanu-algorithms/tests/data`.
+- **Deleted:** `keanu-project`, `keanu-golden`, `keanu-examples`, `benchmarks`, the Jekyll `docs/` site, the Gradle
+  build and wrapper, `ci/`, `.travis.yml` and `sonar-project.properties`. `release_notes.md` became `CHANGELOG.md`.
+  The Java documentation pages without a Rust chapter (overview, Lorenz example, CSV IO, roadmap) are listed in the
+  book's "Coming from Java" chapter, which points to them at `java-final`.
+- **Moved:** the Cargo workspace is at the repository root, and the README describes the Rust library.
+- **Schema:** the Java options were removed from the `.proto` files; the generated code is unchanged. The Java vertex
+  type names stay in saved files as stable identifiers, so the frozen Java-written models still load.
+- **CI:** not set up, as the user deferred CI. `CONTRIBUTING.md` lists the local checks, all of which pass.
 
 ## Rough sizing
 
@@ -577,13 +595,11 @@ independently verifiable.
 | Defects in Java being copied into Rust | Known issues are listed in the vectors manifest and either fixed in Java before freezing or marked as intended Rust behaviour |
 | A heavy or unstable dependency tree for downstream users | Optional features for IO and parallelism, `cargo deny`, and pure-Rust dependencies only (`faer`, `prost`, `serde`) |
 
-## Suggested next steps
+## Remaining
 
-1. Finish Phase 0:
-   - sign off the scope decisions in `golden-vectors/README.md`
-   - fix or accept the known issues
-   - add coverage for generic/boolean ops and `Sequence`
-2. Create the Cargo workspace (initially in a `rust/` directory) with `keanu-parity` reading `golden-vectors/`, and
-   run it in CI alongside the Gradle build.
-3. Spike `keanu-tensor` on `ndarray` + `faer` against the tensor vectors (2–3 weeks). Use the spike to choose
-   between `ndarray` and an in-house tensor before committing to Phase 1.
+- **The first crates.io release.** Every crate is `publish = false`. Releasing waits for a conversation with, and the
+  approval of, the repository owner. `CONTRIBUTING.md` describes packaging checks and, after the first release,
+  `cargo semver-checks`.
+- **The licence holder.** `LICENSE` reads "Copyright (c) 2018" with no holder; the owner should decide what it says.
+- **CI.** Deferred by the owner. The local checks in `CONTRIBUTING.md` are what CI should run.
+- **Optional:** Rust chapters for the remaining Java documentation pages (overview, Lorenz example).

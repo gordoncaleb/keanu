@@ -1,0 +1,51 @@
+# cargo-deny configuration: `cargo deny check` (run from the repository root).
+# Checks licences, security advisories, banned/duplicate crates and crate sources for every published crate.
+
+[graph]
+all-features = true
+
+[advisories]
+# RustSec advisory database
+yanked = "deny"
+ignore = [
+    # `paste` (a compile-time proc macro used by faer's `gemm`) is unmaintained. This is an "unmaintained"
+    # notice, not a vulnerability; revisit when faer drops it.
+    { id = "RUSTSEC-2024-0436", reason = "unmaintained notice only; build-time proc macro pulled in by faer/gemm" },
+]
+
+[licenses]
+# Keanu is MIT, except keanu-algorithms' PRIMA translation (BSD-3-Clause). Dependencies may use these permissive
+# licences.
+allow = [
+    "MIT",
+    "Apache-2.0",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "Unicode-3.0",
+    "Zlib",
+]
+confidence-threshold = 0.9
+# BSD-3-Clause is Keanu's own PRIMA module, which isn't checked until the crates are publishable
+unused-allowed-license = "allow"
+
+[[licenses.clarify]]
+# keanu-algorithms: MIT, plus BSD-3-Clause for src/optimizer/bobyqa/prima (see THIRD-PARTY-NOTICES.md)
+crate = "keanu-algorithms"
+expression = "MIT AND BSD-3-Clause"
+license-files = []
+
+[licenses.private]
+# keanu-parity is a test-only crate that is never published
+ignore = true
+
+[bans]
+# duplicates all come from within faer's dependency tree (syn 1/2, equator, windows-sys)
+multiple-versions = "warn"
+wildcards = "deny"
+# path dependencies between the workspace crates have no version until they are published
+allow-wildcard-paths = true
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
