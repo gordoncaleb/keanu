@@ -43,6 +43,8 @@
 - `Diffs.get` returned the gradient of the nearest smaller parameter name instead of failing when asked for a parameter that is not present.
 - `Categorical.logProb` returned 0 (probability 1) for a value that is not one of the categories; it now returns -infinity.
 - `Binomial`, `Gamma`, `Laplace` and `Poisson` sampling failed when the parameters had a larger shape than the requested sample shape; they now return the broadcast shape.
+- The forward sampler rejected any model with two or more observed vertices, even when no random variable was upstream of them.
+- Adam threw a `NullPointerException` when maximizing the likelihood of a model with a latent the likelihood doesn't depend on; that latent now has a zero gradient (as with conjugate gradient).
 - Sequence labels used an identity hash code, so they changed every time a program ran. They now use a counter (`SequenceBuilder.resetSequenceIdentifiers()` restarts it).
 - Networks could not be saved if any vertex had an array parameter: reshape, permute, broadcast, take, tensor multiply, sum / product / mean over given dimensions (`int[]` / `long[]`), or a string slice (`boolean[]`, now saved as a boolean tensor and converted back on load).
 - `argMax()` / `argMin()` / `nanArgMax()` / `nanArgMin()` over every element, and string slices without an ellipsis, could not be saved (their null parameters were not nullable).

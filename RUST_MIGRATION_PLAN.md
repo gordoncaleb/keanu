@@ -310,6 +310,33 @@ Differences from Java that are intentional:
 **Exit:** every golden saved model loads in Rust and gives the same `logProb` and gradient as Java.
 
 ### Phase 5: `keanu-algorithms`
+
+**Status: step a done; the rest in progress.** `rust/keanu-algorithms` has:
+
+- **Samples:** `NetworkSamples`, `NetworkSample` and `Samples`, with drop, down-sampling (keeping ceil(n / k)
+  samples), mean, variance, mode, probability, autocorrelation, effective sample size, stacking and the most
+  probable sample.
+- **Statistics:** FFT autocorrelation, effective sample size by Geyer's initial monotone sequence (new; Java had
+  none), and summaries.
+- **Forward sampling.**
+- **Gradient optimizers:** Adam (an exact port of Java's update rule and defaults) and nonlinear conjugate gradient
+  (Polak–Ribière or Fletcher–Reeves, with its own line search).
+
+`golden-vectors/algorithms.json` records Java's MAP and maximum likelihood results for each golden model with Adam
+and with conjugate gradient. Rust agrees on every case except the hierarchical model's MAP, which is skipped because
+its posterior is unbounded.
+
+**BOBYQA is pending a licensing decision.** It must not be translated from Apache Commons Math source into the MIT
+crate. The options are a clean-room implementation from Powell's paper, or dropping it.
+
+Intentional differences in this step:
+- **Licensing:** the conjugate gradient and its line search are our own implementations, not ports of Apache Commons
+  Math, so their paths differ from Java's while reaching the same optima.
+- **Discrete latents:** a gradient optimizer given discrete latents returns an error, where Java threw a
+  `ClassCastException`.
+- **Evaluation limit:** running out of evaluations returns the current point with `converged: false`, where Java
+  threw `TooManyEvaluationsException`.
+
 - Port the optimizers:
   - Adam
   - conjugate gradient (via `argmin`, or ported)

@@ -133,7 +133,10 @@ public class Adam implements GradientOptimizationAlgorithm {
                                  DoubleTensor[] gradients) {
 
         for (int i = 0; i < ordered.size(); i++) {
-            gradients[i] = newGradients.get(ordered.get(i).getReference());
+            final DoubleTensor gradient = newGradients.get(ordered.get(i).getReference());
+            // a latent that the fitness doesn't depend on (e.g. a prior-only latent under maximum likelihood) has no
+            // gradient entry; its gradient is zero, as in the conjugate gradient adapter
+            gradients[i] = gradient != null ? gradient : DoubleTensor.zeros(ordered.get(i).getShape());
         }
 
     }

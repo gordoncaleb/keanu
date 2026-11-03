@@ -123,4 +123,25 @@ public class AlgorithmRegressionTest {
         assertEquals(2.0, partials.of(b).scalar(), 1e-12);
         assertEquals(6.0, partials.of(c).scalar(), 1e-12);
     }
+
+    @Test
+    public void adamMaxLikelihoodWithALatentTheLikelihoodDoesNotDependOn() {
+        GaussianVertex unrelated = new GaussianVertex(0, 1);
+        unrelated.setValue(0.5);
+        GaussianVertex mu = new GaussianVertex(0, 10);
+        mu.setValue(1.0);
+        GaussianVertex observed = new GaussianVertex(mu, 1);
+        observed.observe(3.0);
+        // connect the unrelated latent to the same graph without affecting the likelihood
+        DoubleVertex joined = unrelated.plus(mu);
+
+        io.improbable.keanu.algorithms.variational.optimizer.gradient.GradientOptimizer.builder()
+            .probabilisticModel(new KeanuProbabilisticModelWithGradient(new BayesianNetwork(joined.getConnectedGraph())))
+            .algorithm(io.improbable.keanu.algorithms.variational.optimizer.gradient.Adam.builder().maxEvaluations(100000).build())
+            .build()
+            .maxLikelihood();
+
+        assertEquals(3.0, mu.getValue().scalar(), 1e-2);
+        assertEquals(0.5, unrelated.getValue().scalar(), 0.0);
+    }
 }

@@ -1,0 +1,132 @@
+//! MAP and maximum likelihood on the golden models agree with Java's results (golden-vectors/algorithms.json).
+//!
+//! Optimizers reach the optimum by different paths, so results are compared with optimization tolerances. Adam is
+//! an exact port of Java's update rule, so it is held to a tighter tolerance than conjugate gradient, whose line
+//! search is independent of Java's.
+
+use keanu_algorithms::optimizer::{Adam, ConjugateGradient, GradientOptimizer};
+use keanu_distributions::KeanuRng;
+use keanu_graph::{Model, NodeId};
+use keanu_parity::{golden_dir, parse_tensor};
+use serde_json::Value as Json;
+
+/// Cases whose Java result is not a meaningful optimum, with the reason.
+const SKIPPED: &[(&str, &str)] = &[
+    (
+        "hierarchicalGaussian/Adam/MAP",
+        "the posterior is unbounded (sigma -> 0 with the group means at mu); Java's Adam steps to a negative sigma",
+    ),
+    (
+        "hierarchicalGaussian/ConjugateGradient/MAP",
+        "the posterior is unbounded (sigma -> 0 with the group means at mu), so there is no optimum to agree on",
+    ),
+];
+
+fn number(v: &Json) -> f64 {
+    keanu_parity::number(v)
+}
+
+#[test]
+fn optimizers_match_java() {
+    let text = std::fs::read_to_string(golden_dir().join("algorithms.json")).unwrap();
+    let root: Json = serde_json::from_str(&text).unwrap();
+    let cases = root["cases"].as_array().unwrap();
+    assert!(!cases.is_empty());
+
+    let mut failures = Vec::new();
+    let mut checked = 0;
+    for case in cases {
+        let name = case["name"].as_str().unwrap();
+        if SKIPPED.iter().any(|(n, _)| *n == name) {
+            continue;
+        }
+        let model_name = case["model"].as_str().unwrap();
+        let bytes = std::fs::read(golden_dir().join(format!("models/{model_name}.pb"))).unwrap();
+        let loaded = keanu_io::load_protobuf(&bytes).unwrap();
+        let graph = loaded.graph;
+        let mut state = loaded.state;
+        let all: Vec<NodeId> = graph.ids().collect();
+        state
+            .lazy_eval(&graph, &all, &mut KeanuRng::seed_from_u64(0))
+            .unwrap();
+        let model = Model::new(graph, &state).unwrap();
+
+        let algorithm = case["algorithm"]["name"].as_str().unwrap();
+        let mut optimizer = GradientOptimizer::new(&model);
+        let (value_tolerance, fitness_tolerance) = match algorithm {
+            "Adam" => {
+                let max = case["algorithm"]["maxEvaluations"].as_u64().unwrap() as usize;
+                optimizer = optimizer.algorithm(Adam {
+                    max_evaluations: max,
+                    ..Adam::default()
+                });
+                (1e-6, 1e-9)
+            }
+            "ConjugateGradient" => {
+                optimizer = optimizer.algorithm(ConjugateGradient::default());
+                // both stop when the fitness changes by less than 1e-8, so the position is only known to ~1e-4
+                (2e-3, 1e-7)
+            }
+            other => panic!("unknown algorithm {other}"),
+        };
+        let result = match case["fitness"].as_str().unwrap() {
+            "MAP" => optimizer.max_a_posteriori(&mut state),
+            _ => optimizer.max_likelihood(&mut state),
+        };
+        checked += 1;
+
+        let expected = &case["result"];
+        let problem = match (expected.get("error"), result) {
+            (Some(_), Err(_)) => None,
+            (Some(e), Ok(_)) => Some(format!("Java failed with {e} but Rust succeeded")),
+            (None, Err(e)) => Some(format!("unexpected error {e}")),
+            (None, Ok(result)) => {
+                let mut problems = Vec::new();
+                let java_fitness = number(&expected["fitness"]);
+                if (result.fitness - java_fitness).abs()
+                    > fitness_tolerance * java_fitness.abs().max(1.0)
+                {
+                    problems.push(format!("fitness {} vs Java {java_fitness}", result.fitness));
+                }
+                if let Some(converged) = expected.get("converged")
+                    && converged.as_bool().unwrap() != result.converged
+                {
+                    problems.push(format!(
+                        "converged {} vs Java {converged}",
+                        result.converged
+                    ));
+                }
+                for (label, value) in expected["values"].as_object().unwrap() {
+                    let java = parse_tensor(value).unwrap();
+                    let id = model
+                        .find(label)
+                        .unwrap_or_else(|| panic!("no node {label}"));
+                    let rust = result
+                        .get(id)
+                        .unwrap_or_else(|| panic!("no result for {label}"));
+                    for (r, j) in rust.as_slice().iter().zip(&java.data) {
+                        if (r - j).abs() > value_tolerance * j.abs().max(1.0) {
+                            problems.push(format!("{label}: {r} vs Java {j}"));
+                        }
+                    }
+                }
+                (!problems.is_empty()).then(|| problems.join("; "))
+            }
+        };
+        if let Some(p) = problem {
+            failures.push(format!("{name}: {p}"));
+        }
+    }
+    println!(
+        "checked {checked} of {} optimizer cases ({} skipped)",
+        cases.len(),
+        SKIPPED.len()
+    );
+    assert_eq!(checked + SKIPPED.len(), cases.len());
+    assert!(
+        failures.is_empty(),
+        "{} failures:\n{}",
+        failures.len(),
+        failures.join("\n")
+    );
+}

@@ -1,0 +1,21 @@
+[package]
+name = "keanu-algorithms"
+version = "0.1.0"
+description = "Inference algorithms (optimizers, samplers, statistics) for the Keanu probabilistic programming library"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+keanu-tensor = { path = "../keanu-tensor" }
+keanu-distributions = { path = "../keanu-distributions" }
+keanu-graph = { path = "../keanu-graph" }
+
+[dev-dependencies]
+keanu-io = { path = "../keanu-io" }
+keanu-parity = { path = "../keanu-parity" }
+serde_json = { version = "1.0.154", features = ["float_roundtrip"] }
+
+[lints]
+workspace = true

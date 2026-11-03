@@ -1,0 +1,601 @@
+{
+  "formatVersion": 1,
+  "cases": [
+    {
+      "name": "thermometers/Adam/MAP",
+      "model": "thermometers",
+      "algorithm": {
+        "name": "Adam",
+        "maxEvaluations": 200000
+      },
+      "fitness": "MAP",
+      "result": {
+        "values": {
+          "temperature": {
+            "dtype": "f64",
+            "shape": [],
+            "data": [25.994937035052782]
+          }
+        },
+        "fitness": -7.066193367073053,
+        "converged": true
+      }
+    },
+    {
+      "name": "thermometers/Adam/MLE",
+      "model": "thermometers",
+      "algorithm": {
+        "name": "Adam",
+        "maxEvaluations": 200000
+      },
+      "fitness": "MLE",
+      "result": {
+        "values": {
+          "temperature": {
+            "dtype": "f64",
+            "shape": [],
+            "data": [25.994937035052782]
+          }
+        },
+        "fitness": -4.763608274079006,
+        "converged": true
+      }
+    },
+    {
+      "name": "thermometers/ConjugateGradient/MAP",
+      "model": "thermometers",
+      "algorithm": {
+        "name": "ConjugateGradient"
+      },
+      "fitness": "MAP",
+      "result": {
+        "values": {
+          "temperature": {
+            "dtype": "f64",
+            "shape": [],
+            "data": [25.99999999999002]
+          }
+        },
+        "fitness": -7.066190803711647
+      }
+    },
+    {
+      "name": "thermometers/ConjugateGradient/MLE",
+      "model": "thermometers",
+      "algorithm": {
+        "name": "ConjugateGradient"
+      },
+      "fitness": "MLE",
+      "result": {
+        "values": {
+          "temperature": {
+            "dtype": "f64",
+            "shape": [],
+            "data": [26.000000000009194]
+          }
+        },
+        "fitness": -4.7636057107176
+      }
+    },
+    {
+      "name": "hierarchicalGaussian/Adam/MAP",
+      "model": "hierarchicalGaussian",
+      "algorithm": {
+        "name": "Adam",
+        "maxEvaluations": 200000
+      },
+      "fitness": "MAP",
+      "result": {
+        "values": {
+          "groupMeans": {
+            "dtype": "f64",
+            "shape": [3],
+            "data": [1.2225713974222736, 1.2224335204573393, 1.2222810365140067]
+          },
+          "mu": {
+            "dtype": "f64",
+            "shape": [],
+            "data": [1.28540361175154]
+          },
+          "sigma": {
+            "dtype": "f64",
+            "shape": [],
+            "data": [-0.031768702635565416]
+          }
+        },
+        "fitness": "-Infinity",
+        "converged": true
+      }
+    },
+    {
+      "name": "hierarchicalGaussian/Adam/MLE",
+      "model": "hierarchicalGaussian",
+      "algorithm": {
+        "name": "Adam",
+        "maxEvaluations": 200000
+      },
+      "fitness": "MLE",
+      "result": {
+        "values": {
+          "groupMeans": {
+            "dtype": "f64",
+            "shape": [3],
+            "data": [0.5500000000000002, 1.5, 2.399765913952984]
+          },
+          "mu": {
+            "dtype": "f64",
+            "shape": [],
+            "data": [1.2]
+          },
+          "sigma": {
+            "dtype": "f64",
+            "shape": [],
+            "data": [0.8]
+          }
+        },
+        "fitness": -5.736131254024313,
+        "converged": true
+      }
+    },
+    {
+      "name": "hierarchicalGaussian/ConjugateGradient/MAP",
+      "model": "hierarchicalGaussian",
+      "algorithm": {
+        "name": "ConjugateGradient"
+      },
+      "fitness": "MAP",
+      "result": {
+        "values": {
+          "groupMeans": {
+            "dtype": "f64",
+            "shape": [3],
+            "data": [1.4301321861464815, 1.4296610052742433, 1.429821147068016]
+          },
+          "mu": {
+            "dtype": "f64",
+            "shape": [],
+            "data": [1.429691326989121]
+          },
+          "sigma": {
+            "dtype": "f64",
+            "shape": [],
+            "data": [2.1807886424799296E-4]
+          }
+        },
+        "fitness": 8.697305007508882
+      }
+    },
+    {
+      "name": "hierarchicalGaussian/ConjugateGradient/MLE",
+      "model": "hierarchicalGaussian",
+      "algorithm": {
+        "name": "ConjugateGradient"
+      },
+      "fitness": "MLE",
+      "result": {
+        "values": {
+          "groupMeans": {
+            "dtype": "f64",
+            "shape": [3],
+            "data": [0.5499999999999998, 1.5, 2.3999999999999986]
+          },
+          "mu": {
+            "dtype": "f64",
+            "shape": [],
+            "data": [1.2]
+          },
+          "sigma": {
+            "dtype": "f64",
+            "shape": [],
+            "data": [0.8]
+          }
+        },
+        "fitness": -5.736131199228035
+      }
+    },
+    {
+      "name": "linearRegression/Adam/MAP",
+      "model": "linearRegression",
+      "algorithm": {
+        "name": "Adam",
+        "maxEvaluations": 200000
+      },
+      "fitness": "MAP",
+      "result": {
+        "values": {
+          "intercept": {
+            "dtype": "f64",
+            "shape": [],
+            "data": [1.1081093120862353]
+          },
+          "noise": {
+            "dtype": "f64",
+            "shape": [],
+            "data": [0.26416621513877875]
+          },
+          "weights": {
+            "dtype": "f64",
+            "shape": [2, 1],
+            "data": [0.20708798194341851, -1.4787668931673332]
+          }
+        },
+        "fitness": -5.9560267769316795,
+        "converged": true
+      }
+    },
+    {
+      "name": "linearRegression/Adam/MLE",
+      "model": "linearRegression",
+      "algorithm": {
+        "name": "Adam",
+        "maxEvaluations": 200000
+      },
+      "fitness": "MLE",
+      "result": {
+        "values": {
+          "intercept": {
+            "dtype": "f64",
+            "shape": [],
+            "data": [1.1692757941721486]
+          },
+          "noise": {
+            "dtype": "f64",
+            "shape": [],
+            "data": [0.27823320316869016]
+          },
+          "weights": {
+            "dtype": "f64",
+            "shape": [2, 1],
+            "data": [0.177099012166329, -1.542631389015311]
+          }
+        },
+        "fitness": -0.5585715061819709,
+        "converged": true
+      }
+    },
+    {
+      "name": "linearRegression/ConjugateGradient/MAP",
+      "model": "linearRegression",
+      "algorithm": {
+        "name": "ConjugateGradient"
+      },
+      "fitness": "MAP",
+      "result": {
+        "values": {
+          "intercept": {
+            "dtype": "f64",
+            "shape": [],
+            "data": [1.1081298669382325]
+          },
+          "noise": {
+            "dtype": "f64",
+            "shape": [],
+            "data": [0.2641649031410056]
+          },
+          "weights": {
+            "dtype": "f64",
+            "shape": [2, 1],
+            "data": [0.20707741723406148, -1.4787811747652284]
+          }
+        },
+        "fitness": -5.956026773410163
+      }
+    },
+    {
+      "name": "linearRegression/ConjugateGradient/MLE",
+      "model": "linearRegression",
+      "algorithm": {
+        "name": "ConjugateGradient"
+      },
+      "fitness": "MLE",
+      "result": {
+        "values": {
+          "intercept": {
+            "dtype": "f64",
+            "shape": [],
+            "data": [1.1692989749709963]
+          },
+          "noise": {
+            "dtype": "f64",
+            "shape": [],
+            "data": [0.2782331764100471]
+          },
+          "weights": {
+            "dtype": "f64",
+            "shape": [2, 1],
+            "data": [0.17708777139790913, -1.5426454758277683]
+          }
+        },
+        "fitness": -0.5585715030179714
+      }
+    },
+    {
+      "name": "betaBinomial/Adam/MAP",
+      "model": "betaBinomial",
+      "algorithm": {
+        "name": "Adam",
+        "maxEvaluations": 200000
+      },
+      "fitness": "MAP",
+      "result": {
+        "values": {
+          "p": {
+            "dtype": "f64",
+            "shape": [],
+            "data": [0.34883157971600787]
+          }
+        },
+        "fitness": -5.853528175814766,
+        "converged": true
+      }
+    },
+    {
+      "name": "betaBinomial/Adam/MLE",
+      "model": "betaBinomial",
+      "algorithm": {
+        "name": "Adam",
+        "maxEvaluations": 200000
+      },
+      "fitness": "MLE",
+      "result": {
+        "values": {
+          "p": {
+            "dtype": "f64",
+            "shape": [],
+            "data": [0.3500000000444089]
+          }
+        },
+        "fitness": -6.427174710604016,
+        "converged": true
+      }
+    },
+    {
+      "name": "betaBinomial/ConjugateGradient/MAP",
+      "model": "betaBinomial",
+      "algorithm": {
+        "name": "ConjugateGradient"
+      },
+      "fitness": "MAP",
+      "result": {
+        "values": {
+          "p": {
+            "dtype": "f64",
+            "shape": [],
+            "data": [0.3488372095725328]
+          }
+        },
+        "fitness": -5.853528172815038
+      }
+    },
+    {
+      "name": "betaBinomial/ConjugateGradient/MLE",
+      "model": "betaBinomial",
+      "algorithm": {
+        "name": "ConjugateGradient"
+      },
+      "fitness": "MLE",
+      "result": {
+        "values": {
+          "p": {
+            "dtype": "f64",
+            "shape": [],
+            "data": [0.35]
+          }
+        },
+        "fitness": -6.427174710604018
+      }
+    },
+    {
+      "name": "gammaPoisson/Adam/MAP",
+      "model": "gammaPoisson",
+      "algorithm": {
+        "name": "Adam",
+        "maxEvaluations": 200000
+      },
+      "fitness": "MAP",
+      "result": {
+        "values": {
+          "rate": {
+            "dtype": "f64",
+            "shape": [],
+            "data": [1.909282643544654]
+          }
+        },
+        "fitness": -10.292313834578954,
+        "converged": true
+      }
+    },
+    {
+      "name": "gammaPoisson/Adam/MLE",
+      "model": "gammaPoisson",
+      "algorithm": {
+        "name": "Adam",
+        "maxEvaluations": 200000
+      },
+      "fitness": "MLE",
+      "result": {
+        "values": {
+          "rate": {
+            "dtype": "f64",
+            "shape": [],
+            "data": [2.0001743743893496]
+          }
+        },
+        "fitness": -8.731488712542319,
+        "converged": true
+      }
+    },
+    {
+      "name": "gammaPoisson/ConjugateGradient/MAP",
+      "model": "gammaPoisson",
+      "algorithm": {
+        "name": "ConjugateGradient"
+      },
+      "fitness": "MAP",
+      "result": {
+        "values": {
+          "rate": {
+            "dtype": "f64",
+            "shape": [],
+            "data": [1.9090911196563989]
+          }
+        },
+        "fitness": -10.29231378162763
+      }
+    },
+    {
+      "name": "gammaPoisson/ConjugateGradient/MLE",
+      "model": "gammaPoisson",
+      "algorithm": {
+        "name": "ConjugateGradient"
+      },
+      "fitness": "MLE",
+      "result": {
+        "values": {
+          "rate": {
+            "dtype": "f64",
+            "shape": [],
+            "data": [1.999999950103481]
+          }
+        },
+        "fitness": -8.731488674536497
+      }
+    },
+    {
+      "name": "randomWalkSequence/Adam/MAP",
+      "model": "randomWalkSequence",
+      "algorithm": {
+        "name": "Adam",
+        "maxEvaluations": 200000
+      },
+      "fitness": "MAP",
+      "result": {
+        "values": {
+          "Sequence_Item_0.1.x": {
+            "dtype": "f64",
+            "shape": [],
+            "data": [0.25160417108201133]
+          },
+          "Sequence_Item_1.1.x": {
+            "dtype": "f64",
+            "shape": [],
+            "data": [0.4911078954928426]
+          },
+          "Sequence_Item_2.1.x": {
+            "dtype": "f64",
+            "shape": [],
+            "data": [0.628382256949919]
+          },
+          "Sequence_Item_3.1.x": {
+            "dtype": "f64",
+            "shape": [],
+            "data": [0.8227318780816849]
+          }
+        },
+        "fitness": -5.346404529330126,
+        "converged": true
+      }
+    },
+    {
+      "name": "randomWalkSequence/Adam/MLE",
+      "model": "randomWalkSequence",
+      "algorithm": {
+        "name": "Adam",
+        "maxEvaluations": 200000
+      },
+      "fitness": "MLE",
+      "result": {
+        "values": {
+          "Sequence_Item_0.1.x": {
+            "dtype": "f64",
+            "shape": [],
+            "data": [0.3000000000000017]
+          },
+          "Sequence_Item_1.1.x": {
+            "dtype": "f64",
+            "shape": [],
+            "data": [0.8999842582316554]
+          },
+          "Sequence_Item_2.1.x": {
+            "dtype": "f64",
+            "shape": [],
+            "data": [0.4000157417683447]
+          },
+          "Sequence_Item_3.1.x": {
+            "dtype": "f64",
+            "shape": [],
+            "data": [1.5999842582316548]
+          }
+        },
+        "fitness": -3.6757541331903956,
+        "converged": true
+      }
+    },
+    {
+      "name": "randomWalkSequence/ConjugateGradient/MAP",
+      "model": "randomWalkSequence",
+      "algorithm": {
+        "name": "ConjugateGradient"
+      },
+      "fitness": "MAP",
+      "result": {
+        "values": {
+          "Sequence_Item_0.1.x": {
+            "dtype": "f64",
+            "shape": [],
+            "data": [0.2515879828326231]
+          },
+          "Sequence_Item_1.1.x": {
+            "dtype": "f64",
+            "shape": [],
+            "data": [0.49107296137274203]
+          },
+          "Sequence_Item_2.1.x": {
+            "dtype": "f64",
+            "shape": [],
+            "data": [0.6283261802577987]
+          },
+          "Sequence_Item_3.1.x": {
+            "dtype": "f64",
+            "shape": [],
+            "data": [0.8226609442054943]
+          }
+        },
+        "fitness": -5.346404521938372
+      }
+    },
+    {
+      "name": "randomWalkSequence/ConjugateGradient/MLE",
+      "model": "randomWalkSequence",
+      "algorithm": {
+        "name": "ConjugateGradient"
+      },
+      "fitness": "MLE",
+      "result": {
+        "values": {
+          "Sequence_Item_0.1.x": {
+            "dtype": "f64",
+            "shape": [],
+            "data": [0.3000000000004166]
+          },
+          "Sequence_Item_1.1.x": {
+            "dtype": "f64",
+            "shape": [],
+            "data": [0.9000000000008332]
+          },
+          "Sequence_Item_2.1.x": {
+            "dtype": "f64",
+            "shape": [],
+            "data": [0.39999999999916674]
+          },
+          "Sequence_Item_3.1.x": {
+            "dtype": "f64",
+            "shape": [],
+            "data": [1.6000000000008334]
+          }
+        },
+        "fitness": -3.6757541328186907
+      }
+    }
+  ]
+}

@@ -36,6 +36,7 @@ The verify task regenerates everything from scratch, so it also fails if the exp
 | `distributions.json` | For each distribution and several parameter settings: element-wise `logProb` over a grid of x values, inside and outside the support, and the element-wise derivatives of the log prob with respect to x and each parameter |
 | `vertices.json` | Small vertex graphs: the output value, plus forward-mode and reverse-mode partial derivatives of the output with respect to each input |
 | `models.json`, `models/` | Whole models saved in Keanu's protobuf (`.pb`) and JSON formats, with the expected log prob, log likelihood, their gradients with respect to each latent, and the value of every labelled vertex. `catalog` contains one labelled instance of every saveable vertex type, recording each type's Java class name and parameter names |
+| `algorithms.json` | MAP and maximum likelihood results for each golden model, with Adam (Keanu's defaults, at most 200,000 iterations) and conjugate gradient (Keanu's defaults): the optimized value of each latent (by label), the fitness, and whether Adam converged. Optimizers reach the optimum by different paths, so compare with optimization tolerances. The hierarchical model's MAP is unbounded (sigma → 0), so it has no meaningful optimum |
 
 ## Format
 

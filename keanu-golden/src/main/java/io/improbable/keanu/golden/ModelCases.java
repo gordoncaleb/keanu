@@ -50,9 +50,10 @@ final class ModelCases {
     private ModelCases() {
     }
 
-    static List<Map<String, Object>> generate(Path modelsDir) throws IOException {
-        Files.createDirectories(modelsDir);
-
+    /**
+     * The models used for inference reference results (every golden model except the vertex catalog).
+     */
+    static Map<String, Supplier<BayesianNetwork>> inferenceModels() {
         Map<String, Supplier<BayesianNetwork>> models = new LinkedHashMap<>();
         models.put("thermometers", ModelCases::thermometers);
         models.put("hierarchicalGaussian", ModelCases::hierarchicalGaussian);
@@ -60,6 +61,26 @@ final class ModelCases {
         models.put("betaBinomial", ModelCases::betaBinomial);
         models.put("gammaPoisson", ModelCases::gammaPoisson);
         models.put("randomWalkSequence", ModelCases::randomWalkSequence);
+        return models;
+    }
+
+    /**
+     * Builds a golden model with fresh, deterministic vertex ids and sequence labels.
+     */
+    static BayesianNetwork fresh(Supplier<BayesianNetwork> builder) {
+        VertexId.resetIdGenerator();
+        io.improbable.keanu.templating.SequenceBuilder.resetSequenceIdentifiers();
+        return builder.get();
+    }
+
+    static String labelOf(Vertex vertex) {
+        return name(vertex);
+    }
+
+    static List<Map<String, Object>> generate(Path modelsDir) throws IOException {
+        Files.createDirectories(modelsDir);
+
+        Map<String, Supplier<BayesianNetwork>> models = new LinkedHashMap<>(inferenceModels());
         models.put("catalog", CatalogModel::build);
 
         List<Map<String, Object>> cases = new ArrayList<>();

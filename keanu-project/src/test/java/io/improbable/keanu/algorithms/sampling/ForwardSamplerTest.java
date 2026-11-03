@@ -66,6 +66,24 @@ public class ForwardSamplerTest {
     }
 
     @Test
+    public void canSampleWhenSeveralObservationsHaveNoRandomVariableUpstream() {
+        GaussianVertex A = new GaussianVertex(100.0, 1);
+        DoubleVertex B = A.plus(ConstantVertex.of(5.));
+        GaussianVertex observedOne = new GaussianVertex(ConstantVertex.of(0.), 1.);
+        GaussianVertex observedTwo = new GaussianVertex(observedOne, 1.);
+        observedOne.observe(1.);
+        observedTwo.observe(2.);
+        // connect the observations to the same graph without making them depend on a latent
+        DoubleVertex joined = B.plus(observedTwo);
+
+        ProbabilisticModel model = new KeanuProbabilisticModel(A.getConnectedGraph());
+
+        NetworkSamples samples = Keanu.Sampling.Forward.withDefaultConfig(random).getPosteriorSamples(model, Arrays.asList(A, joined), 100);
+        assertEquals(100, samples.size());
+        assertEquals(107.0, samples.getDoubleTensorSamples(joined).getAverages().scalar(), 0.5);
+    }
+
+    @Test
     public void canSampleFromPrior() {
         GaussianVertex A = new GaussianVertex(100.0, 1);
         DoubleVertex B = A.plus(ConstantVertex.of(5.));

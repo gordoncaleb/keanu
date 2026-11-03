@@ -1,0 +1,70 @@
+use keanu_graph::GraphError;
+use keanu_tensor::TensorError;
+use std::fmt;
+
+/// Errors from inference algorithms.
+#[derive(Debug, Clone, PartialEq)]
+#[non_exhaustive]
+pub enum AlgorithmError {
+    /// An error evaluating the graph.
+    Graph(GraphError),
+    /// The model has no latent nodes to optimize or sample.
+    NoLatents,
+    /// Gradient optimizers only work on continuous (f64) latents; these latents are discrete.
+    DiscreteLatents(Vec<String>),
+    /// The starting point has zero probability.
+    ImpossibleStart,
+    /// The gradient at the starting point is flat (its largest absolute element is given).
+    FlatGradient { largest: f64 },
+    /// An algorithm setting is out of range.
+    InvalidSetting(String),
+    /// An argument is invalid for this operation.
+    InvalidArgument(String),
+}
+
+impl fmt::Display for AlgorithmError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Graph(e) => write!(f, "{e}"),
+            Self::NoLatents => f.write_str("the model has no latent nodes"),
+            Self::DiscreteLatents(nodes) => {
+                write!(
+                    f,
+                    "gradient optimizers need continuous latents, but these are discrete: {}",
+                    nodes.join(", ")
+                )
+            }
+            Self::ImpossibleStart => f.write_str("cannot start from a zero probability state"),
+            Self::FlatGradient { largest } => {
+                write!(
+                    f,
+                    "the initial gradient is very flat; its largest element is {largest}"
+                )
+            }
+            Self::InvalidSetting(message) | Self::InvalidArgument(message) => f.write_str(message),
+        }
+    }
+}
+
+impl std::error::Error for AlgorithmError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Graph(e) => Some(e),
+            _ => None,
+        }
+    }
+}
+
+impl From<GraphError> for AlgorithmError {
+    fn from(e: GraphError) -> Self {
+        Self::Graph(e)
+    }
+}
+
+impl From<TensorError> for AlgorithmError {
+    fn from(e: TensorError) -> Self {
+        Self::Graph(GraphError::Tensor(e))
+    }
+}
+
+pub type Result<T, E = AlgorithmError> = std::result::Result<T, E>;

@@ -97,8 +97,12 @@ public class Forward implements PosteriorSamplingAlgorithm {
 
     private void checkUpstreamOfObservedDoesNotContainProbabilistic(List<Vertex> observedVertices) {
         LambdaSection upstreamLambdaSection = LambdaSection.getUpstreamLambdaSectionForCollection(observedVertices, false);
-        Set<Vertex> upstreamRandomVariables = upstreamLambdaSection.getAllVertices();
-        if (upstreamRandomVariables.size() > 1) {
+        // The section includes the observed vertices themselves (and observed vertices upstream of them, which are
+        // fixed), so only an unobserved probabilistic vertex upstream of an observation is a problem.
+        Set<Vertex> upstreamRandomVariables = upstreamLambdaSection.getAllVertices().stream()
+            .filter(v -> !v.isObserved())
+            .collect(java.util.stream.Collectors.toSet());
+        if (!upstreamRandomVariables.isEmpty()) {
             throw new IllegalArgumentException("Forward sampler cannot be ran if observed variables have a random variable in their upstream lambda section");
         }
     }
