@@ -44,8 +44,8 @@ public class DifferenceVertex<T extends Number, TENSOR extends NumberTensor<T, T
         ReverseModePartialDerivative toLeft = AutoDiffBroadcast.correctForBroadcastPartialReverse(derivativeOfOutputWithRespectToSelf, this.getShape(), left.getShape());
         ReverseModePartialDerivative toRight = AutoDiffBroadcast.correctForBroadcastPartialReverse(derivativeOfOutputWithRespectToSelf.multiply(-1), this.getShape(), right.getShape());
 
-        partials.put(left, toLeft);
-        partials.put(right, toRight);
+        partials.merge(left, toLeft, ReverseModePartialDerivative::add);
+        partials.merge(right, toRight, ReverseModePartialDerivative::add);
         return partials;
     }
 }

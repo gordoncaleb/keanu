@@ -206,7 +206,7 @@ Intentional differences from Java:
 
 ### Phase 3: `keanu-graph`
 
-**Status: step 1 of 3 done** (design: `rust/docs/decisions/0002-graph-design.md`). `rust/keanu-graph` has:
+**Status: steps 1 and 2 of 3 done** (design: `rust/docs/decisions/0002-graph-design.md`). `rust/keanu-graph` has:
 
 - the immutable arena `Graph` (`Send + Sync`) and a separate, cloneable `State`;
 - `GraphBuilder`, whose typed `DoubleVar`/`IntVar`/`BoolVar` handles support `std::ops`, and which defers
@@ -216,13 +216,23 @@ Intentional differences from Java:
 - proxies, lambdas, asserts, multiplexer and CPT;
 - every distribution as a node, sampled through eval.
 
-All 121 cases in `golden-vectors/vertices.json` match Java's values, with none skipped. Next come step 2 (autodiff)
-and step 3 (log prob and its gradient). Differences from Java that are intentional:
+Step 2 adds forward and reverse mode autodiff (`forward_partials`, `reverse_partials`, `reverse_partials_from`) for
+every differentiable op. Partials are shaped `[of shape..., wrt shape...]`, and traversal follows Java's
+`Differentiator`.
+
+All 121 cases in `golden-vectors/vertices.json` match Java's values, along with all 264 recorded forward and reverse
+partials, with none skipped. Finite-difference checks in both modes cover every differentiable op, plus the traversal
+rules. Step 3 (log prob and its gradient) is next.
+
+Differences from Java that are intentional:
 
 - `where` broadcasts all three operands, whereas Java required then/else to have equal shapes.
 - `GetBooleanIndexVertex` isn't ported, because its value-dependent shape can't be a static node shape.
 - Java's n-ary `AndMultiple`/`OrMultiple` are chains of `&` / `|`.
 - `PrintVertex` and generic-object vertices aren't ported (see the design record).
+- `multiplexer` is not differentiable, as in Java (only `where` and the f64 CPT route gradients).
+- Lambdas are made differentiable by supplying their Jacobian (`GraphBuilder::lambda_with_jacobian`), rather than
+  Java's forward and reverse partial callbacks.
 
 - Port the arena graph, all ops (vertex types), value propagation (cascade / lazy eval) and observation.
 - Port forward and reverse autodiff and `LogProbGraph`.

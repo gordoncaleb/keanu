@@ -134,11 +134,18 @@ pub enum ArgOp {
 /// The function of a lambda node.
 pub type LambdaFn = dyn Fn(&[Value]) -> std::result::Result<Value, String> + Send + Sync;
 
+/// The Jacobian of a lambda: for each parent, ∂output/∂parent shaped `[output shape..., parent shape...]`
+/// (`None` for parents the output doesn't depend on differentiably, e.g. non-f64 parents).
+pub type LambdaJacobianFn = dyn Fn(&[Value]) -> std::result::Result<Vec<Option<keanu_tensor::DoubleTensor>>, String>
+    + Send
+    + Sync;
+
 /// A node computed by a user supplied function of its parents' values.
 #[derive(Clone)]
 pub struct Lambda {
     pub(crate) name: String,
     pub(crate) function: Arc<LambdaFn>,
+    pub(crate) jacobian: Option<Arc<LambdaJacobianFn>>,
     pub(crate) dtype: DType,
     pub(crate) shape: Vec<usize>,
 }
@@ -147,6 +154,7 @@ impl fmt::Debug for Lambda {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("Lambda")
             .field("name", &self.name)
+            .field("differentiable", &self.jacobian.is_some())
             .field("dtype", &self.dtype)
             .field("shape", &self.shape)
             .finish()

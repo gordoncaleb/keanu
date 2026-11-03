@@ -1,5 +1,5 @@
 //! Computation graphs for [Keanu](https://github.com/gordoncaleb/keanu): probabilistic and deterministic nodes,
-//! value propagation and (later) automatic differentiation.
+//! value propagation and automatic differentiation.
 //!
 //! A [`Graph`] is an immutable arena of nodes, built with a [`GraphBuilder`] through typed handles
 //! ([`DoubleVar`], [`IntVar`], [`BoolVar`]). Node ids are assigned in creation order and parents always precede
@@ -29,6 +29,7 @@
 //! # Ok::<(), keanu_graph::GraphError>(())
 //! ```
 
+pub mod autodiff;
 mod builder;
 mod distributions;
 mod error;
@@ -38,6 +39,9 @@ mod state;
 mod value;
 mod vars;
 
+pub use autodiff::{
+    Partials, forward_partials, is_differentiable, reverse_partials, reverse_partials_from,
+};
 pub use builder::GraphBuilder;
 pub use error::{GraphError, Result};
 pub use graph::{Graph, Node, NodeId};

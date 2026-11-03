@@ -64,8 +64,8 @@ public class SafeLogTimesVertex<T extends Number, TENSOR extends FloatingPointTe
         final ReverseModePartialDerivative toLeft = AutoDiffBroadcast.correctForBroadcastPartialReverse(dOutputsWrtX, this.getShape(), left.getShape());
         final ReverseModePartialDerivative toRight = AutoDiffBroadcast.correctForBroadcastPartialReverse(dOutputsWrtY, this.getShape(), right.getShape());
 
-        partials.put(left, toLeft);
-        partials.put(right, toRight);
+        partials.merge(left, toLeft, ReverseModePartialDerivative::add);
+        partials.merge(right, toRight, ReverseModePartialDerivative::add);
 
         return partials;
     }

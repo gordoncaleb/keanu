@@ -92,8 +92,8 @@ public class PowerVertex<T extends Number, TENSOR extends NumberTensor<T, TENSOR
         ReverseModePartialDerivative toBase = AutoDiffBroadcast.correctForBroadcastPartialReverse(dOutputsWrtBase, this.getShape(), getBase().getShape());
         ReverseModePartialDerivative toExponent = AutoDiffBroadcast.correctForBroadcastPartialReverse(dOutputsWrtExponent, this.getShape(), getExponent().getShape());
 
-        partials.put(getBase(), toBase);
-        partials.put(getExponent(), toExponent);
+        partials.merge(getBase(), toBase, ReverseModePartialDerivative::add);
+        partials.merge(getExponent(), toExponent, ReverseModePartialDerivative::add);
         return partials;
     }
 }

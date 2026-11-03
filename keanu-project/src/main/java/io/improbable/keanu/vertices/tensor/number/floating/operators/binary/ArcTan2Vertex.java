@@ -69,8 +69,8 @@ public class ArcTan2Vertex<T extends Number, TENSOR extends FloatingPointTensor<
         ReverseModePartialDerivative toLeft = AutoDiffBroadcast.correctForBroadcastPartialReverse(dOutputsWrtLeft, this.getShape(), left.getShape());
         ReverseModePartialDerivative toRight = AutoDiffBroadcast.correctForBroadcastPartialReverse(dOutputsWrtRight, this.getShape(), right.getShape());
 
-        partials.put(left, toLeft);
-        partials.put(right, toRight);
+        partials.merge(left, toLeft, ReverseModePartialDerivative::add);
+        partials.merge(right, toRight, ReverseModePartialDerivative::add);
         return partials;
     }
 }

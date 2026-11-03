@@ -207,4 +207,60 @@ public class AutoDiffRegressionTest {
         finiteDifferenceMatchesForwardAndReverseModeGradient(ImmutableList.of(a, b), a.min(b), INCREMENT, DELTA);
         finiteDifferenceMatchesForwardAndReverseModeGradient(ImmutableList.of(scalar, a), scalar.min(a), INCREMENT, DELTA);
     }
+
+    @Test
+    public void productGradientIsCorrectWhereElementsAreZero() {
+        UniformVertex a = input(DoubleTensor.create(new double[]{1.5, 0.0, -2.0, 3.0, 0.5, 2.0}, 2, 3));
+        check(a, a.product());
+        check(a, a.product(1));
+
+        // d/dx_1 of x0 * x1 * x2 at x1 = 0 is x0 * x2, not 0 / 0
+        UniformVertex b = input(DoubleTensor.create(1.5, 0.0, -2.0));
+        DoubleTensor gradient = io.improbable.keanu.vertices.tensor.number.floating.dbl.Differentiator
+            .reverseModeAutoDiff(b.product(), b).withRespectTo(b);
+        org.junit.Assert.assertArrayEquals(new double[]{0.0, -3.0, 0.0}, gradient.asFlatDoubleArray(), 1e-12);
+    }
+
+    @Test
+    public void aVertexUsedAsBothOperandsGetsBothContributionsInReverseMode() {
+        UniformVertex x = input(DoubleTensor.create(0.75, 1.0, 1.25));
+        UniformVertex y = input(DoubleTensor.scalar(0.7));
+        DoubleVertex product = x.times(y);
+        DoubleVertex squared = product.times(product).sum();
+
+        // d/dx sum((xy)^2) = 2 x y^2, which used to come out halved because one operand's partial was overwritten
+        DoubleTensor dx = io.improbable.keanu.vertices.tensor.number.floating.dbl.Differentiator
+            .reverseModeAutoDiff(squared, x).withRespectTo(x);
+        org.junit.Assert.assertArrayEquals(new double[]{2 * 0.75 * 0.49, 2 * 1.0 * 0.49, 2 * 1.25 * 0.49}, dx.asFlatDoubleArray(), 1e-12);
+        check(x, squared);
+        check(x, x.times(x).plus(x.div(x.plus(2.0))).sum());
+    }
+
+    @Test
+    public void forwardModeThroughAFullSumHasTheRightShape() {
+        UniformVertex x = input(DoubleTensor.create(0.75, 1.0, 1.25));
+        UniformVertex y = input(DoubleTensor.scalar(0.7));
+        DoubleVertex out = x.times(y).sum();
+        DoubleVertex outMean = x.times(y).mean();
+
+        DoubleTensor dy = io.improbable.keanu.vertices.tensor.number.floating.dbl.Differentiator
+            .forwardModeAutoDiff(y, out).of(out);
+        org.junit.Assert.assertArrayEquals(new long[0], dy.getShape());
+        org.junit.Assert.assertEquals(3.0, dy.scalar(), 1e-12);
+        check(y, out);
+        check(y, outMean);
+        check(x, x.reshape(3, 1).times(y).sum());
+    }
+
+    @Test
+    public void whereGivesAZeroPartialForTheUnselectedBranch() {
+        UniformVertex a = input(DoubleTensor.scalar(5.0));
+        UniformVertex b = input(DoubleTensor.create(0.7, 0.9, 1.1, 1.3).reshape(2, 2));
+        DoubleVertex out = a.max(b);
+
+        DoubleTensor forward = io.improbable.keanu.vertices.tensor.number.floating.dbl.Differentiator
+            .forwardModeAutoDiff(b, out).of(out);
+        org.junit.Assert.assertEquals(0.0, forward.abs().sum().scalar(), 0.0);
+        check(b, out);
+    }
 }

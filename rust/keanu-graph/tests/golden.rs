@@ -3,11 +3,14 @@
 //! Each case is rebuilt as a Rust graph whose inputs are probabilistic latents holding the recorded input values
 //! (as in Java). Every case must either be checked or appear in `SKIPPED` with a reason.
 //!
-//! Step 1 checks node values. Step 2 adds the forward and reverse partials: `build_case` already returns the input
-//! node ids they are taken with respect to.
+//! Node values are checked for every case, and the forward and reverse partials of the output with respect to each
+//! input for every case that records them (an error in the vectors means Rust must fail too).
 
 use keanu_distributions::KeanuRng;
-use keanu_graph::{BoolVar, DoubleVar, GraphBuilder, IntVar, NodeId, Value};
+use keanu_graph::{
+    BoolVar, DoubleVar, Graph, GraphBuilder, IntVar, NodeId, State, Value, forward_partials,
+    reverse_partials,
+};
 use keanu_parity::{Arg, Case, DType, GoldenTensor, Outcome, close, load, parse_outcome};
 use keanu_tensor::{DoubleTensor, IntTensor};
 
@@ -30,7 +33,6 @@ fn input_tensor(arg: &Arg) -> DoubleTensor {
 /// A built case: the output node and the input nodes (for partials in step 2).
 struct Built {
     output: NodeId,
-    #[allow(dead_code)] // used by the partials checks in step 2
     inputs: Vec<NodeId>,
 }
 
@@ -161,8 +163,9 @@ fn build_output<'g>(case: &Case, g: &'g GraphBuilder, inputs: &[DoubleVar<'g>]) 
         "linalg/matrixInverse" => d(x().inverse()),
         "linalg/matrixDeterminant" => d(x().determinant()),
         "linalg/choleskyDecomposition" => d(x().cholesky()),
-        // Java's choleskyInverse returns only the lower triangle of the inverse
-        "linalg/choleskyInverse" => d(x().cholesky_inverse().tril(0)),
+        // Java's choleskyInverse returns the lower triangle of the inverse plus the input's strict upper triangle
+        // (zero for a Cholesky factor); building exactly that also makes the partials comparable
+        "linalg/choleskyInverse" => d(x().cholesky_inverse().tril(0) + x().triu(1)),
 
         "graph/sharedSubexpression" => {
             let shared = (x() * y()).sin();
@@ -230,27 +233,92 @@ fn as_f64s(value: &Value) -> (Vec<usize>, Vec<f64>) {
     }
 }
 
+/// Compares the forward and reverse partials of the output with respect to each input against the vectors.
+/// Returns the number of partials checked.
+fn check_partials(
+    case: &Case,
+    graph: &Graph,
+    state: &State,
+    output: NodeId,
+    inputs: &[NodeId],
+    failures: &mut Vec<String>,
+) -> usize {
+    let mut checked = 0;
+    for (mode, key) in [
+        ("forward", "forwardPartials"),
+        ("reverse", "reversePartials"),
+    ] {
+        let Some(expected) = case.result.get(key).and_then(|v| v.as_array()) else {
+            continue;
+        };
+        assert_eq!(
+            expected.len(),
+            inputs.len(),
+            "{}: one {key} entry per input",
+            case.name
+        );
+        for (k, (&input, expected)) in inputs.iter().zip(expected).enumerate() {
+            checked += 1;
+            let computed = if mode == "forward" {
+                forward_partials(graph, state, input, &[output])
+                    .and_then(|p| p.get(output).cloned())
+            } else {
+                reverse_partials(graph, state, output, &[input]).and_then(|p| p.get(input).cloned())
+            };
+            let problem = match (parse_outcome(expected), computed) {
+                (Outcome::Error(_), Err(_)) => None,
+                (Outcome::Error(e), Ok(_)) => {
+                    Some(format!("Java failed with {e} but Rust returned a partial"))
+                }
+                (Outcome::Tensor(_), Err(e)) => Some(format!("unexpected error: {e}")),
+                (Outcome::Tensor(expected), Ok(partial)) => {
+                    if partial.shape() != expected.shape.as_slice() {
+                        Some(format!(
+                            "shape {:?}, expected {:?}",
+                            partial.shape(),
+                            expected.shape
+                        ))
+                    } else {
+                        close(partial.as_slice(), &expected.data, PARTIAL_TOLERANCE).err()
+                    }
+                }
+            };
+            if let Some(p) = problem {
+                failures.push(format!("{} {mode} partial wrt input {k}: {p}", case.name));
+            }
+        }
+    }
+    checked
+}
+
+const PARTIAL_TOLERANCE: f64 = 1e-10;
+
 #[test]
 fn every_vertex_golden_value() {
     let cases = load("vertices.json");
     let mut failures = Vec::new();
     let mut unmapped = Vec::new();
     let mut checked = 0;
+    let mut partial_checks = 0;
     for case in &cases {
         if SKIPPED.iter().any(|(n, _)| *n == case.name) {
             continue;
         }
         let g = GraphBuilder::new();
-        let Some(Built { output, .. }) = build_case(case, &g) else {
+        let Some(Built { output, inputs }) = build_case(case, &g) else {
             unmapped.push(case.name.clone());
             continue;
         };
         checked += 1;
         let expected = parse_outcome(&case.result["value"]);
-        let computed = g.build().and_then(|(graph, mut state)| {
+        let built = g.build().and_then(|(graph, mut state)| {
             state.lazy_eval(&graph, &[output], &mut KeanuRng::seed_from_u64(1))?;
-            Ok(state.value(output).cloned().unwrap())
+            Ok((graph, state))
         });
+        if let Ok((graph, state)) = &built {
+            partial_checks += check_partials(case, graph, state, output, &inputs, &mut failures);
+        }
+        let computed = built.map(|(_, state)| state.value(output).cloned().unwrap());
         let problem = match (expected, computed) {
             (Outcome::Error(_), Err(_)) => None,
             (Outcome::Error(e), Ok(_)) => {
@@ -271,7 +339,7 @@ fn every_vertex_golden_value() {
         }
     }
     println!(
-        "checked {checked} of {} cases ({} skipped)",
+        "checked {checked} of {} cases ({} skipped), {partial_checks} partials",
         cases.len(),
         SKIPPED.len()
     );

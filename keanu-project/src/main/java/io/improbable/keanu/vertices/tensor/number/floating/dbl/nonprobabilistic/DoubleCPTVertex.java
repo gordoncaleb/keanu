@@ -1,6 +1,7 @@
 package io.improbable.keanu.vertices.tensor.number.floating.dbl.nonprobabilistic;
 
 import io.improbable.keanu.tensor.Tensor;
+import io.improbable.keanu.tensor.TensorShape;
 import io.improbable.keanu.tensor.dbl.DoubleTensor;
 import io.improbable.keanu.vertices.NonProbabilistic;
 import io.improbable.keanu.vertices.NonSaveableVertex;
@@ -12,6 +13,7 @@ import io.improbable.keanu.vertices.tensor.number.floating.dbl.DoubleVertex;
 import io.improbable.keanu.vertices.tensor.number.floating.dbl.nonprobabilistic.diff.ForwardModePartialDerivative;
 import io.improbable.keanu.vertices.tensor.number.floating.dbl.nonprobabilistic.diff.ReverseModePartialDerivative;
 
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -42,27 +44,49 @@ public class DoubleCPTVertex extends VertexImpl<DoubleTensor, DoubleVertex> impl
     }
 
     @Override
+    /**
+     * The selected outcome's partial. If it doesn't depend on the input but another outcome does, the partial is
+     * zero rather than absent, since the output still depends on the input through a differentiable vertex.
+     */
     public ForwardModePartialDerivative forwardModeAutoDifferentiation(Map<Vertex, ForwardModePartialDerivative> derivativeOfParentsWithRespectToInput) {
         final CPTCondition condition = CPTCondition.from(inputs, (vertex) -> vertex.getValue().scalar());
         DoubleVertex vertex = conditions.get(condition);
-        return vertex == null ? derivativeOfParentsWithRespectToInput.get(defaultResult) : derivativeOfParentsWithRespectToInput.get(vertex);
+        DoubleVertex selected = vertex == null ? defaultResult : vertex;
+        ForwardModePartialDerivative selectedPartial = derivativeOfParentsWithRespectToInput.get(selected);
+        if (selectedPartial != null && selectedPartial.isPresent()) {
+            return selectedPartial;
+        }
+
+        List<DoubleVertex> outcomes = new ArrayList<>(conditions.values());
+        outcomes.add(defaultResult);
+        for (DoubleVertex outcome : outcomes) {
+            ForwardModePartialDerivative partial = derivativeOfParentsWithRespectToInput.get(outcome);
+            if (partial != null && partial.isPresent()) {
+                long[] wrtShape = partial.getWrtShape();
+                return new ForwardModePartialDerivative(wrtShape, DoubleTensor.zeros(TensorShape.concat(wrtShape, getShape())));
+            }
+        }
+        return ForwardModePartialDerivative.EMPTY;
     }
 
+    /**
+     * The selected outcome gets the partial and the others get a zero partial (see the forward mode).
+     */
     public Map<Vertex, ReverseModePartialDerivative> reverseModeAutoDifferentiation(ReverseModePartialDerivative derivativeOfOutputWithRespectToSelf) {
         final CPTCondition condition = CPTCondition.from(inputs, (vertex) -> vertex.getValue().scalar());
         DoubleVertex conditionVertex = conditions.get(condition);
+        DoubleVertex selected = conditionVertex == null ? defaultResult : conditionVertex;
+
+        List<DoubleVertex> outcomes = new ArrayList<>(conditions.values());
+        outcomes.add(defaultResult);
 
         Map<Vertex, ReverseModePartialDerivative> partials = new HashMap<>();
-        for (Vertex v : conditions.values()) {
-            if (v == conditionVertex) {
-                partials.put(v, derivativeOfOutputWithRespectToSelf);
-            }
+        for (DoubleVertex outcome : outcomes) {
+            ReverseModePartialDerivative partial = outcome == selected
+                ? derivativeOfOutputWithRespectToSelf
+                : derivativeOfOutputWithRespectToSelf.multiply(0.0);
+            partials.merge(outcome, partial, ReverseModePartialDerivative::add);
         }
-
-        if (conditionVertex == null) {
-            partials.put(defaultResult, derivativeOfOutputWithRespectToSelf);
-        }
-
         return partials;
     }
 }

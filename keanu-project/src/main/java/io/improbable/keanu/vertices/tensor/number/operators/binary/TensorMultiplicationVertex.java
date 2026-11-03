@@ -130,7 +130,7 @@ public class TensorMultiplicationVertex<T extends Number, TENSOR extends NumberT
         for (int i = 0; i < bContractedAscending.length; i++) {
             dAOrder[keptA.length + i] = dimsA[indexOf(dimsB, bContractedAscending[i])];
         }
-        partials.put(left, new ReverseModePartialDerivative(ofShape, toOriginalOrder(dAUnordered, ofRank, dAOrder)));
+        partials.merge(left, new ReverseModePartialDerivative(ofShape, toOriginalOrder(dAUnordered, ofRank, dAOrder)), ReverseModePartialDerivative::add);
 
         // dB: contract A's kept dims with G's A-kept dims -> [A contracted (ascending A dim order)..., of..., B kept...]
         final int[] gAKeptDims = new int[keptA.length];
@@ -162,7 +162,7 @@ public class TensorMultiplicationVertex<T extends Number, TENSOR extends NumberT
         for (int i = 0; i < keptB.length; i++) {
             dBOrder[aContractedAscending.length + i] = keptB[i];
         }
-        partials.put(right, new ReverseModePartialDerivative(ofShape, toOriginalOrder(dBOfFirst, ofRank, dBOrder)));
+        partials.merge(right, new ReverseModePartialDerivative(ofShape, toOriginalOrder(dBOfFirst, ofRank, dBOrder)), ReverseModePartialDerivative::add);
 
         return partials;
     }

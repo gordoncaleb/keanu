@@ -66,24 +66,20 @@ public class WhereVertex<T, TENSOR extends Tensor<T, TENSOR>, VERTEX extends Ten
         ForwardModePartialDerivative elsPartial = derivativeOfParentsWithRespectToInput.getOrDefault(els, ForwardModePartialDerivative.EMPTY);
         BooleanTensor predicateValue = predicate.getValue();
 
-        if (predicateValue.allTrue().scalar()) {
-            return thnPartial;
-        } else if (predicateValue.allFalse().scalar()) {
-            return elsPartial;
-        } else {
-            return thnPartial.multiply(predicateValue.toDoubleMask())
-                .add(elsPartial.multiply(predicateValue.not().toDoubleMask()), this.getShape());
-        }
+        // No shortcut when the predicate is all true or all false: the branch that isn't selected may be the only
+        // one depending on the input, and the partial is then zero rather than absent.
+        return thnPartial.multiply(predicateValue.toDoubleMask())
+            .add(elsPartial.multiply(predicateValue.not().toDoubleMask()), this.getShape());
     }
 
     @Override
     public Map<Vertex, ReverseModePartialDerivative> reverseModeAutoDifferentiation(ReverseModePartialDerivative derivativeOfOutputWithRespectToSelf) {
         Map<Vertex, ReverseModePartialDerivative> partials = new HashMap<>();
         BooleanTensor predicateValue = predicate.getValue();
-        partials.put(thn, derivativeOfOutputWithRespectToSelf
-            .multiply(predicateValue.toDoubleMask()));
-        partials.put(els, derivativeOfOutputWithRespectToSelf
-            .multiply(predicateValue.not().toDoubleMask()));
+        partials.merge(thn, derivativeOfOutputWithRespectToSelf
+            .multiply(predicateValue.toDoubleMask()), ReverseModePartialDerivative::add);
+        partials.merge(els, derivativeOfOutputWithRespectToSelf
+            .multiply(predicateValue.not().toDoubleMask()), ReverseModePartialDerivative::add);
         return partials;
     }
 

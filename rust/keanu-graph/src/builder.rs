@@ -165,6 +165,18 @@ impl GraphBuilder {
         )
     }
 
+    /// A handle for an existing f64 node, e.g. one returned by [`lambda`](Self::lambda). Records an error if the
+    /// node is not f64.
+    pub fn double_var(&self, id: NodeId) -> DoubleVar<'_> {
+        let (dtype, _) = self.dtype_shape(id);
+        if dtype != DType::F64 {
+            self.record(GraphError::InvalidValue(format!(
+                "node {id:?} is {dtype:?}, not f64"
+            )));
+        }
+        DoubleVar::new(self, id)
+    }
+
     pub fn scalar(&self, value: f64) -> DoubleVar<'_> {
         self.constant(DoubleTensor::scalar(value))
     }
@@ -314,10 +326,37 @@ impl GraphBuilder {
         let lambda = Lambda {
             name: name.to_owned(),
             function: Arc::new(function),
+            jacobian: None,
             dtype,
             shape: shape.to_vec(),
         };
         self.add(Op::Lambda(lambda), parents, dtype)
+    }
+
+    /// A differentiable f64 lambda. `jacobian` returns, for each parent, ∂output/∂parent shaped
+    /// `[output shape..., parent shape...]`, or `None` for a parent the output doesn't depend on differentiably.
+    pub fn lambda_with_jacobian(
+        &self,
+        name: &str,
+        parents: &[NodeId],
+        shape: &[usize],
+        function: impl Fn(&[Value]) -> std::result::Result<Value, String> + Send + Sync + 'static,
+        jacobian: impl Fn(
+            &[Value],
+        )
+            -> std::result::Result<Vec<Option<keanu_tensor::DoubleTensor>>, String>
+        + Send
+        + Sync
+        + 'static,
+    ) -> NodeId {
+        let lambda = Lambda {
+            name: name.to_owned(),
+            function: Arc::new(function),
+            jacobian: Some(Arc::new(jacobian)),
+            dtype: DType::F64,
+            shape: shape.to_vec(),
+        };
+        self.add(Op::Lambda(lambda), parents, DType::F64)
     }
 
     /// The option chosen by a scalar integer selector. Every option must have the same type and shape.

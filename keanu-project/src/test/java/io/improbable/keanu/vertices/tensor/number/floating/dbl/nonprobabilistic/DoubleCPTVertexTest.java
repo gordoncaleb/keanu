@@ -71,4 +71,25 @@ public class DoubleCPTVertexTest {
         assertThat(expected, valuesWithinEpsilonAndShapesMatch(actualForward, 1e-8));
     }
 
+
+    @Test
+    public void unselectedOutcomesGetZeroPartialsRatherThanNone() {
+        GaussianVertex a = new GaussianVertex(0, 1);
+        a.setValue(0.7);
+        GaussianVertex b = new GaussianVertex(0, 1);
+        b.setValue(1.3);
+        BooleanVertex predicate = new BernoulliVertex(0.5);
+        predicate.setValue(true);
+
+        DoubleVertex cpt = ConditionalProbabilityTable.of(predicate)
+            .when(true).then(a.times(2.0))
+            .orDefault(b);
+        cpt.eval();
+
+        // the output depends on b through a differentiable vertex, but not locally: the partial is zero
+        assertEquals(0.0, Differentiator.forwardModeAutoDiff(b, cpt).of(cpt).scalar(), 0.0);
+        assertEquals(0.0, Differentiator.reverseModeAutoDiff(cpt, b).withRespectTo(b).scalar(), 0.0);
+        assertEquals(2.0, Differentiator.forwardModeAutoDiff(a, cpt).of(cpt).scalar(), 0.0);
+        assertEquals(2.0, Differentiator.reverseModeAutoDiff(cpt, a).withRespectTo(a).scalar(), 0.0);
+    }
 }

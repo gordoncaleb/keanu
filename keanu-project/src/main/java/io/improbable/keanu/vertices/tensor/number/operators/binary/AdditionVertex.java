@@ -50,8 +50,8 @@ public class AdditionVertex<T extends Number, TENSOR extends NumberTensor<T, TEN
         ReverseModePartialDerivative toLeft = AutoDiffBroadcast.correctForBroadcastPartialReverse(derivativeOfOutputWithRespectToSelf, this.getShape(), left.getShape());
         ReverseModePartialDerivative toRight = AutoDiffBroadcast.correctForBroadcastPartialReverse(derivativeOfOutputWithRespectToSelf, this.getShape(), right.getShape());
 
-        partials.put(left, toLeft);
-        partials.put(right, toRight);
+        partials.merge(left, toLeft, ReverseModePartialDerivative::add);
+        partials.merge(right, toRight, ReverseModePartialDerivative::add);
         return partials;
     }
 }

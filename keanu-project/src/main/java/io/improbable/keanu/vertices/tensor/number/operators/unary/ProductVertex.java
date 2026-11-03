@@ -1,7 +1,6 @@
 package io.improbable.keanu.vertices.tensor.number.operators.unary;
 
 import io.improbable.keanu.tensor.NumberTensor;
-import io.improbable.keanu.tensor.TensorShape;
 import io.improbable.keanu.tensor.dbl.DoubleTensor;
 import io.improbable.keanu.vertices.LoadVertexParam;
 import io.improbable.keanu.vertices.NonProbabilisticVertex;
@@ -12,6 +11,7 @@ import io.improbable.keanu.vertices.tensor.UnaryTensorOpVertex;
 import io.improbable.keanu.vertices.tensor.number.NumberTensorVertex;
 import io.improbable.keanu.vertices.tensor.number.floating.dbl.Differentiable;
 import io.improbable.keanu.vertices.tensor.number.floating.dbl.nonprobabilistic.diff.ForwardModePartialDerivative;
+import io.improbable.keanu.vertices.tensor.number.floating.dbl.nonprobabilistic.diff.JacobianAutoDiff;
 import io.improbable.keanu.vertices.tensor.number.floating.dbl.nonprobabilistic.diff.ReverseModePartialDerivative;
 
 import java.util.Collections;
@@ -45,52 +45,26 @@ public class ProductVertex<T extends Number, TENSOR extends NumberTensor<T, TENS
         }
     }
 
+    /**
+     * A product is affine in each element when the others are held fixed, so its Jacobian is exact from
+     * {@link JacobianAutoDiff#jacobianOfElementwiseAffineOp}. Unlike dividing the product by each element this is
+     * correct where elements are zero.
+     */
+    private DoubleTensor jacobian() {
+        return JacobianAutoDiff.jacobianOfElementwiseAffineOp(
+            x -> overDimensions == null ? x.product() : x.product(overDimensions),
+            inputVertex.getValue().toDouble()
+        );
+    }
+
     @Override
     public ForwardModePartialDerivative forwardModeAutoDifferentiation(Map<Vertex, ForwardModePartialDerivative> derivativeOfParentsWithRespectToInput) {
-
-        final ForwardModePartialDerivative partial = derivativeOfParentsWithRespectToInput.get(inputVertex);
-        final int operandRank = inputVertex.getRank();
-        final int partialRank = partial.get().getRank();
-
-        final int[] dimensionsToSum;
-        if (overDimensions == null) {
-            dimensionsToSum = TensorShape.dimensionRange(operandRank, partialRank);
-        } else {
-            dimensionsToSum = new int[overDimensions.length];
-            int[] absoluteDims = TensorShape.getAbsoluteDimensions(inputVertex.getRank(), overDimensions);
-            for (int i = 0; i < dimensionsToSum.length; i++) {
-                dimensionsToSum[i] = absoluteDims[i] + (partialRank - operandRank);
-            }
-        }
-
-        final long[] ofShapeWithoutRankLoss = TensorShape.getReductionResultShapeWithoutRankLoss(inputVertex.getShape(), overDimensions);
-
-        final DoubleTensor result = partial
-            .multiply(getValue().toDouble().reshape(ofShapeWithoutRankLoss))
-            .divideBy(inputVertex.getValue().toDouble())
-            .get().sum(dimensionsToSum);
-
-        return new ForwardModePartialDerivative(partial.getWrtShape(), result);
+        return JacobianAutoDiff.forward(derivativeOfParentsWithRespectToInput.get(inputVertex), jacobian(), getShape());
     }
 
     @Override
     public Map<Vertex, ReverseModePartialDerivative> reverseModeAutoDifferentiation(ReverseModePartialDerivative partial) {
-
-        final long[] wrtShapeWithoutRankLoss = TensorShape.getReductionResultShapeWithoutRankLoss(inputVertex.getShape(), overDimensions);
-        final long[] ofShape = partial.getOfShape();
-
-        final long[] newPartialShape = TensorShape.concat(
-            ofShape,
-            wrtShapeWithoutRankLoss
-        );
-
-        final DoubleTensor partialDueToShapeChange = partial.get().reshape(newPartialShape);
-
-        final DoubleTensor result = partialDueToShapeChange
-            .times(getValue().toDouble().reshape(wrtShapeWithoutRankLoss))
-            .div(inputVertex.getValue().toDouble());
-
-        return Collections.singletonMap(inputVertex, new ReverseModePartialDerivative(partial.getOfShape(), result));
+        return Collections.singletonMap(inputVertex, JacobianAutoDiff.reverse(partial, jacobian(), inputVertex.getShape()));
     }
 
     @SaveVertexParam(value = OVER_DIMENSIONS, isNullable = true)

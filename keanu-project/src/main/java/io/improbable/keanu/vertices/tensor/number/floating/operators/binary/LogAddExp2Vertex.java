@@ -53,12 +53,12 @@ public class LogAddExp2Vertex<T extends Number, TENSOR extends FloatingPointTens
         final DoubleTensor[] w = weights();
         final Map<Vertex, ReverseModePartialDerivative> partials = new HashMap<>();
 
-        partials.put(left, AutoDiffBroadcast.correctForBroadcastPartialReverse(
+        partials.merge(left, AutoDiffBroadcast.correctForBroadcastPartialReverse(
             derivativeOfOutputWithRespectToSelf.multiply(w[0]), this.getShape(), left.getShape()
-        ));
-        partials.put(right, AutoDiffBroadcast.correctForBroadcastPartialReverse(
+        ), ReverseModePartialDerivative::add);
+        partials.merge(right, AutoDiffBroadcast.correctForBroadcastPartialReverse(
             derivativeOfOutputWithRespectToSelf.multiply(w[1]), this.getShape(), right.getShape()
-        ));
+        ), ReverseModePartialDerivative::add);
 
         return partials;
     }

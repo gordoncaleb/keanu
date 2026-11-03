@@ -36,6 +36,10 @@
 - Unary `max()` / `min()` vertices reported their input's shape instead of a scalar, and had no auto diff. They now pass the gradient to the selected element (split equally between ties).
 - Binary `max` / `min` vertices did not broadcast their operands, unlike the tensor operations.
 - `logGamma(+infinity)` returned NaN; it now returns +infinity.
+- Reverse mode autodiff lost one contribution when the same vertex was both operands of a binary op (e.g. `x.times(x)`), halving the gradient.
+- Forward mode autodiff through a full `sum()` or `mean()` summed the wrong dimensions when the with-respect-to vertex's rank differed from the operand's, giving wrongly shaped partials.
+- The gradient of `product()` was NaN where an element is zero; it is now exact.
+- Forward mode through `where` (and so binary `max` / `min`), and both modes through a double CPT, reported no partial when only an unselected branch depended on the input; the partial is now zero.
 - `Diffs.get` returned the gradient of the nearest smaller parameter name instead of failing when asked for a parameter that is not present.
 - `Categorical.logProb` returned 0 (probability 1) for a value that is not one of the categories; it now returns -infinity.
 - `Binomial`, `Gamma`, `Laplace` and `Poisson` sampling failed when the parameters had a larger shape than the requested sample shape; they now return the broadcast shape.

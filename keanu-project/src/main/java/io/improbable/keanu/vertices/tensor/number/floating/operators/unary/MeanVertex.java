@@ -66,7 +66,8 @@ public class MeanVertex<T extends Number, TENSOR extends FloatingPointTensor<T, 
         final int[] dimensionsToSum;
         final long length;
         if (overDimensions == null) {
-            dimensionsToSum = TensorShape.dimensionRange(operandRank, partialRank);
+            // the operand's dimensions are the trailing ones of the partial ([wrt..., operand...])
+            dimensionsToSum = TensorShape.dimensionRange(partialRank - operandRank, partialRank);
             length = inputVertex.getValue().getLength();
         } else {
             dimensionsToSum = new int[overDimensions.length];

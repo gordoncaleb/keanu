@@ -26,6 +26,13 @@ pub enum GraphError {
     AssertionFailed(String),
     /// A lambda node's function failed.
     Lambda(String),
+    /// There is no partial derivative: the "of" node does not depend on the "with respect to" node through
+    /// differentiable nodes (e.g. it depends on it only via floor, a comparison or a probabilistic node).
+    NoPartial { of: usize, wrt: usize },
+    /// Auto diff needs a value that hasn't been computed; evaluate the graph first.
+    MissingValue(usize),
+    /// Auto diff was asked for on a node that isn't f64 or isn't differentiable.
+    NotDifferentiable(String),
 }
 
 impl fmt::Display for GraphError {
@@ -41,6 +48,15 @@ impl fmt::Display for GraphError {
             Self::Proxy(m) => write!(f, "{m}"),
             Self::AssertionFailed(m) => write!(f, "assertion failed: {m}"),
             Self::Lambda(m) => write!(f, "lambda failed: {m}"),
+            Self::NoPartial { of, wrt } => write!(
+                f,
+                "no partial derivative of node #{of} with respect to node #{wrt}: it does not depend on it through differentiable nodes"
+            ),
+            Self::MissingValue(id) => write!(
+                f,
+                "node #{id} has no value; evaluate the graph before differentiating"
+            ),
+            Self::NotDifferentiable(m) => write!(f, "{m}"),
         }
     }
 }
