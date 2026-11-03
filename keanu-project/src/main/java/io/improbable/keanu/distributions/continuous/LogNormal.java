@@ -41,14 +41,16 @@ public class LogNormal implements ContinuousDistribution {
         final DoubleTensor lnSigmaX = sigma.times(x).logInPlace();
         final DoubleTensor lnXMinusMuSquared = x.log().minusInPlace(mu).powInPlace(2.);
         final DoubleTensor lnXMinusMuSquaredOver2Variance = lnXMinusMuSquared.divInPlace(sigma.pow(2.).timesInPlace(2.));
-        return lnXMinusMuSquaredOver2Variance.plusInPlace(lnSigmaX).plusInPlace(LN_SQRT_2PI).unaryMinusInPlace();
+        final DoubleTensor logProb = lnXMinusMuSquaredOver2Variance.plusInPlace(lnSigmaX).plusInPlace(LN_SQRT_2PI).unaryMinusInPlace();
+        return logProb.setWithMaskInPlace(x.lessThanOrEqualToMask(DoubleTensor.scalar(0.0)), Double.NEGATIVE_INFINITY);
     }
 
     public static DoubleVertex logProbOutput(DoublePlaceholderVertex x, DoublePlaceholderVertex mu, DoublePlaceholderVertex sigma) {
         final DoubleVertex lnSigmaX = sigma.times(x).log();
         final DoubleVertex lnXMinusMuSquared = x.log().minus(mu).pow(2.);
         final DoubleVertex lnXMinusMuSquaredOver2Variance = lnXMinusMuSquared.div(sigma.pow(2.).times(2.));
-        return lnXMinusMuSquaredOver2Variance.plus(lnSigmaX).plus(LN_SQRT_2PI).unaryMinus();
+        return lnXMinusMuSquaredOver2Variance.plus(lnSigmaX).plus(LN_SQRT_2PI).unaryMinus()
+            .setWithMask(x.lessThanOrEqualToMask(0.), Double.NEGATIVE_INFINITY);
     }
 
     public Diffs dLogProb(DoubleTensor x) {

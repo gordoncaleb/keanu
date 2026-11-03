@@ -1,0 +1,126 @@
+{
+  "graph": {
+    "vertices": [{
+      "id": {
+        "id": "[0]"
+      },
+      "vertexType": "io.improbable.keanu.vertices.tensor.number.floating.dbl.nonprobabilistic.ConstantDoubleVertex",
+      "parameters": [{
+        "name": "constant",
+        "doubleTensorParam": {
+          "values": [2.0]
+        }
+      }]
+    }, {
+      "id": {
+        "id": "[1]"
+      },
+      "vertexType": "io.improbable.keanu.vertices.tensor.number.floating.dbl.nonprobabilistic.ConstantDoubleVertex",
+      "parameters": [{
+        "name": "constant",
+        "doubleTensorParam": {
+          "values": [3.0]
+        }
+      }]
+    }, {
+      "id": {
+        "id": "[2]"
+      },
+      "label": "p",
+      "vertexType": "io.improbable.keanu.vertices.tensor.number.floating.dbl.probabilistic.BetaVertex",
+      "parameters": [{
+        "name": "alpha",
+        "parentVertex": {
+          "id": "[0]"
+        }
+      }, {
+        "name": "beta",
+        "parentVertex": {
+          "id": "[1]"
+        }
+      }]
+    }, {
+      "id": {
+        "id": "[3]"
+      },
+      "vertexType": "io.improbable.keanu.vertices.tensor.number.fixed.intgr.nonprobabilistic.ConstantIntegerVertex",
+      "parameters": [{
+        "name": "constant",
+        "intTensorParam": {
+          "values": [10]
+        }
+      }]
+    }, {
+      "id": {
+        "id": "[4]"
+      },
+      "label": "successes",
+      "vertexType": "io.improbable.keanu.vertices.tensor.number.fixed.intgr.probabilistic.BinomialVertex",
+      "parameters": [{
+        "name": "n",
+        "parentVertex": {
+          "id": "[3]"
+        }
+      }, {
+        "name": "p",
+        "parentVertex": {
+          "id": "[2]"
+        }
+      }],
+      "shape": ["4"]
+    }],
+    "defaultState": [{
+      "value": {
+        "doubleVal": {
+          "values": [2.0]
+        }
+      },
+      "id": {
+        "id": "[0]"
+      }
+    }, {
+      "value": {
+        "doubleVal": {
+          "values": [3.0]
+        }
+      },
+      "id": {
+        "id": "[1]"
+      }
+    }, {
+      "value": {
+        "doubleVal": {
+          "values": [0.35]
+        }
+      },
+      "id": {
+        "id": "[2]"
+      }
+    }, {
+      "value": {
+        "intVal": {
+          "values": [10]
+        }
+      },
+      "id": {
+        "id": "[3]"
+      }
+    }, {
+      "value": {
+        "intVal": {
+          "shape": ["4"],
+          "values": [3, 5, 2, 4]
+        }
+      },
+      "id": {
+        "id": "[4]"
+      },
+      "isObserved": true
+    }]
+  },
+  "metadata": {
+    "metadataInfo": {
+      "name": "betaBinomial"
+    }
+  }
+}

@@ -113,6 +113,14 @@ phase (Phase 7) with the Rust crate shipped as a separate artifact.
 Each phase ends with its exit criteria passing in CI.
 
 ### Phase 0: Prepare the Java side (Java)
+
+**Status: in progress.** The exporter (`keanu-golden`) and the first set of vectors are in
+[`golden-vectors/`](golden-vectors/README.md), and `verifyGoldenVectors` runs as part of `check`. What remains:
+
+- sign-off on the proposed scope decisions in the vectors README
+- fixes for the known issues listed in `golden-vectors/manifest.json`
+- coverage for generic/boolean vertex ops, `Sequence` / plates and the remaining vertex types
+
 - Add a golden vector exporter: a Gradle task that runs a fixed list of cases and writes inputs and outputs to JSON.
   It should cover:
   - tensor ops, broadcasting, slicing and linear algebra

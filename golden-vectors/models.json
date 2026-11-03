@@ -1,0 +1,205 @@
+{
+  "formatVersion": 1,
+  "cases": [
+    {
+      "name": "thermometers",
+      "protobuf": "models/thermometers.pb",
+      "json": "models/thermometers.json",
+      "expected": {
+        "latentValues": {
+          "temperature": {
+            "dtype": "f64",
+            "shape": [],
+            "data": [25.3]
+          }
+        },
+        "logProb": -7.115190803711647,
+        "logLikelihood": -4.812605710717601,
+        "dLogProb": {
+          "temperature": {
+            "dtype": "f64",
+            "shape": [],
+            "data": [0.13999999999999985]
+          }
+        },
+        "dLogLikelihood": {
+          "temperature": {
+            "dtype": "f64",
+            "shape": [],
+            "data": [0.13999999999999985]
+          }
+        }
+      }
+    },
+    {
+      "name": "hierarchicalGaussian",
+      "protobuf": "models/hierarchicalGaussian.pb",
+      "json": "models/hierarchicalGaussian.json",
+      "expected": {
+        "latentValues": {
+          "groupMeans": {
+            "dtype": "f64",
+            "shape": [3],
+            "data": [0.5, 1.5, 2.0]
+          },
+          "mu": {
+            "dtype": "f64",
+            "shape": [],
+            "data": [1.2]
+          },
+          "sigma": {
+            "dtype": "f64",
+            "shape": [],
+            "data": [0.8]
+          }
+        },
+        "logProb": -13.166803304302816,
+        "logLikelihood": -5.898631199228036,
+        "dLogProb": {
+          "groupMeans": {
+            "dtype": "f64",
+            "shape": [3],
+            "data": [1.1937499999999996, -0.46875, -0.4499999999999995]
+          },
+          "mu": {
+            "dtype": "f64",
+            "shape": [],
+            "data": [0.613]
+          },
+          "sigma": {
+            "dtype": "f64",
+            "shape": [],
+            "data": [-1.5671875000000004]
+          }
+        },
+        "dLogLikelihood": {
+          "groupMeans": {
+            "dtype": "f64",
+            "shape": [3],
+            "data": [0.09999999999999998, 0.0, 0.8000000000000003]
+          }
+        }
+      }
+    },
+    {
+      "name": "linearRegression",
+      "protobuf": "models/linearRegression.pb",
+      "json": "models/linearRegression.json",
+      "expected": {
+        "latentValues": {
+          "intercept": {
+            "dtype": "f64",
+            "shape": [],
+            "data": [0.3]
+          },
+          "noise": {
+            "dtype": "f64",
+            "shape": [],
+            "data": [0.6]
+          },
+          "weights": {
+            "dtype": "f64",
+            "shape": [2, 1],
+            "data": [0.7, -1.1]
+          }
+        },
+        "logProb": -9.072496858131789,
+        "logLikelihood": -3.3475905266436166,
+        "dLogProb": {
+          "intercept": {
+            "dtype": "f64",
+            "shape": [],
+            "data": [0.1824444444444464]
+          },
+          "noise": {
+            "dtype": "f64",
+            "shape": [],
+            "data": [-2.9495370370370386]
+          },
+          "weights": {
+            "dtype": "f64",
+            "shape": [2, 1],
+            "data": [-6.088888888888885, 2.041666666666666]
+          }
+        },
+        "dLogLikelihood": {
+          "intercept": {
+            "dtype": "f64",
+            "shape": [],
+            "data": [0.19444444444444642]
+          },
+          "noise": {
+            "dtype": "f64",
+            "shape": [],
+            "data": [-0.9495370370370386]
+          },
+          "weights": {
+            "dtype": "f64",
+            "shape": [2, 1],
+            "data": [-5.388888888888885, 0.941666666666666]
+          }
+        }
+      }
+    },
+    {
+      "name": "betaBinomial",
+      "protobuf": "models/betaBinomial.pb",
+      "json": "models/betaBinomial.json",
+      "expected": {
+        "latentValues": {
+          "p": {
+            "dtype": "f64",
+            "shape": [],
+            "data": [0.35]
+          }
+        },
+        "logProb": -5.853656017499604,
+        "logLikelihood": -6.427174710604018,
+        "dLogProb": {
+          "p": {
+            "dtype": "f64",
+            "shape": [],
+            "data": [-0.219780219780215]
+          }
+        },
+        "dLogLikelihood": {
+          "p": {
+            "dtype": "f64",
+            "shape": [],
+            "data": [4.440892098500626E-15]
+          }
+        }
+      }
+    },
+    {
+      "name": "gammaPoisson",
+      "protobuf": "models/gammaPoisson.pb",
+      "json": "models/gammaPoisson.json",
+      "expected": {
+        "latentValues": {
+          "rate": {
+            "dtype": "f64",
+            "shape": [],
+            "data": [2.4]
+          }
+        },
+        "logProb": -10.58947727112467,
+        "logLikelihood": -8.908273106596948,
+        "dLogProb": {
+          "rate": {
+            "dtype": "f64",
+            "shape": [],
+            "data": [-1.1249999999999996]
+          }
+        },
+        "dLogLikelihood": {
+          "rate": {
+            "dtype": "f64",
+            "shape": [],
+            "data": [-0.833333333333333]
+          }
+        }
+      }
+    }
+  ]
+}

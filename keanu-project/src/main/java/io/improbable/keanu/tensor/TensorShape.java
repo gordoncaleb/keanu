@@ -321,7 +321,15 @@ public class TensorShape {
         return dimension;
     }
 
+    /**
+     * @param inputShape           shape being reduced
+     * @param reduceOverDimensions dimensions to reduce over, or null to reduce over every dimension
+     * @return the shape after the reduction
+     */
     public static long[] getReductionResultShape(long[] inputShape, int[] reduceOverDimensions) {
+        if (reduceOverDimensions == null) {
+            return new long[0];
+        }
         if (inputShape.length > 0) {
             reduceOverDimensions = getAbsoluteDimensions(inputShape.length, reduceOverDimensions);
             return ArrayUtils.removeAll(inputShape, reduceOverDimensions);

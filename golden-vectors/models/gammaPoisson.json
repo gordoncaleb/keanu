@@ -1,0 +1,113 @@
+{
+  "graph": {
+    "vertices": [{
+      "id": {
+        "id": "[0]"
+      },
+      "vertexType": "io.improbable.keanu.vertices.tensor.number.floating.dbl.nonprobabilistic.ConstantDoubleVertex",
+      "parameters": [{
+        "name": "constant",
+        "doubleTensorParam": {
+          "values": [2.0]
+        }
+      }]
+    }, {
+      "id": {
+        "id": "[1]"
+      },
+      "vertexType": "io.improbable.keanu.vertices.tensor.number.floating.dbl.nonprobabilistic.ConstantDoubleVertex",
+      "parameters": [{
+        "name": "constant",
+        "doubleTensorParam": {
+          "values": [1.5]
+        }
+      }]
+    }, {
+      "id": {
+        "id": "[2]"
+      },
+      "label": "rate",
+      "vertexType": "io.improbable.keanu.vertices.tensor.number.floating.dbl.probabilistic.GammaVertex",
+      "parameters": [{
+        "name": "k",
+        "parentVertex": {
+          "id": "[1]"
+        }
+      }, {
+        "name": "theta",
+        "parentVertex": {
+          "id": "[0]"
+        }
+      }]
+    }, {
+      "id": {
+        "id": "[3]"
+      },
+      "label": "counts",
+      "vertexType": "io.improbable.keanu.vertices.tensor.number.fixed.intgr.probabilistic.PoissonVertex",
+      "parameters": [{
+        "name": "mu",
+        "parentVertex": {
+          "id": "[2]"
+        }
+      }],
+      "shape": ["5"]
+    }, {
+      "id": {
+        "id": "[4]"
+      },
+      "label": "total",
+      "vertexType": "io.improbable.keanu.vertices.tensor.number.operators.unary.SumVertex",
+      "parameters": [{
+        "name": "inputVertex",
+        "parentVertex": {
+          "id": "[3]"
+        }
+      }]
+    }],
+    "defaultState": [{
+      "value": {
+        "doubleVal": {
+          "values": [2.0]
+        }
+      },
+      "id": {
+        "id": "[0]"
+      }
+    }, {
+      "value": {
+        "doubleVal": {
+          "values": [1.5]
+        }
+      },
+      "id": {
+        "id": "[1]"
+      }
+    }, {
+      "value": {
+        "doubleVal": {
+          "values": [2.4]
+        }
+      },
+      "id": {
+        "id": "[2]"
+      }
+    }, {
+      "value": {
+        "intVal": {
+          "shape": ["5"],
+          "values": [1, 4, 2, 0, 3]
+        }
+      },
+      "id": {
+        "id": "[3]"
+      },
+      "isObserved": true
+    }]
+  },
+  "metadata": {
+    "metadataInfo": {
+      "name": "gammaPoisson"
+    }
+  }
+}

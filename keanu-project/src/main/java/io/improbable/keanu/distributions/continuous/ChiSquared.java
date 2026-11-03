@@ -31,14 +31,14 @@ public class ChiSquared implements ContinuousDistribution {
         final DoubleTensor halfK = k.toDouble().divInPlace(2.);
         final DoubleTensor numerator = x.safeLogTimes(halfK.minus(1.)).minusInPlace(x.div(2.));
         final DoubleTensor denominator = halfK.times(LOG_TWO).plusInPlace(halfK.logGamma());
-        return numerator.minusInPlace(denominator);
+        return numerator.minusInPlace(denominator).setWithMaskInPlace(x.lessThanMask(DoubleTensor.scalar(0.0)), Double.NEGATIVE_INFINITY);
     }
 
     public static DoubleVertex logProbOutput(DoublePlaceholderVertex x, IntegerPlaceholderVertex k) {
         final DoubleVertex halfK = k.toDouble().div(2.);
-        final DoubleVertex numerator = halfK.minus(1.).times(x.log()).minus(x.div(2.));
+        final DoubleVertex numerator = x.safeLogTimes(halfK.minus(1.)).minus(x.div(2.));
         final DoubleVertex denominator = halfK.times(LOG_TWO).plus(halfK.logGamma());
-        return numerator.minus(denominator);
+        return numerator.minus(denominator).setWithMask(x.lessThanMask(0.), Double.NEGATIVE_INFINITY);
     }
 
     public DoubleTensor[] dLogProb(DoubleTensor x, boolean wrtX) {

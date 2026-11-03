@@ -10,6 +10,7 @@ plugins {
 }
 
 include 'keanu-project',
+    'keanu-golden',
     'docs',
     'benchmarks',
     'keanu-examples:coalMiningDisasters',

@@ -1,0 +1,41 @@
+plugins {
+    id 'application'
+}
+
+description = 'Generates golden test vectors from the Java implementation, used as the parity reference for the Rust port'
+
+dependencies {
+    implementation project(':keanu-project')
+}
+
+application {
+    mainClass = 'io.improbable.keanu.golden.GoldenVectorExporter'
+}
+
+def goldenDir = rootProject.file('golden-vectors')
+def generatedDir = layout.buildDirectory.dir('golden-vectors')
+
+// Regenerates the checked in golden vectors. Run this deliberately when a behaviour change is intended,
+// review the diff, and commit it together with the change.
+tasks.register('generateGoldenVectors', JavaExec) {
+    group = 'golden vectors'
+    description = 'Regenerates the checked in golden vectors in golden-vectors/'
+    classpath = sourceSets.main.runtimeClasspath
+    mainClass = 'io.improbable.keanu.golden.GoldenVectorExporter'
+    args goldenDir.absolutePath
+}
+
+// Generates into build/ and fails if the result differs from the checked in vectors. This catches both
+// unintended behaviour changes in Keanu and non-determinism in the exporter.
+tasks.register('verifyGoldenVectors', JavaExec) {
+    group = 'golden vectors'
+    description = 'Fails if regenerating the golden vectors does not reproduce golden-vectors/ exactly'
+    classpath = sourceSets.main.runtimeClasspath
+    mainClass = 'io.improbable.keanu.golden.GoldenVectorVerifier'
+    inputs.dir(goldenDir)
+    inputs.files(sourceSets.main.runtimeClasspath)
+    outputs.dir(generatedDir)
+    args goldenDir.absolutePath, generatedDir.get().asFile.absolutePath
+}
+
+check.dependsOn('verifyGoldenVectors')

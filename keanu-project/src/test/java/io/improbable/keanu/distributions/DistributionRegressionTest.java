@@ -166,4 +166,53 @@ public class DistributionRegressionTest {
         double h = 1e-6;
         return (f.apply(at + h) - f.apply(at - h)) / (2 * h);
     }
+
+    @Test
+    public void continuousLogProbIsNegativeInfinityOutsideSupportRatherThanNaN() {
+        DoubleTensor x = DoubleTensor.create(-1.0, -0.5);
+        DoubleTensor[] logProbs = new DoubleTensor[]{
+            Gamma.withParameters(DoubleTensor.scalar(2.0), DoubleTensor.scalar(1.5)).logProb(x),
+            io.improbable.keanu.distributions.continuous.ChiSquared.withParameters(IntegerTensor.scalar(3)).logProb(x),
+            io.improbable.keanu.distributions.continuous.InverseGamma.withParameters(DoubleTensor.scalar(2.0), DoubleTensor.scalar(1.0)).logProb(x),
+            io.improbable.keanu.distributions.continuous.LogNormal.withParameters(DoubleTensor.scalar(0.0), DoubleTensor.scalar(1.0)).logProb(x),
+            io.improbable.keanu.distributions.continuous.Beta.withParameters(DoubleTensor.scalar(2.0), DoubleTensor.scalar(3.0), DoubleTensor.scalar(0.0), DoubleTensor.scalar(1.0)).logProb(x)
+        };
+        for (DoubleTensor logProb : logProbs) {
+            assertArrayEquals(new double[]{Double.NEGATIVE_INFINITY, Double.NEGATIVE_INFINITY}, logProb.asFlatDoubleArray(), 0.0);
+        }
+
+        assertEquals(Double.NEGATIVE_INFINITY, io.improbable.keanu.distributions.continuous.LogNormal.withParameters(DoubleTensor.scalar(0.0), DoubleTensor.scalar(1.0)).logProb(DoubleTensor.scalar(0.0)).scalar(), 0.0);
+        assertEquals(Double.NEGATIVE_INFINITY, io.improbable.keanu.distributions.continuous.InverseGamma.withParameters(DoubleTensor.scalar(2.0), DoubleTensor.scalar(1.0)).logProb(DoubleTensor.scalar(0.0)).scalar(), 0.0);
+    }
+
+    @Test
+    public void gammaWithShapeOneIsExponentialIncludingAtZero() {
+        double theta = 2.0;
+        DoubleTensor logProb = Gamma.withParameters(DoubleTensor.scalar(theta), DoubleTensor.scalar(1.0)).logProb(DoubleTensor.create(0.0, 1.5));
+        assertArrayEquals(new double[]{-Math.log(theta), -1.5 / theta - Math.log(theta)}, logProb.asFlatDoubleArray(), 1e-12);
+    }
+
+    @Test
+    public void betaLogProbHonoursItsBounds() {
+        // Beta(2, 3) on [-1, 2] at x is Beta(2, 3) on [0, 1] at (x + 1) / 3, divided by the range 3
+        io.improbable.keanu.distributions.continuous.Beta bounded = io.improbable.keanu.distributions.continuous.Beta.withParameters(
+            DoubleTensor.scalar(2.0), DoubleTensor.scalar(3.0), DoubleTensor.scalar(-1.0), DoubleTensor.scalar(2.0));
+        io.improbable.keanu.distributions.continuous.Beta unit = io.improbable.keanu.distributions.continuous.Beta.withParameters(
+            DoubleTensor.scalar(2.0), DoubleTensor.scalar(3.0), DoubleTensor.scalar(0.0), DoubleTensor.scalar(1.0));
+
+        for (double x : new double[]{-0.5, 0.0, 1.5}) {
+            double expected = unit.logProb(DoubleTensor.scalar((x + 1) / 3)).scalar() - Math.log(3);
+            assertEquals(expected, bounded.logProb(DoubleTensor.scalar(x)).scalar(), 1e-12);
+
+            double h = 1e-6;
+            double numeric = (bounded.logProb(DoubleTensor.scalar(x + h)).scalar() - bounded.logProb(DoubleTensor.scalar(x - h)).scalar()) / (2 * h);
+            assertEquals(numeric, bounded.dLogProb(DoubleTensor.scalar(x)).get(X).getValue().scalar(), 1e-5);
+        }
+        assertEquals(Double.NEGATIVE_INFINITY, bounded.logProb(DoubleTensor.scalar(2.5)).scalar(), 0.0);
+
+        // alpha == 1 is finite at the lower bound
+        io.improbable.keanu.distributions.continuous.Beta alphaOne = io.improbable.keanu.distributions.continuous.Beta.withParameters(
+            DoubleTensor.scalar(1.0), DoubleTensor.scalar(2.0), DoubleTensor.scalar(0.0), DoubleTensor.scalar(1.0));
+        assertEquals(Math.log(2.0), alphaOne.logProb(DoubleTensor.scalar(0.0)).scalar(), 1e-12);
+    }
 }

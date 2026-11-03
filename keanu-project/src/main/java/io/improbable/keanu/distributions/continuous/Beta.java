@@ -51,43 +51,66 @@ public class Beta implements ContinuousDistribution {
         return lessMask.timesInPlace(lessThan).plusInPlace(greaterMask.timesInPlace(greaterThan));
     }
 
+    /**
+     * Beta on [xMin, xMax]: with y = (x - xMin) / (xMax - xMin),
+     * logPdf(x) = (alpha - 1) ln(y) + (beta - 1) ln(1 - y) - lnB(alpha, beta) - ln(xMax - xMin)
+     * and -infinity outside [xMin, xMax].
+     */
     @Override
     public DoubleTensor logProb(DoubleTensor x) {
+        final DoubleTensor range = xMax.minus(xMin);
+        final DoubleTensor y = x.minus(xMin).divInPlace(range);
+        final DoubleTensor oneMinusY = y.unaryMinus().plusInPlace(1.);
+
         final DoubleTensor lnGammaAlpha = alpha.logGamma();
         final DoubleTensor lnGammaBeta = beta.logGamma();
         final DoubleTensor alphaPlusBetaLnGamma = (alpha.plus(beta)).logGammaInPlace();
-        final DoubleTensor alphaMinusOneTimesLnX = x.log().timesInPlace(alpha.minus(1.));
-        final DoubleTensor betaMinusOneTimesOneMinusXLn = x.unaryMinus().plusInPlace(1.).logInPlace().timesInPlace(beta.minus(1.));
-
         final DoubleTensor betaFunction = lnGammaAlpha.plusInPlace(lnGammaBeta).minusInPlace(alphaPlusBetaLnGamma);
 
-        return alphaMinusOneTimesLnX.plusInPlace(betaMinusOneTimesOneMinusXLn).minusInPlace(betaFunction);
+        // 0 * ln(0) = 0 so alpha == 1 or beta == 1 are finite at the bounds
+        final DoubleTensor alphaMinusOneTimesLnY = y.safeLogTimes(alpha.minus(1.));
+        final DoubleTensor betaMinusOneTimesLnOneMinusY = oneMinusY.safeLogTimes(beta.minus(1.));
+
+        final DoubleTensor logProb = alphaMinusOneTimesLnY
+            .plusInPlace(betaMinusOneTimesLnOneMinusY)
+            .minusInPlace(betaFunction)
+            .minusInPlace(range.log());
+
+        final DoubleTensor outside = x.lessThanMask(xMin).plusInPlace(x.greaterThanMask(xMax));
+        return logProb.setWithMaskInPlace(outside.greaterThanMask(DoubleTensor.scalar(0.0)), Double.NEGATIVE_INFINITY);
     }
 
     public static DoubleVertex logProbOutput(DoublePlaceholderVertex x, DoublePlaceholderVertex alpha, DoublePlaceholderVertex beta) {
         final DoubleVertex lnGammaAlpha = alpha.logGamma();
         final DoubleVertex lnGammaBeta = beta.logGamma();
         final DoubleVertex alphaPlusBetaLnGamma = (alpha.plus(beta)).logGamma();
-        final DoubleVertex alphaMinusOneTimesLnX = x.log().times(alpha.minus(1.));
-        final DoubleVertex betaMinusOneTimesOneMinusXLn = x.unaryMinus().plus(1.).log().times(beta.minus(1.));
+        // the graph form is only used by BetaVertex, which is always on [0, 1]
+        final DoubleVertex alphaMinusOneTimesLnX = x.safeLogTimes(alpha.minus(1.));
+        final DoubleVertex betaMinusOneTimesOneMinusXLn = x.unaryMinus().plus(1.).safeLogTimes(beta.minus(1.));
 
         final DoubleVertex betaFunction = lnGammaAlpha.plus(lnGammaBeta).minus(alphaPlusBetaLnGamma);
 
-        return alphaMinusOneTimesLnX.plus(betaMinusOneTimesOneMinusXLn).minus(betaFunction);
+        return alphaMinusOneTimesLnX.plus(betaMinusOneTimesOneMinusXLn).minus(betaFunction)
+            .setWithMask(x.lessThanMask(0.), Double.NEGATIVE_INFINITY)
+            .setWithMask(x.greaterThanMask(1.), Double.NEGATIVE_INFINITY);
     }
 
     public Diffs dLogProb(DoubleTensor x) {
-        final DoubleTensor oneMinusX = x.unaryMinus().plusInPlace(1.0);
+        final DoubleTensor range = xMax.minus(xMin);
+        final DoubleTensor y = x.minus(xMin).divInPlace(range);
+        final DoubleTensor oneMinusY = y.unaryMinus().plusInPlace(1.0);
         final DoubleTensor digammaAlphaPlusBeta = alpha.plus(beta).digammaInPlace();
-        final DoubleTensor alphaMinusOneDivX = x.reciprocal().timesInPlace(alpha.minus(1));
+        final DoubleTensor alphaMinusOneDivY = y.reciprocal().timesInPlace(alpha.minus(1));
 
-        final DoubleTensor dLogPdx = alphaMinusOneDivX.minusInPlace(oneMinusX.reciprocal().timesInPlace(beta.minus(1)));
-        final DoubleTensor dLogPda = x.log().plusInPlace(digammaAlphaPlusBeta.minus(alpha.digamma()));
-        final DoubleTensor dLogPdb = oneMinusX.logInPlace().plusInPlace(digammaAlphaPlusBeta.minusInPlace(beta.digamma()));
+        final DoubleTensor dLogPdy = alphaMinusOneDivY.minusInPlace(oneMinusY.reciprocal().timesInPlace(beta.minus(1)));
+        final DoubleTensor dLogPdx = dLogPdy.divInPlace(range);
+        final DoubleTensor dLogPda = y.log().plusInPlace(digammaAlphaPlusBeta.minus(alpha.digamma()));
+        final DoubleTensor dLogPdb = oneMinusY.logInPlace().plusInPlace(digammaAlphaPlusBeta.minusInPlace(beta.digamma()));
 
         return new Diffs()
             .put(A, dLogPda)
             .put(B, dLogPdb)
             .put(X, dLogPdx);
     }
+
 }

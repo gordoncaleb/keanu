@@ -138,7 +138,7 @@ public class ProtobufLoader implements NetworkLoader {
             setOrObserveValue(vertex, extractBoolValue(value), valueInformation.getIsObserved());
         } else if (type.isAssignableFrom(DoubleTensor.class)) {
             setOrObserveValue(vertex, extractDoubleValue(value), valueInformation.getIsObserved());
-        } else if (type.isAssignableFrom(Integer.class)) {
+        } else if (type.isAssignableFrom(IntegerTensor.class)) {
             setOrObserveValue(vertex, extractIntValue(value), valueInformation.getIsObserved());
         }
     }

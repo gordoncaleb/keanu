@@ -37,7 +37,8 @@ public class InverseGamma implements ContinuousDistribution {
         final DoubleTensor negAMinus1TimesLnX = x.log().timesInPlace(alpha.unaryMinus().minusInPlace(1.));
         final DoubleTensor lnGammaA = alpha.logGamma();
 
-        return aTimesLnB.plus(negAMinus1TimesLnX).minusInPlace(lnGammaA).minusInPlace(beta.div(x));
+        final DoubleTensor logProb = aTimesLnB.plus(negAMinus1TimesLnX).minusInPlace(lnGammaA).minusInPlace(beta.div(x));
+        return logProb.setWithMaskInPlace(x.lessThanOrEqualToMask(DoubleTensor.scalar(0.0)), Double.NEGATIVE_INFINITY);
     }
 
     public static DoubleVertex logProbOutput(DoublePlaceholderVertex x, DoublePlaceholderVertex alpha, DoublePlaceholderVertex beta) {
@@ -45,7 +46,8 @@ public class InverseGamma implements ContinuousDistribution {
         final DoubleVertex negAMinus1TimesLnX = x.log().times(alpha.unaryMinus().minus(1.));
         final DoubleVertex lnGammaA = alpha.logGamma();
 
-        return aTimesLnB.plus(negAMinus1TimesLnX).minus(lnGammaA).minus(beta.div(x));
+        return aTimesLnB.plus(negAMinus1TimesLnX).minus(lnGammaA).minus(beta.div(x))
+            .setWithMask(x.lessThanOrEqualToMask(0.), Double.NEGATIVE_INFINITY);
     }
 
     public Diffs dLogProb(DoubleTensor x) {

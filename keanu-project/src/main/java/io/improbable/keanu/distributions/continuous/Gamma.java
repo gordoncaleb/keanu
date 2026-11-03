@@ -107,17 +107,19 @@ public class Gamma implements ContinuousDistribution {
     public DoubleTensor logProb(DoubleTensor x) {
         final DoubleTensor xOverTheta = x.div(theta);
         final DoubleTensor kLnTheta = k.times(theta.log());
-        final DoubleTensor kMinus1LogX = k.minus(1.).timesInPlace(x.log());
+        // (k - 1) * ln(x) with 0 * ln(0) = 0 so that k == 1 is finite at x == 0
+        final DoubleTensor kMinus1LogX = x.safeLogTimes(k.minus(1.));
         final DoubleTensor lgammaK = k.logGamma();
-        return kMinus1LogX.minusInPlace(lgammaK).minusInPlace(xOverTheta).minusInPlace(kLnTheta);
+        final DoubleTensor logProb = kMinus1LogX.minusInPlace(lgammaK).minusInPlace(xOverTheta).minusInPlace(kLnTheta);
+        return logProb.setWithMaskInPlace(x.lessThanMask(DoubleTensor.scalar(0.0)), Double.NEGATIVE_INFINITY);
     }
 
     public static DoubleVertex logProbOutput(DoublePlaceholderVertex x, DoublePlaceholderVertex theta, DoublePlaceholderVertex k) {
         final DoubleVertex xOverTheta = x.div(theta);
         final DoubleVertex kLnTheta = k.times(theta.log());
-        final DoubleVertex kMinus1LogX = k.minus(1.).times(x.log());
+        final DoubleVertex kMinus1LogX = x.safeLogTimes(k.minus(1.));
         final DoubleVertex lgammaK = k.logGamma();
-        return kMinus1LogX.minus(lgammaK).minus(xOverTheta).minus(kLnTheta);
+        return kMinus1LogX.minus(lgammaK).minus(xOverTheta).minus(kLnTheta).setWithMask(x.lessThanMask(0.), Double.NEGATIVE_INFINITY);
     }
 
     public Diffs dLogProb(DoubleTensor x) {

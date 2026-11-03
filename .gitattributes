@@ -13,3 +13,6 @@
 # Denote all files that are truly binary and should not be modified.
 # *.png binary
 # *.jpg binary
+
+# generated golden vector model files are binary protobuf
+golden-vectors/models/*.pb binary

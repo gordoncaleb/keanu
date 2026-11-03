@@ -26,7 +26,7 @@ public class ProductVertex<T extends Number, TENSOR extends NumberTensor<T, TENS
     private final int[] overDimensions;
 
     public ProductVertex(@LoadVertexParam(INPUT_NAME) TensorVertex<T, TENSOR, VERTEX> inputVertex,
-                         @LoadVertexParam(OVER_DIMENSIONS) int[] overDimensions) {
+                         @LoadVertexParam(value = OVER_DIMENSIONS, isNullable = true) int[] overDimensions) {
         super(getReductionResultShape(inputVertex.getShape(), overDimensions), inputVertex, inputVertex.ofType());
         this.overDimensions = overDimensions;
     }
@@ -93,7 +93,7 @@ public class ProductVertex<T extends Number, TENSOR extends NumberTensor<T, TENS
         return Collections.singletonMap(inputVertex, new ReverseModePartialDerivative(partial.getOfShape(), result));
     }
 
-    @SaveVertexParam(OVER_DIMENSIONS)
+    @SaveVertexParam(value = OVER_DIMENSIONS, isNullable = true)
     public int[] getOverDimensions() {
         return overDimensions;
     }

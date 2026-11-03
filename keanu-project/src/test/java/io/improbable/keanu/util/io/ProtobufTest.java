@@ -58,6 +58,7 @@ import static org.hamcrest.Matchers.is;
 import static org.hamcrest.Matchers.not;
 import static org.hamcrest.Matchers.notNullValue;
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertTrue;
 
 public class ProtobufTest {
 
@@ -578,5 +579,39 @@ public class ProtobufTest {
         BayesianNetwork reconstructedNetwork = loader.loadNetwork(new ByteArrayInputStream(writer.toByteArray()));
         Vertex reconstructedVertex = reconstructedNetwork.getVertexByLabel(proxyLabel);
         assertThat(reconstructedVertex, notNullValue());
+    }
+
+    @Test
+    public void observedIntegerValuesSurviveASaveAndLoad() throws IOException {
+        io.improbable.keanu.vertices.tensor.number.floating.dbl.probabilistic.BetaVertex p =
+            new io.improbable.keanu.vertices.tensor.number.floating.dbl.probabilistic.BetaVertex(2.0, 3.0);
+        p.setValue(0.35);
+        io.improbable.keanu.vertices.tensor.number.fixed.intgr.probabilistic.BinomialVertex successes =
+            new io.improbable.keanu.vertices.tensor.number.fixed.intgr.probabilistic.BinomialVertex(new long[]{4}, p, 10);
+        successes.setLabel("successes");
+        successes.observe(io.improbable.keanu.tensor.intgr.IntegerTensor.create(3, 5, 2, 4));
+
+        ByteArrayOutputStream output = new ByteArrayOutputStream();
+        new ProtobufSaver(new BayesianNetwork(p.getConnectedGraph())).save(output, true);
+        BayesianNetwork reloaded = new ProtobufLoader().loadNetwork(new ByteArrayInputStream(output.toByteArray()));
+
+        Vertex reloadedSuccesses = reloaded.getVertexByLabel(new VertexLabel("successes"));
+        assertTrue(reloadedSuccesses.isObserved());
+        assertEquals(io.improbable.keanu.tensor.intgr.IntegerTensor.create(3, 5, 2, 4), reloadedSuccesses.getValue());
+    }
+
+    @Test
+    public void fullReductionsCanBeSavedAndLoaded() throws IOException {
+        GaussianVertex a = new GaussianVertex(new long[]{2, 3}, 0, 1);
+        a.setValue(DoubleTensor.arange(0, 6).reshape(2, 3));
+        DoubleVertex total = a.sum().plus(a.product()).plus(a.mean());
+        total.setLabel("total");
+
+        ByteArrayOutputStream output = new ByteArrayOutputStream();
+        new ProtobufSaver(new BayesianNetwork(a.getConnectedGraph())).save(output, true);
+        BayesianNetwork reloaded = new ProtobufLoader().loadNetwork(new ByteArrayInputStream(output.toByteArray()));
+
+        Vertex<?, ?> reloadedTotal = reloaded.getVertexByLabel(new VertexLabel("total"));
+        assertEquals(total.eval(), reloadedTotal.eval());
     }
 }

@@ -33,7 +33,7 @@ public class SumVertex<T extends Number, TENSOR extends NumberTensor<T, TENSOR>,
      * @param overDimensions dimensions to sum over
      */
     public SumVertex(@LoadVertexParam(INPUT_NAME) TensorVertex<T, TENSOR, VERTEX> inputVertex,
-                     @LoadVertexParam(DIMENSIONS_NAME) int[] overDimensions) {
+                     @LoadVertexParam(value = DIMENSIONS_NAME, isNullable = true) int[] overDimensions) {
         super(getReductionResultShape(inputVertex.getShape(), overDimensions), inputVertex, inputVertex.ofType());
         this.overDimensions = overDimensions;
     }
@@ -100,7 +100,7 @@ public class SumVertex<T extends Number, TENSOR extends NumberTensor<T, TENSOR>,
         return singletonMap(inputVertex, new ReverseModePartialDerivative(ofShape, broadcastedPartial));
     }
 
-    @SaveVertexParam(DIMENSIONS_NAME)
+    @SaveVertexParam(value = DIMENSIONS_NAME, isNullable = true)
     public int[] getOverDimensions() {
         return overDimensions;
     }

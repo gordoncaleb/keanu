@@ -33,7 +33,7 @@ public class MeanVertex<T extends Number, TENSOR extends FloatingPointTensor<T, 
      * @param overDimensions dimensions to sum over
      */
     public MeanVertex(@LoadVertexParam(INPUT_NAME) TensorVertex<T, TENSOR, VERTEX> inputVertex,
-                      @LoadVertexParam(DIMENSIONS_NAME) int[] overDimensions) {
+                      @LoadVertexParam(value = DIMENSIONS_NAME, isNullable = true) int[] overDimensions) {
         super(getReductionResultShape(inputVertex.getShape(), overDimensions), inputVertex, inputVertex.ofType());
         this.overDimensions = overDimensions;
     }
@@ -105,7 +105,7 @@ public class MeanVertex<T extends Number, TENSOR extends FloatingPointTensor<T, 
         return singletonMap(inputVertex, new ReverseModePartialDerivative(ofShape, broadcastedPartial));
     }
 
-    @SaveVertexParam(DIMENSIONS_NAME)
+    @SaveVertexParam(value = DIMENSIONS_NAME, isNullable = true)
     public int[] getOverDimensions() {
         return overDimensions;
     }
