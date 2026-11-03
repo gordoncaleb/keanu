@@ -311,7 +311,7 @@ Differences from Java that are intentional:
 
 ### Phase 5: `keanu-algorithms`
 
-**Status: done, except BOBYQA, which is pending a licensing decision.** `rust/keanu-algorithms` has:
+**Status: done.** `rust/keanu-algorithms` has:
 
 - **Samples:** `NetworkSamples`, `NetworkSample` and `Samples`, with drop, down-sampling (keeping ceil(n / k)
   samples), mean, variance, mode, probability, autocorrelation, effective sample size, stacking and the most
@@ -321,6 +321,9 @@ Differences from Java that are intentional:
 - **Forward sampling.**
 - **Gradient optimizers:** Adam (an exact port of Java's update rule and defaults) and nonlinear conjugate gradient
   (Polak–Ribière or Fletcher–Reeves, with its own line search).
+- **Non-gradient optimizer (`optimizer::bobyqa`):** BOBYQA translated from PRIMA
+  (https://github.com/libprima/prima, revision 43863c69), with Java's settings (initial and stopping trust region
+  radius, bounds range, per-latent `OptimizerBounds`, maximum evaluations) plus the number of interpolation points.
 - **Metropolis–Hastings (`mcmc::metropolis`, `mcmc::proposal`):**
   - prior and Gaussian proposals (per-node sigmas), with the prior proposal's q(x' | x) recorded when it is created
   - single and full variable selectors
@@ -344,20 +347,35 @@ Differences from Java that are intentional:
 
 Reference results:
 - `golden-vectors/algorithms.json` records Java's MAP and maximum likelihood results for each golden model with
-  Adam and with conjugate gradient. Rust agrees on every case except the hierarchical model's MAP, which is skipped
-  because its posterior is unbounded.
+  Adam, with conjugate gradient, and with BOBYQA (Keanu's defaults, and an initial radius of 0.5 with a bounds
+  range of 5). Rust agrees on every case except the hierarchical model's MAP, which is skipped because its
+  posterior is unbounded. Where Java's BOBYQA didn't reach the optimum, Rust's BOBYQA is checked against the better
+  of Java's gradient optimizers instead.
 - `golden-vectors/samplers.json` records Java's NUTS and Metropolis–Hastings posterior summaries for each golden
   model. Rust agrees on all 32 latent elements within 5 combined Monte Carlo standard errors.
 
 Rust also checks against analytic posteriors: Gaussian–Gaussian, Beta–Binomial, Gamma–Poisson, a correlated 2D
 Gaussian, and an exact discrete posterior.
 
-**BOBYQA is pending a licensing decision.** It must not be translated from Apache Commons Math source into the MIT
-crate. The options are a clean-room implementation from Powell's paper, or dropping it.
+**BOBYQA licensing (decided 2026-11-03):** BOBYQA is translated from PRIMA, which is BSD 3-Clause, not from Apache
+Commons Math. `keanu-algorithms` is therefore `MIT AND BSD-3-Clause`: everything is MIT except
+`src/optimizer/bobyqa/prima/`, which keeps PRIMA's licence and copyright notice in every file and in the crate's
+`THIRD-PARTY-NOTICES.md`.
 
 Intentional differences:
 - **Licensing:** the conjugate gradient and its line search are our own implementations, not ports of Apache Commons
   Math, so their paths differ from Java's while reaching the same optima.
+- **BOBYQA:**
+  - It follows PRIMA's algorithm rather than Apache's, so its path differs from Java's.
+  - With Keanu's default initial radius of 10, Java's BOBYQA stops short of the optimum on the linear regression
+    model, because its first interpolation points leave the support of the positive `noise` latent. Rust's reaches
+    the optimum.
+  - Rust accepts a single latent dimension; Java's BOBYQA required at least two.
+  - The initial-condition check defaults to on, as for the gradient optimizers (Java's non-gradient optimizer
+    defaulted to off).
+  - In PRIMA's `rescue`, one term uses `WMV(1:N)` where Powell's original and PRIMA's own derivation use
+    `WMV(NPT+1:NPT+N)`. Rust uses the latter, and a unit test shows the interpolation conditions only hold after a
+    rescue with it.
 - **Discrete latents:** a gradient optimizer, or NUTS, given discrete latents returns an error. Java's optimizer
   threw a `ClassCastException`, and Java's NUTS silently left them fixed.
 - **Evaluation limit:** running out of evaluations returns the current point with `converged: false`, where Java

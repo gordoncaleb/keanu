@@ -78,6 +78,54 @@
       }
     },
     {
+      "name": "thermometers/BOBYQA/MAP",
+      "model": "thermometers",
+      "algorithm": {
+        "name": "BOBYQA"
+      },
+      "fitness": "MAP",
+      "result": {
+        "error": "IllegalArgumentException"
+      }
+    },
+    {
+      "name": "thermometers/BOBYQA/radius0.5/range5/MAP",
+      "model": "thermometers",
+      "algorithm": {
+        "name": "BOBYQA",
+        "initialTrustRegionRadius": 0.5,
+        "boundsRange": 5.0
+      },
+      "fitness": "MAP",
+      "result": {
+        "error": "IllegalArgumentException"
+      }
+    },
+    {
+      "name": "thermometers/BOBYQA/MLE",
+      "model": "thermometers",
+      "algorithm": {
+        "name": "BOBYQA"
+      },
+      "fitness": "MLE",
+      "result": {
+        "error": "IllegalArgumentException"
+      }
+    },
+    {
+      "name": "thermometers/BOBYQA/radius0.5/range5/MLE",
+      "model": "thermometers",
+      "algorithm": {
+        "name": "BOBYQA",
+        "initialTrustRegionRadius": 0.5,
+        "boundsRange": 5.0
+      },
+      "fitness": "MLE",
+      "result": {
+        "error": "IllegalArgumentException"
+      }
+    },
+    {
       "name": "hierarchicalGaussian/Adam/MAP",
       "model": "hierarchicalGaussian",
       "algorithm": {
@@ -183,6 +231,122 @@
             "dtype": "f64",
             "shape": [],
             "data": [1.2]
+          },
+          "sigma": {
+            "dtype": "f64",
+            "shape": [],
+            "data": [0.8]
+          }
+        },
+        "fitness": -5.736131199228035
+      }
+    },
+    {
+      "name": "hierarchicalGaussian/BOBYQA/MAP",
+      "model": "hierarchicalGaussian",
+      "algorithm": {
+        "name": "BOBYQA"
+      },
+      "fitness": "MAP",
+      "result": {
+        "values": {
+          "groupMeans": {
+            "dtype": "f64",
+            "shape": [3],
+            "data": [0.7028524781007358, 1.3896831712341824, 1.9799736403362787]
+          },
+          "mu": {
+            "dtype": "f64",
+            "shape": [],
+            "data": [1.2020123490485157]
+          },
+          "sigma": {
+            "dtype": "f64",
+            "shape": [],
+            "data": [0.799897878083332]
+          }
+        },
+        "fitness": -12.957936025517341
+      }
+    },
+    {
+      "name": "hierarchicalGaussian/BOBYQA/radius0.5/range5/MAP",
+      "model": "hierarchicalGaussian",
+      "algorithm": {
+        "name": "BOBYQA",
+        "initialTrustRegionRadius": 0.5,
+        "boundsRange": 5.0
+      },
+      "fitness": "MAP",
+      "result": {
+        "values": {
+          "groupMeans": {
+            "dtype": "f64",
+            "shape": [3],
+            "data": [1.5240410169842915, 1.4713560715957676, 1.5525771947731652]
+          },
+          "mu": {
+            "dtype": "f64",
+            "shape": [],
+            "data": [1.5527698507847127]
+          },
+          "sigma": {
+            "dtype": "f64",
+            "shape": [],
+            "data": [0.05582235096498258]
+          }
+        },
+        "fitness": -6.852779530575845
+      }
+    },
+    {
+      "name": "hierarchicalGaussian/BOBYQA/MLE",
+      "model": "hierarchicalGaussian",
+      "algorithm": {
+        "name": "BOBYQA"
+      },
+      "fitness": "MLE",
+      "result": {
+        "values": {
+          "groupMeans": {
+            "dtype": "f64",
+            "shape": [3],
+            "data": [0.5499999999999993, 1.4999999999999958, 2.3999999999999955]
+          },
+          "mu": {
+            "dtype": "f64",
+            "shape": [],
+            "data": [1.1905629352840537]
+          },
+          "sigma": {
+            "dtype": "f64",
+            "shape": [],
+            "data": [0.7966921593830653]
+          }
+        },
+        "fitness": -5.736131199228035
+      }
+    },
+    {
+      "name": "hierarchicalGaussian/BOBYQA/radius0.5/range5/MLE",
+      "model": "hierarchicalGaussian",
+      "algorithm": {
+        "name": "BOBYQA",
+        "initialTrustRegionRadius": 0.5,
+        "boundsRange": 5.0
+      },
+      "fitness": "MLE",
+      "result": {
+        "values": {
+          "groupMeans": {
+            "dtype": "f64",
+            "shape": [3],
+            "data": [0.5499999999998629, 1.5000000000001275, 2.3999999999999355]
+          },
+          "mu": {
+            "dtype": "f64",
+            "shape": [],
+            "data": [1.2049999999999998]
           },
           "sigma": {
             "dtype": "f64",
@@ -310,6 +474,122 @@
       }
     },
     {
+      "name": "linearRegression/BOBYQA/MAP",
+      "model": "linearRegression",
+      "algorithm": {
+        "name": "BOBYQA"
+      },
+      "fitness": "MAP",
+      "result": {
+        "values": {
+          "intercept": {
+            "dtype": "f64",
+            "shape": [],
+            "data": [0.2999365316777087]
+          },
+          "noise": {
+            "dtype": "f64",
+            "shape": [],
+            "data": [0.5983047782066496]
+          },
+          "weights": {
+            "dtype": "f64",
+            "shape": [2, 1],
+            "data": [0.588871671482176, -1.0797276051207834]
+          }
+        },
+        "fitness": -8.610694178010338
+      }
+    },
+    {
+      "name": "linearRegression/BOBYQA/radius0.5/range5/MAP",
+      "model": "linearRegression",
+      "algorithm": {
+        "name": "BOBYQA",
+        "initialTrustRegionRadius": 0.5,
+        "boundsRange": 5.0
+      },
+      "fitness": "MAP",
+      "result": {
+        "values": {
+          "intercept": {
+            "dtype": "f64",
+            "shape": [],
+            "data": [1.108131416743734]
+          },
+          "noise": {
+            "dtype": "f64",
+            "shape": [],
+            "data": [0.26416497151663904]
+          },
+          "weights": {
+            "dtype": "f64",
+            "shape": [2, 1],
+            "data": [0.20707625942300864, -1.4787818751797797]
+          }
+        },
+        "fitness": -5.956026773369275
+      }
+    },
+    {
+      "name": "linearRegression/BOBYQA/MLE",
+      "model": "linearRegression",
+      "algorithm": {
+        "name": "BOBYQA"
+      },
+      "fitness": "MLE",
+      "result": {
+        "values": {
+          "intercept": {
+            "dtype": "f64",
+            "shape": [],
+            "data": [0.3000045030031449]
+          },
+          "noise": {
+            "dtype": "f64",
+            "shape": [],
+            "data": [0.5983032652400181]
+          },
+          "weights": {
+            "dtype": "f64",
+            "shape": [2, 1],
+            "data": [0.5889492618532961, -1.079750432668038]
+          }
+        },
+        "fitness": -2.9828357880639027
+      }
+    },
+    {
+      "name": "linearRegression/BOBYQA/radius0.5/range5/MLE",
+      "model": "linearRegression",
+      "algorithm": {
+        "name": "BOBYQA",
+        "initialTrustRegionRadius": 0.5,
+        "boundsRange": 5.0
+      },
+      "fitness": "MLE",
+      "result": {
+        "values": {
+          "intercept": {
+            "dtype": "f64",
+            "shape": [],
+            "data": [1.1692988848136812]
+          },
+          "noise": {
+            "dtype": "f64",
+            "shape": [],
+            "data": [0.2782332030294452]
+          },
+          "weights": {
+            "dtype": "f64",
+            "shape": [2, 1],
+            "data": [0.17708709573757578, -1.5426454671533105]
+          }
+        },
+        "fitness": -0.558571502971247
+      }
+    },
+    {
       "name": "betaBinomial/Adam/MAP",
       "model": "betaBinomial",
       "algorithm": {
@@ -386,6 +666,54 @@
       }
     },
     {
+      "name": "betaBinomial/BOBYQA/MAP",
+      "model": "betaBinomial",
+      "algorithm": {
+        "name": "BOBYQA"
+      },
+      "fitness": "MAP",
+      "result": {
+        "error": "IllegalArgumentException"
+      }
+    },
+    {
+      "name": "betaBinomial/BOBYQA/radius0.5/range5/MAP",
+      "model": "betaBinomial",
+      "algorithm": {
+        "name": "BOBYQA",
+        "initialTrustRegionRadius": 0.5,
+        "boundsRange": 5.0
+      },
+      "fitness": "MAP",
+      "result": {
+        "error": "IllegalArgumentException"
+      }
+    },
+    {
+      "name": "betaBinomial/BOBYQA/MLE",
+      "model": "betaBinomial",
+      "algorithm": {
+        "name": "BOBYQA"
+      },
+      "fitness": "MLE",
+      "result": {
+        "error": "IllegalArgumentException"
+      }
+    },
+    {
+      "name": "betaBinomial/BOBYQA/radius0.5/range5/MLE",
+      "model": "betaBinomial",
+      "algorithm": {
+        "name": "BOBYQA",
+        "initialTrustRegionRadius": 0.5,
+        "boundsRange": 5.0
+      },
+      "fitness": "MLE",
+      "result": {
+        "error": "IllegalArgumentException"
+      }
+    },
+    {
       "name": "gammaPoisson/Adam/MAP",
       "model": "gammaPoisson",
       "algorithm": {
@@ -459,6 +787,54 @@
           }
         },
         "fitness": -8.731488674536497
+      }
+    },
+    {
+      "name": "gammaPoisson/BOBYQA/MAP",
+      "model": "gammaPoisson",
+      "algorithm": {
+        "name": "BOBYQA"
+      },
+      "fitness": "MAP",
+      "result": {
+        "error": "IllegalArgumentException"
+      }
+    },
+    {
+      "name": "gammaPoisson/BOBYQA/radius0.5/range5/MAP",
+      "model": "gammaPoisson",
+      "algorithm": {
+        "name": "BOBYQA",
+        "initialTrustRegionRadius": 0.5,
+        "boundsRange": 5.0
+      },
+      "fitness": "MAP",
+      "result": {
+        "error": "IllegalArgumentException"
+      }
+    },
+    {
+      "name": "gammaPoisson/BOBYQA/MLE",
+      "model": "gammaPoisson",
+      "algorithm": {
+        "name": "BOBYQA"
+      },
+      "fitness": "MLE",
+      "result": {
+        "error": "IllegalArgumentException"
+      }
+    },
+    {
+      "name": "gammaPoisson/BOBYQA/radius0.5/range5/MLE",
+      "model": "gammaPoisson",
+      "algorithm": {
+        "name": "BOBYQA",
+        "initialTrustRegionRadius": 0.5,
+        "boundsRange": 5.0
+      },
+      "fitness": "MLE",
+      "result": {
+        "error": "IllegalArgumentException"
       }
     },
     {
@@ -592,6 +968,142 @@
             "dtype": "f64",
             "shape": [],
             "data": [1.6000000000008334]
+          }
+        },
+        "fitness": -3.6757541328186907
+      }
+    },
+    {
+      "name": "randomWalkSequence/BOBYQA/MAP",
+      "model": "randomWalkSequence",
+      "algorithm": {
+        "name": "BOBYQA"
+      },
+      "fitness": "MAP",
+      "result": {
+        "values": {
+          "Sequence_Item_0.1.x": {
+            "dtype": "f64",
+            "shape": [],
+            "data": [0.25158798711453445]
+          },
+          "Sequence_Item_1.1.x": {
+            "dtype": "f64",
+            "shape": [],
+            "data": [0.4910729685020989]
+          },
+          "Sequence_Item_2.1.x": {
+            "dtype": "f64",
+            "shape": [],
+            "data": [0.6283261892864017]
+          },
+          "Sequence_Item_3.1.x": {
+            "dtype": "f64",
+            "shape": [],
+            "data": [0.8226609534615534]
+          }
+        },
+        "fitness": -5.346404521938373
+      }
+    },
+    {
+      "name": "randomWalkSequence/BOBYQA/radius0.5/range5/MAP",
+      "model": "randomWalkSequence",
+      "algorithm": {
+        "name": "BOBYQA",
+        "initialTrustRegionRadius": 0.5,
+        "boundsRange": 5.0
+      },
+      "fitness": "MAP",
+      "result": {
+        "values": {
+          "Sequence_Item_0.1.x": {
+            "dtype": "f64",
+            "shape": [],
+            "data": [0.2515879843676431]
+          },
+          "Sequence_Item_1.1.x": {
+            "dtype": "f64",
+            "shape": [],
+            "data": [0.49107295841698434]
+          },
+          "Sequence_Item_2.1.x": {
+            "dtype": "f64",
+            "shape": [],
+            "data": [0.6283261816633972]
+          },
+          "Sequence_Item_3.1.x": {
+            "dtype": "f64",
+            "shape": [],
+            "data": [0.8226609444278624]
+          }
+        },
+        "fitness": -5.346404521938373
+      }
+    },
+    {
+      "name": "randomWalkSequence/BOBYQA/MLE",
+      "model": "randomWalkSequence",
+      "algorithm": {
+        "name": "BOBYQA"
+      },
+      "fitness": "MLE",
+      "result": {
+        "values": {
+          "Sequence_Item_0.1.x": {
+            "dtype": "f64",
+            "shape": [],
+            "data": [0.3000000000000015]
+          },
+          "Sequence_Item_1.1.x": {
+            "dtype": "f64",
+            "shape": [],
+            "data": [0.900000000000001]
+          },
+          "Sequence_Item_2.1.x": {
+            "dtype": "f64",
+            "shape": [],
+            "data": [0.40000000000000063]
+          },
+          "Sequence_Item_3.1.x": {
+            "dtype": "f64",
+            "shape": [],
+            "data": [1.5999999999999992]
+          }
+        },
+        "fitness": -3.6757541328186907
+      }
+    },
+    {
+      "name": "randomWalkSequence/BOBYQA/radius0.5/range5/MLE",
+      "model": "randomWalkSequence",
+      "algorithm": {
+        "name": "BOBYQA",
+        "initialTrustRegionRadius": 0.5,
+        "boundsRange": 5.0
+      },
+      "fitness": "MLE",
+      "result": {
+        "values": {
+          "Sequence_Item_0.1.x": {
+            "dtype": "f64",
+            "shape": [],
+            "data": [0.30000000000000004]
+          },
+          "Sequence_Item_1.1.x": {
+            "dtype": "f64",
+            "shape": [],
+            "data": [0.9000000000000001]
+          },
+          "Sequence_Item_2.1.x": {
+            "dtype": "f64",
+            "shape": [],
+            "data": [0.39999999999999986]
+          },
+          "Sequence_Item_3.1.x": {
+            "dtype": "f64",
+            "shape": [],
+            "data": [1.6]
           }
         },
         "fitness": -3.6757541328186907

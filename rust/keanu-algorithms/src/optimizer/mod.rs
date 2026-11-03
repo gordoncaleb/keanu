@@ -2,10 +2,12 @@
 //! model's continuous latents.
 
 mod adam;
+pub mod bobyqa;
 mod conjugate_gradient;
 mod convergence;
 
 pub use adam::Adam;
+pub use bobyqa::{Bobyqa, NonGradientOptimizer, OptimizerBounds};
 pub use conjugate_gradient::{ConjugateGradient, UpdateFormula};
 pub use convergence::{ConvergenceChecker, Norm};
 
@@ -111,24 +113,7 @@ impl<'m> GradientOptimizer<'m> {
     /// Optimizes the given fitness, leaving the state at the optimum.
     pub fn optimize(&self, state: &mut State, fitness: Fitness) -> Result<OptimizedResult> {
         let model = self.model;
-        if model.latents().is_empty() {
-            return Err(AlgorithmError::NoLatents);
-        }
-        let discrete = model.discrete_latents();
-        if !discrete.is_empty() {
-            let graph = model.graph();
-            let names = discrete
-                .iter()
-                .map(|&id| {
-                    graph
-                        .node(id)
-                        .label()
-                        .map(str::to_owned)
-                        .unwrap_or_else(|| format!("node {}", id.index()))
-                })
-                .collect();
-            return Err(AlgorithmError::DiscreteLatents(names));
-        }
+        check_latents(model)?;
 
         let objective = Objective::new(model, fitness);
         let start = objective.point(state)?;
@@ -161,6 +146,29 @@ impl<'m> GradientOptimizer<'m> {
     }
 }
 
+/// Optimizers need at least one latent, and only continuous ones.
+pub(crate) fn check_latents(model: &Model) -> Result<()> {
+    if model.latents().is_empty() {
+        return Err(AlgorithmError::NoLatents);
+    }
+    let discrete = model.discrete_latents();
+    if !discrete.is_empty() {
+        let graph = model.graph();
+        let names = discrete
+            .iter()
+            .map(|&id| {
+                graph
+                    .node(id)
+                    .label()
+                    .map(str::to_owned)
+                    .unwrap_or_else(|| format!("node {}", id.index()))
+            })
+            .collect();
+        return Err(AlgorithmError::DiscreteLatents(names));
+    }
+    Ok(())
+}
+
 /// The fitness of a model as a function of its continuous latents' values.
 pub(crate) struct Objective<'m> {
     model: &'m Model,
@@ -170,7 +178,7 @@ pub(crate) struct Objective<'m> {
 }
 
 impl<'m> Objective<'m> {
-    fn new(model: &'m Model, fitness: Fitness) -> Self {
+    pub(crate) fn new(model: &'m Model, fitness: Fitness) -> Self {
         Self {
             model,
             fitness,
@@ -183,8 +191,12 @@ impl<'m> Objective<'m> {
         self.evaluations.get()
     }
 
+    pub(crate) fn latents(&self) -> &[NodeId] {
+        &self.latents
+    }
+
     /// The latents' current values.
-    fn point(&self, state: &State) -> Result<Vec<DoubleTensor>> {
+    pub(crate) fn point(&self, state: &State) -> Result<Vec<DoubleTensor>> {
         self.latents
             .iter()
             .map(|&id| {

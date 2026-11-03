@@ -40,6 +40,10 @@ fn optimizers_match_java() {
         if SKIPPED.iter().any(|(n, _)| *n == name) {
             continue;
         }
+        if case["algorithm"]["name"] == "BOBYQA" {
+            // checked by golden_bobyqa.rs
+            continue;
+        }
         let model_name = case["model"].as_str().unwrap();
         let bytes = std::fs::read(golden_dir().join(format!("models/{model_name}.pb"))).unwrap();
         let loaded = keanu_io::load_protobuf(&bytes).unwrap();
@@ -119,10 +123,18 @@ fn optimizers_match_java() {
     }
     println!(
         "checked {checked} of {} optimizer cases ({} skipped)",
-        cases.len(),
+        cases
+            .iter()
+            .filter(|c| c["algorithm"]["name"] != "BOBYQA")
+            .count(),
         SKIPPED.len()
     );
-    assert_eq!(checked + SKIPPED.len(), cases.len());
+    // BOBYQA cases are checked by golden_bobyqa.rs
+    let gradient_cases = cases
+        .iter()
+        .filter(|c| c["algorithm"]["name"] != "BOBYQA")
+        .count();
+    assert_eq!(checked + SKIPPED.len(), gradient_cases);
     assert!(
         failures.is_empty(),
         "{} failures:\n{}",

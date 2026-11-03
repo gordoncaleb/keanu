@@ -36,8 +36,7 @@ Some benchmarks aren't compared:
 
 - **10240 × 10240** (`ElementwiseBinaryDoubleOperations`) was left out of both runs: one matrix multiply takes
   minutes.
-- **The compiled backend and BOBYQA** only exist in Java (the backend isn't ported; BOBYQA is pending the licensing
-  decision).
+- **The compiled backend** only exists in Java (it isn't ported).
 - **`UnaryDoubleOperations` CHOLESKY**: Rust adds the identity to the matrix so that it is always positive
   definite. The cost is the same.
 
@@ -66,7 +65,8 @@ Geometric mean of Java time ÷ Rust time per group (above 1 means Rust is faster
   for Phase 7 (library hardening).
 - **Optimizers:**
   - Warm-start Adam is 2.4× faster in Rust; warm-start conjugate gradient is 3.7× slower (it's a different
-    implementation, with its own line search).
+    implementation, with its own line search). Warm-start BOBYQA (translated from PRIMA rather than Apache Commons
+    Math) is about level, 0.9×; it was measured later than the other rows, on the same machine.
   - From a cold start, Adam takes about 71 ms because its default step size (0.001) needs thousands of steps to
     move A from 0 to its optimum near 6, and conjugate gradient takes about 1.1 ms. The Java benchmark doesn't
     measure a cold start.
@@ -155,7 +155,8 @@ Geometric mean of Java time ÷ Rust time per group (above 1 means Rust is faster
 |---|---:|---:|---:|
 | ADAM_OPTIMIZER | 99.27 µs | 41.76 µs | 2.4× |
 | ADAM_OPTIMIZER (cold start) | — | 71.20 ms | — |
-| BOBYQA_OPTIMIZER | 96.04 µs | — | — |
+| BOBYQA_OPTIMIZER | 96.04 µs | 110.36 µs | 0.9× |
+| BOBYQA_OPTIMIZER (cold start) | — | 238.81 µs | — |
 | CONJUGATE_GRADIENT | 58.43 µs | 214.57 µs | 0.3× |
 | CONJUGATE_GRADIENT (cold start) | — | 1.13 ms | — |
 

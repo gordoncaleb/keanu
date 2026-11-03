@@ -1,5 +1,5 @@
-//! Inference algorithms for [Keanu](https://github.com/gordoncaleb/keanu) models: gradient optimizers for MAP and
-//! maximum likelihood, MCMC samplers (Metropolis–Hastings, NUTS) and simulated annealing, a particle filter,
+//! Inference algorithms for [Keanu](https://github.com/gordoncaleb/keanu) models: gradient optimizers and a
+//! non-gradient optimizer (BOBYQA) for MAP and maximum likelihood, MCMC samplers (Metropolis–Hastings, NUTS) and simulated annealing, a particle filter,
 //! forward sampling from the prior, sample containers and chain statistics.
 //!
 //! ```
@@ -21,6 +21,12 @@
 //! assert!((mu_map - 300.0 / 101.0).abs() < 1e-2);
 //! # Ok::<(), Box<dyn std::error::Error>>(())
 //! ```
+//!
+//! # Licence
+//!
+//! This crate is MIT licensed, except for [`optimizer::bobyqa::prima`], a Rust translation of the BOBYQA solver
+//! from [PRIMA](https://github.com/libprima/prima), which remains under PRIMA's BSD 3-Clause licence. See
+//! `THIRD-PARTY-NOTICES.md` in the crate.
 
 #![warn(missing_docs)]
 

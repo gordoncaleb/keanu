@@ -178,6 +178,19 @@ fn maximum_a_posteriori() -> keanu::Result<()> {
     let most_likely = result.get(temperature).unwrap().to_scalar().unwrap();
     assert!((most_likely - 26.0).abs() < 1e-3);
     // ANCHOR_END: map_settings
+
+    // ANCHOR: bobyqa
+    let bounds = OptimizerBounds::new().add_scalar(temperature, 20.0, 30.0);
+    let result = NonGradientOptimizer::new(&model)
+        .algorithm(Bobyqa {
+            initial_trust_region_radius: 1.0,
+            ..Bobyqa::default()
+        })
+        .bounds(bounds)
+        .max_a_posteriori(&mut state)?;
+    let most_probable = result.get(temperature).unwrap().to_scalar().unwrap();
+    assert!((most_probable - 26.0).abs() < 1e-6);
+    // ANCHOR_END: bobyqa
     Ok(())
 }
 

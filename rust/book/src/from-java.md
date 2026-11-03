@@ -30,4 +30,5 @@ The API is idiomatic Rust rather than a translation.
   - external-process (lambda model) vertices
   - `PrintVertex`
   - generic object vertices (`Categorical` works over category indices)
-  - BOBYQA, which is pending
+- **BOBYQA** is translated from PRIMA rather than Apache Commons Math, so its path differs from Java's. It reaches
+  the optimum in cases where Java's stops short with Keanu's defaults, and it accepts a single latent dimension.

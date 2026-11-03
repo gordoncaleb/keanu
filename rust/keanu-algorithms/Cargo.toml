@@ -3,7 +3,8 @@ name = "keanu-algorithms"
 version = "0.1.0"
 description = "Inference algorithms (optimizers, samplers, statistics) for the Keanu probabilistic programming library"
 edition.workspace = true
-license.workspace = true
+# MIT, except src/optimizer/bobyqa/prima/ (a translation of PRIMA, BSD 3-Clause): see THIRD-PARTY-NOTICES.md
+license = "MIT AND BSD-3-Clause"
 repository.workspace = true
 publish.workspace = true
 

@@ -86,6 +86,22 @@ fn optimizers(c: &mut Criterion) {
             bench.iter(|| black_box(optimizer.max_a_posteriori(&mut state.clone()).unwrap()))
         });
     }
+    // Java's BOBYQA.builder().build() defaults
+    let bobyqa = NonGradientOptimizer::new(&model).algorithm(Bobyqa::default());
+    let result = bobyqa.max_a_posteriori(&mut state.clone()).unwrap();
+    assert!(
+        (result.fitness - -0.1496).abs() < 1e-2,
+        "BOBYQA fitness {}",
+        result.fitness
+    );
+    let mut warm = state.clone();
+    group.bench_function(
+        "BOBYQA_OPTIMIZER/from previous optimum (as Java)",
+        |bench| bench.iter(|| black_box(bobyqa.max_a_posteriori(&mut warm).unwrap())),
+    );
+    group.bench_function("BOBYQA_OPTIMIZER/from A = B = 0", |bench| {
+        bench.iter(|| black_box(bobyqa.max_a_posteriori(&mut state.clone()).unwrap()))
+    });
     group.finish();
 }
 
