@@ -80,10 +80,12 @@ impl<T: Element> Tensor<T> {
         }
     }
 
+    /// The shape.
     pub fn shape(&self) -> &[usize] {
         &self.shape
     }
 
+    /// The number of dimensions.
     pub fn rank(&self) -> usize {
         self.shape.len()
     }
@@ -93,6 +95,7 @@ impl<T: Element> Tensor<T> {
         self.data.len()
     }
 
+    /// Whether there are no elements.
     pub fn is_empty(&self) -> bool {
         self.data.is_empty()
     }
@@ -107,6 +110,7 @@ impl<T: Element> Tensor<T> {
         &self.data
     }
 
+    /// The elements in row-major order.
     pub fn into_vec(self) -> Vec<T> {
         self.data
     }

@@ -20,8 +20,11 @@ pub struct MultivariateGaussian {
 /// Derivatives of [`MultivariateGaussian::log_prob`], each shaped like the corresponding input.
 #[derive(Debug, Clone, PartialEq)]
 pub struct MultivariateGaussianGradient {
+    /// With respect to x.
     pub x: DoubleTensor,
+    /// With respect to `mu`.
     pub mu: DoubleTensor,
+    /// With respect to `covariance`.
     pub covariance: DoubleTensor,
 }
 
@@ -41,6 +44,7 @@ fn sum_over_batch(batched: &DoubleTensor, target_shape: &[usize]) -> Result<Doub
 }
 
 impl MultivariateGaussian {
+    /// Creates the distribution from its parameters.
     pub fn new(mu: DoubleTensor, covariance: DoubleTensor) -> Self {
         Self { mu, covariance }
     }
@@ -93,6 +97,7 @@ impl MultivariateGaussian {
         Ok(quadratic.add(&(&log_cov_det + k_log_2pi))?.sum() * -0.5)
     }
 
+    /// The element-wise derivatives of [`Self::log_prob`] with respect to x and each parameter.
     pub fn d_log_prob(&self, x: &DoubleTensor) -> Result<MultivariateGaussianGradient> {
         let result_shape = self.validate(x.shape())?;
         let n = x.shape()[x.rank() - 1];
@@ -137,19 +142,23 @@ impl MultivariateGaussian {
 /// Dirichlet distribution over a single probability vector.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Dirichlet {
+    /// The concentration.
     pub concentration: DoubleTensor,
 }
 
 /// Derivatives of [`Dirichlet::log_prob`].
 #[derive(Debug, Clone, PartialEq)]
 pub struct DirichletGradient {
+    /// With respect to x.
     pub x: DoubleTensor,
+    /// With respect to `concentration`.
     pub concentration: DoubleTensor,
 }
 
 const DIRICHLET_EPSILON: f64 = 1e-5;
 
 impl Dirichlet {
+    /// Creates the distribution from its parameters.
     pub fn new(concentration: DoubleTensor) -> Self {
         Self { concentration }
     }
@@ -167,6 +176,7 @@ impl Dirichlet {
         Ok(sum_concentration_logged - sum_ln_gamma_concentration + ln_gamma(c.sum()))
     }
 
+    /// The element-wise derivatives of [`Self::log_prob`] with respect to x and each parameter.
     pub fn d_log_prob(&self, x: &DoubleTensor) -> Result<DirichletGradient> {
         let c = &self.concentration;
         Ok(DirichletGradient {
@@ -193,17 +203,21 @@ impl Dirichlet {
 /// `p` need not be normalised.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Multinomial {
+    /// The number of trials.
     pub n: IntTensor,
+    /// The probability parameter.
     pub p: DoubleTensor,
 }
 
 /// Derivative of [`Multinomial::log_prob`] with respect to `p`.
 #[derive(Debug, Clone, PartialEq)]
 pub struct MultinomialGradient {
+    /// With respect to `p`.
     pub p: DoubleTensor,
 }
 
 impl Multinomial {
+    /// Creates the distribution from its parameters.
     pub fn new(n: IntTensor, p: DoubleTensor) -> Result<Self> {
         if p.rank() == 0 {
             return invalid_parameter("p must be a vector or batch of vectors");

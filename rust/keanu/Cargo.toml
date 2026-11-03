@@ -1,0 +1,43 @@
+[package]
+name = "keanu"
+version = "0.1.0"
+description = "Probabilistic programming: build Bayesian networks, then optimize or sample them"
+readme = "README.md"
+keywords = ["probabilistic-programming", "bayesian", "mcmc", "statistics", "inference"]
+categories = ["science", "mathematics"]
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[features]
+default = ["json"]
+# load and save models as JSON
+json = ["keanu-io/json"]
+# load and save models as binary protobuf
+protobuf = ["keanu-io/protobuf"]
+# Graphviz DOT export of graphs
+dot = ["keanu-io/dot"]
+# run independent MCMC chains in parallel (rayon)
+parallel = ["keanu-algorithms/parallel"]
+
+[dependencies]
+keanu-tensor = { path = "../keanu-tensor" }
+keanu-distributions = { path = "../keanu-distributions" }
+keanu-graph = { path = "../keanu-graph" }
+keanu-algorithms = { path = "../keanu-algorithms" }
+keanu-io = { path = "../keanu-io", default-features = false }
+
+[dev-dependencies]
+criterion = "0.7"
+
+[[bench]]
+name = "tensors"
+harness = false
+
+[[bench]]
+name = "models"
+harness = false
+
+[lints]
+workspace = true

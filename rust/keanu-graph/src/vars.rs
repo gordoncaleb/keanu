@@ -12,7 +12,9 @@ use std::ops::{Add, BitAnd, BitOr, BitXor, Div, Mul, Neg, Not, Rem, Sub};
 pub trait Var<'b>: Copy {
     /// The type of the node's value.
     const DTYPE: DType;
+    /// The node this handle refers to.
     fn id(&self) -> NodeId;
+    /// The builder the node belongs to.
     fn builder(&self) -> &'b GraphBuilder;
     #[doc(hidden)]
     fn wrap(builder: &'b GraphBuilder, id: NodeId) -> Self;
@@ -32,6 +34,7 @@ macro_rules! handle {
                 Self { builder, id }
             }
 
+            /// The node this handle refers to.
             pub fn id(self) -> NodeId {
                 self.id
             }
@@ -55,9 +58,11 @@ macro_rules! handle {
                 Self::new(self.builder, self.unary_node(op, $dtype))
             }
 
+            /// Reshapes to a shape with the same length (one dimension may be -1).
             pub fn reshape(self, shape: &[isize]) -> Self {
                 self.same(Op::Reshape(shape.to_vec()))
             }
+            /// Rearranges the dimensions.
             pub fn permute(self, permutation: &[usize]) -> Self {
                 self.same(Op::Permute(permutation.to_vec()))
             }
@@ -65,6 +70,7 @@ macro_rules! handle {
             pub fn transpose(self) -> Self {
                 self.same(Op::Transpose)
             }
+            /// Broadcasts to the given shape.
             pub fn broadcast_to(self, shape: &[usize]) -> Self {
                 self.same(Op::Broadcast(shape.to_vec()))
             }
@@ -76,9 +82,11 @@ macro_rules! handle {
             pub fn take(self, index: &[usize]) -> Self {
                 self.same(Op::Take(index.to_vec()))
             }
+            /// A diagonal matrix from each vector in the last dimension.
             pub fn diag(self) -> Self {
                 self.same(Op::Diag)
             }
+            /// The main diagonal of each matrix.
             pub fn diag_part(self) -> Self {
                 self.same(Op::DiagPart)
             }
@@ -90,9 +98,11 @@ macro_rules! handle {
             pub fn triu(self, k: isize) -> Self {
                 self.same(Op::Triu(k))
             }
+            /// Fills the lower and/or upper triangle of a square matrix from vectors of length n(n + 1) / 2.
             pub fn fill_triangular(self, upper: bool, lower: bool) -> Self {
                 self.same(Op::FillTriangular { upper, lower })
             }
+            /// The elements of the upper or lower triangle of each matrix, as a vector.
             pub fn triangle_part(self, upper: bool) -> Self {
                 self.same(Op::TrianglePart { upper })
             }
@@ -137,6 +147,7 @@ handle!(
 
 /// Things that can be used where an f64 node is expected: handles, scalars and tensors (which become constants).
 pub trait IntoDoubleVar<'b> {
+    /// The handle, adding a constant node for plain values.
     fn into_var(self, builder: &'b GraphBuilder) -> DoubleVar<'b>;
 }
 
@@ -160,6 +171,7 @@ impl<'b> IntoDoubleVar<'b> for DoubleTensor {
 
 /// Things that can be used where an i64 node is expected.
 pub trait IntoIntVar<'b> {
+    /// The handle, adding a constant node for plain values.
     fn into_var(self, builder: &'b GraphBuilder) -> IntVar<'b>;
 }
 
@@ -213,12 +225,15 @@ macro_rules! numeric_methods {
                 )
             }
 
+            /// A node computing the absolute value.
             pub fn abs(self) -> Self {
                 self.same(Op::Unary(UnaryOp::Abs))
             }
+            /// A node computing the sign (-1, 0 or 1; zero keeps its sign and NaN stays NaN).
             pub fn sign(self) -> Self {
                 self.same(Op::Unary(UnaryOp::Sign))
             }
+            /// A node computing self raised to the power other.
             pub fn pow(self, exponent: impl $into<'b>) -> Self {
                 self.binary(BinaryOp::Pow, exponent)
             }
@@ -230,21 +245,27 @@ macro_rules! numeric_methods {
             pub fn minimum(self, other: impl $into<'b>) -> Self {
                 self.binary(BinaryOp::Min, other)
             }
+            /// A node computing whether self > other.
             pub fn gt(self, other: impl $into<'b>) -> BoolVar<'b> {
                 self.compare(CompareOp::Gt, other)
             }
+            /// A node computing whether self >= other.
             pub fn ge(self, other: impl $into<'b>) -> BoolVar<'b> {
                 self.compare(CompareOp::Ge, other)
             }
+            /// A node computing whether self < other.
             pub fn lt(self, other: impl $into<'b>) -> BoolVar<'b> {
                 self.compare(CompareOp::Lt, other)
             }
+            /// A node computing whether self <= other.
             pub fn le(self, other: impl $into<'b>) -> BoolVar<'b> {
                 self.compare(CompareOp::Le, other)
             }
+            /// A node computing whether self == other (IEEE: NaN is never equal).
             pub fn elementwise_eq(self, other: impl $into<'b>) -> BoolVar<'b> {
                 self.compare(CompareOp::Eq, other)
             }
+            /// A node computing whether self != other.
             pub fn elementwise_ne(self, other: impl $into<'b>) -> BoolVar<'b> {
                 self.compare(CompareOp::Ne, other)
             }
@@ -261,12 +282,15 @@ macro_rules! numeric_methods {
             pub fn sum(self) -> Self {
                 self.reduce(ReduceOp::Sum, None)
             }
+            /// The sum over the given axes, which are removed.
             pub fn sum_axes(self, axes: &[isize]) -> Self {
                 self.reduce(ReduceOp::Sum, Some(axes))
             }
+            /// The product of every element.
             pub fn product(self) -> Self {
                 self.reduce(ReduceOp::Product, None)
             }
+            /// The product over the given axes, which are removed.
             pub fn product_axes(self, axes: &[isize]) -> Self {
                 self.reduce(ReduceOp::Product, Some(axes))
             }
@@ -278,12 +302,14 @@ macro_rules! numeric_methods {
             pub fn min(self) -> Self {
                 self.reduce(ReduceOp::Min, None)
             }
+            /// The cumulative sum along an axis.
             pub fn cumsum(self, axis: isize) -> Self {
                 self.same(Op::Scan {
                     kind: ScanOp::CumSum,
                     axis,
                 })
             }
+            /// The cumulative product along an axis.
             pub fn cumprod(self, axis: isize) -> Self {
                 self.same(Op::Scan {
                     kind: ScanOp::CumProd,
@@ -294,12 +320,15 @@ macro_rules! numeric_methods {
             pub fn argmax(self) -> IntVar<'b> {
                 self.arg(ArgOp::ArgMax, None)
             }
+            /// The flat index of the smallest element (the first NaN wins).
             pub fn argmin(self) -> IntVar<'b> {
                 self.arg(ArgOp::ArgMin, None)
             }
+            /// The index of the largest element along an axis (the first NaN wins).
             pub fn argmax_axis(self, axis: isize) -> IntVar<'b> {
                 self.arg(ArgOp::ArgMax, Some(axis))
             }
+            /// The index of the smallest element along an axis (the first NaN wins).
             pub fn argmin_axis(self, axis: isize) -> IntVar<'b> {
                 self.arg(ArgOp::ArgMin, Some(axis))
             }
@@ -425,75 +454,99 @@ impl<'b> DoubleVar<'b> {
         BoolVar::new(self.builder, self.unary_node(Op::Predicate(p), DType::Bool))
     }
 
+    /// A node computing 1 / x.
     pub fn reciprocal(self) -> Self {
         self.map(UnaryOp::Reciprocal)
     }
+    /// A node computing eˣ.
     pub fn exp(self) -> Self {
         self.map(UnaryOp::Exp)
     }
+    /// A node computing 2ˣ.
     pub fn exp2(self) -> Self {
         self.map(UnaryOp::Exp2)
     }
+    /// A node computing eˣ - 1 (accurate near 0).
     pub fn exp_m1(self) -> Self {
         self.map(UnaryOp::ExpM1)
     }
+    /// A node computing the natural logarithm.
     pub fn ln(self) -> Self {
         self.map(UnaryOp::Ln)
     }
+    /// A node computing ln(1 + x) (accurate near 0).
     pub fn ln_1p(self) -> Self {
         self.map(UnaryOp::Ln1p)
     }
+    /// A node computing the base 2 logarithm.
     pub fn log2(self) -> Self {
         self.map(UnaryOp::Log2)
     }
+    /// A node computing the base 10 logarithm.
     pub fn log10(self) -> Self {
         self.map(UnaryOp::Log10)
     }
+    /// A node computing the square root.
     pub fn sqrt(self) -> Self {
         self.map(UnaryOp::Sqrt)
     }
+    /// A node computing the sine.
     pub fn sin(self) -> Self {
         self.map(UnaryOp::Sin)
     }
+    /// A node computing the cosine.
     pub fn cos(self) -> Self {
         self.map(UnaryOp::Cos)
     }
+    /// A node computing the tangent.
     pub fn tan(self) -> Self {
         self.map(UnaryOp::Tan)
     }
+    /// A node computing the arc sine.
     pub fn asin(self) -> Self {
         self.map(UnaryOp::Asin)
     }
+    /// A node computing the arc cosine.
     pub fn acos(self) -> Self {
         self.map(UnaryOp::Acos)
     }
+    /// A node computing the arc tangent.
     pub fn atan(self) -> Self {
         self.map(UnaryOp::Atan)
     }
+    /// A node computing the hyperbolic sine.
     pub fn sinh(self) -> Self {
         self.map(UnaryOp::Sinh)
     }
+    /// A node computing the hyperbolic cosine.
     pub fn cosh(self) -> Self {
         self.map(UnaryOp::Cosh)
     }
+    /// A node computing the hyperbolic tangent.
     pub fn tanh(self) -> Self {
         self.map(UnaryOp::Tanh)
     }
+    /// A node computing the inverse hyperbolic sine.
     pub fn asinh(self) -> Self {
         self.map(UnaryOp::Asinh)
     }
+    /// A node computing the inverse hyperbolic cosine.
     pub fn acosh(self) -> Self {
         self.map(UnaryOp::Acosh)
     }
+    /// A node computing the inverse hyperbolic tangent.
     pub fn atanh(self) -> Self {
         self.map(UnaryOp::Atanh)
     }
+    /// A node computing the logistic sigmoid 1 / (1 + e⁻ˣ).
     pub fn sigmoid(self) -> Self {
         self.map(UnaryOp::Sigmoid)
     }
+    /// A node computing the largest integer not greater than each element.
     pub fn floor(self) -> Self {
         self.map(UnaryOp::Floor)
     }
+    /// A node computing the smallest integer not less than each element.
     pub fn ceil(self) -> Self {
         self.map(UnaryOp::Ceil)
     }
@@ -501,12 +554,15 @@ impl<'b> DoubleVar<'b> {
     pub fn round(self) -> Self {
         self.map(UnaryOp::Round)
     }
+    /// A node computing ln Γ(x).
     pub fn ln_gamma(self) -> Self {
         self.map(UnaryOp::LnGamma)
     }
+    /// A node computing the digamma function ψ(x).
     pub fn digamma(self) -> Self {
         self.map(UnaryOp::Digamma)
     }
+    /// A node computing the trigamma function ψ₁(x).
     pub fn trigamma(self) -> Self {
         self.map(UnaryOp::Trigamma)
     }
@@ -515,9 +571,11 @@ impl<'b> DoubleVar<'b> {
     pub fn atan2(self, y: impl IntoDoubleVar<'b>) -> Self {
         self.binary(BinaryOp::Atan2, y)
     }
+    /// A node computing ln(eᵃ + eᵇ), without overflow.
     pub fn log_add_exp(self, other: impl IntoDoubleVar<'b>) -> Self {
         self.binary(BinaryOp::LogAddExp, other)
     }
+    /// A node computing log₂(2ᵃ + 2ᵇ), without overflow.
     pub fn log_add_exp2(self, other: impl IntoDoubleVar<'b>) -> Self {
         self.binary(BinaryOp::LogAddExp2, other)
     }
@@ -530,38 +588,49 @@ impl<'b> DoubleVar<'b> {
     pub fn gt_mask(self, other: impl IntoDoubleVar<'b>) -> Self {
         self.mask(CompareOp::Gt, other)
     }
+    /// A node computing 1.0 where self >= other, else 0.0.
     pub fn ge_mask(self, other: impl IntoDoubleVar<'b>) -> Self {
         self.mask(CompareOp::Ge, other)
     }
+    /// A node computing 1.0 where self < other, else 0.0.
     pub fn lt_mask(self, other: impl IntoDoubleVar<'b>) -> Self {
         self.mask(CompareOp::Lt, other)
     }
+    /// A node computing 1.0 where self <= other, else 0.0.
     pub fn le_mask(self, other: impl IntoDoubleVar<'b>) -> Self {
         self.mask(CompareOp::Le, other)
     }
 
+    /// A node computing whether each element is NaN.
     pub fn is_nan(self) -> BoolVar<'b> {
         self.predicate(Predicate::IsNan)
     }
+    /// A node computing whether each element is not NaN.
     pub fn not_nan(self) -> BoolVar<'b> {
         self.predicate(Predicate::NotNan)
     }
+    /// A node computing whether each element is finite.
     pub fn is_finite(self) -> BoolVar<'b> {
         self.predicate(Predicate::IsFinite)
     }
+    /// A node computing whether each element is ±infinity.
     pub fn is_infinite(self) -> BoolVar<'b> {
         self.predicate(Predicate::IsInfinite)
     }
+    /// A node computing whether each element is +infinity.
     pub fn is_positive_infinity(self) -> BoolVar<'b> {
         self.predicate(Predicate::IsPositiveInfinity)
     }
+    /// A node computing whether each element is -infinity.
     pub fn is_negative_infinity(self) -> BoolVar<'b> {
         self.predicate(Predicate::IsNegativeInfinity)
     }
 
+    /// The mean of every element.
     pub fn mean(self) -> Self {
         self.reduce(ReduceOp::Mean, None)
     }
+    /// The mean over the given axes, which are removed.
     pub fn mean_axes(self, axes: &[isize]) -> Self {
         self.reduce(ReduceOp::Mean, Some(axes))
     }
@@ -577,13 +646,16 @@ impl<'b> DoubleVar<'b> {
     pub fn nan_argmax(self) -> IntVar<'b> {
         self.arg(ArgOp::NanArgMax, None)
     }
+    /// The flat index of the smallest element, ignoring NaN.
     pub fn nan_argmin(self) -> IntVar<'b> {
         self.arg(ArgOp::NanArgMin, None)
     }
 
+    /// The matrix product over the last two dimensions; leading dimensions broadcast.
     pub fn matmul(self, other: impl IntoDoubleVar<'b>) -> Self {
         self.matmul_transposed(other, false, false)
     }
+    /// The matrix product, optionally transposing either operand.
     pub fn matmul_transposed(
         self,
         other: impl IntoDoubleVar<'b>,
@@ -603,6 +675,7 @@ impl<'b> DoubleVar<'b> {
             ),
         )
     }
+    /// The tensor contraction of self and other over the given pairs of axes.
     pub fn tensor_multiply(
         self,
         other: impl IntoDoubleVar<'b>,
@@ -619,12 +692,15 @@ impl<'b> DoubleVar<'b> {
             self.builder.add(op, &[self.id, other.id()], DType::F64),
         )
     }
+    /// The inverse of each matrix (the last two dimensions).
     pub fn inverse(self) -> Self {
         self.same(Op::Inverse)
     }
+    /// The determinant of each matrix (the last two dimensions).
     pub fn determinant(self) -> Self {
         self.same(Op::Determinant)
     }
+    /// The lower triangular Cholesky factor of each symmetric positive definite matrix.
     pub fn cholesky(self) -> Self {
         self.same(Op::Cholesky)
     }
@@ -656,12 +732,14 @@ impl<'b> DoubleVar<'b> {
             ),
         )
     }
+    /// Replaces NaN elements with a value.
     pub fn replace_nan(self, with: f64) -> Self {
         self.same(Op::ReplaceNan(with))
     }
 }
 
 impl<'b> IntVar<'b> {
+    /// Converts to f64.
     pub fn to_double(self) -> DoubleVar<'b> {
         DoubleVar::new(
             self.builder,
@@ -679,6 +757,7 @@ impl<'b, R: IntoIntVar<'b>> Rem<R> for IntVar<'b> {
 
 /// Things that can be used where a bool node is expected.
 pub trait IntoBoolVar<'b> {
+    /// The handle, adding a constant node for plain values.
     fn into_var(self, builder: &'b GraphBuilder) -> BoolVar<'b>;
 }
 
@@ -709,12 +788,15 @@ impl<'b> BoolVar<'b> {
                 .add(Op::Logic(op), &[self.id, other.id()], DType::Bool),
         )
     }
+    /// A node computing the logical and.
     pub fn and(self, other: impl IntoBoolVar<'b>) -> Self {
         self.logic(LogicOp::And, other)
     }
+    /// A node computing the logical or.
     pub fn or(self, other: impl IntoBoolVar<'b>) -> Self {
         self.logic(LogicOp::Or, other)
     }
+    /// A node computing the logical exclusive or.
     pub fn xor(self, other: impl IntoBoolVar<'b>) -> Self {
         self.logic(LogicOp::Xor, other)
     }
@@ -726,6 +808,7 @@ impl<'b> BoolVar<'b> {
     pub fn any(self) -> Self {
         self.same(Op::Any)
     }
+    /// A node computing whether self == other (IEEE: NaN is never equal).
     pub fn elementwise_eq(self, other: impl IntoBoolVar<'b>) -> Self {
         let other = other.into_var(self.builder);
         Self::new(

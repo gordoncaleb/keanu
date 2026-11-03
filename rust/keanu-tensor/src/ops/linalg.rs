@@ -37,6 +37,7 @@ impl DoubleTensor {
         self.matmul_transposed(other, false, false)
     }
 
+    /// The matrix product, optionally transposing either operand.
     pub fn matmul_transposed(
         &self,
         other: &Self,

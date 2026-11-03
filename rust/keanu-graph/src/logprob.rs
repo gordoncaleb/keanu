@@ -67,6 +67,13 @@ pub fn node_log_prob_at(graph: &Graph, state: &State, id: NodeId, v: &Value) -> 
             let probabilities = (0..parents.len()).map(p).collect::<Result<Vec<_>>>()?;
             total(d::Categorical::new(probabilities)?.log_prob(v.i64()?)?)
         }
+        Custom(c) => {
+            let values = parents
+                .iter()
+                .map(|&id| value(state, id))
+                .collect::<Result<Vec<_>>>()?;
+            c.log_prob(v, &values).map_err(GraphError::Custom)?
+        }
         Geometric => total(d::Geometric::new(p(0)?).log_prob(v.i64()?)?),
         Multinomial => total(d::Multinomial::new(q(0)?, p(1)?)?.log_prob(v.i64()?)?),
         Poisson => total(d::Poisson::new(p(0)?).log_prob(v.i64()?)?),
@@ -114,7 +121,9 @@ pub fn log_prior(graph: &Graph, state: &State) -> Result<f64> {
 /// (multivariate Gaussian, Dirichlet).
 #[derive(Debug, Clone)]
 pub struct NodeLogProbGradient {
+    /// With respect to `value`.
     pub value: Option<DoubleTensor>,
+    /// With respect to `parameters`.
     pub parameters: Vec<Option<DoubleTensor>>,
 }
 
@@ -237,6 +246,23 @@ pub fn node_log_prob_gradient(
             (None, vec![some(g.mu)])
         }
         Categorical | UniformInt => (None, vec![None; parents.len()]),
+        Custom(c) => {
+            let values = parents
+                .iter()
+                .map(|&id| value(state, id))
+                .collect::<Result<Vec<_>>>()?;
+            match c
+                .log_prob_gradient(v, &values)
+                .map_err(GraphError::Custom)?
+            {
+                Some(g) => {
+                    let mut parameters = g.parameters;
+                    parameters.resize(parents.len(), None);
+                    (g.value, parameters)
+                }
+                None => (None, vec![None; parents.len()]),
+            }
+        }
     };
     Ok(NodeLogProbGradient {
         value: x,
@@ -280,18 +306,22 @@ impl LogProbGradient {
         self.gradients.get(&node)
     }
 
+    /// Iterates over the entries.
     pub fn iter(&self) -> impl Iterator<Item = (NodeId, &DoubleTensor)> + '_ {
         self.gradients.iter().map(|(&id, t)| (id, t))
     }
 
+    /// The number of elements.
     pub fn len(&self) -> usize {
         self.gradients.len()
     }
 
+    /// Whether there are no elements.
     pub fn is_empty(&self) -> bool {
         self.gradients.is_empty()
     }
 
+    /// The entries as a map.
     pub fn into_map(self) -> HashMap<NodeId, DoubleTensor> {
         self.gradients
     }

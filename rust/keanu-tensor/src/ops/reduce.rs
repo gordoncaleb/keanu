@@ -23,6 +23,7 @@ impl<T: Numeric> Tensor<T> {
         self.data.iter().fold(T::ONE, |a, &b| a.mul(b))
     }
 
+    /// The product over the given axes, which are removed.
     pub fn product_axes(&self, axes: &[isize]) -> Result<Self> {
         let mask = shape::axis_mask(axes, self.rank())?;
         let (s, data) = reduce(&self.data, &self.shape, &mask, false, T::ONE, T::mul);

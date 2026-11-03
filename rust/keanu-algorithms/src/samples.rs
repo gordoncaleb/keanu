@@ -100,6 +100,7 @@ impl NetworkSamples {
         self.log_probs.len()
     }
 
+    /// Whether there are no elements.
     pub fn is_empty(&self) -> bool {
         self.log_probs.is_empty()
     }
@@ -228,6 +229,7 @@ impl NetworkSample<'_> {
         self.samples.column(id).map(|c| c.get(self.index))
     }
 
+    /// The f64 value, if there is one.
     pub fn f64(&self, id: NodeId) -> Option<&DoubleTensor> {
         match self.samples.column(id)? {
             Column::F64(v) => Some(&v[self.index]),
@@ -235,6 +237,7 @@ impl NetworkSample<'_> {
         }
     }
 
+    /// The i64 value, if there is one.
     pub fn i64(&self, id: NodeId) -> Option<&IntTensor> {
         match self.samples.column(id)? {
             Column::I64(v) => Some(&v[self.index]),
@@ -242,6 +245,7 @@ impl NetworkSample<'_> {
         }
     }
 
+    /// The bool value, if there is one.
     pub fn bool(&self, id: NodeId) -> Option<&BoolTensor> {
         match self.samples.column(id)? {
             Column::Bool(v) => Some(&v[self.index]),
@@ -267,14 +271,17 @@ pub struct Samples<'a, T: Element> {
 }
 
 impl<'a, T: Element> Samples<'a, T> {
+    /// The number of elements.
     pub fn len(&self) -> usize {
         self.values.len()
     }
 
+    /// Whether there are no elements.
     pub fn is_empty(&self) -> bool {
         self.values.is_empty()
     }
 
+    /// The elements in row-major order.
     pub fn as_slice(&self) -> &'a [Tensor<T>] {
         self.values
     }

@@ -142,6 +142,7 @@ impl Model {
         })
     }
 
+    /// The graph.
     pub fn graph(&self) -> &Arc<Graph> {
         &self.graph
     }
@@ -253,6 +254,39 @@ impl Model {
         affected.sort();
         affected.dedup();
         affected
+    }
+
+    /// Java's `probeForNonZeroProbability`: if the current state is impossible (log prob of -infinity or NaN),
+    /// repeatedly samples every latent from its prior, in dependency order, cascading each value, until the state is
+    /// possible. Gives up with an error after `attempts` tries. Values missing from the state (e.g. latents that
+    /// were never set) are sampled first.
+    pub fn probe_for_non_zero_probability(
+        &self,
+        state: &mut State,
+        attempts: usize,
+        rng: &mut keanu_distributions::KeanuRng,
+    ) -> Result<()> {
+        let impossible = |state: &State| -> Result<bool> {
+            let log_prob = self.log_prob(state)?;
+            Ok(log_prob == f64::NEG_INFINITY || log_prob.is_nan())
+        };
+        // sample any latent without a value from its prior, and compute the deterministic nodes
+        let all: Vec<NodeId> = (0..self.graph.len()).map(NodeId::from_index).collect();
+        state.lazy_eval(&self.graph, &all, rng)?;
+        let mut attempt = 0;
+        while impossible(state)? {
+            if attempt == attempts {
+                return Err(GraphError::InvalidValue(format!(
+                    "failed to find a state with non-zero probability in {attempts} attempts"
+                )));
+            }
+            for &latent in &self.latents {
+                let value = state.sample_prior(&self.graph, latent, rng)?;
+                state.set_and_cascade(&self.graph, latent, value)?;
+            }
+            attempt += 1;
+        }
+        Ok(())
     }
 
     /// Applies a proposal (new values for some latents, cascading to their deterministic descendants) and returns

@@ -22,6 +22,8 @@
 //! # Ok::<(), Box<dyn std::error::Error>>(())
 //! ```
 
+#![warn(missing_docs)]
+
 mod error;
 pub mod forward;
 pub mod mcmc;

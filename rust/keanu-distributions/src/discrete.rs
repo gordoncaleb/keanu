@@ -8,16 +8,19 @@ use keanu_tensor::{BoolTensor, DoubleTensor, IntTensor};
 /// Bernoulli distribution: true with probability `prob_true`.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Bernoulli {
+    /// The probability of true.
     pub prob_true: DoubleTensor,
 }
 
 /// Derivative of [`Bernoulli::log_prob`] with respect to `prob_true`.
 #[derive(Debug, Clone, PartialEq)]
 pub struct BernoulliGradient {
+    /// With respect to `prob_true`.
     pub prob_true: DoubleTensor,
 }
 
 impl Bernoulli {
+    /// Creates the distribution from its parameters.
     pub fn new(prob_true: DoubleTensor) -> Self {
         Self { prob_true }
     }
@@ -46,6 +49,7 @@ impl Bernoulli {
         })
     }
 
+    /// Draws a sample of the given shape (broadcast with the parameters' shapes).
     pub fn sample(&self, shape: &[usize], rng: &mut KeanuRng) -> Result<BoolTensor> {
         Ok(rng.uniform(shape).lt(&self.prob_true)?)
     }
@@ -54,21 +58,26 @@ impl Bernoulli {
 /// Binomial distribution: the number of successes in `n` trials with success probability `p`.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Binomial {
+    /// The probability parameter.
     pub p: DoubleTensor,
+    /// The number of trials.
     pub n: IntTensor,
 }
 
 /// Derivative of [`Binomial::log_prob`] with respect to `p`.
 #[derive(Debug, Clone, PartialEq)]
 pub struct BinomialGradient {
+    /// With respect to `p`.
     pub p: DoubleTensor,
 }
 
 impl Binomial {
+    /// Creates the distribution from its parameters.
     pub fn new(p: DoubleTensor, n: IntTensor) -> Self {
         Self { p, n }
     }
 
+    /// The element-wise log probability of x, broadcasting x with the parameters (-infinity outside the support).
     pub fn log_prob(&self, k: &IntTensor) -> Result<DoubleTensor> {
         map3(k, &self.p, &self.n, |k, p, n| {
             if k < 0 || k > n {
@@ -81,6 +90,7 @@ impl Binomial {
         })
     }
 
+    /// The element-wise derivatives of [`Self::log_prob`] with respect to x and each parameter.
     pub fn d_log_prob(&self, k: &IntTensor) -> Result<BinomialGradient> {
         Ok(BinomialGradient {
             p: map3(k, &self.p, &self.n, |k, p, n| {
@@ -89,6 +99,7 @@ impl Binomial {
         })
     }
 
+    /// Draws a sample of the given shape (broadcast with the parameters' shapes).
     pub fn sample(&self, shape: &[usize], rng: &mut KeanuRng) -> Result<IntTensor> {
         let n = self.n.to_double();
         sample_each(shape, &[&self.p, &n], |params| {
@@ -101,20 +112,24 @@ impl Binomial {
 /// Geometric distribution: the number of trials up to and including the first success (k >= 1).
 #[derive(Debug, Clone, PartialEq)]
 pub struct Geometric {
+    /// The probability parameter.
     pub p: DoubleTensor,
 }
 
 /// Derivative of [`Geometric::log_prob`] with respect to `p`.
 #[derive(Debug, Clone, PartialEq)]
 pub struct GeometricGradient {
+    /// With respect to `p`.
     pub p: DoubleTensor,
 }
 
 impl Geometric {
+    /// Creates the distribution from its parameters.
     pub fn new(p: DoubleTensor) -> Self {
         Self { p }
     }
 
+    /// The element-wise log probability of x, broadcasting x with the parameters (-infinity outside the support).
     pub fn log_prob(&self, k: &IntTensor) -> Result<DoubleTensor> {
         let valid = self.p.as_slice().iter().all(|&p| p > 0.0 && p < 1.0);
         if !valid {
@@ -129,6 +144,7 @@ impl Geometric {
         })
     }
 
+    /// The element-wise derivatives of [`Self::log_prob`] with respect to x and each parameter.
     pub fn d_log_prob(&self, k: &IntTensor) -> Result<GeometricGradient> {
         Ok(GeometricGradient {
             p: map2(k, &self.p, |k, p| {
@@ -141,6 +157,7 @@ impl Geometric {
         })
     }
 
+    /// Draws a sample of the given shape (broadcast with the parameters' shapes).
     pub fn sample(&self, shape: &[usize], rng: &mut KeanuRng) -> Result<IntTensor> {
         let u = rng.uniform(shape);
         let samples = map2(&u, &self.p, |u, p| (u.ln() / (1.0 - p).ln()).floor())?;
@@ -151,20 +168,24 @@ impl Geometric {
 /// Poisson distribution with mean `mu`.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Poisson {
+    /// The location (mean).
     pub mu: DoubleTensor,
 }
 
 /// Derivative of [`Poisson::log_prob`] with respect to `mu`.
 #[derive(Debug, Clone, PartialEq)]
 pub struct PoissonGradient {
+    /// With respect to `mu`.
     pub mu: DoubleTensor,
 }
 
 impl Poisson {
+    /// Creates the distribution from its parameters.
     pub fn new(mu: DoubleTensor) -> Self {
         Self { mu }
     }
 
+    /// The element-wise log probability of x, broadcasting x with the parameters (-infinity outside the support).
     pub fn log_prob(&self, k: &IntTensor) -> Result<DoubleTensor> {
         map2(k, &self.mu, |k, mu| {
             if k < 0 {
@@ -175,12 +196,14 @@ impl Poisson {
         })
     }
 
+    /// The element-wise derivatives of [`Self::log_prob`] with respect to x and each parameter.
     pub fn d_log_prob(&self, k: &IntTensor) -> Result<PoissonGradient> {
         Ok(PoissonGradient {
             mu: map2(k, &self.mu, |k, mu| k as f64 / mu - 1.0)?,
         })
     }
 
+    /// Draws a sample of the given shape (broadcast with the parameters' shapes).
     pub fn sample(&self, shape: &[usize], rng: &mut KeanuRng) -> Result<IntTensor> {
         sample_each(shape, &[&self.mu], |p| sample_poisson(p[0], rng))
     }
@@ -216,15 +239,19 @@ fn sample_poisson(mu: f64, rng: &mut KeanuRng) -> Result<i64> {
 /// Uniform distribution over the integers in [x_min, x_max).
 #[derive(Debug, Clone, PartialEq)]
 pub struct UniformInt {
+    /// The lower bound.
     pub x_min: IntTensor,
+    /// The upper bound.
     pub x_max: IntTensor,
 }
 
 impl UniformInt {
+    /// Creates the distribution from its parameters.
     pub fn new(x_min: IntTensor, x_max: IntTensor) -> Self {
         Self { x_min, x_max }
     }
 
+    /// The element-wise log probability of x, broadcasting x with the parameters (-infinity outside the support).
     pub fn log_prob(&self, x: &IntTensor) -> Result<DoubleTensor> {
         map3(x, &self.x_min, &self.x_max, |x, min, max| {
             if x >= max || x < min {
@@ -235,6 +262,7 @@ impl UniformInt {
         })
     }
 
+    /// Draws a sample of the given shape (broadcast with the parameters' shapes).
     pub fn sample(&self, shape: &[usize], rng: &mut KeanuRng) -> Result<IntTensor> {
         let u = rng.uniform(shape);
         let (min, max) = (self.x_min.to_double(), self.x_max.to_double());
@@ -251,10 +279,12 @@ impl UniformInt {
 /// variables can have different probabilities.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Categorical {
+    /// The probability of each category.
     pub probabilities: Vec<DoubleTensor>,
 }
 
 impl Categorical {
+    /// Creates the distribution from its parameters.
     pub fn new(probabilities: Vec<DoubleTensor>) -> Result<Self> {
         if probabilities.is_empty() {
             return invalid_parameter("a categorical distribution needs at least one category");
@@ -286,6 +316,7 @@ impl Categorical {
         Ok(log_prob)
     }
 
+    /// Draws a sample of the given shape (broadcast with the parameters' shapes).
     pub fn sample(&self, shape: &[usize], rng: &mut KeanuRng) -> Result<IntTensor> {
         let total = self.total(shape)?;
         let u = rng.uniform(shape);

@@ -13,3 +13,4 @@ Pipfile.lock
 
 # Rust build output
 /rust/target/
+/rust/book/book/

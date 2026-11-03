@@ -45,6 +45,7 @@ pub struct GraphBuilder {
 }
 
 impl GraphBuilder {
+    /// An empty builder.
     pub fn new() -> Self {
         Self::default()
     }
@@ -289,6 +290,7 @@ impl GraphBuilder {
 
     // ----- constants -----
 
+    /// A constant f64 node.
     pub fn constant(&self, value: impl Into<DoubleTensor>) -> DoubleVar<'_> {
         DoubleVar::new(
             self,
@@ -308,10 +310,12 @@ impl GraphBuilder {
         DoubleVar::new(self, id)
     }
 
+    /// A constant f64 scalar node.
     pub fn scalar(&self, value: f64) -> DoubleVar<'_> {
         self.constant(DoubleTensor::scalar(value))
     }
 
+    /// A constant i64 node.
     pub fn int_constant(&self, value: impl Into<IntTensor>) -> IntVar<'_> {
         IntVar::new(
             self,
@@ -319,10 +323,12 @@ impl GraphBuilder {
         )
     }
 
+    /// A constant i64 scalar node.
     pub fn int_scalar(&self, value: i64) -> IntVar<'_> {
         self.int_constant(IntTensor::scalar(value))
     }
 
+    /// A constant bool node.
     pub fn bool_constant(&self, value: impl Into<BoolTensor>) -> BoolVar<'_> {
         BoolVar::new(
             self,
@@ -330,6 +336,7 @@ impl GraphBuilder {
         )
     }
 
+    /// A constant bool scalar node.
     pub fn bool_scalar(&self, value: bool) -> BoolVar<'_> {
         self.bool_constant(BoolTensor::scalar(value))
     }
@@ -403,10 +410,12 @@ impl GraphBuilder {
         DoubleVar::new(self, self.proxy(DType::F64, shape))
     }
 
+    /// An i64 proxy node, whose parent is connected later.
     pub fn int_proxy(&self, shape: &[usize]) -> IntVar<'_> {
         IntVar::new(self, self.proxy(DType::I64, shape))
     }
 
+    /// A bool proxy node, whose parent is connected later.
     pub fn bool_proxy(&self, shape: &[usize]) -> BoolVar<'_> {
         BoolVar::new(self, self.proxy(DType::Bool, shape))
     }

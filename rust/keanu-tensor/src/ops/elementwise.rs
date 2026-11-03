@@ -8,17 +8,27 @@ use crate::tensor::{BoolTensor, DoubleTensor, Element, IntTensor, Tensor};
 ///
 /// Integer arithmetic wraps on overflow. `max`/`min` propagate NaN and order -0.0 below +0.0.
 pub trait Numeric: Element + PartialOrd {
+    /// The additive identity.
     const ZERO: Self;
+    /// The multiplicative identity.
     const ONE: Self;
+    /// Element-wise, broadcasting: self + other.
     fn add(self, other: Self) -> Self;
+    /// Element-wise, broadcasting: self - other.
     fn sub(self, other: Self) -> Self;
+    /// Element-wise, broadcasting: self × other.
     fn mul(self, other: Self) -> Self;
+    /// Element-wise: the negation.
     fn neg(self) -> Self;
+    /// Element-wise: the absolute value.
     fn abs(self) -> Self;
+    /// The larger value (NaN if either is NaN; +0.0 is larger than -0.0).
     fn max(self, other: Self) -> Self;
+    /// The smaller value (NaN if either is NaN; -0.0 is smaller than +0.0).
     fn min(self, other: Self) -> Self;
     /// True if this value should win an arg max / arg min (NaN wins, as in numpy).
     fn is_nan(self) -> bool;
+    /// The value as f64.
     fn to_f64(self) -> f64;
 }
 
@@ -104,12 +114,15 @@ impl Numeric for i64 {
 }
 
 impl<T: Numeric> Tensor<T> {
+    /// Element-wise, broadcasting: self + other.
     pub fn add(&self, other: &Self) -> Result<Self> {
         self.zip_with(other, T::add)
     }
+    /// Element-wise, broadcasting: self - other.
     pub fn sub(&self, other: &Self) -> Result<Self> {
         self.zip_with(other, T::sub)
     }
+    /// Element-wise, broadcasting: self × other.
     pub fn mul(&self, other: &Self) -> Result<Self> {
         self.zip_with(other, T::mul)
     }
@@ -121,22 +134,28 @@ impl<T: Numeric> Tensor<T> {
     pub fn minimum(&self, other: &Self) -> Result<Self> {
         self.zip_with(other, T::min)
     }
+    /// Element-wise: the negation.
     pub fn neg(&self) -> Self {
         self.map(T::neg)
     }
+    /// Element-wise: the absolute value.
     pub fn abs(&self) -> Self {
         self.map(T::abs)
     }
 
+    /// Element-wise, broadcasting: whether self > other.
     pub fn gt(&self, other: &Self) -> Result<BoolTensor> {
         self.zip_with(other, |a, b| a > b)
     }
+    /// Element-wise, broadcasting: whether self >= other.
     pub fn ge(&self, other: &Self) -> Result<BoolTensor> {
         self.zip_with(other, |a, b| a >= b)
     }
+    /// Element-wise, broadcasting: whether self < other.
     pub fn lt(&self, other: &Self) -> Result<BoolTensor> {
         self.zip_with(other, |a, b| a < b)
     }
+    /// Element-wise, broadcasting: whether self <= other.
     pub fn le(&self, other: &Self) -> Result<BoolTensor> {
         self.zip_with(other, |a, b| a <= b)
     }
@@ -144,6 +163,7 @@ impl<T: Numeric> Tensor<T> {
     pub fn elementwise_eq(&self, other: &Self) -> Result<BoolTensor> {
         self.zip_with(other, |a, b| a == b)
     }
+    /// Element-wise, broadcasting: whether self != other.
     pub fn elementwise_ne(&self, other: &Self) -> Result<BoolTensor> {
         self.zip_with(other, |a, b| a != b)
     }
@@ -152,7 +172,7 @@ impl<T: Numeric> Tensor<T> {
 macro_rules! unary {
     ($($(#[$doc:meta])* $name:ident => $f:expr),* $(,)?) => {
         impl DoubleTensor {
-            $($(#[$doc])* pub fn $name(&self) -> Self { self.map($f) })*
+            $($(#[$doc])* #[doc = concat!("Element-wise `", stringify!($name), "`.")] pub fn $name(&self) -> Self { self.map($f) })*
         }
     };
 }
@@ -205,9 +225,11 @@ unary! {
 }
 
 impl DoubleTensor {
+    /// Element-wise, broadcasting: self / other.
     pub fn div(&self, other: &Self) -> Result<Self> {
         self.zip_with(other, |a, b| a / b)
     }
+    /// Element-wise, broadcasting: self raised to the power other.
     pub fn pow(&self, exponent: &Self) -> Result<Self> {
         self.zip_with(exponent, f64::powf)
     }
@@ -246,12 +268,15 @@ impl DoubleTensor {
     pub fn gt_mask(&self, other: &Self) -> Result<Self> {
         self.zip_with(other, |a, b| f64::from(u8::from(a > b)))
     }
+    /// Element-wise, broadcasting: 1.0 where self >= other, else 0.0.
     pub fn ge_mask(&self, other: &Self) -> Result<Self> {
         self.zip_with(other, |a, b| f64::from(u8::from(a >= b)))
     }
+    /// Element-wise, broadcasting: 1.0 where self < other, else 0.0.
     pub fn lt_mask(&self, other: &Self) -> Result<Self> {
         self.zip_with(other, |a, b| f64::from(u8::from(a < b)))
     }
+    /// Element-wise, broadcasting: 1.0 where self <= other, else 0.0.
     pub fn le_mask(&self, other: &Self) -> Result<Self> {
         self.zip_with(other, |a, b| f64::from(u8::from(a <= b)))
     }
@@ -309,30 +334,38 @@ impl IntTensor {
     pub fn pow(&self, exponent: &Self) -> Result<Self> {
         self.try_zip_with(exponent, int_pow)
     }
+    /// Element-wise: the sign (-1, 0 or 1; zero keeps its sign and NaN stays NaN).
     pub fn sign(&self) -> Self {
         self.map(i64::signum)
     }
+    /// Converts to f64.
     pub fn to_double(&self) -> DoubleTensor {
         self.map(|x| x as f64)
     }
 }
 
 impl BoolTensor {
+    /// Element-wise, broadcasting: the logical and.
     pub fn and(&self, other: &Self) -> Result<Self> {
         self.zip_with(other, |a, b| a && b)
     }
+    /// Element-wise, broadcasting: the logical or.
     pub fn or(&self, other: &Self) -> Result<Self> {
         self.zip_with(other, |a, b| a || b)
     }
+    /// Element-wise, broadcasting: the logical exclusive or.
     pub fn xor(&self, other: &Self) -> Result<Self> {
         self.zip_with(other, |a, b| a != b)
     }
+    /// Element-wise: the logical negation.
     pub fn not(&self) -> Self {
         self.map(|a| !a)
     }
+    /// Whether every element is true.
     pub fn all(&self) -> bool {
         self.data.iter().all(|&a| a)
     }
+    /// Whether any element is true.
     pub fn any(&self) -> bool {
         self.data.iter().any(|&a| a)
     }

@@ -43,21 +43,27 @@ pub struct Node {
 }
 
 impl Node {
+    /// The operation the node performs.
     pub fn op(&self) -> &Op {
         &self.op
     }
+    /// The node's parents, in order.
     pub fn parents(&self) -> &[NodeId] {
         &self.parents
     }
+    /// The element type.
     pub fn dtype(&self) -> DType {
         self.dtype
     }
+    /// The shape.
     pub fn shape(&self) -> &[usize] {
         &self.shape
     }
+    /// Labels the node.
     pub fn label(&self) -> Option<&str> {
         self.label.as_deref()
     }
+    /// Whether the node is probabilistic.
     pub fn is_probabilistic(&self) -> bool {
         self.op.is_probabilistic()
     }
@@ -96,10 +102,12 @@ impl Graph {
         self.nodes.len()
     }
 
+    /// Whether there are no elements.
     pub fn is_empty(&self) -> bool {
         self.nodes.is_empty()
     }
 
+    /// The node with this id.
     pub fn node(&self, id: NodeId) -> &Node {
         &self.nodes[id.0]
     }
@@ -109,10 +117,12 @@ impl Graph {
         (0..self.nodes.len()).map(NodeId)
     }
 
+    /// The node's parents, in order.
     pub fn parents(&self, id: NodeId) -> &[NodeId] {
         &self.nodes[id.0].parents
     }
 
+    /// The nodes whose parents include this node.
     pub fn children(&self, id: NodeId) -> &[NodeId] {
         &self.children[id.0]
     }

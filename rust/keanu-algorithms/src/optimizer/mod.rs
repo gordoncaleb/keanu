@@ -26,7 +26,9 @@ pub enum Fitness {
 /// The optimization algorithm.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Algorithm {
+    /// Adam.
     Adam(Adam),
+    /// Nonlinear conjugate gradient.
     ConjugateGradient(ConjugateGradient),
 }
 
@@ -75,6 +77,7 @@ pub struct GradientOptimizer<'m> {
 const FLAT_GRADIENT: f64 = 1e-16;
 
 impl<'m> GradientOptimizer<'m> {
+    /// An optimizer for `model`, using conjugate gradient by default.
     pub fn new(model: &'m Model) -> Self {
         Self {
             model,
@@ -83,6 +86,7 @@ impl<'m> GradientOptimizer<'m> {
         }
     }
 
+    /// Sets the optimization algorithm.
     pub fn algorithm(mut self, algorithm: impl Into<Algorithm>) -> Self {
         self.algorithm = algorithm.into();
         self
@@ -104,6 +108,7 @@ impl<'m> GradientOptimizer<'m> {
         self.optimize(state, Fitness::LogLikelihood)
     }
 
+    /// Optimizes the given fitness, leaving the state at the optimum.
     pub fn optimize(&self, state: &mut State, fitness: Fitness) -> Result<OptimizedResult> {
         let model = self.model;
         if model.latents().is_empty() {

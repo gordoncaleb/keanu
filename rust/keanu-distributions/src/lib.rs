@@ -21,6 +21,8 @@
 //! # Ok::<(), keanu_distributions::DistributionError>(())
 //! ```
 
+#![warn(missing_docs)]
+
 pub mod continuous;
 pub mod discrete;
 mod error;

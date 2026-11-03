@@ -11,13 +11,17 @@ use keanu_graph::{Model, NodeId, State, Value};
 pub enum AnnealingSchedule {
     /// T(n) = start · (end / start)^(n / iterations), falling from `start` to `end` (Java's `exponentialSchedule`).
     Exponential {
+        /// The number of iterations over which the temperature decays.
         iterations: usize,
+        /// The starting temperature.
         start: f64,
+        /// The final temperature.
         end: f64,
     },
 }
 
 impl AnnealingSchedule {
+    /// Exponential decay from `start` to `end` over `iterations`.
     pub fn exponential(iterations: usize, start: f64, end: f64) -> Self {
         Self::Exponential {
             iterations,
@@ -26,6 +30,7 @@ impl AnnealingSchedule {
         }
     }
 
+    /// The temperature at the given iteration.
     pub fn temperature(&self, iteration: usize) -> f64 {
         match *self {
             Self::Exponential {
@@ -53,10 +58,12 @@ pub struct MapEstimate {
 /// variable selection and rejection.
 #[derive(Debug, Clone, Default)]
 pub struct SimulatedAnnealing {
+    /// The Metropolis–Hastings settings each step uses.
     pub metropolis_hastings: MetropolisHastings,
 }
 
 impl SimulatedAnnealing {
+    /// Simulated annealing with the given Metropolis–Hastings settings.
     pub fn new(metropolis_hastings: MetropolisHastings) -> Self {
         Self {
             metropolis_hastings,

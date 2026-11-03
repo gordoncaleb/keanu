@@ -25,26 +25,32 @@ enum Plan {
 }
 
 impl State {
+    /// The value.
     pub fn value(&self, id: NodeId) -> Option<&Value> {
         self.values[id.0].as_ref()
     }
 
+    /// The f64 value, if there is one.
     pub fn f64(&self, id: NodeId) -> Option<&DoubleTensor> {
         self.value(id).and_then(Value::as_f64)
     }
 
+    /// The i64 value, if there is one.
     pub fn i64(&self, id: NodeId) -> Option<&IntTensor> {
         self.value(id).and_then(Value::as_i64)
     }
 
+    /// The bool value, if there is one.
     pub fn bool(&self, id: NodeId) -> Option<&BoolTensor> {
         self.value(id).and_then(Value::as_bool)
     }
 
+    /// Whether the node has a value.
     pub fn has_value(&self, id: NodeId) -> bool {
         self.values[id.0].is_some()
     }
 
+    /// Whether the node is observed.
     pub fn is_observed(&self, id: NodeId) -> bool {
         self.observed[id.0]
     }

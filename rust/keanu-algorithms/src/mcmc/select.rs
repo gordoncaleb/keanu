@@ -82,7 +82,9 @@ fn is_constant(graph: &Graph, state: &State, id: NodeId, cache: &mut HashSet<Nod
 /// otherwise Metropolis–Hastings, each with its default settings.
 #[derive(Debug, Clone)]
 pub enum Sampler {
+    /// The No-U-Turn sampler.
     Nuts(Nuts),
+    /// Metropolis–Hastings.
     MetropolisHastings(MetropolisHastings),
 }
 

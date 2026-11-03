@@ -5,9 +5,11 @@ use crate::tensor::{DoubleTensor, Tensor};
 use std::ops::{Add, Div, Mul, Neg, Sub};
 
 impl<T: Numeric> Tensor<T> {
+    /// A tensor of zeros.
     pub fn zeros(shape: &[usize]) -> Self {
         Self::full(shape, T::ZERO)
     }
+    /// A tensor of ones.
     pub fn ones(shape: &[usize]) -> Self {
         Self::full(shape, T::ONE)
     }

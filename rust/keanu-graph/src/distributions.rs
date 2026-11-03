@@ -1,7 +1,8 @@
 //! Probabilistic nodes: one constructor per distribution on [`GraphBuilder`].
 
 use crate::builder::GraphBuilder;
-use crate::op::DistributionKind;
+use crate::graph::NodeId;
+use crate::op::{CustomDistribution, DistributionKind};
 use crate::vars::{BoolVar, DoubleVar, IntVar, IntoDoubleVar, IntoIntVar, Var};
 use keanu_distributions::Kde;
 use std::sync::Arc;
@@ -52,6 +53,7 @@ continuous! {
 }
 
 impl GraphBuilder {
+    /// A chi-squared node with k degrees of freedom.
     pub fn chi_squared<'b>(&'b self, k: impl IntoIntVar<'b>) -> DoubleVar<'b> {
         let k = k.into_var(self).id();
         DoubleVar::new(
@@ -60,6 +62,7 @@ impl GraphBuilder {
         )
     }
 
+    /// Like [`Self::chi_squared`], with values of the given shape (broadcast with the parameters' shapes).
     pub fn chi_squared_with_shape<'b>(
         &'b self,
         shape: &[usize],
@@ -72,6 +75,7 @@ impl GraphBuilder {
         )
     }
 
+    /// A Student's t node with v degrees of freedom.
     pub fn student_t<'b>(&'b self, v: impl IntoIntVar<'b>) -> DoubleVar<'b> {
         let v = v.into_var(self).id();
         DoubleVar::new(
@@ -80,6 +84,7 @@ impl GraphBuilder {
         )
     }
 
+    /// Like [`Self::student_t`], with values of the given shape (broadcast with the parameters' shapes).
     pub fn student_t_with_shape<'b>(
         &'b self,
         shape: &[usize],
@@ -122,6 +127,28 @@ impl GraphBuilder {
         )
     }
 
+    /// A node with a user-defined distribution (see [`CustomDistribution`]), a value of the given shape and the
+    /// given nodes as its parameters. The handle type must match the distribution's value type.
+    pub fn custom<'b, V: Var<'b>>(
+        &'b self,
+        distribution: impl CustomDistribution + 'static,
+        shape: &[usize],
+        parameters: &[NodeId],
+    ) -> V {
+        let kind = DistributionKind::Custom(Arc::new(distribution));
+        if kind.value_type() != V::DTYPE {
+            self.record(crate::GraphError::InvalidNode {
+                op: "custom",
+                message: format!(
+                    "the distribution's values are {:?} but a {:?} node was requested",
+                    kind.value_type(),
+                    V::DTYPE
+                ),
+            });
+        }
+        V::wrap(self, self.distribution(kind, Some(shape), parameters))
+    }
+
     /// True with the given probability.
     pub fn bernoulli<'b>(&'b self, probability: impl IntoDoubleVar<'b>) -> BoolVar<'b> {
         let p = probability.into_var(self).id();
@@ -131,6 +158,7 @@ impl GraphBuilder {
         )
     }
 
+    /// Like [`Self::bernoulli`], with values of the given shape (broadcast with the parameters' shapes).
     pub fn bernoulli_with_shape<'b>(
         &'b self,
         shape: &[usize],
@@ -143,6 +171,7 @@ impl GraphBuilder {
         )
     }
 
+    /// A Binomial(p, n) node: successes out of n trials.
     pub fn binomial<'b>(&'b self, p: impl IntoDoubleVar<'b>, n: impl IntoIntVar<'b>) -> IntVar<'b> {
         let ids = [p.into_var(self).id(), n.into_var(self).id()];
         IntVar::new(
@@ -151,6 +180,7 @@ impl GraphBuilder {
         )
     }
 
+    /// Like [`Self::binomial`], with values of the given shape (broadcast with the parameters' shapes).
     pub fn binomial_with_shape<'b>(
         &'b self,
         shape: &[usize],
@@ -177,6 +207,7 @@ impl GraphBuilder {
         )
     }
 
+    /// A geometric node with success probability p.
     pub fn geometric<'b>(&'b self, p: impl IntoDoubleVar<'b>) -> IntVar<'b> {
         let p = p.into_var(self).id();
         IntVar::new(
@@ -185,6 +216,7 @@ impl GraphBuilder {
         )
     }
 
+    /// Like [`Self::geometric`], with values of the given shape (broadcast with the parameters' shapes).
     pub fn geometric_with_shape<'b>(
         &'b self,
         shape: &[usize],
@@ -197,6 +229,7 @@ impl GraphBuilder {
         )
     }
 
+    /// A multinomial node: counts of each category out of n draws.
     pub fn multinomial<'b>(
         &'b self,
         n: impl IntoIntVar<'b>,
@@ -209,6 +242,7 @@ impl GraphBuilder {
         )
     }
 
+    /// A Poisson node with mean mu.
     pub fn poisson<'b>(&'b self, mu: impl IntoDoubleVar<'b>) -> IntVar<'b> {
         let mu = mu.into_var(self).id();
         IntVar::new(
@@ -217,6 +251,7 @@ impl GraphBuilder {
         )
     }
 
+    /// Like [`Self::poisson`], with values of the given shape (broadcast with the parameters' shapes).
     pub fn poisson_with_shape<'b>(
         &'b self,
         shape: &[usize],
@@ -242,6 +277,7 @@ impl GraphBuilder {
         )
     }
 
+    /// Like [`Self::uniform_int`], with values of the given shape (broadcast with the parameters' shapes).
     pub fn uniform_int_with_shape<'b>(
         &'b self,
         shape: &[usize],

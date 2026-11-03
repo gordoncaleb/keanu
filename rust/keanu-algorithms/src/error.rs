@@ -15,7 +15,10 @@ pub enum AlgorithmError {
     /// The starting point has zero probability.
     ImpossibleStart,
     /// The gradient at the starting point is flat (its largest absolute element is given).
-    FlatGradient { largest: f64 },
+    FlatGradient {
+        /// The largest absolute element of the gradient.
+        largest: f64,
+    },
     /// An algorithm setting is out of range.
     InvalidSetting(String),
     /// An argument is invalid for this operation.
@@ -73,4 +76,5 @@ impl From<TensorError> for AlgorithmError {
     }
 }
 
+/// A `Result` whose error is [`AlgorithmError`].
 pub type Result<T, E = AlgorithmError> = std::result::Result<T, E>;

@@ -232,7 +232,9 @@ impl ProposalDistribution for GaussianProposal {
 
 /// Observes proposals as a chain runs (Java's `ProposalListener`).
 pub trait ProposalListener {
+    /// Called when a proposal is created.
     fn on_proposal_created(&mut self, proposal: &Proposal);
+    /// Called when a proposal is rejected.
     fn on_proposal_rejected(&mut self, proposal: &Proposal);
 }
 
@@ -244,6 +246,7 @@ pub struct AcceptanceRateTracker {
 }
 
 impl AcceptanceRateTracker {
+    /// A tracker with no proposals recorded.
     pub fn new() -> Self {
         Self::default()
     }

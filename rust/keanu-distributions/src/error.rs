@@ -38,6 +38,7 @@ impl From<TensorError> for DistributionError {
     }
 }
 
+/// A `Result` whose error is [`DistributionError`].
 pub type Result<T, E = DistributionError> = std::result::Result<T, E>;
 
 pub(crate) fn invalid_parameter<T>(message: impl Into<String>) -> Result<T> {

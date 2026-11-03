@@ -15,10 +15,13 @@ use keanu_tensor::DoubleTensor;
 /// current position.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct QuadraticPotential {
+    /// The starting estimate of each latent's mean.
     pub initial_mean: f64,
+    /// The starting estimate of each latent's variance.
     pub initial_variance: f64,
     /// How many pseudo-samples the initial mean and variance count as.
     pub initial_weight: f64,
+    /// Samples per adaptation window.
     pub adaption_window: usize,
 }
 
@@ -39,15 +42,19 @@ impl Default for QuadraticPotential {
 pub struct Nuts {
     /// Samples during which the step size and potential are adapted.
     pub adapt_count: usize,
+    /// Whether to adapt the step size during the first `adapt_count` samples.
     pub adapt_step_size: bool,
     /// The initial step size; by default 0.25 / n^(1/4) for n latent elements.
     pub initial_step_size: Option<f64>,
+    /// The kinetic energy (mass matrix) settings.
     pub potential: QuadraticPotential,
+    /// Whether to adapt the potential during the first `adapt_count` samples.
     pub adapt_potential: bool,
     /// The acceptance probability step size adaptation aims for.
     pub target_acceptance_prob: f64,
     /// A trajectory whose energy changes by at least this much is divergent.
     pub max_energy_change: f64,
+    /// The maximum tree height (at most 2^height leapfrog steps per sample).
     pub max_tree_height: usize,
     /// Record step sizes, log probs, mean tree acceptance and tree sizes for every step.
     pub save_statistics: bool,
@@ -85,6 +92,7 @@ pub struct NutsStatistics {
 }
 
 impl Nuts {
+    /// The default settings, as Java's NUTS builder.
     pub fn new() -> Self {
         Self::default()
     }

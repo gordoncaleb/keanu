@@ -18,8 +18,11 @@ use std::sync::Arc;
 /// saved vertex id became.
 #[derive(Debug)]
 pub struct Loaded {
+    /// The graph.
     pub graph: Graph,
+    /// The saved values and observations.
     pub state: State,
+    /// The saved metadata.
     pub metadata: Metadata,
     /// Saved vertex id (e.g. `"[3]"`) to node.
     pub ids: HashMap<String, NodeId>,

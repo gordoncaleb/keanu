@@ -395,6 +395,34 @@ Intentional differences:
 
 **Exit:** the examples run in CI, and the docs build from doctests.
 
+**Status: done.**
+
+- **The `keanu` facade crate** re-exports each layer (`tensor`, `distributions`, `graph`, `algorithms`, `io`) and
+  forwards the features (`json` by default, `protobuf`, `dot`, `parallel`). It has a unified `keanu::Error`, a
+  `prelude`, and a crate-level quick start that runs as a doctest.
+- **The examples** (`rust/keanu/examples`) cover the coal mining disasters, all four *Bayesian Methods for Hackers*
+  examples, and the custom distribution example. `tests/examples.rs` checks each against what the Java tests assert:
+  - **Longer chains.** With a different random number generator, the Java examples' chain lengths only converge
+    for particular seeds (checked across seeds), so the tests use 20× longer chains with the Java tolerances.
+  - **Challenger** is checked with NUTS. Its correlated posterior defeats Metropolis–Hastings with prior proposals
+    at any practical length.
+  - **The custom distribution example** is checked against posterior means computed independently by numerical
+    integration.
+- **`keanu-graph` gained `CustomDistribution`**, the equivalent of a custom Java vertex: a log prob plus an
+  optional gradient and sampler. It also gained `Model::probe_for_non_zero_probability` (Java's
+  `probeForNonZeroProbability`), which also evaluates missing values.
+- **The guide** is an mdBook in `rust/book`, with 14 chapters ported from `docs/doc_templates`. Every code sample is
+  `{{#include}}`d from `rust/keanu/tests/book.rs` or the examples, so the samples compile and run as tests.
+  `#![warn(missing_docs)]` is on in every published crate, and every public item is documented.
+- **The benchmarks** (`rust/keanu/benches`) mirror every Java JMH benchmark, plus a `ModelBenchmark` (log prob,
+  gradient and Metropolis–Hastings on the golden models) added on both sides. `rust/docs/benchmarks.md` has the
+  Java vs Rust comparison. Tensors are 1.4–2.6× faster in Rust (geometric means). Graph evaluation and
+  Metropolis–Hastings are about level. Gradients are 2–8× slower, which makes NUTS 2× slower; that's the main
+  performance item for Phase 7.
+- **Not ported:** Java's `model` package (`ModelFitter`, `RegressionModel` and the linear regression builders).
+  It's a convenience layer over the optimizers and samplers, so it needs a decision on whether to port it before
+  Java is deleted.
+
 ### Phase 7: Library hardening and first crates.io release
 - Review the public API:
   - minimal surface, with crate internals marked `pub(crate)`

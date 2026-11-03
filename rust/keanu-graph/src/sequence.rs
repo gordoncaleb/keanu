@@ -60,6 +60,7 @@ pub struct SequenceBuilder<'b> {
 }
 
 impl<'b> SequenceBuilder<'b> {
+    /// A sequence builder adding its nodes to `builder`.
     pub fn new(builder: &'b GraphBuilder) -> Self {
         Self {
             builder,
@@ -249,18 +250,22 @@ impl<'b> SequenceItem<'b> {
         DoubleVar::wrap(self.builder, self.proxy_for(label, DType::F64, shape))
     }
 
+    /// A proxy, in this item, for the previous item's i64 node with this label.
     pub fn int_proxy_for(&mut self, label: &str) -> IntVar<'b> {
         self.int_proxy_for_shape(label, &[])
     }
 
+    /// A proxy of the given shape, in this item, for the previous item's i64 node with this label.
     pub fn int_proxy_for_shape(&mut self, label: &str, shape: &[usize]) -> IntVar<'b> {
         IntVar::wrap(self.builder, self.proxy_for(label, DType::I64, shape))
     }
 
+    /// A proxy, in this item, for the previous item's bool node with this label.
     pub fn bool_proxy_for(&mut self, label: &str) -> BoolVar<'b> {
         self.bool_proxy_for_shape(label, &[])
     }
 
+    /// A proxy of the given shape, in this item, for the previous item's bool node with this label.
     pub fn bool_proxy_for_shape(&mut self, label: &str, shape: &[usize]) -> BoolVar<'b> {
         BoolVar::wrap(self.builder, self.proxy_for(label, DType::Bool, shape))
     }
@@ -278,6 +283,7 @@ struct Item {
 pub struct BuiltItem<'s>(&'s Item);
 
 impl BuiltItem<'_> {
+    /// The index of this id.
     pub fn index(&self) -> usize {
         self.0.index
     }
@@ -311,26 +317,32 @@ impl Sequence {
         self.identifier
     }
 
+    /// The name.
     pub fn name(&self) -> Option<&str> {
         self.name.as_deref()
     }
 
+    /// The number of elements.
     pub fn len(&self) -> usize {
         self.items.len()
     }
 
+    /// Whether there are no elements.
     pub fn is_empty(&self) -> bool {
         self.items.is_empty()
     }
 
+    /// The items, in order.
     pub fn items(&self) -> Vec<BuiltItem<'_>> {
         self.items.iter().map(BuiltItem).collect()
     }
 
+    /// The item at an index.
     pub fn item(&self, index: usize) -> Option<BuiltItem<'_>> {
         self.items.get(index).map(BuiltItem)
     }
 
+    /// The last item.
     pub fn last_item(&self) -> Option<BuiltItem<'_>> {
         self.items.last().map(BuiltItem)
     }

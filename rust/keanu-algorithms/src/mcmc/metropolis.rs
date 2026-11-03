@@ -42,6 +42,7 @@ pub enum RejectionStrategy {
 /// The result of one Metropolis–Hastings step.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct StepResult {
+    /// Whether the proposal was accepted.
     pub accepted: bool,
     /// The joint log probability after the step (the old one if the proposal was rejected).
     pub log_prob: f64,
@@ -56,6 +57,7 @@ pub struct MetropolisHastingsStep<'m> {
 }
 
 impl<'m> MetropolisHastingsStep<'m> {
+    /// A step over `model` with the given proposal distribution and rejection strategy.
     pub fn new(
         model: &'m Model,
         proposal: Arc<dyn ProposalDistribution>,
@@ -147,8 +149,11 @@ fn snapshot(graph: &Graph, state: &State, proposal: &Proposal) -> Vec<(NodeId, O
 /// step and rollback to cached values. A configuration can be shared by many chains.
 #[derive(Debug, Clone)]
 pub struct MetropolisHastings {
+    /// How new values are proposed.
     pub proposal: Arc<dyn ProposalDistribution>,
+    /// Which latents each step proposes for.
     pub selector: VariableSelector,
+    /// What happens when a proposal is rejected.
     pub rejection: RejectionStrategy,
 }
 
@@ -163,20 +168,24 @@ impl Default for MetropolisHastings {
 }
 
 impl MetropolisHastings {
+    /// The default settings: prior proposals, one latent per step, rollback to cached values.
     pub fn new() -> Self {
         Self::default()
     }
 
+    /// Sets the proposal distribution.
     pub fn proposal(mut self, proposal: impl ProposalDistribution + 'static) -> Self {
         self.proposal = Arc::new(proposal);
         self
     }
 
+    /// Sets which latents each step proposes for.
     pub fn selector(mut self, selector: VariableSelector) -> Self {
         self.selector = selector;
         self
     }
 
+    /// Sets what happens when a proposal is rejected.
     pub fn rejection(mut self, rejection: RejectionStrategy) -> Self {
         self.rejection = rejection;
         self

@@ -16,6 +16,7 @@ pub struct KeanuRng {
 }
 
 impl KeanuRng {
+    /// A generator seeded deterministically from `seed`.
     pub fn seed_from_u64(seed: u64) -> Self {
         Self {
             rng: ChaCha8Rng::seed_from_u64(seed),
@@ -60,6 +61,7 @@ impl KeanuRng {
         }
     }
 
+    /// A uniformly random bool.
     pub fn next_bool(&mut self) -> bool {
         self.rng.next_u64() >> 63 == 1
     }

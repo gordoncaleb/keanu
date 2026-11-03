@@ -109,12 +109,17 @@ pub fn effective_sample_size(series: &[f64]) -> f64 {
 /// Summary statistics of a series.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Summary {
+    /// The number of values.
     pub count: usize,
+    /// Their mean.
     pub mean: f64,
     /// Sample variance (n - 1 denominator).
     pub variance: f64,
+    /// Their sample standard deviation.
     pub std_dev: f64,
+    /// The smallest value.
     pub min: f64,
+    /// The largest value.
     pub max: f64,
 }
 

@@ -9,6 +9,8 @@
 //! Not supported: `PrintVertex`, `GetBooleanIndexVertex`, lambda / CPT / categorical nodes (which Java can't save
 //! either), and files written by older Java versions.
 
+#![warn(missing_docs)]
+
 mod classes;
 mod error;
 mod load;

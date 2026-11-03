@@ -1,0 +1,9 @@
+[book]
+title = "Keanu"
+description = "Probabilistic programming in Rust"
+authors = ["Keanu contributors"]
+language = "en"
+src = "src"
+
+[output.html]
+git-repository-url = "https://github.com/gordoncaleb/keanu"

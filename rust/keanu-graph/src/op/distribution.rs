@@ -11,58 +11,108 @@ use std::sync::Arc;
 #[derive(Debug, Clone)]
 #[non_exhaustive]
 pub enum DistributionKind {
-    /// [mu, sigma]
+    /// Parameters: `mu`, `sigma`
     Gaussian,
-    /// [sigma]
+    /// Parameters: `sigma`
     HalfGaussian,
-    /// [location, scale]
+    /// Parameters: `location`, `scale`
     Cauchy,
-    /// [scale]
+    /// Parameters: `scale`
     HalfCauchy,
-    /// [alpha, beta], on [0, 1]
+    /// Parameters: `alpha`, `beta`, on [0, 1]
     Beta,
-    /// [k (i64)]
+    /// Parameters: `k (i64)`
     ChiSquared,
-    /// [concentration]; the value has the concentration's shape
+    /// Parameters: `concentration`; the value has the concentration's shape
     Dirichlet,
-    /// [rate]
+    /// Parameters: `rate`
     Exponential,
-    /// [theta (scale), k (shape)]
+    /// Parameters: `theta (scale)`, `k (shape)`
     Gamma,
-    /// [alpha, beta]
+    /// Parameters: `alpha`, `beta`
     InverseGamma,
-    /// [mu, beta]
+    /// Parameters: `mu`, `beta`
     Laplace,
-    /// [mu, s]
+    /// Parameters: `mu`, `s`
     Logistic,
-    /// [mu, sigma]
+    /// Parameters: `mu`, `sigma`
     LogNormal,
-    /// [mu, covariance]; the value's last dimension is the event dimension
+    /// Parameters: `mu`, `covariance`; the value's last dimension is the event dimension
     MultivariateGaussian,
-    /// [location, scale]
+    /// Parameters: `location`, `scale`
     Pareto,
-    /// [v (i64)]
+    /// Parameters: `v (i64)`
     StudentT,
-    /// [x_min, x_max, c]
+    /// Parameters: `x_min`, `x_max`, `c`
     Triangular,
-    /// [x_min, x_max]
+    /// Parameters: `x_min`, `x_max`
     Uniform,
     /// No parameters: a kernel density estimate from fixed samples.
     Kde(Arc<d::Kde>),
-    /// [probability of true] -> bool
+    /// Parameters: `probability of true` -> bool
     Bernoulli,
-    /// [p, n (i64)] -> i64
+    /// Parameters: `p`, `n (i64)` -> i64
     Binomial,
-    /// [probability of each category...] -> i64 category index
+    /// Parameters: `probability of each category...` -> i64 category index
     Categorical,
-    /// [p] -> i64
+    /// Parameters: `p` -> i64
     Geometric,
-    /// [n (i64), p] -> i64
+    /// Parameters: `n (i64)`, `p` -> i64
     Multinomial,
-    /// [mu] -> i64
+    /// Parameters: `mu` -> i64
     Poisson,
-    /// [x_min (i64), x_max (i64)] -> i64 in [x_min, x_max)
+    /// Parameters: `x_min (i64)`, `x_max (i64)` -> i64 in [x_min, x_max)
     UniformInt,
+    /// A user-defined distribution; its parameters are whatever nodes it was given.
+    Custom(Arc<dyn CustomDistribution>),
+}
+
+/// A user-defined distribution for a probabilistic node, the equivalent of implementing a custom probabilistic
+/// vertex in Java.
+///
+/// Only [`log_prob`](Self::log_prob) is required. Implement [`log_prob_gradient`](Self::log_prob_gradient) to use
+/// the node with gradient based algorithms (NUTS, gradient optimizers), and [`sample`](Self::sample) to sample it
+/// from its prior (forward sampling, prior proposals, evaluating a graph without a value for it).
+pub trait CustomDistribution: Send + Sync + std::fmt::Debug {
+    /// The type of the node's value. f64 by default.
+    fn value_type(&self) -> DType {
+        DType::F64
+    }
+
+    /// The log probability of `value` (summed over its elements) given the parameters' values.
+    fn log_prob(&self, value: &Value, parameters: &[&Value]) -> std::result::Result<f64, String>;
+
+    /// The gradient of [`log_prob`](Self::log_prob) with respect to the value (f64 values only) and each f64
+    /// parameter, shaped like the value and the parameters. `None` (the default) means the distribution has no
+    /// gradient.
+    fn log_prob_gradient(
+        &self,
+        value: &Value,
+        parameters: &[&Value],
+    ) -> std::result::Result<Option<CustomGradient>, String> {
+        let _ = (value, parameters);
+        Ok(None)
+    }
+
+    /// Draws a value of the given shape. By default the distribution can't be sampled.
+    fn sample(
+        &self,
+        shape: &[usize],
+        parameters: &[&Value],
+        rng: &mut KeanuRng,
+    ) -> std::result::Result<Value, String> {
+        let _ = (shape, parameters, rng);
+        Err("this custom distribution cannot be sampled".into())
+    }
+}
+
+/// The gradient of a [`CustomDistribution`]'s log probability.
+#[derive(Debug, Clone, Default)]
+pub struct CustomGradient {
+    /// With respect to the value, if it is f64 and differentiable.
+    pub value: Option<keanu_tensor::DoubleTensor>,
+    /// With respect to each parameter, in order (`None` where there is no gradient).
+    pub parameters: Vec<Option<keanu_tensor::DoubleTensor>>,
 }
 
 impl DistributionKind {
@@ -82,7 +132,7 @@ impl DistributionKind {
             Binomial => &[F64, I64],
             Multinomial => &[I64, F64],
             UniformInt => &[I64, I64],
-            Categorical => return None,
+            Categorical | Custom(_) => return None,
         })
     }
 
@@ -92,6 +142,7 @@ impl DistributionKind {
         match self {
             Bernoulli => DType::Bool,
             Binomial | Categorical | Geometric | Multinomial | Poisson | UniformInt => DType::I64,
+            Custom(c) => c.value_type(),
             _ => DType::F64,
         }
     }
@@ -125,6 +176,7 @@ impl DistributionKind {
             Multinomial => "multinomial",
             Poisson => "poisson",
             UniformInt => "uniform_int",
+            Custom(_) => "custom",
         }
     }
 }
@@ -132,7 +184,9 @@ impl DistributionKind {
 /// A probabilistic node's distribution and the shape of its value.
 #[derive(Debug, Clone)]
 pub struct DistributionOp {
+    /// The distribution.
     pub kind: DistributionKind,
+    /// The shape of the node's value.
     pub shape: Shape,
 }
 
@@ -148,6 +202,9 @@ impl DistributionOp {
             op: kind.name(),
             message,
         };
+        if let DistributionKind::Custom(_) = kind {
+            return Ok(Shape::from_slice(requested.unwrap_or(&[])));
+        }
         match kind.parameter_types() {
             Some(types) => {
                 if parameters.len() != types.len()
@@ -246,6 +303,20 @@ impl DistributionOp {
             Multinomial => Value::I64(d::Multinomial::new(i(0)?, f(1)?)?.sample(shape, rng)?),
             Poisson => Value::I64(d::Poisson::new(f(0)?).sample(shape, rng)?),
             UniformInt => Value::I64(d::UniformInt::new(i(0)?, i(1)?).sample(shape, rng)?),
+            Custom(c) => {
+                let value = c
+                    .sample(shape, parameters, rng)
+                    .map_err(GraphError::Custom)?;
+                if value.dtype() != c.value_type() || value.shape() != shape {
+                    return Err(GraphError::Custom(format!(
+                        "sample returned a {:?} value of shape {:?}, expected {:?} of shape {shape:?}",
+                        value.dtype(),
+                        value.shape(),
+                        c.value_type()
+                    )));
+                }
+                value
+            }
         })
     }
 }

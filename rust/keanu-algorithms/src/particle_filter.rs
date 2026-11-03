@@ -14,6 +14,7 @@ use std::collections::{BTreeMap, BTreeSet};
 /// Particle filter settings. Defaults follow Java's `ParticleFilterBuilder`.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct ParticleFilter {
+    /// The number of particles.
     pub particles: usize,
     /// Rounds of culling and resampling per increment.
     pub resampling_cycles: usize,

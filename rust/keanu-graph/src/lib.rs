@@ -29,6 +29,8 @@
 //! # Ok::<(), keanu_graph::GraphError>(())
 //! ```
 
+#![warn(missing_docs)]
+
 pub mod autodiff;
 mod builder;
 mod distributions;
@@ -54,6 +56,7 @@ pub use logprob::{
     node_log_prob_at, node_log_prob_gradient,
 };
 pub use model::{LambdaSection, Model, downstream_lambda_section, upstream_lambda_section};
+pub use op::{CustomDistribution, CustomGradient};
 pub use state::State;
 pub use value::{DType, Value};
 pub use vars::{BoolVar, DoubleVar, IntVar, IntoBoolVar, IntoDoubleVar, IntoIntVar, Var};

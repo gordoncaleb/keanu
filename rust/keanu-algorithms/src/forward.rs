@@ -19,6 +19,7 @@ pub struct ForwardSampler {
 }
 
 impl ForwardSampler {
+    /// A forward sampler that also records each sample's log probability.
     pub fn new() -> Self {
         Self::default()
     }

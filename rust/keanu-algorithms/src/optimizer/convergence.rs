@@ -30,12 +30,20 @@ impl Norm {
 pub enum ConvergenceChecker {
     /// The norm of |a - b| / (|a| + epsilon) is below the threshold.
     Relative {
+        /// How the change is measured.
         norm: Norm,
+        /// Converged when the change is below this.
         threshold: f64,
+        /// Added to the denominator so values near zero don't blow up the relative change.
         epsilon: f64,
     },
     /// The norm of |a - b| is below the threshold.
-    Absolute { norm: Norm, threshold: f64 },
+    Absolute {
+        /// How the change is measured.
+        norm: Norm,
+        /// Converged when the change is below this.
+        threshold: f64,
+    },
 }
 
 impl ConvergenceChecker {
@@ -48,10 +56,12 @@ impl ConvergenceChecker {
         }
     }
 
+    /// A convergence checker on the absolute change.
     pub fn absolute(norm: Norm, threshold: f64) -> Self {
         Self::Absolute { norm, threshold }
     }
 
+    /// Whether the move from position to next_position counts as converged.
     pub fn has_converged(&self, position: &[DoubleTensor], next: &[DoubleTensor]) -> bool {
         let deltas = position.iter().zip(next).map(|(a, b)| {
             a.zip_with(b, |a, b| match self {

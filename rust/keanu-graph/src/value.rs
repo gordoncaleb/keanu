@@ -4,20 +4,27 @@ use keanu_tensor::{BoolTensor, DoubleTensor, IntTensor};
 /// The element type of a node's value.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum DType {
+    /// `f64`
     F64,
+    /// `i64`
     I64,
+    /// `bool`
     Bool,
 }
 
 /// The value of a node: a tensor of one of the supported element types.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Value {
+    /// An f64 tensor.
     F64(DoubleTensor),
+    /// An i64 tensor.
     I64(IntTensor),
+    /// A bool tensor.
     Bool(BoolTensor),
 }
 
 impl Value {
+    /// The element type.
     pub fn dtype(&self) -> DType {
         match self {
             Self::F64(_) => DType::F64,
@@ -26,6 +33,7 @@ impl Value {
         }
     }
 
+    /// The shape.
     pub fn shape(&self) -> &[usize] {
         match self {
             Self::F64(t) => t.shape(),
@@ -34,6 +42,7 @@ impl Value {
         }
     }
 
+    /// The value as an f64 tensor, if it is one.
     pub fn as_f64(&self) -> Option<&DoubleTensor> {
         match self {
             Self::F64(t) => Some(t),
@@ -41,6 +50,7 @@ impl Value {
         }
     }
 
+    /// The value as an i64 tensor, if it is one.
     pub fn as_i64(&self) -> Option<&IntTensor> {
         match self {
             Self::I64(t) => Some(t),
@@ -48,6 +58,7 @@ impl Value {
         }
     }
 
+    /// The value as a bool tensor, if it is one.
     pub fn as_bool(&self) -> Option<&BoolTensor> {
         match self {
             Self::Bool(t) => Some(t),

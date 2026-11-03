@@ -7,13 +7,16 @@ use keanu_tensor::DoubleTensor;
 /// A Gaussian kernel density estimate from samples.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Kde {
+    /// The samples the estimate is built from.
     pub samples: Vec<f64>,
+    /// The kernel bandwidth.
     pub bandwidth: f64,
 }
 
 /// Derivative of [`Kde::log_prob`] with respect to x.
 #[derive(Debug, Clone, PartialEq)]
 pub struct KdeGradient {
+    /// With respect to x.
     pub x: DoubleTensor,
 }
 
@@ -22,6 +25,7 @@ fn kernel(d: f64) -> f64 {
 }
 
 impl Kde {
+    /// Creates the distribution from its parameters.
     pub fn new(samples: Vec<f64>, bandwidth: f64) -> Result<Self> {
         if samples.is_empty() {
             return invalid_parameter("a KDE needs at least one sample");
@@ -36,6 +40,7 @@ impl Kde {
         Self::new(samples, 1.06 * sd * (n as f64).powf(-1.0 / 5.0))
     }
 
+    /// The probability density at x.
     pub fn pdf(&self, x: &DoubleTensor) -> DoubleTensor {
         let (n, h) = (self.samples.len() as f64, self.bandwidth);
         x.map(|x| {
@@ -47,10 +52,12 @@ impl Kde {
         })
     }
 
+    /// The element-wise log probability of x, broadcasting x with the parameters (-infinity outside the support).
     pub fn log_prob(&self, x: &DoubleTensor) -> DoubleTensor {
         self.pdf(x).ln()
     }
 
+    /// The element-wise derivatives of [`Self::log_prob`] with respect to x and each parameter.
     pub fn d_log_prob(&self, x: &DoubleTensor) -> Result<KdeGradient> {
         let (n, h) = (self.samples.len() as f64, self.bandwidth);
         let d_pdf = x.map(|x| {

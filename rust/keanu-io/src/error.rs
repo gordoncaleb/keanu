@@ -11,8 +11,11 @@ pub enum IoError {
     UnsupportedVertex(String),
     /// A vertex is missing a parameter, or has one of the wrong kind.
     InvalidParameter {
+        /// The vertex type.
         vertex: String,
+        /// The parameter name.
         parameter: String,
+        /// What is wrong.
         message: String,
     },
     /// A parameter or value refers to a vertex that hasn't been defined (earlier in the file).
@@ -48,4 +51,5 @@ impl From<GraphError> for IoError {
     }
 }
 
+/// A `Result` whose error is [`IoError`].
 pub type Result<T, E = IoError> = std::result::Result<T, E>;

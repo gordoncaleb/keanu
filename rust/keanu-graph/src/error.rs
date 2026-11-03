@@ -11,7 +11,12 @@ pub enum GraphError {
     /// A distribution could not be constructed or sampled.
     Distribution(DistributionError),
     /// A node was created with an invalid argument. `op` names the operation.
-    InvalidNode { op: &'static str, message: String },
+    InvalidNode {
+        /// The operation.
+        op: &'static str,
+        /// What is wrong.
+        message: String,
+    },
     /// A value of the wrong type or shape was given for a node.
     InvalidValue(String),
     /// Two nodes have the same label.
@@ -30,11 +35,18 @@ pub enum GraphError {
     Lambda(String),
     /// There is no partial derivative: the "of" node does not depend on the "with respect to" node through
     /// differentiable nodes (e.g. it depends on it only via floor, a comparison or a probabilistic node).
-    NoPartial { of: usize, wrt: usize },
+    NoPartial {
+        /// The index of the "of" node.
+        of: usize,
+        /// The index of the "with respect to" node.
+        wrt: usize,
+    },
     /// Auto diff needs a value that hasn't been computed; evaluate the graph first.
     MissingValue(usize),
     /// Auto diff was asked for on a node that isn't f64 or isn't differentiable.
     NotDifferentiable(String),
+    /// A custom distribution failed.
+    Custom(String),
 }
 
 impl fmt::Display for GraphError {
@@ -60,6 +72,7 @@ impl fmt::Display for GraphError {
                 "node #{id} has no value; evaluate the graph before differentiating"
             ),
             Self::NotDifferentiable(m) => write!(f, "{m}"),
+            Self::Custom(m) => write!(f, "custom distribution: {m}"),
         }
     }
 }
@@ -78,4 +91,5 @@ impl From<DistributionError> for GraphError {
     }
 }
 
+/// A `Result` whose error is [`GraphError`].
 pub type Result<T, E = GraphError> = std::result::Result<T, E>;

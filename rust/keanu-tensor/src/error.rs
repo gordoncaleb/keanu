@@ -5,16 +5,38 @@ use std::fmt;
 #[non_exhaustive]
 pub enum TensorError {
     /// The number of values does not match the shape.
-    LengthMismatch { shape: Vec<usize>, len: usize },
+    LengthMismatch {
+        /// The requested shape.
+        shape: Vec<usize>,
+        /// The number of values given.
+        len: usize,
+    },
     /// Two shapes cannot be broadcast together, or a shape is otherwise incompatible with an operation.
-    IncompatibleShapes { left: Vec<usize>, right: Vec<usize> },
+    IncompatibleShapes {
+        /// The first shape.
+        left: Vec<usize>,
+        /// The second shape.
+        right: Vec<usize>,
+    },
     /// An axis or dimension is out of range for the tensor's rank.
-    InvalidAxis { axis: isize, rank: usize },
+    InvalidAxis {
+        /// The axis given.
+        axis: isize,
+        /// The tensor's rank.
+        rank: usize,
+    },
     /// A reshape target is not valid for the tensor's length.
-    InvalidReshape { from: Vec<usize>, to: Vec<isize> },
+    InvalidReshape {
+        /// The tensor's shape.
+        from: Vec<usize>,
+        /// The requested shape.
+        to: Vec<isize>,
+    },
     /// A permutation is not a rearrangement of the tensor's dimensions.
     InvalidPermutation {
+        /// The permutation given.
         permutation: Vec<usize>,
+        /// The tensor's rank.
         rank: usize,
     },
     /// A slice specification could not be parsed or is out of range.
@@ -59,4 +81,5 @@ impl fmt::Display for TensorError {
 
 impl std::error::Error for TensorError {}
 
+/// A `Result` whose error is [`TensorError`].
 pub type Result<T, E = TensorError> = std::result::Result<T, E>;
