@@ -215,4 +215,48 @@ public class DistributionRegressionTest {
             DoubleTensor.scalar(1.0), DoubleTensor.scalar(2.0), DoubleTensor.scalar(0.0), DoubleTensor.scalar(1.0));
         assertEquals(Math.log(2.0), alphaOne.logProb(DoubleTensor.scalar(0.0)).scalar(), 1e-12);
     }
+
+    @Test(expected = java.util.NoSuchElementException.class)
+    public void diffsLookupOfAMissingParameterFails() {
+        // only X and MU are present; SIGMA sorts after MU, so a floor lookup would wrongly return MU
+        new Diffs()
+            .put(X, DoubleTensor.scalar(1.0))
+            .put(Diffs.MU, DoubleTensor.scalar(2.0))
+            .get(Diffs.SIGMA);
+    }
+
+    @Test
+    public void diffsLookupOfAPresentParameterReturnsIt() {
+        Diffs diffs = new Diffs().put(X, DoubleTensor.scalar(1.0)).put(Diffs.MU, DoubleTensor.scalar(2.0));
+        assertEquals(2.0, diffs.get(Diffs.MU).getValue().scalar(), 0.0);
+        assertEquals(1.0, diffs.get(X).getValue().scalar(), 0.0);
+    }
+
+    @Test
+    public void categoricalLogProbOfAValueThatIsNotACategoryIsNegativeInfinity() {
+        java.util.Map<Integer, DoubleTensor> probabilities = new java.util.LinkedHashMap<>();
+        probabilities.put(1, DoubleTensor.scalar(0.25));
+        probabilities.put(2, DoubleTensor.scalar(0.75));
+        io.improbable.keanu.distributions.discrete.Categorical<Integer> categorical =
+            io.improbable.keanu.distributions.discrete.Categorical.withParameters(probabilities);
+
+        DoubleTensor logProb = categorical.logProb(io.improbable.keanu.tensor.generic.GenericTensor.create(new Integer[]{1, 2, 3}, new long[]{3}));
+        assertArrayEquals(new double[]{Math.log(0.25), Math.log(0.75), Double.NEGATIVE_INFINITY}, logProb.asFlatDoubleArray(), 1e-12);
+    }
+
+    @Test
+    public void binomialSamplesTheBroadcastShapeWhenParametersAreLargerThanTheRequestedShape() {
+        IntegerTensor samples = Binomial.withParameters(DoubleTensor.create(0.0, 1.0, 0.0), IntegerTensor.scalar(5))
+            .sample(new long[0], new KeanuRandom(1));
+        assertArrayEquals(new long[]{3}, samples.getShape());
+        assertArrayEquals(new int[]{0, 5, 0}, samples.asFlatIntegerArray());
+    }
+
+    @Test
+    public void elementWiseSamplersReturnTheBroadcastShapeWhenParametersAreLargerThanTheRequestedShape() {
+        KeanuRandom random = new KeanuRandom(1);
+        assertArrayEquals(new long[]{3}, Gamma.withParameters(DoubleTensor.create(1.0, 2.0, 3.0), DoubleTensor.scalar(2.0)).sample(new long[0], random).getShape());
+        assertArrayEquals(new long[]{3}, io.improbable.keanu.distributions.continuous.Laplace.withParameters(DoubleTensor.create(1.0, 2.0, 3.0), DoubleTensor.scalar(2.0)).sample(new long[0], random).getShape());
+        assertArrayEquals(new long[]{3}, Poisson.withParameters(DoubleTensor.create(1.0, 2.0, 3.0)).sample(new long[0], random).getShape());
+    }
 }

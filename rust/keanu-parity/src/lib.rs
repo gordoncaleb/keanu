@@ -45,6 +45,8 @@ pub struct Case {
     pub name: String,
     pub op: String,
     pub args: Vec<Arg>,
+    /// Named parameters (distribution cases), in file order.
+    pub params: Vec<(String, Arg)>,
     pub result: Value,
 }
 
@@ -52,6 +54,15 @@ impl Case {
     /// The result interpreted as a single tensor or error (tensor cases).
     pub fn outcome(&self) -> Outcome {
         parse_outcome(&self.result)
+    }
+
+    /// A named parameter. Panics if it is missing.
+    pub fn param(&self, name: &str) -> &Arg {
+        self.params
+            .iter()
+            .find(|(n, _)| n == name)
+            .map(|(_, a)| a)
+            .unwrap_or_else(|| panic!("case {} has no parameter {name}", self.name))
     }
 }
 
@@ -80,6 +91,11 @@ pub fn load(file: &str) -> Vec<Case> {
                 .iter()
                 .map(parse_arg)
                 .collect(),
+            params: case
+                .get("params")
+                .and_then(Value::as_object)
+                .map(|m| m.iter().map(|(k, v)| (k.clone(), parse_arg(v))).collect())
+                .unwrap_or_default(),
             result: case["result"].clone(),
         })
         .collect()

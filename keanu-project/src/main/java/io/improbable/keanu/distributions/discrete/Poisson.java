@@ -30,15 +30,16 @@ public class Poisson implements DiscreteDistribution {
     @Override
     public IntegerTensor sample(long[] shape, KeanuRandom random) {
         // broadcast mu to the sample shape so each output element uses the mu at its broadcast position
-        final double[] muBroadcast = mu.broadcast(shape).asFlatDoubleArray();
+        final long[] broadcastedShape = TensorShape.getBroadcastResultShape(shape, mu.getShape());
+        final double[] muBroadcast = mu.broadcast(broadcastedShape).asFlatDoubleArray();
 
-        int length = TensorShape.getLengthAsInt(shape);
+        int length = TensorShape.getLengthAsInt(broadcastedShape);
         int[] samples = new int[length];
         for (int i = 0; i < length; i++) {
             samples[i] = sample(muBroadcast[i], random);
         }
 
-        return IntegerTensor.create(samples, shape);
+        return IntegerTensor.create(samples, broadcastedShape);
     }
 
     private static int sample(double mu, KeanuRandom random) {

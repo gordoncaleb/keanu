@@ -2,7 +2,8 @@
 resolver = "3"
 members = [
     "keanu-tensor",
-    "keanu-parity",
+    "keanu-distributions",
+    "keanu-parity", "keanu-distributions",
 ]
 
 [workspace.package]

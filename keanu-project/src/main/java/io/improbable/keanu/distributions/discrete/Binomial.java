@@ -31,7 +31,8 @@ public class Binomial implements DiscreteDistribution {
         Tensor.FlattenedView<Double> pWrapped = p.broadcast(broadcastedShape).getFlattenedView();
         Tensor.FlattenedView<Integer> nWrapped = n.broadcast(broadcastedShape).getFlattenedView();
 
-        int length = TensorShape.getLengthAsInt(shape);
+        // one sample per element of the broadcast shape (which can be larger than the requested shape)
+        int length = TensorShape.getLengthAsInt(broadcastedShape);
         int[] samples = new int[length];
         for (int i = 0; i < length; i++) {
             samples[i] = sample(pWrapped.get(i), nWrapped.get(i), random);

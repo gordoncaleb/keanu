@@ -61,12 +61,14 @@ public class Categorical<CATEGORY> implements Distribution<GenericTensor<CATEGOR
         DoubleTensor sumOfProbabilities = getSumOfProbabilities(x.getShape());
 
         DoubleTensor logProb = DoubleTensor.zeros(x.getShape());
+        DoubleTensor matchedAnyCategory = DoubleTensor.zeros(x.getShape());
         for (Map.Entry<CATEGORY, DoubleTensor> entry : selectableValues.entrySet()) {
-
             DoubleTensor xEqualToEntryKeyMask = x.elementwiseEquals(GenericTensor.createFilled(entry.getKey(), x.getShape())).toDoubleMask();
+            matchedAnyCategory = matchedAnyCategory.plus(xEqualToEntryKeyMask);
             logProb = logProb.plus(xEqualToEntryKeyMask.timesInPlace(entry.getValue().div(sumOfProbabilities).logInPlace()));
         }
-
+        // a value that is none of the categories is impossible
+        logProb = logProb.setWithMaskInPlace(matchedAnyCategory.elementwiseEquals(0.0).toDoubleMask(), Double.NEGATIVE_INFINITY);
         return logProb;
     }
 

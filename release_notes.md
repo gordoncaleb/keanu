@@ -36,6 +36,9 @@
 - Unary `max()` / `min()` vertices reported their input's shape instead of a scalar, and had no auto diff. They now pass the gradient to the selected element (split equally between ties).
 - Binary `max` / `min` vertices did not broadcast their operands, unlike the tensor operations.
 - `logGamma(+infinity)` returned NaN; it now returns +infinity.
+- `Diffs.get` returned the gradient of the nearest smaller parameter name instead of failing when asked for a parameter that is not present.
+- `Categorical.logProb` returned 0 (probability 1) for a value that is not one of the categories; it now returns -infinity.
+- `Binomial`, `Gamma`, `Laplace` and `Poisson` sampling failed when the parameters had a larger shape than the requested sample shape; they now return the broadcast shape.
 - Sequence labels used an identity hash code, so they changed every time a program ran. They now use a counter (`SequenceBuilder.resetSequenceIdentifiers()` restarts it).
 
 #### New

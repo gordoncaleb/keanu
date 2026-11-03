@@ -48,7 +48,8 @@ public class Gamma implements ContinuousDistribution {
             samples[i] = sample(thetaWrapped.get(i), kWrapped.get(i), random);
         }
 
-        return DoubleTensor.create(samples, shape);
+        // one sample per element of the broadcast shape (which can be larger than the requested shape)
+        return DoubleTensor.create(samples, broadcastedShape);
     }
 
     private static double sample(double theta, double k, KeanuRandom random) {

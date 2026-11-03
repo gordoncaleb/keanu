@@ -183,6 +183,20 @@ permute, reshape and reductions. Differences from Java that are intentional:
 **Exit:** 100% of the tensor golden vectors match (exact for integer ops, ≤1e-12 relative for floating point).
 
 ### Phase 2: `keanu-distributions`
+
+**Status: done.** `rust/keanu-distributions` ports every distribution: 16 continuous, 7 discrete, plus HalfGaussian,
+HalfCauchy and KDE. Each has an element-wise `log_prob`, a typed gradient struct, and Keanu's own samplers on
+`KeanuRng` (ChaCha8 with polar Box–Muller Gaussians, passed explicitly with no global state).
+
+It passes all 61 cases in `golden-vectors/distributions.json` with none skipped. It also has 28 statistical sampler
+tests and finite-difference checks of every gradient.
+
+Intentional differences from Java:
+- `Categorical` is over category indices (`IntTensor`) rather than arbitrary objects.
+- `Dirichlet` works on a single probability vector, as the Java implementation effectively did.
+- `Uniform` and `UniformInt` have no gradient method, where Java threw.
+- `Multinomial` validation is not ported (it was off by default in Java).
+
 - Port the special functions, every distribution's `log_prob`, `d_log_prob` and `sample`, and the KDE.
 
 **Exit:**

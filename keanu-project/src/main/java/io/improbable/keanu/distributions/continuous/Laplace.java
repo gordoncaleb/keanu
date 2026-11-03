@@ -44,7 +44,8 @@ public class Laplace implements ContinuousDistribution {
             samples[i] = sample(muWrapped.get(i), betaWrapped.get(i), random);
         }
 
-        return DoubleTensor.create(samples, shape);
+        // one sample per element of the broadcast shape (which can be larger than the requested shape)
+        return DoubleTensor.create(samples, broadcastedShape);
     }
 
     private static double sample(double mu, double beta, KeanuRandom random) {

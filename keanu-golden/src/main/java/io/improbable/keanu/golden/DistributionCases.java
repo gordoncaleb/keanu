@@ -196,7 +196,7 @@ final class DistributionCases {
         DoubleTensor mvCov = DoubleTensor.create(new double[]{2, 0.3, 0.3, 1}, 2, 2);
         MultivariateGaussian mvg = MultivariateGaussian.withParameters(mvMu, mvCov);
         for (DoubleTensor x : new DoubleTensor[]{d(0, 0), d(1.5, -2), DoubleTensor.create(new double[]{0, 0, 1, 1, -1, 2}, 3, 2)}) {
-            add(cases, "MultivariateGaussian", "x" + java.util.Arrays.toString(x.getShape()), named("mu", mvMu, "covariance", mvCov), x,
+            add(cases, "MultivariateGaussian", "x=" + java.util.Arrays.toString(x.asFlatDoubleArray()) + ",shape=" + java.util.Arrays.toString(x.getShape()), named("mu", mvMu, "covariance", mvCov), x,
                 v -> mvg.logProb((DoubleTensor) v),
                 v -> {
                     DoubleTensor[] r = mvg.dLogProb((DoubleTensor) v, true, true, true);
@@ -266,11 +266,13 @@ final class DistributionCases {
             });
 
         // distributions that only exist as vertices: logProb is the total over x, gradients come from the vertex
+        // the total log prob is -infinity if any x is negative, so use x inside the support
+        DoubleTensor nonNegative = DoubleTensor.create(0.0, 0.1, 0.5, 1.0, 2.0, 4.5);
         for (double scale : new double[]{0.5, 2}) {
-            addVertexCase(cases, "HalfGaussian", "sigma=" + scale, scale, POSITIVE,
-                param -> new HalfGaussianVertex(POSITIVE.getShape(), param));
-            addVertexCase(cases, "HalfCauchy", "scale=" + scale, scale, POSITIVE,
-                param -> new HalfCauchyVertex(POSITIVE.getShape(), param));
+            addVertexCase(cases, "HalfGaussian", "sigma=" + scale, scale, nonNegative,
+                param -> new HalfGaussianVertex(nonNegative.getShape(), param));
+            addVertexCase(cases, "HalfCauchy", "scale=" + scale, scale, nonNegative,
+                param -> new HalfCauchyVertex(nonNegative.getShape(), param));
         }
 
         return cases;

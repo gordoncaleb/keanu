@@ -33,8 +33,9 @@ public class Diffs {
     }
 
     public Diff get(ParameterName id) {
+        // exact lookup: floor() alone would return the nearest smaller name when id is missing
         Diff diff = diffs.floor(new Diff(id));
-        if (diff == null) {
+        if (diff == null || !diff.getName().equals(id.getName())) {
             throw new NoSuchElementException("Cannot find Diff named " + id);
         }
         return diff;
