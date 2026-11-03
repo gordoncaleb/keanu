@@ -1,0 +1,19 @@
+[package]
+name = "keanu-tensor"
+version = "0.1.0"
+description = "N-dimensional tensors for the Keanu probabilistic programming library"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+faer = "0.24"
+smallvec = { version = "1", features = ["union"] }
+
+[dev-dependencies]
+keanu-parity = { path = "../keanu-parity" }
+proptest = "1.12.0"
+
+[lints]
+workspace = true

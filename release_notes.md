@@ -35,6 +35,7 @@
 - `RoundVertex` claimed to be differentiable and reported an identity gradient. floor, ceil, round and sign are now consistently non-differentiable, and asking for a partial derivative through a non-differentiable vertex throws an `IllegalArgumentException` instead of a `NullPointerException`.
 - Unary `max()` / `min()` vertices reported their input's shape instead of a scalar, and had no auto diff. They now pass the gradient to the selected element (split equally between ties).
 - Binary `max` / `min` vertices did not broadcast their operands, unlike the tensor operations.
+- `logGamma(+infinity)` returned NaN; it now returns +infinity.
 - Sequence labels used an identity hash code, so they changed every time a program ran. They now use a counter (`SequenceBuilder.resetSequenceIdentifiers()` restarts it).
 
 #### New

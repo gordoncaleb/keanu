@@ -1374,7 +1374,7 @@
       "result": {
         "dtype": "f64",
         "shape": [3],
-        "data": ["NaN", "NaN", "NaN"]
+        "data": ["NaN", "Infinity", "NaN"]
       }
     },
     {

@@ -244,4 +244,10 @@ public class TensorRegressionTest {
         }
         return flat;
     }
+
+    @Test
+    public void logGammaOfInfinityIsInfinity() {
+        assertEquals(Double.POSITIVE_INFINITY, DoubleTensor.scalar(Double.POSITIVE_INFINITY).logGamma().scalar(), 0.0);
+        assertEquals(Math.log(6.0), DoubleTensor.scalar(4.0).logGamma().scalar(), 1e-12);
+    }
 }

@@ -1,4 +1,6 @@
-# Tensor library spike
+# Decision 0001: tensor library
+
+**Decision (2026-11-03): an in-house tensor (row-major `Vec` + shape) with `faer` for linear algebra.** The spike crates were removed after the decision; they are in the git history (commit 17061d1bc).
 
 The question is what `keanu-tensor` should be built on:
 

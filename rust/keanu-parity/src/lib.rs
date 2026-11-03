@@ -63,7 +63,8 @@ pub fn golden_dir() -> PathBuf {
 /// Loads every case from one of the golden vector files, e.g. `"tensors.json"`.
 pub fn load(file: &str) -> Vec<Case> {
     let path = golden_dir().join(file);
-    let text = std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("reading {}: {e}", path.display()));
+    let text = std::fs::read_to_string(&path)
+        .unwrap_or_else(|e| panic!("reading {}: {e}", path.display()));
     let root: Value = serde_json::from_str(&text).expect("golden vectors are valid JSON");
     assert_eq!(root["formatVersion"], 1, "unsupported golden vector format");
     root["cases"]
@@ -73,7 +74,12 @@ pub fn load(file: &str) -> Vec<Case> {
         .map(|case| Case {
             name: case["name"].as_str().unwrap().to_owned(),
             op: case["op"].as_str().unwrap().to_owned(),
-            args: case["args"].as_array().unwrap().iter().map(parse_arg).collect(),
+            args: case["args"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(parse_arg)
+                .collect(),
             result: case["result"].clone(),
         })
         .collect()
@@ -102,7 +108,11 @@ pub fn parse_tensor(value: &Value) -> Option<GoldenTensor> {
         "bool" => DType::Bool,
         other => panic!("unknown dtype {other}"),
     };
-    let shape = value["shape"].as_array()?.iter().map(|d| d.as_u64().unwrap() as usize).collect();
+    let shape = value["shape"]
+        .as_array()?
+        .iter()
+        .map(|d| d.as_u64().unwrap() as usize)
+        .collect();
     let data = value["data"].as_array()?.iter().map(number).collect();
     Some(GoldenTensor { dtype, shape, data })
 }
@@ -132,7 +142,11 @@ fn parse_arg(value: &Value) -> Arg {
 /// (relative, with an absolute floor of `tolerance` near zero).
 pub fn close(actual: &[f64], expected: &[f64], tolerance: f64) -> Result<(), String> {
     if actual.len() != expected.len() {
-        return Err(format!("length {} != expected {}", actual.len(), expected.len()));
+        return Err(format!(
+            "length {} != expected {}",
+            actual.len(),
+            expected.len()
+        ));
     }
     for (i, (&a, &e)) in actual.iter().zip(expected).enumerate() {
         let ok = (a.is_nan() && e.is_nan())

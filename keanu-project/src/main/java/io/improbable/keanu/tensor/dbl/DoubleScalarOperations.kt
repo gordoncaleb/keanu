@@ -29,6 +29,10 @@ object DoubleScalarOperations : FloatingPointScalarOperations<Double> {
     }
 
     override fun logGamma(value: Double): Double {
+        // commons-math's Lanczos form evaluates infinity - infinity at +infinity; ln(gamma(x)) -> +infinity
+        if (value == Double.POSITIVE_INFINITY) {
+            return Double.POSITIVE_INFINITY
+        }
         return Gamma.logGamma(value)
     }
 

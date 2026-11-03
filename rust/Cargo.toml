@@ -1,10 +1,8 @@
 [workspace]
 resolver = "3"
 members = [
+    "keanu-tensor",
     "keanu-parity",
-    "spikes/tensor-ndarray",
-    "spikes/tensor-inhouse",
-    "spikes/tensor-bench", "spikes/tensor-bench",
 ]
 
 [workspace.package]
@@ -12,3 +10,9 @@ edition = "2024"
 license = "MIT"
 repository = "https://github.com/gordoncaleb/keanu"
 publish = false
+
+[workspace.lints.rust]
+missing_debug_implementations = "warn"
+
+[workspace.lints.clippy]
+all = { level = "warn", priority = -1 }
