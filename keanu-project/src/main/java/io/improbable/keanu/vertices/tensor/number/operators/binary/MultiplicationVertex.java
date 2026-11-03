@@ -1,7 +1,6 @@
 package io.improbable.keanu.vertices.tensor.number.operators.binary;
 
 import io.improbable.keanu.annotation.DisplayInformationForOutput;
-import io.improbable.keanu.annotation.ExportVertexToPythonBindings;
 import io.improbable.keanu.tensor.NumberTensor;
 import io.improbable.keanu.vertices.LoadVertexParam;
 import io.improbable.keanu.vertices.NonProbabilisticVertex;
@@ -27,7 +26,6 @@ public class MultiplicationVertex<T extends Number, TENSOR extends NumberTensor<
      * @param left  vertex to be multiplied
      * @param right vertex to be multiplied
      */
-    @ExportVertexToPythonBindings
     public MultiplicationVertex(@LoadVertexParam(LEFT_NAME) TensorVertex<T, TENSOR, VERTEX> left,
                                 @LoadVertexParam(RIGHT_NAME) TensorVertex<T, TENSOR, VERTEX> right) {
         super(left, right, left.ofType());

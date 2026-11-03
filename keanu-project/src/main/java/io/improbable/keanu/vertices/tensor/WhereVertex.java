@@ -1,6 +1,5 @@
 package io.improbable.keanu.vertices.tensor;
 
-import io.improbable.keanu.annotation.ExportVertexToPythonBindings;
 import io.improbable.keanu.tensor.Tensor;
 import io.improbable.keanu.tensor.TensorShapeValidation;
 import io.improbable.keanu.tensor.bool.BooleanTensor;
@@ -29,7 +28,6 @@ public class WhereVertex<T, TENSOR extends Tensor<T, TENSOR>, VERTEX extends Ten
     protected static final String THEN_NAME = "then";
     protected static final String ELSE_NAME = "else";
 
-    @ExportVertexToPythonBindings
     public WhereVertex(@LoadVertexParam(PREDICATE_NAME) Vertex<BooleanTensor, ?> predicate,
                        @LoadVertexParam(THEN_NAME) Vertex<TENSOR, ?> thn,
                        @LoadVertexParam(ELSE_NAME) Vertex<TENSOR, ?> els) {

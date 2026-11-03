@@ -4,7 +4,6 @@ import io.improbable.keanu.tensor.NumberTensor;
 import io.improbable.keanu.tensor.Tensor;
 import org.junit.Before;
 import org.junit.Test;
-import org.nd4j.linalg.api.shape.Shape;
 
 import java.util.function.BiFunction;
 
@@ -144,7 +143,7 @@ public class IntegerScalarTensorShapePreservationTest {
     }
 
     private static void resultShapeMatchesBroadcastShape(Tensor result, Tensor input1, Tensor input2) {
-        long[] broadcastShape = Shape.broadcastOutputShape(input1.getShape(), input2.getShape());
+        long[] broadcastShape = io.improbable.keanu.tensor.TensorShape.getBroadcastResultShape(input1.getShape(), input2.getShape());
         long[] resultShape = result.getShape();
         assertArrayEquals(broadcastShape, resultShape);
     }

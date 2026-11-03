@@ -36,7 +36,6 @@ the older one provides less accurate results.
 
 Let's calculate the temperature of the room given these two measurements.
 
-
 ### Defining the problem as a graph
 
 How can we define this problem as a graph? 
@@ -145,22 +144,4 @@ public class ThermometerExample {
         System.out.println("Calculated Room Temperature: " + calculatedTemperature);
     }
 }
-```
-
-#### Python
-
-```python
-with Model() as m:
-    m.temperature = Uniform(20., 30.)
-    m.first_thermometer = Gaussian(m.temperature, 2.5)
-    m.second_thermometer = Gaussian(m.temperature, 5.)
-
-m.first_thermometer.observe(25.)
-m.second_thermometer.observe(30.)
-
-bayes_net = m.to_bayes_net()
-optimizer = GradientOptimizer(bayes_net)
-optimizer.max_a_posteriori()
-
-calculated_temperature = m.temperature.get_value()
 ```

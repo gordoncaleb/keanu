@@ -125,28 +125,6 @@ double actual = averagePosteriorA + averagePosteriorB; //42.0
 
 As we can see, our prior belief and observations have combined and we've gained insight through sampling.
 
-##### Python
-
-We can perform the same steps in Python.
-```python
-with Model() as m:
-    m.a = Gaussian(20.,1.)
-    m.b = Gaussian(20.,1.)
-    m.c = Gaussian(m.a+m.b,1.)
-m.c.observe(43.)
-m.a.set_value(20.)
-m.b.set_value(20.)
-bayes_net = m.to_bayes_net()
-algo = MetropolisHastingsSampler(proposal_distribution='prior', latents=bayes_net.iter_latent_vertices())
-posterior_samples = sample(net=bayes_net, sample_from=bayes_net.iter_latent_vertices(),
-                           sampling_algorithm=algo, draws=30000)
-
-average_posterior_a = np.average(posterior_samples.get('a'))
-average_posterior_b = np.average(posterior_samples.get('b'))
-
-actual = average_posterior_a + average_posterior_b
-```
-
 ### Hamiltonian Monte Carlo
 
 #### Algorithm
@@ -193,7 +171,6 @@ The parameters are:
 * The vertices in the network to return samples for (latent vertices)
 * The number of samples to take
 
-
 ### NUTS
 
 NUTS is an auto-tuning implementation of HMC.
@@ -215,14 +192,6 @@ NetworkSamples posteriorSamples = Keanu.Sampling.NUTS.withDefaultConfig().getPos
     model.getLatentVariables(),
     2000
 );
-```
-
-##### Python
-
-```python
-algo = NUTSSampler()
-posterior_samples = sample(net=bayes_net, sample_from=bayes_net.iter_latent_vertices(),
-                           sampling_algorithm=algo, draws=2000)
 ```
 
 #### Parameters

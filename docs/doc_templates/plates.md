@@ -51,7 +51,6 @@ This example shows you how you can repeat logic over many observed data points w
 dependency on a common global value. 
 Here they are the intercept and weights of a linear regression model. 
 
-
 Let's say you have a class `MyData` that looks like this:
 ```java
 {% snippet SequenceData %}

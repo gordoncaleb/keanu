@@ -1,7 +1,6 @@
 package io.improbable.keanu.vertices.tensor.number.floating.dbl.probabilistic;
 
 import io.improbable.keanu.KeanuRandom;
-import io.improbable.keanu.annotation.ExportVertexToPythonBindings;
 import io.improbable.keanu.distributions.continuous.Laplace;
 import io.improbable.keanu.distributions.hyperparam.Diffs;
 import io.improbable.keanu.tensor.TensorShape;
@@ -73,7 +72,6 @@ public class LaplaceVertex extends VertexImpl<DoubleTensor, DoubleVertex> implem
      * @param mu   the mu of the Laplace with either the same shape as specified for this vertex or a scalar
      * @param beta the beta of the Laplace with either the same shape as specified for this vertex or a scalar
      */
-    @ExportVertexToPythonBindings
     public LaplaceVertex(Vertex<DoubleTensor, ?> mu,
                          Vertex<DoubleTensor, ?> beta) {
         this(TensorShape.getBroadcastResultShape(mu.getShape(), beta.getShape()), mu, beta);

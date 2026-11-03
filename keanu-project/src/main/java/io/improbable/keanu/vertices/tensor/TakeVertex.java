@@ -1,6 +1,5 @@
 package io.improbable.keanu.vertices.tensor;
 
-import io.improbable.keanu.annotation.ExportVertexToPythonBindings;
 import io.improbable.keanu.tensor.Tensor;
 import io.improbable.keanu.tensor.TensorShape;
 import io.improbable.keanu.tensor.dbl.DoubleTensor;
@@ -22,7 +21,6 @@ public class TakeVertex<T, TENSOR extends Tensor<T, TENSOR>, VERTEX extends Tens
     private static final String INDEX = "index";
     private long[] index;
 
-    @ExportVertexToPythonBindings
     public TakeVertex(@LoadVertexParam(INPUT_NAME) TensorVertex<T, TENSOR, VERTEX> inputVertex,
                       @LoadVertexParam(INDEX) long... index) {
         super(new long[0], inputVertex, inputVertex.ofType());

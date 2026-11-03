@@ -1,7 +1,6 @@
 package io.improbable.keanu.vertices.tensor.number.floating.dbl.probabilistic;
 
 import io.improbable.keanu.KeanuRandom;
-import io.improbable.keanu.annotation.ExportVertexToPythonBindings;
 import io.improbable.keanu.distributions.continuous.Dirichlet;
 import io.improbable.keanu.distributions.hyperparam.Diffs;
 import io.improbable.keanu.tensor.dbl.DoubleTensor;
@@ -53,7 +52,6 @@ public class DirichletVertex extends VertexImpl<DoubleTensor, DoubleVertex> impl
      *
      * @param concentration the concentration values of the dirichlet
      */
-    @ExportVertexToPythonBindings
     public DirichletVertex(Vertex<DoubleTensor, ?> concentration) {
         this(concentration.getShape(), concentration);
     }

@@ -23,7 +23,6 @@ page_nav:
 
 ---
 
-
 ## Reading data into and out of Keanu
 
 This page tells you how to:
@@ -142,7 +141,6 @@ public class MySetterClass {
     }
 }
 ```
-
 
 ### Reading into a model
 
@@ -274,6 +272,4 @@ These are written to CSV in the format of `{vertex ID}[{index}]`, with each row 
 2.5,5.0,7.5,10.0,12.5,12.5,10.0,7.5,5.0
 3.0,6.0,9.0,12.0,15.0,15.0,12.0,9.0,6.0
 ```
-
-
 

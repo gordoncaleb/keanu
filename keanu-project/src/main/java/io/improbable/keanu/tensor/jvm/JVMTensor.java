@@ -107,13 +107,17 @@ public abstract class JVMTensor<T, TENSOR extends Tensor<T, TENSOR>, B extends J
 
         Preconditions.checkArgument(shape.length >= 2, "Diag Part only operates on matrices or greater rank");
 
-        final long N = shape[shape.length - 1];
+        final long rows = shape[shape.length - 2];
+        final long cols = shape[shape.length - 1];
+        final long diagLength = Math.min(rows, cols);
         final long[] resultShape = TensorShape.getDiagPartResultShape(shape);
         final long bufferLength = TensorShape.getLength(resultShape);
         final B newBuffer = factory.createNew(bufferLength);
 
         for (long i = 0; i < bufferLength; i++) {
-            final long pos = i + N * i - (i / N) * N;
+            final long batch = i / diagLength;
+            final long j = i % diagLength;
+            final long pos = batch * rows * cols + j * cols + j;
             newBuffer.set(buffer.get(pos), i);
         }
 
@@ -581,7 +585,11 @@ public abstract class JVMTensor<T, TENSOR extends Tensor<T, TENSOR>, B extends J
                              BiFunction<T, T, Boolean> compareOp,
                              long[] shape, long[] stride, int axis) {
 
-        if (axis >= shape.length) {
+        if (axis < 0) {
+            axis += shape.length;
+        }
+
+        if (axis < 0 || axis >= shape.length) {
             throw new IllegalArgumentException("Cannot take arg max of axis " + axis + " on a " + shape.length + " rank tensor.");
         }
 

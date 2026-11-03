@@ -1,6 +1,5 @@
 package io.improbable.keanu.vertices.tensor.number.floating.operators.binary;
 
-import io.improbable.keanu.annotation.ExportVertexToPythonBindings;
 import io.improbable.keanu.tensor.FloatingPointTensor;
 import io.improbable.keanu.tensor.bool.BooleanTensor;
 import io.improbable.keanu.tensor.dbl.DoubleTensor;
@@ -21,7 +20,6 @@ import java.util.Map;
 public class SafeLogTimesVertex<T extends Number, TENSOR extends FloatingPointTensor<T, TENSOR>, VERTEX extends NumberTensorVertex<T, TENSOR, VERTEX>>
     extends BinaryTensorOpVertex<T, TENSOR, VERTEX> implements NonProbabilisticVertex<TENSOR, VERTEX>, Differentiable {
 
-    @ExportVertexToPythonBindings
     public SafeLogTimesVertex(@LoadVertexParam(LEFT_NAME) TensorVertex<T, TENSOR, VERTEX> x,
                               @LoadVertexParam(RIGHT_NAME) TensorVertex<T, TENSOR, VERTEX> y) {
         super(x, y, x.ofType());

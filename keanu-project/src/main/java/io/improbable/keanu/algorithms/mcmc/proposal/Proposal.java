@@ -11,6 +11,7 @@ public class Proposal {
 
     private final Map<Variable, Object> perVariableProposalTo;
     private final Map<Variable, Object> perVariableProposalFrom;
+    private Double recordedLogProbAtToGivenFrom;
 
     public Proposal() {
         this.perVariableProposalTo = new HashMap<>();
@@ -42,5 +43,19 @@ public class Proposal {
 
     public Set<Variable> getVariablesWithProposal() {
         return perVariableProposalTo.keySet();
+    }
+
+    /**
+     * Some proposal distributions can only evaluate q(x'|x) correctly at the time the proposal is created,
+     * e.g. when q depends on the state of the rest of the network which changes once the proposal is applied.
+     *
+     * @return q(x'|x) if it was recorded when the proposal was created, otherwise null
+     */
+    public Double getRecordedLogProbAtToGivenFrom() {
+        return recordedLogProbAtToGivenFrom;
+    }
+
+    public void setRecordedLogProbAtToGivenFrom(double logProb) {
+        this.recordedLogProbAtToGivenFrom = logProb;
     }
 }

@@ -1,6 +1,5 @@
 package io.improbable.keanu.vertices.tensor.number.floating.dbl.nonprobabilistic;
 
-import io.improbable.keanu.annotation.ExportVertexToPythonBindings;
 import io.improbable.keanu.tensor.dbl.DoubleTensor;
 import io.improbable.keanu.vertices.ConstantVertex;
 import io.improbable.keanu.vertices.LoadVertexParam;
@@ -20,7 +19,6 @@ public class ConstantDoubleVertex extends VertexImpl<DoubleTensor, DoubleVertex>
 
     private final static String CONSTANT_NAME = "constant";
 
-    @ExportVertexToPythonBindings
     public ConstantDoubleVertex(@LoadVertexParam(CONSTANT_NAME) DoubleTensor constant) {
         super(constant.getShape());
         setValue(constant);

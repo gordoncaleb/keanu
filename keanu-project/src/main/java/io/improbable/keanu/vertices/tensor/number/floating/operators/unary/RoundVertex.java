@@ -1,6 +1,5 @@
 package io.improbable.keanu.vertices.tensor.number.floating.operators.unary;
 
-import io.improbable.keanu.annotation.ExportVertexToPythonBindings;
 import io.improbable.keanu.tensor.FloatingPointTensor;
 import io.improbable.keanu.vertices.LoadVertexParam;
 import io.improbable.keanu.vertices.NonProbabilisticVertex;
@@ -19,7 +18,6 @@ public class RoundVertex<T extends Number, TENSOR extends FloatingPointTensor<T,
      *
      * @param inputVertex the vertex to be rounded
      */
-    @ExportVertexToPythonBindings
     public RoundVertex(@LoadVertexParam(INPUT_NAME) TensorVertex<T, TENSOR, VERTEX> inputVertex) {
         super(inputVertex);
     }

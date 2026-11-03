@@ -1,6 +1,5 @@
 package io.improbable.keanu.vertices.tensor;
 
-import io.improbable.keanu.annotation.ExportVertexToPythonBindings;
 import io.improbable.keanu.tensor.Tensor;
 import io.improbable.keanu.tensor.TensorShape;
 import io.improbable.keanu.tensor.dbl.DoubleTensor;
@@ -23,7 +22,6 @@ public class BroadcastVertex<T, TENSOR extends Tensor<T, TENSOR>, VERTEX extends
     private static final String TO_SHAPE = "toShape";
     private final long[] toShape;
 
-    @ExportVertexToPythonBindings
     public BroadcastVertex(@LoadVertexParam(INPUT_NAME) TensorVertex<T, TENSOR, VERTEX> inputVertex,
                            @LoadVertexParam(TO_SHAPE) long... toShape) {
         super(toShape, inputVertex, inputVertex.ofType());

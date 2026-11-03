@@ -1,6 +1,5 @@
 package io.improbable.keanu.vertices.tensor.number.operators.unary;
 
-import io.improbable.keanu.annotation.ExportVertexToPythonBindings;
 import io.improbable.keanu.tensor.NumberTensor;
 import io.improbable.keanu.tensor.TensorShape;
 import io.improbable.keanu.tensor.dbl.DoubleTensor;
@@ -26,7 +25,6 @@ public class ProductVertex<T extends Number, TENSOR extends NumberTensor<T, TENS
     private final static String OVER_DIMENSIONS = "overDimensions";
     private final int[] overDimensions;
 
-    @ExportVertexToPythonBindings
     public ProductVertex(@LoadVertexParam(INPUT_NAME) TensorVertex<T, TENSOR, VERTEX> inputVertex,
                          @LoadVertexParam(OVER_DIMENSIONS) int[] overDimensions) {
         super(getReductionResultShape(inputVertex.getShape(), overDimensions), inputVertex, inputVertex.ofType());

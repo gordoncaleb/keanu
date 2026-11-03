@@ -1,6 +1,5 @@
 package io.improbable.keanu.vertices.tensor;
 
-import io.improbable.keanu.annotation.ExportVertexToPythonBindings;
 import io.improbable.keanu.tensor.Tensor;
 import io.improbable.keanu.tensor.TensorShape;
 import io.improbable.keanu.tensor.dbl.DoubleTensor;
@@ -37,7 +36,6 @@ public class StridedSliceVertex<T, TENSOR extends Tensor<T, TENSOR>, VERTEX exte
 
     private final Slicer slicer;
 
-    @ExportVertexToPythonBindings
     public StridedSliceVertex(@LoadVertexParam(INPUT_NAME) TensorVertex<T, TENSOR, VERTEX> inputVertex,
                               @LoadVertexParam(START_NAME) long[] start,
                               @LoadVertexParam(END_NAME) long[] end,

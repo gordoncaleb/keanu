@@ -34,7 +34,6 @@ public class IntegerTensorTest {
     @Parameterized.Parameters(name = "{index}: Test with {1}")
     public static Iterable<Object[]> data() {
         return Arrays.asList(new Object[][]{
-            {new Nd4jIntegerTensorFactory(), "ND4J IntegerTensor"},
             {new JVMIntegerTensorFactory(), "JVM IntegerTensor"},
         });
     }

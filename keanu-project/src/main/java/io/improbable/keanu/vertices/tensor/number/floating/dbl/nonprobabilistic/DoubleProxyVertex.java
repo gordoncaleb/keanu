@@ -1,7 +1,6 @@
 package io.improbable.keanu.vertices.tensor.number.floating.dbl.nonprobabilistic;
 
 import com.google.common.collect.Iterables;
-import io.improbable.keanu.annotation.ExportVertexToPythonBindings;
 import io.improbable.keanu.tensor.Tensor;
 import io.improbable.keanu.tensor.dbl.DoubleTensor;
 import io.improbable.keanu.vertices.LoadShape;
@@ -37,7 +36,6 @@ public class DoubleProxyVertex extends VertexImpl<DoubleTensor, DoubleVertex> im
         this(Tensor.SCALAR_SHAPE, label);
     }
 
-    @ExportVertexToPythonBindings
     public DoubleProxyVertex(long[] shape, VertexLabel label) {
         super(shape);
         setLabel(label);

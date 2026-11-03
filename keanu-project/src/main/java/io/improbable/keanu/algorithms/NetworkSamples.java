@@ -133,7 +133,9 @@ public class NetworkSamples {
             );
         final List<Double> withLogProbsDownSampled = downSample(logOfMasterPForEachSample, downSampleInterval);
 
-        return new NetworkSamples(withSamplesDownSampled, withLogProbsDownSampled, size / downSampleInterval);
+        // indices 0, k, 2k, ... are kept, which is ceil(size / k) samples
+        final int downSampledSize = (size + downSampleInterval - 1) / downSampleInterval;
+        return new NetworkSamples(withSamplesDownSampled, withLogProbsDownSampled, downSampledSize);
     }
 
     private static <T> List<T> downSample(final List<T> samples, final int downSampleInterval) {

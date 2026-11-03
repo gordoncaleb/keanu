@@ -143,7 +143,7 @@ public class GradientOptimizer implements Optimizer {
     private static void throwIfGradientIsFlat(Map<? extends VariableReference, DoubleTensor> gradient) {
         double maxGradient = gradient.values().stream()
             .flatMap(v -> Arrays.stream(v.asFlatDoubleArray()).boxed())
-            .mapToDouble(v -> v).max().orElseThrow(IllegalArgumentException::new);
+            .mapToDouble(Math::abs).max().orElseThrow(IllegalArgumentException::new);
 
         if (Math.abs(maxGradient) <= FLAT_GRADIENT) {
             throw new IllegalStateException("The initial gradient is very flat. The largest gradient is " + maxGradient);

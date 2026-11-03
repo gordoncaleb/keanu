@@ -1,7 +1,6 @@
 package io.improbable.keanu.vertices.tensor.number.fixed.intgr.probabilistic;
 
 import io.improbable.keanu.KeanuRandom;
-import io.improbable.keanu.annotation.ExportVertexToPythonBindings;
 import io.improbable.keanu.distributions.discrete.Geometric;
 import io.improbable.keanu.tensor.TensorShape;
 import io.improbable.keanu.tensor.dbl.DoubleTensor;
@@ -54,7 +53,6 @@ public class GeometricVertex extends VertexImpl<IntegerTensor, IntegerVertex> im
         this(tensorShape, ConstantVertex.of(p));
     }
 
-    @ExportVertexToPythonBindings
     public GeometricVertex(Vertex<DoubleTensor, ?> p) {
         this(p.getShape(), p);
     }

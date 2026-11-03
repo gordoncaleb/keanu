@@ -1,6 +1,5 @@
 package io.improbable.keanu.vertices.tensor.number.operators.binary;
 
-import io.improbable.keanu.annotation.ExportVertexToPythonBindings;
 import io.improbable.keanu.tensor.NumberTensor;
 import io.improbable.keanu.tensor.dbl.DoubleTensor;
 import io.improbable.keanu.vertices.LoadVertexParam;
@@ -29,7 +28,6 @@ public class PowerVertex<T extends Number, TENSOR extends NumberTensor<T, TENSOR
      * @param base     the base vertex
      * @param exponent the exponent vertex
      */
-    @ExportVertexToPythonBindings
     public PowerVertex(@LoadVertexParam(BASE_NAME) TensorVertex<T, TENSOR, VERTEX> base,
                        @LoadVertexParam(EXPONENT_NAME) TensorVertex<T, TENSOR, VERTEX> exponent) {
         super(base, exponent, base.ofType());

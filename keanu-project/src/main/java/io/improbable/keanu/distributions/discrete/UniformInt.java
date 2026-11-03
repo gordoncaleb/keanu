@@ -27,7 +27,8 @@ public class UniformInt implements DiscreteDistribution {
         DoubleTensor delta = xMax.toDouble().minus(minDouble);
         DoubleTensor randoms = random.nextDouble(shape);
 
-        return delta.timesInPlace(randoms).plusInPlace(minDouble).toInteger();
+        // floor rather than truncate towards zero so negative ranges are sampled uniformly over [min, max)
+        return delta.timesInPlace(randoms).plusInPlace(minDouble).floorInPlace().toInteger();
     }
 
     @Override

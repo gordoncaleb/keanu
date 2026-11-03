@@ -1,6 +1,5 @@
 package io.improbable.keanu.vertices.tensor.number.operators.unary;
 
-import io.improbable.keanu.annotation.ExportVertexToPythonBindings;
 import io.improbable.keanu.tensor.NumberTensor;
 import io.improbable.keanu.vertices.LoadVertexParam;
 import io.improbable.keanu.vertices.NonProbabilisticVertex;
@@ -16,7 +15,6 @@ public class SignVertex<T extends Number, TENSOR extends NumberTensor<T, TENSOR>
      *
      * @param inputVertex the vertex
      */
-    @ExportVertexToPythonBindings
     public SignVertex(@LoadVertexParam(INPUT_NAME) TensorVertex<T, TENSOR, VERTEX> inputVertex) {
         super(inputVertex, inputVertex.ofType());
     }

@@ -1,6 +1,5 @@
 package io.improbable.keanu.vertices.tensor;
 
-import io.improbable.keanu.annotation.ExportVertexToPythonBindings;
 import io.improbable.keanu.tensor.Tensor;
 import io.improbable.keanu.tensor.TensorShape;
 import io.improbable.keanu.vertices.LoadVertexParam;
@@ -19,7 +18,6 @@ public class ReshapeVertex<T, TENSOR extends Tensor<T, TENSOR>, VERTEX extends T
 
     private static final String SHAPE_NAME = "proposedShape";
 
-    @ExportVertexToPythonBindings
     public ReshapeVertex(@LoadVertexParam(INPUT_NAME) TensorVertex<T, TENSOR, VERTEX> inputVertex,
                          @LoadVertexParam(SHAPE_NAME) long... proposedShape) {
         super(proposedShape, inputVertex, inputVertex.ofType());

@@ -1,7 +1,6 @@
 package io.improbable.keanu.vertices.tensor.number.floating.dbl.probabilistic;
 
 import io.improbable.keanu.KeanuRandom;
-import io.improbable.keanu.annotation.ExportVertexToPythonBindings;
 import io.improbable.keanu.distributions.continuous.ChiSquared;
 import io.improbable.keanu.tensor.Tensor;
 import io.improbable.keanu.tensor.TensorShape;
@@ -59,7 +58,6 @@ public class ChiSquaredVertex extends VertexImpl<DoubleTensor, DoubleVertex> imp
      *
      * @param k the number of degrees of freedom
      */
-    @ExportVertexToPythonBindings
     public ChiSquaredVertex(IntegerVertex k) {
         this(k.getShape(), k);
     }

@@ -1,6 +1,5 @@
 package io.improbable.keanu.vertices.tensor.bool.nonprobabilistic.operators.binary.compare;
 
-import io.improbable.keanu.annotation.ExportVertexToPythonBindings;
 import io.improbable.keanu.tensor.NumberTensor;
 import io.improbable.keanu.tensor.bool.BooleanTensor;
 import io.improbable.keanu.vertices.LoadVertexParam;
@@ -22,7 +21,6 @@ public class NumericalEqualsVertex<N extends Number, TENSOR extends NumberTensor
     private final static String B_NAME = "b";
     private final static String EPSILON_NAME = "epsilon";
 
-    @ExportVertexToPythonBindings
     public NumericalEqualsVertex(@LoadVertexParam(A_NAME) Vertex<TENSOR, ?> a,
                                  @LoadVertexParam(B_NAME) Vertex<TENSOR, ?> b,
                                  @LoadVertexParam(EPSILON_NAME) N epsilon) {

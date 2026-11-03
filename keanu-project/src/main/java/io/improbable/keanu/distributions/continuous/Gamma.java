@@ -19,7 +19,6 @@ import static java.lang.Math.sqrt;
 
 public class Gamma implements ContinuousDistribution {
 
-    private static final double M_E = 0.577215664901532860606512090082;
     private final DoubleTensor theta;
     private final DoubleTensor k;
 
@@ -61,7 +60,7 @@ public class Gamma implements ContinuousDistribution {
         final double Q = k + 1. / A;
         final double T = 4.5;
         final double D = 1. + log(T);
-        final double C = 1. + k / M_E;
+        final double C = 1. + k / Math.E;
 
         if (k < 1.) {
             return sampleWhileKLessThanOne(C, k, theta, random);

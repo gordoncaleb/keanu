@@ -1,8 +1,8 @@
 package io.improbable.keanu.vertices.tensor.number.floating.dbl.probabilistic;
 
 import io.improbable.keanu.KeanuRandom;
-import io.improbable.keanu.annotation.ExportVertexToPythonBindings;
 import io.improbable.keanu.distributions.continuous.Triangular;
+import io.improbable.keanu.distributions.hyperparam.Diffs;
 import io.improbable.keanu.tensor.dbl.DoubleTensor;
 import io.improbable.keanu.vertices.LoadShape;
 import io.improbable.keanu.vertices.LoadVertexParam;
@@ -17,9 +17,14 @@ import io.improbable.keanu.vertices.tensor.number.floating.dbl.DoublePlaceholder
 import io.improbable.keanu.vertices.tensor.number.floating.dbl.DoubleVertex;
 import io.improbable.keanu.vertices.tensor.number.floating.dbl.nonprobabilistic.ConstantDoubleVertex;
 
+import java.util.HashMap;
 import java.util.Map;
 import java.util.Set;
 
+import static io.improbable.keanu.distributions.hyperparam.Diffs.A;
+import static io.improbable.keanu.distributions.hyperparam.Diffs.B;
+import static io.improbable.keanu.distributions.hyperparam.Diffs.C;
+import static io.improbable.keanu.distributions.hyperparam.Diffs.X;
 import static io.improbable.keanu.tensor.TensorShapeValidation.checkHasOneNonLengthOneShapeOrAllLengthOne;
 import static io.improbable.keanu.tensor.TensorShapeValidation.checkTensorsMatchNonLengthOneShapeOrAreLengthOne;
 import static io.improbable.keanu.vertices.tensor.number.floating.dbl.DoubleVertexWrapper.wrapIfNeeded;
@@ -87,7 +92,6 @@ public class TriangularVertex extends VertexImpl<DoubleTensor, DoubleVertex> imp
      * @param xMax the xMax of the Triangular with either the same shape as specified for this vertex or a scalar
      * @param c    the c of the Triangular with either the same shape as specified for this vertex or a scalar
      */
-    @ExportVertexToPythonBindings
     public TriangularVertex(Vertex<DoubleTensor, ?> xMin, Vertex<DoubleTensor, ?> xMax, Vertex<DoubleTensor, ?> c) {
         this(checkHasOneNonLengthOneShapeOrAllLengthOne(xMin.getShape(), xMax.getShape(), c.getShape()), xMin, xMax, c);
     }
@@ -159,7 +163,27 @@ public class TriangularVertex extends VertexImpl<DoubleTensor, DoubleVertex> imp
 
     @Override
     public Map<Vertex, DoubleTensor> dLogProb(DoubleTensor value, Set<? extends Vertex> withRespectTo) {
-        throw new UnsupportedOperationException();
+        Diffs dlnP = Triangular.withParameters(xMin.getValue(), xMax.getValue(), c.getValue()).dLogProb(value);
+
+        Map<Vertex, DoubleTensor> dLogProbWrtParameters = new HashMap<>();
+
+        if (withRespectTo.contains(xMin)) {
+            dLogProbWrtParameters.put(xMin, dlnP.get(A).getValue());
+        }
+
+        if (withRespectTo.contains(xMax)) {
+            dLogProbWrtParameters.put(xMax, dlnP.get(B).getValue());
+        }
+
+        if (withRespectTo.contains(c)) {
+            dLogProbWrtParameters.put(c, dlnP.get(C).getValue());
+        }
+
+        if (withRespectTo.contains(this)) {
+            dLogProbWrtParameters.put(this, dlnP.get(X).getValue());
+        }
+
+        return dLogProbWrtParameters;
     }
 
     @Override

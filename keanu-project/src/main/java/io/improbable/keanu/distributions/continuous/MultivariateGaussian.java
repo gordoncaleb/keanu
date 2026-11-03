@@ -205,7 +205,9 @@ public class MultivariateGaussian implements ContinuousDistribution {
     }
 
     public static DoubleVertex logProbGraph(DoublePlaceholderVertex x, DoublePlaceholderVertex mu, DoublePlaceholderVertex covariance) {
-        final double kLog2Pi = mu.getShape()[0] * LOG_2_PI;
+        final long[] xShape = x.getShape();
+        // N is the event dimension, which is the last dimension (any leading dimensions are batch dimensions)
+        final double kLog2Pi = xShape[xShape.length - 1] * LOG_2_PI;
         final DoubleVertex logCovDet = covariance.matrixDeterminant().log();
         final DoubleVertex xMinusMu = x.minus(mu);
         final DoubleVertex covInv = covariance.matrixInverse();

@@ -1,7 +1,6 @@
 package io.improbable.keanu.vertices.tensor.number.floating.dbl.probabilistic;
 
 import io.improbable.keanu.KeanuRandom;
-import io.improbable.keanu.annotation.ExportVertexToPythonBindings;
 import io.improbable.keanu.distributions.continuous.Exponential;
 import io.improbable.keanu.distributions.hyperparam.Diffs;
 import io.improbable.keanu.tensor.TensorShape;
@@ -56,7 +55,6 @@ public class ExponentialVertex extends VertexImpl<DoubleTensor, DoubleVertex> im
      *
      * @param rate the rate of the Exponential with either the same shape as specified for this vertex or scalar
      */
-    @ExportVertexToPythonBindings
     public ExponentialVertex(Vertex<DoubleTensor, ?> rate) {
         this(rate.getShape(), rate);
     }

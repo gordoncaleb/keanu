@@ -4,7 +4,6 @@ import io.improbable.keanu.tensor.bool.BooleanTensor;
 import io.improbable.keanu.tensor.dbl.DoubleTensor;
 import io.improbable.keanu.tensor.intgr.IntegerTensor;
 import io.improbable.keanu.tensor.intgr.JVMIntegerTensorFactory;
-import io.improbable.keanu.tensor.intgr.Nd4jIntegerTensorFactory;
 import io.improbable.keanu.tensor.lng.JVMLongTensorFactory;
 import io.improbable.keanu.tensor.lng.LongTensor;
 import junit.framework.TestCase;
@@ -47,7 +46,6 @@ public class FixedPointTensorTest<NUMBER_TYPE extends Number, FIXED_POINT_TENSOR
         return Arrays.asList(new Object[][]{
             {new JVMLongTensorFactory(), toLong, "JVM LongTensor"},
             {new JVMIntegerTensorFactory(), toInt, "JVM IntegerTensor"},
-            {new Nd4jIntegerTensorFactory(), toInt, "Nd4jIntegerTensor"}
         });
     }
 

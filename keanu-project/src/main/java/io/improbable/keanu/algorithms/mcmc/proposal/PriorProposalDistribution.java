@@ -26,6 +26,16 @@ public class PriorProposalDistribution implements ProposalDistribution {
         for (Variable<?, ?> variable : variables) {
             setFor(variable, random, proposal);
         }
+
+        // Each proposed value is sampled from its prior given the parents' current (pre-proposal) values.
+        // q(x'|x) must be evaluated now: once the proposal is applied, any proposed variables that are parents of
+        // other proposed variables will have changed, and the prior would be evaluated with the wrong parents.
+        double logProbAtToGivenFrom = 0.0;
+        for (Variable variable : proposal.getVariablesWithProposal()) {
+            logProbAtToGivenFrom += ((Probabilistic) variable).logProb(proposal.getProposalTo(variable));
+        }
+        proposal.setRecordedLogProbAtToGivenFrom(logProbAtToGivenFrom);
+
         proposalNotifier.notifyProposalCreated(proposal);
         return proposal;
     }
@@ -33,6 +43,12 @@ public class PriorProposalDistribution implements ProposalDistribution {
     @Override
     public <T> double logProb(Probabilistic<T> variable, T ofValue, T givenValue) {
         return variable.logProb(ofValue);
+    }
+
+    @Override
+    public double logProbAtToGivenFrom(Proposal proposal) {
+        final Double recorded = proposal.getRecordedLogProbAtToGivenFrom();
+        return recorded != null ? recorded : ProposalDistribution.super.logProbAtToGivenFrom(proposal);
     }
 
     private <T> void setFor(Variable<T, ?> variable, KeanuRandom random, Proposal proposal) {

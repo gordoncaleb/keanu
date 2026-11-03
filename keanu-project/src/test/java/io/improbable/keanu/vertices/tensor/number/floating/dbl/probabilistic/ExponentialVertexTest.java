@@ -57,7 +57,7 @@ public class ExponentialVertexTest {
 
     @Test
     public void logProbMatchesKnownLogDensityOfScalar() {
-        ExponentialDistribution distribution = new ExponentialDistribution(1.5);
+        ExponentialDistribution distribution = new ExponentialDistribution(1.0 / 1.5);
         ExponentialVertex tensorExponentialVertex = new ExponentialVertex(1.5);
         double expectedDensity = distribution.logDensity(2.0);
 
@@ -72,7 +72,7 @@ public class ExponentialVertexTest {
         LogProbGraphValueFeeder.feedValue(logProbGraph, rate, rate.getValue());
         LogProbGraphValueFeeder.feedValue(logProbGraph, tensorExponentialVertex, DoubleTensor.scalar(2.0));
 
-        ExponentialDistribution distribution = new ExponentialDistribution(1.5);
+        ExponentialDistribution distribution = new ExponentialDistribution(1.0 / 1.5);
         double expectedDensity = distribution.logDensity(2.0);
 
         LogProbGraphContract.matchesKnownLogDensity(logProbGraph, expectedDensity);
@@ -178,6 +178,16 @@ public class ExponentialVertexTest {
         double bucketSize = 0.05;
 
         ProbabilisticDoubleTensorContract.sampleMethodMatchesLogProbMethod(vertex, from, to, bucketSize, 1e-2, random);
+    }
+
+    @Test
+    public void parameterIsARateNotAMean() {
+        double rate = 2.0;
+        ExponentialVertex vertex = new ExponentialVertex(new long[]{200000}, ConstantVertex.of(rate));
+        DoubleTensor samples = vertex.sample(new KeanuRandom(1));
+
+        assertEquals(1.0 / rate, samples.mean().scalar(), 1e-2);
+        assertEquals(Math.log(rate) - rate * 1.0, Exponential.withParameters(DoubleTensor.scalar(rate)).logProb(DoubleTensor.scalar(1.0)).scalar(), 1e-12);
     }
 
     @Test

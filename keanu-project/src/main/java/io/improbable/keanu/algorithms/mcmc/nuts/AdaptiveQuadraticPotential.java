@@ -55,6 +55,9 @@ public class AdaptiveQuadraticPotential implements Potential {
 
         this.forwardVariance = new VarianceCalculator(meanShapedLike, varianceShapedLike, initialWeight);
         this.backgroundVariance = new VarianceCalculator(zeros(meanShapedLike), zeros(meanShapedLike), 0);
+
+        // reset the adaption window so that a potential can be reused across sampling runs
+        this.nSamples = 0;
     }
 
     private void setVariance(Map<VariableReference, DoubleTensor> variance) {

@@ -1,6 +1,5 @@
 package io.improbable.keanu.vertices.tensor.number.floating.operators.unary;
 
-import io.improbable.keanu.annotation.ExportVertexToPythonBindings;
 import io.improbable.keanu.tensor.FloatingPointTensor;
 import io.improbable.keanu.tensor.dbl.DoubleTensor;
 import io.improbable.keanu.vertices.LoadVertexParam;
@@ -22,7 +21,6 @@ public class SinhVertex<T extends Number, TENSOR extends FloatingPointTensor<T, 
     /**
      * @param inputVertex the vertex
      */
-    @ExportVertexToPythonBindings
     public SinhVertex(@LoadVertexParam(INPUT_NAME) TensorVertex<T, TENSOR, VERTEX> inputVertex) {
         super(inputVertex);
     }

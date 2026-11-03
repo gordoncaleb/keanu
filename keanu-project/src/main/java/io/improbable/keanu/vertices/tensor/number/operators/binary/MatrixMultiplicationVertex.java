@@ -1,6 +1,5 @@
 package io.improbable.keanu.vertices.tensor.number.operators.binary;
 
-import io.improbable.keanu.annotation.ExportVertexToPythonBindings;
 import io.improbable.keanu.tensor.NumberTensor;
 import io.improbable.keanu.vertices.LoadVertexParam;
 import io.improbable.keanu.vertices.NonProbabilisticVertex;
@@ -36,7 +35,6 @@ public class MatrixMultiplicationVertex<T extends Number, TENSOR extends NumberT
      * @param transposeLeft  transpose the left operand before multiply
      * @param transposeRight transpose the right operand before multiply
      */
-    @ExportVertexToPythonBindings
     public MatrixMultiplicationVertex(@LoadVertexParam(LEFT_NAME) TensorVertex<T, TENSOR, VERTEX> left,
                                       @LoadVertexParam(RIGHT_NAME) TensorVertex<T, TENSOR, VERTEX> right,
                                       @LoadVertexParam(TRANSPOSE_LEFT) boolean transposeLeft,

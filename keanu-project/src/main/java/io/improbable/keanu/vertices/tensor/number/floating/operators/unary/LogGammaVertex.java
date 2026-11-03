@@ -1,6 +1,5 @@
 package io.improbable.keanu.vertices.tensor.number.floating.operators.unary;
 
-import io.improbable.keanu.annotation.ExportVertexToPythonBindings;
 import io.improbable.keanu.tensor.FloatingPointTensor;
 import io.improbable.keanu.vertices.LoadVertexParam;
 import io.improbable.keanu.vertices.NonProbabilisticVertex;
@@ -23,7 +22,6 @@ public class LogGammaVertex<T extends Number, TENSOR extends FloatingPointTensor
      *
      * @param inputVertex the vertex
      */
-    @ExportVertexToPythonBindings
     public LogGammaVertex(@LoadVertexParam(INPUT_NAME) TensorVertex<T, TENSOR, VERTEX> inputVertex) {
         super(inputVertex);
     }

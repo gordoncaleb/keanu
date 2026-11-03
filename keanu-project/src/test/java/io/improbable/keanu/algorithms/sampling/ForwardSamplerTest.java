@@ -133,6 +133,8 @@ public class ForwardSamplerTest {
         when(A.getChildren()).thenReturn(Collections.singleton(B));
         when(A.getId()).thenReturn(new VertexId());
         when(A.sample()).thenReturn(DoubleTensor.scalar(1.));
+        // isProbabilistic is final on VertexImpl; modern Mockito mocks final methods so it must be stubbed
+        when(A.isProbabilistic()).thenReturn(true);
         when(A.getConnectedGraph()).thenReturn(new HashSet<>(Arrays.asList(A, B)));
 
         when(B.getId()).thenReturn(new VertexId());

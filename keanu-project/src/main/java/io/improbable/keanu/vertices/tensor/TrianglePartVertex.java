@@ -1,7 +1,6 @@
 package io.improbable.keanu.vertices.tensor;
 
 import com.google.common.base.Preconditions;
-import io.improbable.keanu.annotation.ExportVertexToPythonBindings;
 import io.improbable.keanu.tensor.Tensor;
 import io.improbable.keanu.tensor.TensorShape;
 import io.improbable.keanu.tensor.dbl.DoubleTensor;
@@ -23,7 +22,6 @@ public class TrianglePartVertex<T, TENSOR extends Tensor<T, TENSOR>, VERTEX exte
     private static final String UPPER_PART_NAME = "upperPart";
     private final boolean upperPart;
 
-    @ExportVertexToPythonBindings
     public TrianglePartVertex(@LoadVertexParam(INPUT_NAME) TensorVertex<T, TENSOR, VERTEX> inputVertex,
                               @LoadVertexParam(UPPER_PART_NAME) boolean upperPart) {
         super(trianglePartShape(inputVertex.getShape()), inputVertex, inputVertex.ofType());

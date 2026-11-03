@@ -98,7 +98,7 @@ public class TensorShape {
 
         stride[stride.length - 1] = 1;
 
-        int buffer = 1;
+        long buffer = 1;
         for (int i = stride.length - 2; i >= 0; i--) {
             buffer *= shape[i + 1];
             stride[i] = buffer;
@@ -408,6 +408,9 @@ public class TensorShape {
             if (negativeDimension < 0) {
                 throw new IllegalArgumentException("Cannot reshape " + Arrays.toString(oldShape) + " to " + Arrays.toString(newShapeCopy));
             } else {
+                if (newLength == 0 || oldShapeLength % newLength != 0) {
+                    throw new IllegalArgumentException("Cannot reshape " + Arrays.toString(oldShape) + " to " + Arrays.toString(newShapeCopy));
+                }
                 newShapeCopy[negativeDimension] = oldShapeLength / newLength;
             }
         }

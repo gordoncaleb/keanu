@@ -166,11 +166,18 @@ object DoubleScalarOperations : FloatingPointScalarOperations<Double> {
 
     override fun logAddExp(left: Double, right: Double): Double {
         val max = Math.max(left, right)
+        // when both are the same infinity, max - max is NaN. log(e^-inf + e^-inf) = -inf and log(e^inf + e^inf) = inf
+        if (max.isInfinite()) {
+            return max
+        }
         return max + FastMath.log(FastMath.exp(left - max) + FastMath.exp(right - max))
     }
 
     override fun logAddExp2(left: Double, right: Double): Double {
-        val max = Math.max(left, right);
+        val max = Math.max(left, right)
+        if (max.isInfinite()) {
+            return max
+        }
         return max + FastMath.log(FastMath.pow(2.0, left - max) + FastMath.pow(2.0, right - max)) / LOG2
     }
 
@@ -246,8 +253,11 @@ object DoubleScalarOperations : FloatingPointScalarOperations<Double> {
         return if (left <= right) 1.0 else 0.0
     }
 
+    /**
+     * IEEE 754 equality, as used by every other element-wise comparison: NaN != NaN and 0.0 == -0.0
+     */
     override fun equalTo(left: Double, right: Double): Boolean {
-        return left.equals(right)
+        return left == right
     }
 
     override fun equalToWithinEpsilon(left: Double, right: Double, epsilon: Double): Boolean {

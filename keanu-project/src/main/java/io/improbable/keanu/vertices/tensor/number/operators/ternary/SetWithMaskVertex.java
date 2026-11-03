@@ -1,6 +1,5 @@
 package io.improbable.keanu.vertices.tensor.number.operators.ternary;
 
-import io.improbable.keanu.annotation.ExportVertexToPythonBindings;
 import io.improbable.keanu.tensor.NumberTensor;
 import io.improbable.keanu.vertices.LoadVertexParam;
 import io.improbable.keanu.vertices.NonProbabilisticVertex;
@@ -26,7 +25,6 @@ public class SetWithMaskVertex<T extends Number, TENSOR extends NumberTensor<T, 
 
     private final Class<?> type;
 
-    @ExportVertexToPythonBindings
     public SetWithMaskVertex(@LoadVertexParam(OPERAND_NAME) TensorVertex<T, TENSOR, VERTEX> operand,
                              @LoadVertexParam(MASK_NAME) TensorVertex<T, TENSOR, VERTEX> mask,
                              @LoadVertexParam(SET_VALUE_NAME) TensorVertex<T, TENSOR, VERTEX> setValue) {

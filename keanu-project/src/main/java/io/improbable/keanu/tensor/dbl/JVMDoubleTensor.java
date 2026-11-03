@@ -17,19 +17,15 @@ import org.apache.commons.lang3.ArrayUtils;
 import org.apache.commons.math3.linear.SingularMatrixException;
 import org.apache.commons.math3.stat.descriptive.SummaryStatistics;
 
-import java.nio.IntBuffer;
 import java.util.Arrays;
 
 import static io.improbable.keanu.tensor.TensorShape.getBroadcastedFlatIndex;
 import static io.improbable.keanu.tensor.TensorShape.getRowFirstStride;
+import static io.improbable.keanu.tensor.dbl.KeanuLapack.dgemm;
 import static io.improbable.keanu.tensor.dbl.KeanuLapack.dgetrf;
 import static io.improbable.keanu.tensor.dbl.KeanuLapack.dgetri;
 import static io.improbable.keanu.tensor.dbl.KeanuLapack.dpotrf;
 import static io.improbable.keanu.tensor.dbl.KeanuLapack.dpotri;
-import static org.bytedeco.openblas.global.openblas.CblasNoTrans;
-import static org.bytedeco.openblas.global.openblas.CblasRowMajor;
-import static org.bytedeco.openblas.global.openblas.CblasTrans;
-import static org.bytedeco.openblas.global.openblas.cblas_dgemm;
 
 public class JVMDoubleTensor extends JVMFloatingPointTensor<Double, DoubleTensor, DoubleBuffer.PrimitiveDoubleWrapper> implements DoubleTensor {
 
@@ -151,9 +147,8 @@ public class JVMDoubleTensor extends JVMFloatingPointTensor<Double, DoubleTensor
         for (int batch = 0; batch < batchLength; batch++) {
 
             final int position = batch * batchSize;
-            final java.nio.DoubleBuffer batchBuffer = java.nio.DoubleBuffer.wrap(newBuffer, position, batchSize);
 
-            final int factorizationResult = dpotrf(KeanuLapack.Triangular.LOWER, N, batchBuffer);
+            final int factorizationResult = dpotrf(KeanuLapack.Triangular.LOWER, N, newBuffer, position);
 
             if (factorizationResult != 0) {
                 throw new IllegalStateException(
@@ -193,9 +188,7 @@ public class JVMDoubleTensor extends JVMFloatingPointTensor<Double, DoubleTensor
         final double[] newBuffer = buffer.copy().asDoubleArray();
         for (int batch = 0; batch < batchLength; batch++) {
 
-            java.nio.DoubleBuffer batchBuffer = java.nio.DoubleBuffer.wrap(newBuffer, batch * batchSize, batchSize);
-
-            int inverseResult = dpotri(KeanuLapack.Triangular.LOWER, N, batchBuffer);
+            int inverseResult = dpotri(KeanuLapack.Triangular.LOWER, N, newBuffer, batch * batchSize);
 
             if (inverseResult != 0) {
                 throw new IllegalStateException("Cholesky inverse failed");
@@ -220,31 +213,29 @@ public class JVMDoubleTensor extends JVMFloatingPointTensor<Double, DoubleTensor
         final double[] results = new double[batchLength];
         for (int batch = 0; batch < batchLength; batch++) {
 
-            final IntBuffer ipiv = IntBuffer.allocate(batchSize);
+            final int[] ipiv = new int[Math.min(M, N)];
+            final int position = batch * batchSize;
 
-            final java.nio.DoubleBuffer batchBuffer = java.nio.DoubleBuffer.wrap(newBuffer, batch * batchSize, batchSize);
-
-            final int factorizationResult = dgetrf(M, N, batchBuffer, ipiv);
+            final int factorizationResult = dgetrf(M, N, newBuffer, position, ipiv);
 
             if (factorizationResult < 0) {
                 throw new IllegalStateException("Matrix factorization failed");
             } else if (factorizationResult > 0) {
-                return new JVMDoubleTensor(0.0);
+                results[batch] = 0.0;
+                continue;
             }
 
             //credit: https://stackoverflow.com/questions/47315471/compute-determinant-from-lu-decomposition-in-lapack
-            int j;
             double detp = 1.;
-            for (j = 0; j < N; j++) {
-                if (j + 1 != ipiv.get(j)) {
+            for (int j = 0; j < ipiv.length; j++) {
+                if (j + 1 != ipiv[j]) {
                     detp = -detp;
                 }
             }
 
-            int bufferPosition = batchBuffer.position();
             double detU = 1.0;
             for (int i = 0; i < M; i++) {
-                detU *= batchBuffer.get(bufferPosition + i * M + i);
+                detU *= newBuffer[position + i * N + i];
             }
 
             results[batch] = detU * detp;
@@ -265,11 +256,10 @@ public class JVMDoubleTensor extends JVMFloatingPointTensor<Double, DoubleTensor
         final double[] newBuffer = buffer.copy().asDoubleArray();
         for (int batch = 0; batch < batchLength; batch++) {
 
-            final IntBuffer ipiv = IntBuffer.allocate(batchSize);
+            final int[] ipiv = new int[Math.min(m, n)];
+            final int position = batch * batchSize;
 
-            java.nio.DoubleBuffer batchBuffer = java.nio.DoubleBuffer.wrap(newBuffer, batch * batchSize, batchSize);
-
-            final int factorizationResult = dgetrf(m, n, batchBuffer, ipiv);
+            final int factorizationResult = dgetrf(m, n, newBuffer, position, ipiv);
 
             if (factorizationResult < 0) {
                 throw new IllegalStateException("Matrix factorization failed");
@@ -277,7 +267,7 @@ public class JVMDoubleTensor extends JVMFloatingPointTensor<Double, DoubleTensor
                 throw new SingularMatrixException();
             }
 
-            int inverseResult = dgetri(m, batchBuffer, ipiv);
+            int inverseResult = dgetri(m, newBuffer, position, ipiv);
 
             if (inverseResult != 0) {
                 throw new IllegalStateException("Matrix inverse failed");
@@ -327,8 +317,7 @@ public class JVMDoubleTensor extends JVMFloatingPointTensor<Double, DoubleTensor
         final double[] A = buffer.asDoubleArray();
         final double[] B = getAsJVMTensor(that).getBuffer().asDoubleArray();
 
-        cblas_dgemm(CblasRowMajor, transposeLeft ? CblasTrans : CblasNoTrans, transposeRight ? CblasTrans : CblasNoTrans,
-            M, N, K, 1, A, lda, B, ldb, 0, C, N);
+        dgemm(transposeLeft, transposeRight, M, N, K, A, 0, lda, B, 0, ldb, C, 0, N);
 
         return new JVMDoubleTensor(C, resultShape);
     }
@@ -368,12 +357,7 @@ public class JVMDoubleTensor extends JVMFloatingPointTensor<Double, DoubleTensor
             final int k = Ints.checkedCast(getBroadcastedFlatIndex(resultPosition, batchResultStride, batchShapeLeft, batchStrideLeft));
             final int j = Ints.checkedCast(getBroadcastedFlatIndex(resultPosition, batchResultStride, batchShapeRight, batchStrideRight));
 
-            final java.nio.DoubleBuffer batchRightInputBuffer = java.nio.DoubleBuffer.wrap(leftInput, k, batchSizeA);
-            final java.nio.DoubleBuffer batchLeftInputBuffer = java.nio.DoubleBuffer.wrap(rightInput, j, batchSizeB);
-            final java.nio.DoubleBuffer batchOutputBuffer = java.nio.DoubleBuffer.wrap(outputBuffer, resultPosition, resultBatchSize);
-
-            cblas_dgemm(CblasRowMajor, transposeLeft ? CblasTrans : CblasNoTrans, transposeRight ? CblasTrans : CblasNoTrans,
-                M, N, K, 1, batchRightInputBuffer, lda, batchLeftInputBuffer, ldb, 0, batchOutputBuffer, N);
+            dgemm(transposeLeft, transposeRight, M, N, K, leftInput, k, lda, rightInput, j, ldb, outputBuffer, resultPosition, N);
         }
 
         return new JVMDoubleTensor(outputBuffer, resultShape, resultStride);

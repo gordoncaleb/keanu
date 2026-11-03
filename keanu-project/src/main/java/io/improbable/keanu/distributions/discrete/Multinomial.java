@@ -125,10 +125,14 @@ public class Multinomial implements DiscreteDistribution {
             validateX(x, n, p);
         }
 
-        final DoubleTensor pNormalized = p.div(p.sum(-1).expandDims(-1));
-        final DoubleTensor dLogProbWrtP = x.toDouble().divInPlace(pNormalized);
+        // logProb uses p normalised by S = sum(p), so
+        // d/dp_j sum_k x_k * log(p_k / S) = x_j / p_j - sum_k(x_k) / S
+        final DoubleTensor xDouble = x.toDouble();
+        final DoubleTensor pSum = p.sum(-1).expandDims(-1);
+        final DoubleTensor xSum = xDouble.sum(-1).expandDims(-1);
 
-        return dLogProbWrtP;
+        final DoubleTensor xDivP = xDouble.div(p).setWithMaskInPlace(xDouble.elementwiseEquals(0.0).toDoubleMask(), 0.0);
+        return xDivP.minusInPlace(xSum.divInPlace(pSum));
     }
 
     private static void validateProbabilities(DoubleTensor p) {

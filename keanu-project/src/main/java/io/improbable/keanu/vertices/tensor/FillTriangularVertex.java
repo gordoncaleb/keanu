@@ -1,7 +1,6 @@
 package io.improbable.keanu.vertices.tensor;
 
 import com.google.common.base.Preconditions;
-import io.improbable.keanu.annotation.ExportVertexToPythonBindings;
 import io.improbable.keanu.tensor.Tensor;
 import io.improbable.keanu.tensor.TensorShape;
 import io.improbable.keanu.tensor.dbl.DoubleTensor;
@@ -26,7 +25,6 @@ public class FillTriangularVertex<T, TENSOR extends Tensor<T, TENSOR>, VERTEX ex
     private final boolean fillUpper;
     private final boolean fillLower;
 
-    @ExportVertexToPythonBindings
     public FillTriangularVertex(@LoadVertexParam(INPUT_NAME) TensorVertex<T, TENSOR, VERTEX> inputVertex,
                                 @LoadVertexParam(FILL_UPPER_NAME) boolean fillUpper,
                                 @LoadVertexParam(FILL_LOWER_NAME) boolean fillLower) {

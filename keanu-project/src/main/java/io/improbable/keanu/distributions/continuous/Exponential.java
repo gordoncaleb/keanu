@@ -22,27 +22,31 @@ public class Exponential implements ContinuousDistribution {
         this.lambda = lambda;
     }
 
+    /**
+     * Samples using the inverse CDF: x = -ln(U) / rate
+     */
     @Override
     public DoubleTensor sample(long[] shape, KeanuRandom random) {
-        return random.nextDouble(shape).logInPlace().timesInPlace(lambda).unaryMinusInPlace();
+        return random.nextDouble(shape).logInPlace().divInPlace(lambda).unaryMinusInPlace();
     }
 
+    /**
+     * logPdf = ln(rate) - rate * x for x &gt;= 0, -infinity otherwise
+     */
     @Override
     public DoubleTensor logProb(DoubleTensor x) {
-        final DoubleTensor negXMinusADivB = x.unaryMinus().divInPlace(lambda);
-        final DoubleTensor negXMinusADivBMinusLogB = negXMinusADivB.minusInPlace(lambda.log());
-        return negXMinusADivBMinusLogB.setWithMask(x.lessThanMask(DoubleTensor.scalar(0.0)), Double.NEGATIVE_INFINITY);
+        final DoubleTensor logProb = lambda.log().minusInPlace(x.times(lambda));
+        return logProb.setWithMask(x.lessThanMask(DoubleTensor.scalar(0.0)), Double.NEGATIVE_INFINITY);
     }
 
     public static DoubleVertex logProbOutput(DoublePlaceholderVertex x, DoublePlaceholderVertex lambda) {
-        final DoubleVertex negXMinusADivB = x.unaryMinus().div(lambda);
-        final DoubleVertex negXMinusADivBMinusLogB = negXMinusADivB.minus(lambda.log());
-        return negXMinusADivBMinusLogB.setWithMask(x.lessThanMask(0.), Double.NEGATIVE_INFINITY);
+        final DoubleVertex logProb = lambda.log().minus(x.times(lambda));
+        return logProb.setWithMask(x.lessThanMask(0.), Double.NEGATIVE_INFINITY);
     }
 
     public Diffs dLogProb(DoubleTensor x) {
-        final DoubleTensor dLogPdx = DoubleTensor.zeros(x.getShape()).minusInPlace(lambda).reciprocalInPlace();
-        final DoubleTensor dLogPdlambda = x.minus(lambda).divInPlace(lambda.pow(2));
+        final DoubleTensor dLogPdx = DoubleTensor.zeros(x.getShape()).minusInPlace(lambda);
+        final DoubleTensor dLogPdlambda = lambda.reciprocal().minusInPlace(x);
         return new Diffs()
             .put(LAMBDA, dLogPdlambda)
             .put(X, dLogPdx);

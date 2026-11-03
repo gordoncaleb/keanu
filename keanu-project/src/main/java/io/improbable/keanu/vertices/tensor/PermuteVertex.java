@@ -1,6 +1,5 @@
 package io.improbable.keanu.vertices.tensor;
 
-import io.improbable.keanu.annotation.ExportVertexToPythonBindings;
 import io.improbable.keanu.tensor.Tensor;
 import io.improbable.keanu.tensor.dbl.DoubleTensor;
 import io.improbable.keanu.vertices.LoadVertexParam;
@@ -25,7 +24,6 @@ public class PermuteVertex<T, TENSOR extends Tensor<T, TENSOR>, VERTEX extends T
     private final int[] rearrange;
     private final int[] invertedRearrange;
 
-    @ExportVertexToPythonBindings
     public PermuteVertex(@LoadVertexParam(INPUT_NAME) TensorVertex<T, TENSOR, VERTEX> inputVertex,
                          @LoadVertexParam(REARRANGE) int... rearrange) {
         super(getPermutedIndices(inputVertex.getShape(), rearrange), inputVertex, inputVertex.ofType());

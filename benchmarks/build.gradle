@@ -1,26 +1,22 @@
 plugins {
-    id 'com.github.johnrengelman.shadow' version '4.0.3' apply false
+    id 'com.gradleup.shadow' version '9.2.2'
 }
 
-apply plugin: 'com.github.johnrengelman.shadow'
-
 dependencies {
-    compile project(":keanu-project")
+    implementation project(":keanu-project")
 
-    compile 'org.openjdk.jmh:jmh-core:1.21'
-    compile 'org.openjdk.jmh:jmh-generator-annprocess:1.21'
-    
-    testCompile 'junit:junit:4.12'
+    implementation 'org.openjdk.jmh:jmh-core:1.37'
+    annotationProcessor 'org.openjdk.jmh:jmh-generator-annprocess:1.37'
 
+    testImplementation 'junit:junit:4.13.2'
 }
 
 shadowJar {
-    archiveName = 'benchmarks.jar'
-    classifier = 'benchmarks'
+    archiveFileName = 'benchmarks.jar'
     manifest.attributes('Main-Class': 'org.openjdk.jmh.Main')
 }
 
-task runAllBenchmarks(type: Exec) {
+tasks.register('runAllBenchmarks', Exec) {
     dependsOn(shadowJar)
     commandLine 'java',
         '-jar', 'build/libs/benchmarks.jar',

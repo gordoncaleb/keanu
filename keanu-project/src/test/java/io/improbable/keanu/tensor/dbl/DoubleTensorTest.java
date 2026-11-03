@@ -10,7 +10,6 @@ import io.improbable.keanu.tensor.TensorTestHelper;
 import io.improbable.keanu.tensor.bool.BooleanTensor;
 import io.improbable.keanu.tensor.intgr.IntegerTensor;
 import io.improbable.keanu.tensor.jvm.Slicer;
-import io.improbable.keanu.tensor.ndj4.Nd4jTensor;
 import io.improbable.keanu.tensor.validate.TensorValidator;
 import io.improbable.keanu.tensor.validate.policy.TensorValidationPolicy;
 import org.apache.commons.math3.analysis.function.Sigmoid;
@@ -50,7 +49,6 @@ public class DoubleTensorTest {
     @Parameterized.Parameters(name = "{index}: Test with {1}")
     public static Iterable<Object[]> data() {
         return Arrays.asList(new Object[][]{
-            {new Nd4jDoubleTensorFactory(), "ND4J DoubleTensor"},
             {new JVMDoubleTensorFactory(), "JVM DoubleTensor"},
         });
     }
@@ -2335,11 +2333,6 @@ public class DoubleTensorTest {
     @Test
     public void canUseNegativeIndicesAndNegativeStep() {
         DoubleTensor a = DoubleTensor.arange(30).reshape(3, 10);
-
-        if (a instanceof Nd4jTensor) {
-            //TODO: ND4j does not support negative slice steps
-            return;
-        }
 
         DoubleTensor b = a.slice(Slicer.builder()
             .ellipsis()

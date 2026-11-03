@@ -4,18 +4,6 @@ spotless {
 
         indentWithSpaces(4)
         removeUnusedImports()
-        importOrder '', 'javax', 'java', 'static '
-    }
-
-    format 'python', {
-        target project.fileTree(project.rootDir) {
-            include '**/*.py'
-            exclude 'docs/src/test/python/*.py'
-            exclude 'keanu-python/keanu/vertex/generated.py'
-            exclude 'keanu-python/keanu/vertex/__init__.py'
-        }
-
-        replaceRegex 'loggers may not use root context', /logging.(debug|info|warning|error|critical|exception|log)/, 'logging.getLogger("keanu").$1'
-        replaceRegex 'all tests must be type annotated', /def test_([a-z_]+)\(\):/, 'def test_$1() -> None:'
+        importOrder '', 'javax', 'java', '\\#'
     }
 }

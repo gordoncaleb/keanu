@@ -109,7 +109,7 @@ public class ReduceVertex extends VertexImpl<DoubleTensor, DoubleVertex> impleme
             return forwardModeAutoDiffLambda.get();
         }
 
-        throw new UnsupportedOperationException();
+        throw new UnsupportedOperationException("This reduce vertex was created without auto diff lambdas so it cannot be differentiated. Provide them when constructing it.");
     }
 
     @Override

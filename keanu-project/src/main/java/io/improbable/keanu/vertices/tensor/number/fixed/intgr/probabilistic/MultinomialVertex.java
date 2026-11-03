@@ -2,7 +2,6 @@ package io.improbable.keanu.vertices.tensor.number.fixed.intgr.probabilistic;
 
 import com.google.common.base.Preconditions;
 import io.improbable.keanu.KeanuRandom;
-import io.improbable.keanu.annotation.ExportVertexToPythonBindings;
 import io.improbable.keanu.distributions.discrete.Multinomial;
 import io.improbable.keanu.tensor.TensorShape;
 import io.improbable.keanu.tensor.dbl.DoubleTensor;
@@ -97,7 +96,6 @@ public class MultinomialVertex extends VertexImpl<IntegerTensor, IntegerVertex> 
         return TensorShape.concat(TensorShape.getBroadcastResultShape(nShape, pBatchShape), new long[]{k});
     }
 
-    @ExportVertexToPythonBindings
     public MultinomialVertex(Vertex<IntegerTensor, ?> n, Vertex<DoubleTensor, ?> p) {
         this(calculateExpectedShape(n.getShape(), p.getShape()), n, p);
     }

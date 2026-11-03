@@ -1,6 +1,5 @@
 package io.improbable.keanu.vertices.tensor.number.floating.operators.unary;
 
-import io.improbable.keanu.annotation.ExportVertexToPythonBindings;
 import io.improbable.keanu.tensor.FloatingPointTensor;
 import io.improbable.keanu.tensor.Tensor;
 import io.improbable.keanu.tensor.TensorShape;
@@ -31,7 +30,6 @@ import java.util.Map;
 public class MatrixDeterminantVertex<T extends Number, TENSOR extends FloatingPointTensor<T, TENSOR>, VERTEX extends NumberTensorVertex<T, TENSOR, VERTEX>>
     extends UnaryTensorOpVertex<T, TENSOR, VERTEX> implements NonProbabilisticVertex<TENSOR, VERTEX>, Differentiable {
 
-    @ExportVertexToPythonBindings
     public MatrixDeterminantVertex(@LoadVertexParam(INPUT_NAME) TensorVertex<T, TENSOR, VERTEX> vertex) {
         super(Tensor.SCALAR_SHAPE, vertex, vertex.ofType());
         TensorShapeValidation.checkShapeIsSquareMatrix(vertex.getShape());

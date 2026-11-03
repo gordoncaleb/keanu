@@ -43,29 +43,58 @@ public class Slicer {
         private Long step;
 
         Slice(Number start, Number stop, Number step, boolean dropDimension) {
-            this.start = start != null ? start.longValue() : DEFAULT_START;
-            this.stop = stop != null ? stop.longValue() : null;
             this.step = step != null ? step.longValue() : DEFAULT_STEP;
             Preconditions.checkArgument(this.step != 0, "Step cannot be 0");
+            // As in numpy, an omitted start is the first element in the direction of the step. For a negative
+            // step that is the last element, which is index -1.
+            this.start = start != null ? start.longValue() : (this.step > 0 ? DEFAULT_START : -1L);
+            this.stop = stop != null ? stop.longValue() : null;
             this.upperBoundStop = stop == null;
             this.dropDimension = dropDimension;
         }
 
+        /**
+         * @param dimLength length of the dimension being sliced
+         * @return the exclusive stop index. For a negative step this can be -1, meaning "stop after index 0".
+         */
         public Long getStop(long dimLength) {
             if (upperBoundStop) {
-                return dimLength;
-            } else if (stop < 0) {
-                return Math.max(0, dimLength + stop);
+                return step > 0 ? dimLength : -1L;
+            }
+            return clampIndex(stop < 0 ? dimLength + stop : stop, dimLength);
+        }
+
+        /**
+         * @param dimLength length of the dimension being sliced
+         * @return the inclusive start index
+         */
+        public Long getStart(long dimLength) {
+            return clampIndex(start < 0 ? dimLength + start : start, dimLength);
+        }
+
+        /**
+         * Same clamping as numpy: [0, dimLength] for a positive step and [-1, dimLength - 1] for a negative step.
+         */
+        private long clampIndex(long index, long dimLength) {
+            if (step > 0) {
+                return Math.max(0, Math.min(dimLength, index));
             } else {
-                return Math.min(dimLength, stop);
+                return Math.max(-1, Math.min(dimLength - 1, index));
             }
         }
 
-        public Long getStart(long dimLength) {
-            if (start < 0) {
-                return Math.max(0, dimLength + start);
+        /**
+         * @param dimLength the length of the dimension being sliced
+         * @return the number of elements this slice selects, i.e. ceil((stop - start) / step) or 0
+         */
+        public long getLength(long dimLength) {
+            final long first = getStart(dimLength);
+            final long end = getStop(dimLength);
+
+            if (step > 0) {
+                return end > first ? (end - first + step - 1) / step : 0;
             } else {
-                return start;
+                return first > end ? (first - end - step - 1) / -step : 0;
             }
         }
     }
@@ -150,17 +179,7 @@ public class Slicer {
      * @return the length of the dimension after the slice is applied
      */
     private long getSliceLength(long dimLength, Slice slice) {
-
-        final long stop = slice.getStop(dimLength);
-        final long start = slice.getStart(dimLength);
-        final long excludeStopOffset = (long) Math.signum(slice.getStep());
-        final long stepCount = (stop - excludeStopOffset - start) / slice.getStep();
-
-        if (stepCount >= 0) {
-            return 1 + stepCount;
-        } else {
-            return 0;
-        }
+        return slice.getLength(dimLength);
     }
 
     /**
@@ -285,10 +304,11 @@ public class Slicer {
             } else {
                 String[] byColon = dimSlice.split(":", 3);
 
+                // an omitted start is left as null so that it can default according to the step's direction
                 if (byColon.length == 3) {
-                    slicerBuilder.slice(parseStart(byColon[0]), parseStop(byColon[1]), parseStep(byColon[2]));
+                    slicerBuilder.slice(getOrDefault(byColon[0], null), parseStop(byColon[1]), parseStep(byColon[2]));
                 } else if (byColon.length == 2) {
-                    slicerBuilder.slice(parseStart(byColon[0]), parseStop(byColon[1]));
+                    slicerBuilder.slice(getOrDefault(byColon[0], null), parseStop(byColon[1]));
                 } else if (byColon.length == 1) {
                     slicerBuilder.slice(parseStart(byColon[0]));
                 } else if (byColon.length == 0) {

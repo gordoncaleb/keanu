@@ -1,6 +1,6 @@
 dependencies {
-    compile project(":keanu-project")
+    implementation project(":keanu-project")
 
     //testing
-    testCompile 'junit:junit:4.12'
+    testImplementation 'junit:junit:4.13.2'
 }

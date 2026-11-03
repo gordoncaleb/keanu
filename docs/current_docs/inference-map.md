@@ -32,7 +32,6 @@ through an optimization method called Maximum A Posteriori (MAP).
 Another technique for obtaining posterior estimates is through sampling. Read more about that on [posterior-sampling]({{ site.baseurl }}/docs/inference-posterior-sampling).
 Sampling should be used when optimization techniques are not appropriate, e.g: you have discrete variables in your model.
 
-
 ## Maximum A Posteriori
 
 We are going to learn how to calculate posterior estimates of your model. Or, using Keanu terminology, enabling you 
@@ -52,7 +51,6 @@ you have to focus on is describing your model.
 Well it depends on whether your latent variables (the ones we're going to find the most probable value of) are continuous
 or discrete. Keanu does not support gradient optimisation on discrete latents. Still not sure? Don't worry, Keanu can analyse
 your model and determine whether or not to use gradients for you. The next section will teach you how to use this.
-
 
 ### Optimizer
 
@@ -96,16 +94,6 @@ double calculatedTemperature = temperature.getValue().scalar();
 * `relativeThreshold` (default: 1e-8) - If the delta in the log prob is less than the log prob times relativeThreshold, the Optimizer has converged
 * `absoluteThreshold` (default: 1e-8) - If the delta in the log prob is less than absoluteThreshold, the Optimizer has converged
 
-#### Python
-
-```python
-optimizer = GradientOptimizer(bayes_net, algorithm=ConjugateGradient(max_evaluations=5000,
-                                                                     relative_threshold=1e-8,
-                                                                     absolute_threshold=1e-8))
-optimizer.max_a_posteriori()
-calculated_temperature = model.temperature.get_value()
-```
-
 ### Non-Gradient Optimizer
 
 The Non-Gradient Optimizer implements the [BOBYQA algorithm](http://www.damtp.cam.ac.uk/user/na/NA_papers/NA2009_06.pdf), which stands for Bound Optimization BY Quadratic Approximation. 
@@ -140,14 +128,3 @@ double calculatedTemperature = temperature.getValue().scalar();
 * `optimizerBounds` (default: no bounds) - a bounding box of 'allowed values' for a specific vertex 
 * `initialTrustRegionRadius` (default: 10) - initial trust region radius (refer to BOBYQA paper for detail)
 * `stoppingTrustRegionRadius` (default: 1e-8) - stopping trust region radius (refer to BOBYQA paper for detail) 
-
-#### Python
-
-```python
-optimizer = NonGradientOptimizer(bayes_net, algorithm=BOBYQA(max_evaluations=5000,
-                                                             bounds_range=100000.,
-                                                             initial_trust_region_radius=5.,
-                                                             stopping_trust_region_radius=2e-8))
-optimizer.max_a_posteriori()
-calculated_temperature = model.temperature.get_value()
-```

@@ -1,6 +1,5 @@
 package io.improbable.keanu.vertices.tensor.number.operators.unary;
 
-import io.improbable.keanu.annotation.ExportVertexToPythonBindings;
 import io.improbable.keanu.tensor.NumberTensor;
 import io.improbable.keanu.tensor.dbl.DoubleTensor;
 import io.improbable.keanu.vertices.LoadVertexParam;
@@ -25,7 +24,6 @@ public class AbsVertex<T extends Number, TENSOR extends NumberTensor<T, TENSOR>,
      *
      * @param inputVertex the vertex
      */
-    @ExportVertexToPythonBindings
     public AbsVertex(@LoadVertexParam(INPUT_NAME) TensorVertex<T, TENSOR, VERTEX> inputVertex) {
         super(inputVertex, inputVertex.ofType());
     }

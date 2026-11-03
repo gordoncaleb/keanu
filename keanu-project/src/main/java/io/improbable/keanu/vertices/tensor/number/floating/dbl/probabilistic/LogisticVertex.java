@@ -1,7 +1,6 @@
 package io.improbable.keanu.vertices.tensor.number.floating.dbl.probabilistic;
 
 import io.improbable.keanu.KeanuRandom;
-import io.improbable.keanu.annotation.ExportVertexToPythonBindings;
 import io.improbable.keanu.distributions.continuous.Logistic;
 import io.improbable.keanu.distributions.hyperparam.Diffs;
 import io.improbable.keanu.tensor.TensorShape;
@@ -54,7 +53,6 @@ public class LogisticVertex extends VertexImpl<DoubleTensor, DoubleVertex> imple
         setParents(mu, s);
     }
 
-    @ExportVertexToPythonBindings
     public LogisticVertex(Vertex<DoubleTensor, ?> mu, Vertex<DoubleTensor, ?> s) {
         this(TensorShape.getBroadcastResultShape(mu.getShape(), s.getShape()), mu, s);
     }

@@ -21,7 +21,6 @@ page_nav:
         content: Next page
         url: '/docs/data-io/'
 
-
 ---
 
 ## Your model as a Bayesian Network

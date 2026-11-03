@@ -225,21 +225,21 @@ public class NUTSTest {
         Assert.assertEquals(-1.0165440910526553, samples.get(2).scalar(), epsilon);
         Assert.assertEquals(-1.0165440910526553, samples.get(3).scalar(), epsilon);
         Assert.assertEquals(-1.1033732018241589, samples.get(4).scalar(), epsilon);
-        Assert.assertEquals(-1.5926775601489656, samples.get(5).scalar(), epsilon);
-        Assert.assertEquals(-1.5926775601489656, samples.get(6).scalar(), epsilon);
-        Assert.assertEquals(0.06269495259568081, samples.get(7).scalar(), epsilon);
-        Assert.assertEquals(0.06269495259568081, samples.get(8).scalar(), epsilon);
-        Assert.assertEquals(0.06269495259568081, samples.get(9).scalar(), epsilon);
-        Assert.assertEquals(-1.9067350000491319, samples.get(10).scalar(), epsilon);
-        Assert.assertEquals(-0.16217717982790925, samples.get(11).scalar(), epsilon);
-        Assert.assertEquals(-0.16217717982790925, samples.get(12).scalar(), epsilon);
-        Assert.assertEquals(-1.7749397804101408, samples.get(13).scalar(), epsilon);
-        Assert.assertEquals(-1.95774120776884, samples.get(14).scalar(), epsilon);
-        Assert.assertEquals(1.1167543688694772, samples.get(15).scalar(), epsilon);
-        Assert.assertEquals(-2.3326358434845753, samples.get(16).scalar(), epsilon);
-        Assert.assertEquals(-2.425061791760318, samples.get(17).scalar(), epsilon);
-        Assert.assertEquals(1.3182493371930095, samples.get(18).scalar(), epsilon);
-        Assert.assertEquals(-1.3168733581639154, samples.get(19).scalar(), epsilon);
+        Assert.assertEquals(-1.4853499766991674, samples.get(5).scalar(), epsilon);
+        Assert.assertEquals(-1.4853499766991674, samples.get(6).scalar(), epsilon);
+        Assert.assertEquals(0.0161860971477652, samples.get(7).scalar(), epsilon);
+        Assert.assertEquals(0.0161860971477652, samples.get(8).scalar(), epsilon);
+        Assert.assertEquals(0.0161860971477652, samples.get(9).scalar(), epsilon);
+        Assert.assertEquals(-1.8865810604415483, samples.get(10).scalar(), epsilon);
+        Assert.assertEquals(-0.17091059796504227, samples.get(11).scalar(), epsilon);
+        Assert.assertEquals(-0.17091059796504227, samples.get(12).scalar(), epsilon);
+        Assert.assertEquals(-1.7711552800175079, samples.get(13).scalar(), epsilon);
+        Assert.assertEquals(-1.959381166258969, samples.get(14).scalar(), epsilon);
+        Assert.assertEquals(1.1177784255884735, samples.get(15).scalar(), epsilon);
+        Assert.assertEquals(-2.333079603647466, samples.get(16).scalar(), epsilon);
+        Assert.assertEquals(-2.424869494714153, samples.get(17).scalar(), epsilon);
+        Assert.assertEquals(1.3181292591036216, samples.get(18).scalar(), epsilon);
+        Assert.assertEquals(-1.3168213240611966, samples.get(19).scalar(), epsilon);
 
     }
 

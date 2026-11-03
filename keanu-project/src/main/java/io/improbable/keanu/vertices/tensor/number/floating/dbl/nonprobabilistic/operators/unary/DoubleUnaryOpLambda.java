@@ -60,7 +60,7 @@ public class DoubleUnaryOpLambda<IN>
             return forwardModeAutoDiffLambda.apply(derivativeOfParentsWithRespectToInput);
         }
 
-        throw new UnsupportedOperationException();
+        throw new UnsupportedOperationException("This lambda vertex was created without an auto diff lambda so it cannot be differentiated. Provide forward and reverse mode auto diff lambdas when constructing it.");
     }
 
     @Override
@@ -69,6 +69,6 @@ public class DoubleUnaryOpLambda<IN>
             return reverseModeAutoDiffLambda.apply(derivativeOfOutputWithRespectToSelf);
         }
 
-        throw new UnsupportedOperationException();
+        throw new UnsupportedOperationException("This lambda vertex was created without an auto diff lambda so it cannot be differentiated. Provide forward and reverse mode auto diff lambdas when constructing it.");
     }
 }

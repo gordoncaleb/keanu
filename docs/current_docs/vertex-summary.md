@@ -98,7 +98,6 @@ The currently available generic vertices are
 - [Probabilistic](https://static.javadoc.io/io.improbable/keanu/{{ site.current_version }}/io/improbable/keanu/vertices/generic/probabilistic/package-summary.html)
 - [Non-Probabilistic](https://static.javadoc.io/io.improbable/keanu/{{ site.current_version }}/io/improbable/keanu/vertices/generic/nonprobabilistic/package-frame.html)
 
-
 ### Tensors
 
 Vertices also have a `shape`, which describes the tensor shape contained within them. A vertex with shape

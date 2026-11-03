@@ -74,7 +74,7 @@ public class LatentIncrementSort {
         for (Map.Entry<Vertex, Set<Vertex>> entry : dependencies.entrySet()) {
             Vertex<?, ?> dependant = entry.getKey();
             for (Vertex<?, ?> vertex : entry.getValue()) {
-                dependants.computeIfAbsent(vertex, v -> dependants.put(v, new HashSet<>()));
+                dependants.computeIfAbsent(vertex, v -> new HashSet<>());
                 dependants.get(vertex).add(dependant);
             }
         }

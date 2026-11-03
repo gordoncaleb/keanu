@@ -43,18 +43,3 @@ For example, if the sample shape is `[1,5]` we can evaluate the autocorrelation 
 ```java
 {% snippet TensorAutocorrelation %}
 ```
-
-#### Python
-
-It's also possible to calculate the autocorrelation of samples in Python.
-
-```python
-{% snippet PythonScalarAutocorrelation %}
-```
-
-When the samples are `ndarrays` the index on which to calculate the autocorrelation can be specified 
-as a tuple.
-
-```python
-{% snippet PythonNdAutocorrelation %}
-```

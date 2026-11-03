@@ -1,7 +1,6 @@
 package io.improbable.keanu.vertices.tensor.number.floating.dbl.probabilistic;
 
 import io.improbable.keanu.KeanuRandom;
-import io.improbable.keanu.annotation.ExportVertexToPythonBindings;
 import io.improbable.keanu.distributions.continuous.Uniform;
 import io.improbable.keanu.tensor.dbl.DoubleTensor;
 import io.improbable.keanu.vertices.LoadShape;
@@ -60,7 +59,6 @@ public class UniformVertex extends VertexImpl<DoubleTensor, DoubleVertex> implem
      * @param xMin the inclusive lower bound of the Uniform with either the same shape as specified for this vertex or a scalar
      * @param xMax the exclusive upper bound of the Uniform with either the same shape as specified for this vertex or a scalar
      */
-    @ExportVertexToPythonBindings
     public UniformVertex(Vertex<DoubleTensor, ?> xMin, Vertex<DoubleTensor, ?> xMax) {
         this(checkHasOneNonLengthOneShapeOrAllLengthOne(xMin.getShape(), xMax.getShape()), xMin, xMax);
     }

@@ -1,71 +1,73 @@
-buildscript {
-    ext.kotlin_version = '1.2.31'
-    repositories {
-        mavenCentral()
-    }
-
-    dependencies {
-        classpath "org.jetbrains.kotlin:kotlin-gradle-plugin:$kotlin_version"
-        classpath 'com.google.protobuf:protobuf-gradle-plugin:0.8.6'
-    }
-}
-
 plugins {
-    id 'io.franzbecker.gradle-lombok' version '1.14'
-    id "de.marcphilipp.nexus-publish" version "0.4.0"
-    id 'maven'
+    id 'java-library'
+    id 'org.jetbrains.kotlin.jvm' version "${kotlinVersion}"
+    id 'com.google.protobuf' version '0.9.5'
+    id 'maven-publish'
     id 'jacoco'
 }
 
-apply plugin: 'com.google.protobuf'
-apply plugin: 'maven-publish'
-apply plugin: 'kotlin'
+base {
+    archivesName = "keanu"
+}
 
-archivesBaseName = "keanu"
+java {
+    withSourcesJar()
+    withJavadocJar()
+}
 
 dependencies {
+    api 'org.apache.commons:commons-math3:3.6.1'
+    api 'org.apache.commons:commons-lang3:3.17.0'
+    api 'com.google.guava:guava:33.3.1-jre'
+    api 'com.google.protobuf:protobuf-java:3.25.5'
 
-    compile 'org.apache.commons:commons-math3:3.6.1'
+    implementation 'com.google.protobuf:protobuf-java-util:3.25.5'
+    implementation 'org.jooq:joor:0.9.15'
+    implementation 'commons-io:commons-io:2.18.0'
+    implementation 'com.opencsv:opencsv:4.2'
+    api 'org.slf4j:slf4j-api:1.7.36'
+    implementation 'org.slf4j:slf4j-log4j12:1.7.36'
+    implementation 'org.jetbrains:annotations:24.1.0'
 
-    compile 'org.jooq:joor-java-8:0.9.10'
-
-    compile group: 'org.nd4j', name: 'nd4j-native-platform', version: project.property('nd4jVersion')
-    compile "org.jetbrains.kotlin:kotlin-stdlib-jdk8:$kotlin_version"
-    compile 'com.google.guava:guava:20.0'
-    compile 'com.google.protobuf:protobuf-java:3.6.1'
-    compile 'com.google.protobuf:protobuf-java-util:3.6.1'
-    compile 'com.opencsv:opencsv:4.2'
-    compile 'org.slf4j:slf4j-api:1.8.0-beta2'
-    compile 'org.slf4j:slf4j-log4j12:1.8.0-beta2'
+    compileOnly "org.projectlombok:lombok:${lombokVersion}"
+    annotationProcessor "org.projectlombok:lombok:${lombokVersion}"
+    testCompileOnly "org.projectlombok:lombok:${lombokVersion}"
+    testAnnotationProcessor "org.projectlombok:lombok:${lombokVersion}"
 
     //testing
-    testCompile 'junit:junit:4.12'
-    testCompile 'org.mockito:mockito-core:2.19.1'
-    testCompile 'org.jfree:jfreechart:1.0.19'
-    testCompile 'org.mockito:mockito-core:2.15.0'
-    testCompile 'org.hamcrest:hamcrest-library:1.3'
-    testCompile 'ca.umontreal.iro.simul:ssj:3.2.1'
-    testCompile 'org.reflections:reflections:0.9.11'
-
+    testImplementation 'junit:junit:4.13.2'
+    testImplementation 'org.mockito:mockito-core:5.14.2'
+    testImplementation 'org.jfree:jfreechart:1.0.19'
+    testImplementation 'org.hamcrest:hamcrest-library:1.3'
+    testImplementation 'ca.umontreal.iro.simul:ssj:3.2.1'
+    testImplementation 'org.reflections:reflections:0.10.2'
+    testImplementation 'com.fasterxml.jackson.core:jackson-databind:2.18.2'
 }
 
 protobuf {
     protoc {
-        // The artifact spec for the Protobuf Compiler
-        artifact = 'com.google.protobuf:protoc:3.6.1'
+        artifact = 'com.google.protobuf:protoc:3.25.5'
     }
+}
+
+kotlin {
+    jvmToolchain(17)
 }
 
 test {
     systemProperty "io.improbable.keanu.defaultRandom.seed", '1'
     systemProperty "dtype", 'double'
     systemProperty "io.improbable.keanu.util.status.StatusBar.disableStatusBar", 'true'
+    maxHeapSize = "2g"
     useJUnit {
         excludeCategories 'io.improbable.keanu.testcategory.Slow'
     }
 }
 
-task testSlowOnes(type: Test) {
+tasks.register('testSlowOnes', Test) {
+    testClassesDirs = sourceSets.test.output.classesDirs
+    classpath = sourceSets.test.runtimeClasspath
+    maxHeapSize = "2g"
     useJUnit {
         includeCategories 'io.improbable.keanu.testcategory.Slow'
     }
@@ -73,7 +75,7 @@ task testSlowOnes(type: Test) {
 
 check.dependsOn(testSlowOnes)
 
-// Add default user/pass so it's not needed if only building and not publishing to Nexus
+// Add default user/pass so it's not needed if only building and not publishing
 if (!hasProperty('nexusUser')) {
     ext.nexusUser = ''
 }
@@ -82,23 +84,11 @@ if (!hasProperty('nexusPassword')) {
     ext.nexusPassword = ''
 }
 
-task sourcesJar(type: Jar) {
-    classifier = 'sources'
-    from sourceSets.main.allSource
-}
-
-task javadocJar(type: Jar) {
-    classifier = 'javadoc'
-    from javadoc
-}
-
 publishing {
     publications {
         mavenJava(MavenPublication) {
             artifactId = 'keanu'
             from components.java
-            artifact sourcesJar
-            artifact javadocJar
             pom {
                 name = 'Keanu'
                 description = 'A probabilistic approach from an Improbabilistic company'
@@ -132,31 +122,8 @@ publishing {
             }
             def releasesRepoUrl = "https://oss.sonatype.org/service/local/staging/deploy/maven2/"
             def snapshotsRepoUrl = "https://oss.sonatype.org/content/repositories/snapshots/"
-            url = version.endsWith('SNAPSHOT') ? snapshotsRepoUrl : releasesRepoUrl
+            url = version.toString().endsWith('SNAPSHOT') ? snapshotsRepoUrl : releasesRepoUrl
         }
-    }
-}
-
-nexusPublishing {
-    repositories {
-        sonatype {
-            username = nexusUser
-            password = nexusPassword
-        }
-    }
-    clientTimeout = Duration.ofMinutes(5)
-    connectTimeout = Duration.ofMinutes(5)
-}
-
-compileKotlin {
-    kotlinOptions {
-        jvmTarget = "1.8"
-    }
-}
-
-compileTestKotlin {
-    kotlinOptions {
-        jvmTarget = "1.8"
     }
 }
 
@@ -167,29 +134,6 @@ if (project.hasProperty("signing.keyId")) {
     }
 }
 
-task deletePythonClasspath(type: Delete) {
-    delete fileTree("../keanu-python/keanu/classpath/")
-}
-
-task copyJarsIntoPythonClasspath(type: Copy) {
-    dependsOn(build)
-    dependsOn(deletePythonClasspath)
-    into "$rootDir/keanu-python/keanu/classpath/"
-    from jar
-    from configurations.compile
-}
-
-
-//Break build on javadoc warnings
-tasks.withType(Javadoc) {
-    options.addStringOption('Xwerror', '-quiet')
-}
-
-artifacts {
-    archives javadocJar, sourcesJar
-}
-
-lombok { // optional: values below are the defaults
-    version = "1.16.20"
-    sha256 = ""
+tasks.withType(Javadoc).configureEach {
+    options.addStringOption('Xdoclint:none', '-quiet')
 }

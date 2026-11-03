@@ -108,13 +108,6 @@ which will tell us their 'most likely value'.
 
 As we can see, our prior belief and observations have combined and we've gained insight through sampling.
 
-##### Python
-
-We can perform the same steps in Python.
-```python
-{% snippet PythonMetropolisExample %}
-```
-
 ### Hamiltonian Monte Carlo
 
 #### Algorithm
@@ -161,7 +154,6 @@ The parameters are:
 * The vertices in the network to return samples for (latent vertices)
 * The number of samples to take
 
-
 ### NUTS
 
 NUTS is an auto-tuning implementation of HMC.
@@ -179,12 +171,6 @@ It also attempts to calculate and auto-tune those difficult leapfrog and step si
 
 ```java
 {% snippet InfNuts %}
-```
-
-##### Python
-
-```python
-{% snippet PythonNUTSExample %}
 ```
 
 #### Parameters

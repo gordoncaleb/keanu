@@ -1,6 +1,5 @@
 package io.improbable.keanu.vertices.tensor.number.fixed.intgr.nonprobabilistic;
 
-import io.improbable.keanu.annotation.ExportVertexToPythonBindings;
 import io.improbable.keanu.tensor.NumberTensor;
 import io.improbable.keanu.tensor.intgr.IntegerTensor;
 import io.improbable.keanu.vertices.LoadVertexParam;
@@ -16,7 +15,6 @@ public class CastNumberToIntegerVertex<T extends NumberTensor> extends VertexImp
     private final Vertex<T, ?> inputVertex;
     private static final String INPUT_NAME = "inputVertex";
 
-    @ExportVertexToPythonBindings
     public CastNumberToIntegerVertex(@LoadVertexParam(INPUT_NAME) Vertex<T, ?> inputVertex) {
         super(inputVertex.getShape());
         this.inputVertex = inputVertex;

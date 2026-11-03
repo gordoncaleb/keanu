@@ -1,6 +1,5 @@
 package io.improbable.keanu.vertices.tensor.bool.nonprobabilistic;
 
-import io.improbable.keanu.annotation.ExportVertexToPythonBindings;
 import io.improbable.keanu.tensor.bool.BooleanTensor;
 import io.improbable.keanu.vertices.LoadVertexParam;
 import io.improbable.keanu.vertices.NonProbabilistic;
@@ -14,7 +13,6 @@ public class CastToBooleanVertex extends VertexImpl<BooleanTensor, BooleanVertex
     private final Vertex<? extends BooleanTensor, ?> inputVertex;
     private final static String INPUT_NAME = "inputVertex";
 
-    @ExportVertexToPythonBindings
     public CastToBooleanVertex(@LoadVertexParam(INPUT_NAME) Vertex<? extends BooleanTensor, ?> inputVertex) {
         super(inputVertex.getShape());
         this.inputVertex = inputVertex;

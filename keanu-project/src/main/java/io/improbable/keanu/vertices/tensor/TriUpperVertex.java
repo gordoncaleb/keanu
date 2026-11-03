@@ -1,7 +1,6 @@
 package io.improbable.keanu.vertices.tensor;
 
 import com.google.common.base.Preconditions;
-import io.improbable.keanu.annotation.ExportVertexToPythonBindings;
 import io.improbable.keanu.tensor.Tensor;
 import io.improbable.keanu.vertices.LoadVertexParam;
 import io.improbable.keanu.vertices.NonProbabilisticVertex;
@@ -21,7 +20,6 @@ public class TriUpperVertex<T, TENSOR extends Tensor<T, TENSOR>, VERTEX extends 
 
     private final int k;
 
-    @ExportVertexToPythonBindings
     public TriUpperVertex(@LoadVertexParam(INPUT_NAME) TensorVertex<T, TENSOR, VERTEX> inputVertex,
                           @LoadVertexParam(K_NAME) int k) {
         super(getTriShape(inputVertex.getShape()), inputVertex, inputVertex.ofType());

@@ -120,7 +120,7 @@ public class DoubleBuffer {
 
         @Override
         public Double max() {
-            double result = -Double.MAX_VALUE;
+            double result = Double.NEGATIVE_INFINITY;
             for (int i = 0; i < array.length; i++) {
                 result = Math.max(array[i], result);
             }
@@ -129,7 +129,7 @@ public class DoubleBuffer {
 
         @Override
         public Double min() {
-            double result = Double.MAX_VALUE;
+            double result = Double.POSITIVE_INFINITY;
             for (int i = 0; i < array.length; i++) {
                 result = Math.min(array[i], result);
             }
@@ -420,7 +420,8 @@ public class DoubleBuffer {
 
         @Override
         public BooleanBuffer.PrimitiveBooleanWrapper equal(Double that) {
-            return BooleanBuffer.factory.createNew(value.equals(that));
+            // IEEE 754 equality to match the array implementation (NaN != NaN, 0.0 == -0.0)
+            return BooleanBuffer.factory.createNew(value.doubleValue() == that.doubleValue());
         }
 
         @Override

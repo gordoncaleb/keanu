@@ -25,7 +25,7 @@ public class ElementwiseBinaryDoubleOperations {
     @Param({"1", "10", "100", "1000", "10240"})
     public int dimLength;
 
-    @Param({"JVM", "ND4J"})
+    @Param({"JVM"})
     public DoubleTensorImpl impl;
 
     DoubleTensor left;

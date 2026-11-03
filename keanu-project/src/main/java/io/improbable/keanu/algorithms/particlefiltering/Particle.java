@@ -59,6 +59,7 @@ public class Particle {
         Particle clone = new Particle();
         clone.latentVertices = new HashMap<>(this.latentVertices);
         clone.observedVertices = new ArrayList<>(this.observedVertices);
+        clone.sumLogPOfSubgraph = this.sumLogPOfSubgraph;
         return clone;
     }
 
@@ -66,7 +67,7 @@ public class Particle {
         return Double.compare(b.logProb(), a.logProb());
     }
 
-    private void applyLatentVertexValues() {
+    void applyLatentVertexValues() {
         latentVertices.keySet().forEach(this::applyLatentVertexValue);
     }
 

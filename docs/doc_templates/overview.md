@@ -21,7 +21,6 @@ page_nav:
         content: Next page
         url: '/docs/getting-started/'
 
-
 ---
 ## Probabilistic programming
 

@@ -1,6 +1,5 @@
 package io.improbable.keanu.vertices.tensor.bool.nonprobabilistic.operators.unary;
 
-import io.improbable.keanu.annotation.ExportVertexToPythonBindings;
 import io.improbable.keanu.tensor.FloatingPointTensor;
 import io.improbable.keanu.tensor.bool.BooleanTensor;
 import io.improbable.keanu.vertices.LoadVertexParam;
@@ -10,7 +9,6 @@ import io.improbable.keanu.vertices.tensor.TensorVertex;
 public class IsPositiveInfinityVertex<T extends Number, TENSOR extends FloatingPointTensor<T, TENSOR>, VERTEX extends TensorVertex<T, TENSOR, VERTEX>>
     extends BooleanUnaryOpVertex<TENSOR> {
 
-    @ExportVertexToPythonBindings
     public IsPositiveInfinityVertex(@LoadVertexParam(INPUT_NAME) Vertex<TENSOR, VERTEX> inputVertex) {
         super(inputVertex);
     }

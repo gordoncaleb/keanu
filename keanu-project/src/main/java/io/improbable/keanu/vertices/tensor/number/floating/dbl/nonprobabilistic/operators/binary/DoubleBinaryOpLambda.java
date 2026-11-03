@@ -68,7 +68,7 @@ public class DoubleBinaryOpLambda<A, B>
             return forwardModeAutoDiffLambda.apply(derivativeOfParentsWithRespectToInput);
         }
 
-        throw new UnsupportedOperationException();
+        throw new UnsupportedOperationException("This lambda vertex was created without an auto diff lambda so it cannot be differentiated. Provide forward and reverse mode auto diff lambdas when constructing it.");
     }
 
     @Override

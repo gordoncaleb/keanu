@@ -1,7 +1,8 @@
 package io.improbable.keanu.vertices.tensor.number.floating.operators.unary;
 
-import io.improbable.keanu.annotation.ExportVertexToPythonBindings;
 import io.improbable.keanu.tensor.FloatingPointTensor;
+import io.improbable.keanu.tensor.dbl.DoubleTensor;
+import io.improbable.keanu.util.math.SpecialFunctions;
 import io.improbable.keanu.vertices.LoadVertexParam;
 import io.improbable.keanu.vertices.NonProbabilisticVertex;
 import io.improbable.keanu.vertices.Vertex;
@@ -12,6 +13,7 @@ import io.improbable.keanu.vertices.tensor.number.floating.dbl.Differentiable;
 import io.improbable.keanu.vertices.tensor.number.floating.dbl.nonprobabilistic.diff.ForwardModePartialDerivative;
 import io.improbable.keanu.vertices.tensor.number.floating.dbl.nonprobabilistic.diff.ReverseModePartialDerivative;
 
+import java.util.HashMap;
 import java.util.Map;
 
 public class TrigammaVertex<T extends Number, TENSOR extends FloatingPointTensor<T, TENSOR>, VERTEX extends NumberTensorVertex<T, TENSOR, VERTEX>>
@@ -20,7 +22,6 @@ public class TrigammaVertex<T extends Number, TENSOR extends FloatingPointTensor
     /**
      * @param inputVertex the vertex
      */
-    @ExportVertexToPythonBindings
     public TrigammaVertex(@LoadVertexParam(INPUT_NAME) TensorVertex<T, TENSOR, VERTEX> inputVertex) {
         super(inputVertex);
     }
@@ -30,13 +31,27 @@ public class TrigammaVertex<T extends Number, TENSOR extends FloatingPointTensor
         return value.trigamma();
     }
 
+    /**
+     * d/dx trigamma(x) = tetragamma(x)
+     */
+    private DoubleTensor dTrigamma() {
+        final DoubleTensor x = inputVertex.getValue().toDouble();
+        final double[] values = x.asFlatDoubleArray();
+        for (int i = 0; i < values.length; i++) {
+            values[i] = SpecialFunctions.tetragamma(values[i]);
+        }
+        return DoubleTensor.create(values, x.getShape());
+    }
+
     @Override
     public ForwardModePartialDerivative forwardModeAutoDifferentiation(Map<Vertex, ForwardModePartialDerivative> derivativeOfParentsWithRespectToInput) {
-        throw new UnsupportedOperationException();
+        return derivativeOfParentsWithRespectToInput.get(inputVertex).multiply(dTrigamma());
     }
 
     @Override
     public Map<Vertex, ReverseModePartialDerivative> reverseModeAutoDifferentiation(ReverseModePartialDerivative derivativeOfOutputWithRespectToSelf) {
-        throw new UnsupportedOperationException();
+        Map<Vertex, ReverseModePartialDerivative> partials = new HashMap<>();
+        partials.put(inputVertex, derivativeOfOutputWithRespectToSelf.multiply(dTrigamma()));
+        return partials;
     }
 }

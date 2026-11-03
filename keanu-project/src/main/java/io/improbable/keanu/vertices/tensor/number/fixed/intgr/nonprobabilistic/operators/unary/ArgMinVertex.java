@@ -1,6 +1,5 @@
 package io.improbable.keanu.vertices.tensor.number.fixed.intgr.nonprobabilistic.operators.unary;
 
-import io.improbable.keanu.annotation.ExportVertexToPythonBindings;
 import io.improbable.keanu.tensor.NumberTensor;
 import io.improbable.keanu.tensor.intgr.IntegerTensor;
 import io.improbable.keanu.vertices.LoadVertexParam;
@@ -17,7 +16,6 @@ public class ArgMinVertex<T extends Number, TENSOR extends NumberTensor<T, TENSO
         this(inputVertex, null);
     }
 
-    @ExportVertexToPythonBindings
     public ArgMinVertex(@LoadVertexParam(INPUT_NAME) TensorVertex<T, TENSOR, VERTEX> inputVertex,
                         @LoadVertexParam(AXIS) Integer axis) {
         super(inputVertex);

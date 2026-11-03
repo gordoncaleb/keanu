@@ -62,7 +62,6 @@ IntegerTensor iTensor = IntegerTensor.create(1, new long[]{1, 4});    //[1, 1, 1
 BooleanTensor bTensor = BooleanTensor.create(true, new long[]{1, 4}); //[true, true, true, true]
 ```
 
-
 Let's make some 2x2 matrices of doubles, integers and booleans.
 
 ```java
@@ -104,7 +103,6 @@ A complete list of tensor operations is available here:
 - [Integer Tensor](https://static.javadoc.io/io.improbable/keanu/{{ site.current_version }}/io/improbable/keanu/tensor/intgr/IntegerTensor.html)
 - [Boolean Tensor](https://static.javadoc.io/io.improbable/keanu/{{ site.current_version }}/io/improbable/keanu/tensor/bool/SimpleBooleanTensor.html)
 - [Generic Tensor](https://static.javadoc.io/io.improbable/keanu/{{ site.current_version }}/io/improbable/keanu/tensor/generic/GenericTensor.html)
-
 
 ### Creating Vertices with Tensors
 
@@ -175,7 +173,6 @@ DoubleTensor C = A.times(B); //shape [2, 2]
 
 We can do operations as normal between the two, even though they have different shapes. 
 The resulting tensor will always have the shape of the initial tensor.
-
 
 ### Tensor and Tensor
 
@@ -281,7 +278,6 @@ DoubleTensor C = A.times(B); //shape [2, 3].
 //         [120, 150, 180]
 ```
 
-
 ## Example of Tensors
 Tensors can provide us with a more succinct way of describing problems and can allow us to solve problems computationally efficiently on the GPU. 
 Without using tensors we have to iterate over the data and aggregate some results. 
@@ -321,19 +317,4 @@ optimizer.maxAPosteriori();
 
 //Retrieve the most likely estimate using MAP estimation
 DoubleTensor mostLikelyEstimate = A.getValue(); //approximately [2, 3]
-```
-
-## Python
-
-We do not expose Tensors in the Python API. Numpy provides the same concept 
-through its `ndarray` class and these are converted to/from Tensors for you.
-
-All of the operations that used Tensor within Java can be replaced with `ndarray` in Python.
-For example, to create a vertex:
-
-```python
-mu = np.array([[2., 3., 4.],
-               [1., 4., 7.]])
-sigma = np.ones([2, 3])
-g = Gaussian(mu, sigma)
 ```

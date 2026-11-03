@@ -1,6 +1,5 @@
 package io.improbable.keanu.vertices.tensor.number.fixed.intgr.nonprobabilistic.operators.multiple;
 
-import io.improbable.keanu.annotation.ExportVertexToPythonBindings;
 import io.improbable.keanu.tensor.intgr.IntegerTensor;
 import io.improbable.keanu.vertices.LoadVertexParam;
 import io.improbable.keanu.vertices.NonProbabilistic;
@@ -36,7 +35,6 @@ public class IntegerConcatenationVertex extends VertexImpl<IntegerTensor, Intege
         setParents(operands);
     }
 
-    @ExportVertexToPythonBindings
     public IntegerConcatenationVertex(@LoadVertexParam(DIMENSION_NAME) int dimension,
                                       @LoadVertexParam(OPERANDS_NAME) Vertex[] input) {
         this(dimension, convertVertexArrayToIntegerVertex(input));

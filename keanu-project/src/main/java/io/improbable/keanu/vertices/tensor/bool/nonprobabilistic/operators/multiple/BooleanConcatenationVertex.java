@@ -1,6 +1,5 @@
 package io.improbable.keanu.vertices.tensor.bool.nonprobabilistic.operators.multiple;
 
-import io.improbable.keanu.annotation.ExportVertexToPythonBindings;
 import io.improbable.keanu.tensor.bool.BooleanTensor;
 import io.improbable.keanu.vertices.LoadVertexParam;
 import io.improbable.keanu.vertices.NonProbabilistic;
@@ -35,7 +34,6 @@ public class BooleanConcatenationVertex extends VertexImpl<BooleanTensor, Boolea
         setParents(operands);
     }
 
-    @ExportVertexToPythonBindings
     public BooleanConcatenationVertex(@LoadVertexParam(DIMENSION_NAME) int dimension,
                                       @LoadVertexParam(OPERANDS_NAME) Vertex[] input) {
         this(dimension, convertVertexArrayToBooleanVertex(input));

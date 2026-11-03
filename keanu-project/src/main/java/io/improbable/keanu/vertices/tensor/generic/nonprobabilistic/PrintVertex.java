@@ -1,7 +1,6 @@
 package io.improbable.keanu.vertices.tensor.generic.nonprobabilistic;
 
 import com.google.common.base.Preconditions;
-import io.improbable.keanu.annotation.ExportVertexToPythonBindings;
 import io.improbable.keanu.vertices.LoadVertexParam;
 import io.improbable.keanu.vertices.NonProbabilistic;
 import io.improbable.keanu.vertices.SaveVertexParam;
@@ -31,7 +30,6 @@ public class PrintVertex<T> extends VertexImpl<T, GenericVertex<T>> implements G
 
     private final boolean printData;
 
-    @ExportVertexToPythonBindings
     public PrintVertex(@LoadVertexParam(PARENT) Vertex<T, ?> parent,
                        @LoadVertexParam(MESSAGE) final String message,
                        @LoadVertexParam(PRINT_DATA) boolean printData) {

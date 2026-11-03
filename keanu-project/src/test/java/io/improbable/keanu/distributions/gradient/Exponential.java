@@ -13,8 +13,9 @@ public class Exponential {
     }
 
     public static Diff dlnPdf(double lambda, double x) {
-        double dPdlambda = -(lambda - x) / Math.pow(lambda, 2);
-        double dPdx = -(1 / lambda);
+        // logPdf = ln(lambda) - lambda * x where lambda is the rate
+        double dPdlambda = 1 / lambda - x;
+        double dPdx = -lambda;
         return new Diff(dPdlambda, dPdx);
     }
 

@@ -1,11 +1,11 @@
 package io.improbable.keanu.tensor.intgr;
 
 import com.google.common.primitives.Ints;
+import io.improbable.keanu.tensor.FixedPointPow;
 import io.improbable.keanu.tensor.bool.BooleanBuffer;
 import io.improbable.keanu.tensor.jvm.buffer.JVMBuffer;
 import io.improbable.keanu.tensor.jvm.buffer.PrimitiveNumberWrapper;
 import org.apache.commons.lang3.ArrayUtils;
-import org.apache.commons.math3.util.FastMath;
 
 import java.util.Arrays;
 import java.util.function.BiFunction;
@@ -183,7 +183,7 @@ public class IntegerBuffer {
         @Override
         public IntegerArrayWrapper pow(Integer that) {
             for (int i = 0; i < array.length; i++) {
-                array[i] = (int) FastMath.pow(array[i], that);
+                array[i] = FixedPointPow.pow(array[i], that);
             }
             return this;
         }
@@ -376,7 +376,7 @@ public class IntegerBuffer {
 
         @Override
         public PrimitiveIntegerWrapper pow(Integer that) {
-            value = (int) FastMath.pow(value, that);
+            value = FixedPointPow.pow(value, that);
             return this;
         }
 

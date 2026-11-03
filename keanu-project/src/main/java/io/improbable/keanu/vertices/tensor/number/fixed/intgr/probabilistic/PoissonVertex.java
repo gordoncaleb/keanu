@@ -1,7 +1,6 @@
 package io.improbable.keanu.vertices.tensor.number.fixed.intgr.probabilistic;
 
 import io.improbable.keanu.KeanuRandom;
-import io.improbable.keanu.annotation.ExportVertexToPythonBindings;
 import io.improbable.keanu.distributions.discrete.Poisson;
 import io.improbable.keanu.tensor.Tensor;
 import io.improbable.keanu.tensor.TensorShape;
@@ -56,7 +55,6 @@ public class PoissonVertex extends VertexImpl<IntegerTensor, IntegerVertex> impl
      *
      * @param mu mu with same shape as desired Poisson tensor or scalar
      */
-    @ExportVertexToPythonBindings
     public PoissonVertex(Vertex<DoubleTensor, ?> mu) {
         this(mu.getShape(), mu);
     }

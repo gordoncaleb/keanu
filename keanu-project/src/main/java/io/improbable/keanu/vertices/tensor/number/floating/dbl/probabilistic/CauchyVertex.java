@@ -1,7 +1,6 @@
 package io.improbable.keanu.vertices.tensor.number.floating.dbl.probabilistic;
 
 import io.improbable.keanu.KeanuRandom;
-import io.improbable.keanu.annotation.ExportVertexToPythonBindings;
 import io.improbable.keanu.distributions.continuous.Cauchy;
 import io.improbable.keanu.distributions.hyperparam.Diffs;
 import io.improbable.keanu.tensor.TensorShape;
@@ -54,7 +53,6 @@ public class CauchyVertex extends VertexImpl<DoubleTensor, DoubleVertex> impleme
         setParents(location, scale);
     }
 
-    @ExportVertexToPythonBindings
     public CauchyVertex(Vertex<DoubleTensor, ?> location, Vertex<DoubleTensor, ?> scale) {
         this(TensorShape.getBroadcastResultShape(location.getShape(), scale.getShape()), location, scale);
     }

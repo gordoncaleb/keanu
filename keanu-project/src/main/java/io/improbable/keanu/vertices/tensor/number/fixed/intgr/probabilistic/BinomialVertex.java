@@ -1,7 +1,6 @@
 package io.improbable.keanu.vertices.tensor.number.fixed.intgr.probabilistic;
 
 import io.improbable.keanu.KeanuRandom;
-import io.improbable.keanu.annotation.ExportVertexToPythonBindings;
 import io.improbable.keanu.distributions.discrete.Binomial;
 import io.improbable.keanu.tensor.TensorShape;
 import io.improbable.keanu.tensor.dbl.DoubleTensor;
@@ -55,7 +54,6 @@ public class BinomialVertex extends VertexImpl<IntegerTensor, IntegerVertex> imp
         this(tensorShape, ConstantVertex.of(p), ConstantVertex.of(n));
     }
 
-    @ExportVertexToPythonBindings
     public BinomialVertex(Vertex<DoubleTensor, ?> p, Vertex<IntegerTensor, ?> n) {
         this(TensorShape.getBroadcastResultShape(p.getShape(), n.getShape()), p, n);
     }

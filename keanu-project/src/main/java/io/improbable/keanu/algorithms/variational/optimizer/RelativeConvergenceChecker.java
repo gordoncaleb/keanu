@@ -26,7 +26,9 @@ public class RelativeConvergenceChecker implements ConvergenceChecker {
 
         DoubleTensor[] relative = new DoubleTensor[a.length];
         for (int i = 0; i < a.length; i++) {
-            relative[i] = a[i].minus(b[i]).abs().plus(epsilon).div(a[i].abs().plus(epsilon));
+            // |a - b| / (|a| + epsilon). Epsilon only guards the denominator; adding it to the numerator as well
+            // would put a floor of epsilon / (|a| + epsilon) on the delta, which never converges when a is near zero.
+            relative[i] = a[i].minus(b[i]).absInPlace().divInPlace(a[i].abs().plusInPlace(epsilon));
         }
 
         return relative;

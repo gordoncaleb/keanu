@@ -1,7 +1,6 @@
 package io.improbable.keanu.vertices.tensor.number.floating.dbl.probabilistic;
 
 import io.improbable.keanu.KeanuRandom;
-import io.improbable.keanu.annotation.ExportVertexToPythonBindings;
 import io.improbable.keanu.distributions.continuous.InverseGamma;
 import io.improbable.keanu.distributions.hyperparam.Diffs;
 import io.improbable.keanu.tensor.TensorShape;
@@ -61,7 +60,6 @@ public class InverseGammaVertex extends VertexImpl<DoubleTensor, DoubleVertex> i
      * @param alpha the alpha of the Inverse Gamma with either the same shape as specified for this vertex or alpha scalar
      * @param beta  the beta of the Inverse Gamma with either the same shape as specified for this vertex or alpha scalar
      */
-    @ExportVertexToPythonBindings
     public InverseGammaVertex(Vertex<DoubleTensor, ?> alpha, Vertex<DoubleTensor, ?> beta) {
         this(TensorShape.getBroadcastResultShape(alpha.getShape(), beta.getShape()), alpha, beta);
     }

@@ -1,7 +1,6 @@
 package io.improbable.keanu.vertices.tensor.number.fixed.intgr.nonprobabilistic;
 
 import com.google.common.collect.Iterables;
-import io.improbable.keanu.annotation.ExportVertexToPythonBindings;
 import io.improbable.keanu.tensor.Tensor;
 import io.improbable.keanu.tensor.intgr.IntegerTensor;
 import io.improbable.keanu.vertices.LoadShape;
@@ -31,7 +30,6 @@ public class IntegerProxyVertex extends VertexImpl<IntegerTensor, IntegerVertex>
         this(Tensor.SCALAR_SHAPE, label);
     }
 
-    @ExportVertexToPythonBindings
     public IntegerProxyVertex(long[] shape, VertexLabel label) {
         super(shape);
         setLabel(label);

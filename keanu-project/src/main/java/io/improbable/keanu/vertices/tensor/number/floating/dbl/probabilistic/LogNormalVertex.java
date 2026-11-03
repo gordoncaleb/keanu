@@ -1,7 +1,6 @@
 package io.improbable.keanu.vertices.tensor.number.floating.dbl.probabilistic;
 
 import io.improbable.keanu.KeanuRandom;
-import io.improbable.keanu.annotation.ExportVertexToPythonBindings;
 import io.improbable.keanu.distributions.continuous.LogNormal;
 import io.improbable.keanu.distributions.hyperparam.Diffs;
 import io.improbable.keanu.tensor.TensorShape;
@@ -66,7 +65,6 @@ public class LogNormalVertex extends VertexImpl<DoubleTensor, DoubleVertex> impl
         this(tensorShape, ConstantVertex.of(mu), ConstantVertex.of(sigma));
     }
 
-    @ExportVertexToPythonBindings
     public LogNormalVertex(Vertex<DoubleTensor, ?> mu, Vertex<DoubleTensor, ?> sigma) {
         this(TensorShape.getBroadcastResultShape(mu.getShape(), sigma.getShape()), mu, sigma);
     }

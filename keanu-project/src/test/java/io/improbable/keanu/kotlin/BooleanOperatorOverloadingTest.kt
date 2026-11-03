@@ -24,9 +24,9 @@ class BooleanOperatorOverloadingTest {
         val vertex1 = ConstantVertex.of(true)
         val vertex2 = ConstantVertex.of(false)
 
-        assertThat(vertex1 and vertex2, hasValue(vertex1.value and vertex2.value))
-        assertThat(vertex1 and false, hasValue(vertex1.value and false))
-        assertThat(true and vertex1, hasValue(vertex1.value and true))
+        assertThat(vertex1.and(vertex2), hasValue(vertex1.value.and(vertex2.value)))
+        assertThat(vertex1.and(false), hasValue(vertex1.value.and(false)))
+        assertThat(true and vertex1, hasValue(vertex1.value.and(true)))
     }
 
     @Test
@@ -41,9 +41,9 @@ class BooleanOperatorOverloadingTest {
         val vertex1 = ConstantVertex.of(true)
         val vertex2 = ConstantVertex.of(false)
 
-        assertThat(vertex1 or vertex2, hasValue(vertex1.value or vertex2.value))
-        assertThat(vertex1 or false, hasValue(vertex1.value or false))
-        assertThat(true or vertex1, hasValue(vertex1.value or true))
+        assertThat(vertex1.or(vertex2), hasValue(vertex1.value.or(vertex2.value)))
+        assertThat(vertex1.or(false), hasValue(vertex1.value.or(false)))
+        assertThat(true or vertex1, hasValue(vertex1.value.or(true)))
     }
 
     @Test

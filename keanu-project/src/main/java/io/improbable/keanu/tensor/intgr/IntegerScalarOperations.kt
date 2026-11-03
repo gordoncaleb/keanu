@@ -34,16 +34,7 @@ object IntegerScalarOperations : FixedPointScalarOperations<Int> {
     }
 
     override fun pow(left: Int, right: Int): Int {
-        if (right == 0) {
-            return 1
-        }
-
-        var result = left
-        for (i in 0 until right - 1) {
-            result *= left
-        }
-
-        return result
+        return io.improbable.keanu.tensor.FixedPointPow.pow(left, right)
     }
 
     override fun abs(value: Int): Int {

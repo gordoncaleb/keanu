@@ -36,7 +36,6 @@ the older one provides less accurate results.
 
 Let's calculate the temperature of the room given these two measurements.
 
-
 ### Defining the problem as a graph
 
 How can we define this problem as a graph? 
@@ -112,10 +111,4 @@ estimated temperature.
 
 ```java
 {% snippet TempFull %}
-```
-
-#### Python
-
-```python
-{% snippet PythonTwoThermometers %}
 ```

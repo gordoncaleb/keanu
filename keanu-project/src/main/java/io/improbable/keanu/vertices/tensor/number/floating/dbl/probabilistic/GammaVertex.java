@@ -1,7 +1,6 @@
 package io.improbable.keanu.vertices.tensor.number.floating.dbl.probabilistic;
 
 import io.improbable.keanu.KeanuRandom;
-import io.improbable.keanu.annotation.ExportVertexToPythonBindings;
 import io.improbable.keanu.distributions.continuous.Gamma;
 import io.improbable.keanu.distributions.hyperparam.Diffs;
 import io.improbable.keanu.tensor.TensorShape;
@@ -60,7 +59,6 @@ public class GammaVertex extends VertexImpl<DoubleTensor, DoubleVertex> implemen
      * @param theta the theta (scale) of the Gamma with either the same shape as specified for this vertex
      * @param k     the k (shape) of the Gamma with either the same shape as specified for this vertex
      */
-    @ExportVertexToPythonBindings
     public GammaVertex(Vertex<DoubleTensor, ?> theta,
                        Vertex<DoubleTensor, ?> k) {
         this(TensorShape.getBroadcastResultShape(theta.getShape(), k.getShape()), theta, k);

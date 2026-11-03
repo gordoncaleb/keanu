@@ -1,6 +1,5 @@
 package io.improbable.keanu.vertices.tensor.bool.nonprobabilistic.operators.multiple;
 
-import io.improbable.keanu.annotation.ExportVertexToPythonBindings;
 import io.improbable.keanu.tensor.intgr.IntegerTensor;
 import io.improbable.keanu.vertices.LoadVertexParam;
 import io.improbable.keanu.vertices.NonProbabilistic;
@@ -13,7 +12,6 @@ public class BooleanToIntegerMaskVertex extends VertexImpl<IntegerTensor, Intege
     private static final String INPUT_NAME = "inputName";
     private final BooleanVertex inputVertex;
 
-    @ExportVertexToPythonBindings
     public BooleanToIntegerMaskVertex(@LoadVertexParam(INPUT_NAME) BooleanVertex inputVertex) {
         this.inputVertex = inputVertex;
     }

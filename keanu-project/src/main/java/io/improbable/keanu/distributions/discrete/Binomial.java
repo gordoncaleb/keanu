@@ -60,7 +60,12 @@ public class Binomial implements DiscreteDistribution {
         DoubleTensor oneMinusP = p.reverseMinus(1.0);
         DoubleTensor nMinusKLogOneMinusP = oneMinusP.safeLogTimesInPlace(nDouble.minusInPlace(kDouble));
 
-        return logBinomialCoefficient.plusInPlace(kLogP).plusInPlace(nMinusKLogOneMinusP);
+        DoubleTensor logProb = logBinomialCoefficient.plusInPlace(kLogP).plusInPlace(nMinusKLogOneMinusP);
+
+        // outside of the support 0 <= k <= n
+        DoubleTensor outOfSupport = kDouble.lessThanMask(DoubleTensor.scalar(0.0))
+            .plusInPlace(kDouble.greaterThanMask(n.toDouble()));
+        return logProb.setWithMaskInPlace(outOfSupport.greaterThanMask(DoubleTensor.scalar(0.0)), Double.NEGATIVE_INFINITY);
     }
 
     public DoubleTensor[] dLogProb(IntegerTensor k, boolean wrtP) {
@@ -82,7 +87,9 @@ public class Binomial implements DiscreteDistribution {
         DoubleVertex logOneMinusP = p.unaryMinus().plus(1.0).log();
         DoubleVertex nMinusKLogOneMinusP = nDouble.minus(kDouble).times(logOneMinusP);
 
-        return logBinomialCoefficient.plus(kLogP).plus(nMinusKLogOneMinusP);
+        DoubleVertex logProb = logBinomialCoefficient.plus(kLogP).plus(nMinusKLogOneMinusP);
+        logProb = logProb.setWithMask(kDouble.lessThanMask(0.), Double.NEGATIVE_INFINITY);
+        return logProb.setWithMask(kDouble.greaterThanMask(nDouble), Double.NEGATIVE_INFINITY);
     }
 
     private static DoubleTensor getLogBinomialCoefficient(IntegerTensor k, IntegerTensor n) {

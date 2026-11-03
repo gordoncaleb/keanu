@@ -83,7 +83,8 @@ public abstract class JVMFloatingPointTensor<T extends Number, TENSOR extends Fl
 
     @Override
     public TENSOR atan2InPlace(T y) {
-        buffer.applyLeft(getOperations()::atan2, y);
+        // element-wise atan2(y, this), matching the tensor overload: ops.atan2(x, y) == FastMath.atan2(y, x)
+        buffer.applyRight(getOperations()::atan2, y);
         return (TENSOR) this;
     }
 
@@ -212,6 +213,36 @@ public abstract class JVMFloatingPointTensor<T extends Number, TENSOR extends Fl
     @Override
     public TENSOR standardizeInPlace() {
         return this.minusInPlace(mean()).divInPlace(standardDeviation());
+    }
+
+    /**
+     * As in numpy, if there is a NaN then the index of the first NaN is the arg max.
+     */
+    @Override
+    public IntegerTensor argMax(int axis) {
+        final FloatingPointScalarOperations<T> operations = getOperations();
+        return argCompare((value, max) -> !operations.isNaN(max) && (operations.isNaN(value) || operations.gt(value, max)), axis);
+    }
+
+    @Override
+    public IntegerTensor argMax() {
+        final FloatingPointScalarOperations<T> operations = getOperations();
+        return IntegerTensor.scalar(argCompare((value, max) -> !operations.isNaN(max) && (operations.isNaN(value) || operations.gt(value, max))));
+    }
+
+    /**
+     * As in numpy, if there is a NaN then the index of the first NaN is the arg min.
+     */
+    @Override
+    public IntegerTensor argMin(int axis) {
+        final FloatingPointScalarOperations<T> operations = getOperations();
+        return argCompare((value, min) -> !operations.isNaN(min) && (operations.isNaN(value) || operations.lt(value, min)), axis);
+    }
+
+    @Override
+    public IntegerTensor argMin() {
+        final FloatingPointScalarOperations<T> operations = getOperations();
+        return IntegerTensor.scalar(argCompare((value, min) -> !operations.isNaN(min) && (operations.isNaN(value) || operations.lt(value, min))));
     }
 
     @Override

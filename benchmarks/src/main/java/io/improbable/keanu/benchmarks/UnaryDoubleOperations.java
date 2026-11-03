@@ -28,7 +28,7 @@ public class UnaryDoubleOperations {
     @Param({"2", "5", "10", "50"})
     public int dimLength;
 
-    @Param({"JVM", "ND4J"})
+    @Param({"JVM"})
     public DoubleTensorImpl impl;
 
     DoubleTensor tensor;

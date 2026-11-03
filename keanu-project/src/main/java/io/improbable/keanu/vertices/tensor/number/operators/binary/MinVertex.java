@@ -1,6 +1,5 @@
 package io.improbable.keanu.vertices.tensor.number.operators.binary;
 
-import io.improbable.keanu.annotation.ExportVertexToPythonBindings;
 import io.improbable.keanu.tensor.NumberTensor;
 import io.improbable.keanu.vertices.LoadVertexParam;
 import io.improbable.keanu.vertices.NonProbabilisticVertex;
@@ -22,7 +21,6 @@ public class MinVertex<T extends Number, TENSOR extends NumberTensor<T, TENSOR>,
      * @param left  one of the vertices to find the minimum of
      * @param right one of the vertices to find the minimum of
      */
-    @ExportVertexToPythonBindings
     public MinVertex(@LoadVertexParam(LEFT_NAME) Vertex<TENSOR, ?> left,
                      @LoadVertexParam(RIGHT_NAME) Vertex<TENSOR, ?> right) {
         super(new LessThanOrEqualVertex<>(left, right), left, right);

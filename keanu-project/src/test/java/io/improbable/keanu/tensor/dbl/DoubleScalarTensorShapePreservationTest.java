@@ -7,7 +7,6 @@ import org.junit.Before;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.junit.runners.Parameterized;
-import org.nd4j.linalg.api.shape.Shape;
 
 import java.util.Arrays;
 import java.util.function.BiFunction;
@@ -21,7 +20,6 @@ public class DoubleScalarTensorShapePreservationTest {
     @Parameterized.Parameters(name = "{index}: Test with {1}")
     public static Iterable<Object[]> data() {
         return Arrays.asList(new Object[][]{
-            {new Nd4jDoubleTensorFactory(), "ND4J DoubleTensor"},
             {new JVMDoubleTensorFactory(), "JVM DoubleTensor"},
         });
     }
@@ -168,7 +166,7 @@ public class DoubleScalarTensorShapePreservationTest {
     }
 
     private static void resultShapeMatchesBroadcastShape(Tensor result, Tensor input1, Tensor input2) {
-        long[] broadcastShape = Shape.broadcastOutputShape(input1.getShape(), input2.getShape());
+        long[] broadcastShape = io.improbable.keanu.tensor.TensorShape.getBroadcastResultShape(input1.getShape(), input2.getShape());
         long[] resultShape = result.getShape();
         assertThat(resultShape, equalTo(broadcastShape));
     }

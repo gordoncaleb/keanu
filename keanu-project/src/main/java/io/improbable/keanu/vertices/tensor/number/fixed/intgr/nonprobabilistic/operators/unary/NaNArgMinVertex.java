@@ -1,6 +1,5 @@
 package io.improbable.keanu.vertices.tensor.number.fixed.intgr.nonprobabilistic.operators.unary;
 
-import io.improbable.keanu.annotation.ExportVertexToPythonBindings;
 import io.improbable.keanu.tensor.FloatingPointTensor;
 import io.improbable.keanu.tensor.intgr.IntegerTensor;
 import io.improbable.keanu.vertices.LoadVertexParam;
@@ -17,7 +16,6 @@ public class NaNArgMinVertex<T extends Number, TENSOR extends FloatingPointTenso
         this(inputVertex, null);
     }
 
-    @ExportVertexToPythonBindings
     public NaNArgMinVertex(@LoadVertexParam(INPUT_NAME) TensorVertex<T, TENSOR, VERTEX> inputVertex,
                            @LoadVertexParam(AXIS) Integer axis) {
         super(inputVertex);

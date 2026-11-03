@@ -45,7 +45,10 @@ public class Differentiator {
 
             if (of.contains(visiting)) {
                 ofWrt.put(visiting.getId(), partialOfVisiting);
-                continue;
+                if (ofWrt.size() == of.size()) {
+                    break;
+                }
+                // keep traversing: other requested vertices may depend on this one
             }
 
             for (Vertex child : (Set<Vertex>) visiting.getChildren()) {

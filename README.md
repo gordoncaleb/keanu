@@ -53,7 +53,7 @@ Want to see an example and run it yourself? Head over to [Getting Started](https
 ## Documentation
 
 Want to learn more? Head over to the [Documentation](https://improbable-research.github.io/keanu/).
-You can also see our [JavaDocs](https://www.javadoc.io/doc/io.improbable/keanu) or our [Python Docs](https://improbable-research.github.io/keanu/python/latest)
+You can also see our [JavaDocs](https://www.javadoc.io/doc/io.improbable/keanu)
 
 ## Future
 
@@ -79,11 +79,13 @@ For IntelliJ:
 
 #### Formatting
 
-We use [Spotless](https://github.com/diffplug/spotless/tree/master/plugin-gradle) and [yapf](https://github.com/google/yapf) to automatically enforce some basic code style checks. If your build fails due to a formatting issue, simply run `./gradlew formatApply` and commit the changes. You need to have run `./gradlew build` or `test` at least once before running `formatApply`, as this installs yapf in your virtual environment.
+We use [Spotless](https://github.com/diffplug/spotless/tree/master/plugin-gradle) to automatically enforce some basic code style checks. If your build fails due to a formatting issue, simply run `./gradlew formatApply` and commit the changes.
 
-#### Python Code Generation
+#### Requirements
 
-[Custom annotations](keanu-project/src/main/java/io/improbable/keanu/annotation) are used for python code generation. It depends on Oracle JDK to build (i.e. does not support open source JDKs). The minimum version requirement is Python 3.6. Simply run `./gradlew codeGen` to generate the code and commit the changes.
+The build uses the Gradle wrapper (Gradle 9) and needs a JDK 17 or newer to run Gradle. The code is compiled and tested with a JDK 17 toolchain, which Gradle downloads automatically if it is not installed.
+
+Keanu is pure Java (plus Kotlin): there are no native dependencies such as ND4J or OpenBLAS, and there are no longer Python bindings.
 
 
 ## Hiring

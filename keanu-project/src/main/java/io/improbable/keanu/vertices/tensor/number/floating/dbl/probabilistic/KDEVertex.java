@@ -1,7 +1,6 @@
 package io.improbable.keanu.vertices.tensor.number.floating.dbl.probabilistic;
 
 import io.improbable.keanu.KeanuRandom;
-import io.improbable.keanu.annotation.ExportVertexToPythonBindings;
 import io.improbable.keanu.distributions.continuous.Uniform;
 import io.improbable.keanu.tensor.Tensor;
 import io.improbable.keanu.tensor.dbl.DoubleTensor;
@@ -25,7 +24,6 @@ public class KDEVertex extends VertexImpl<DoubleTensor, DoubleVertex> implements
     private static final String BANDWIDTH_NAME = "bandwidth";
     private static final String SAMPLES_NAME = "samples";
 
-    @ExportVertexToPythonBindings
     public KDEVertex(@LoadVertexParam(SAMPLES_NAME) DoubleTensor samples, @LoadVertexParam(BANDWIDTH_NAME) double bandwidth) {
         super(Tensor.SCALAR_SHAPE);
         if (samples.getLength() == 0) {

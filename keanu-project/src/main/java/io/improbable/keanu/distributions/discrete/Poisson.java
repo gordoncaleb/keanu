@@ -2,7 +2,6 @@ package io.improbable.keanu.distributions.discrete;
 
 import io.improbable.keanu.KeanuRandom;
 import io.improbable.keanu.distributions.DiscreteDistribution;
-import io.improbable.keanu.tensor.Tensor;
 import io.improbable.keanu.tensor.TensorShape;
 import io.improbable.keanu.tensor.dbl.DoubleTensor;
 import io.improbable.keanu.tensor.intgr.IntegerTensor;
@@ -30,13 +29,13 @@ public class Poisson implements DiscreteDistribution {
 
     @Override
     public IntegerTensor sample(long[] shape, KeanuRandom random) {
-        Tensor.FlattenedView<Double> muWrapped = mu.getFlattenedView();
+        // broadcast mu to the sample shape so each output element uses the mu at its broadcast position
+        final double[] muBroadcast = mu.broadcast(shape).asFlatDoubleArray();
 
-        long muLength = muWrapped.size();
         int length = TensorShape.getLengthAsInt(shape);
         int[] samples = new int[length];
         for (int i = 0; i < length; i++) {
-            samples[i] = sample(muWrapped.get(i % muLength), random);
+            samples[i] = sample(muBroadcast[i], random);
         }
 
         return IntegerTensor.create(samples, shape);
@@ -83,7 +82,8 @@ public class Poisson implements DiscreteDistribution {
         DoubleTensor kDouble = k.toDouble();
         DoubleTensor logFactorialK = kDouble.plus(1).logGammaInPlace();
 
-        return kDouble.timesInPlace(mu.log()).minusInPlace(mu).minusInPlace(logFactorialK);
+        DoubleTensor logProb = kDouble.times(mu.log()).minusInPlace(mu).minusInPlace(logFactorialK);
+        return logProb.setWithMaskInPlace(kDouble.lessThanMask(DoubleTensor.scalar(0.0)), Double.NEGATIVE_INFINITY);
     }
 
     public static DoubleVertex logProbOutput(IntegerPlaceholderVertex k, DoublePlaceholderVertex mu) {
@@ -91,7 +91,8 @@ public class Poisson implements DiscreteDistribution {
         DoubleVertex kDouble = k.toDouble();
         DoubleVertex logFactorialK = kDouble.plus(1).logGamma();
 
-        return kDouble.times(mu.log()).minus(mu).minus(logFactorialK);
+        DoubleVertex logProb = kDouble.times(mu.log()).minus(mu).minus(logFactorialK);
+        return logProb.setWithMask(kDouble.lessThanMask(0.), Double.NEGATIVE_INFINITY);
     }
 
     public DoubleTensor[] dLogProb(IntegerTensor k, boolean wrtMu) {

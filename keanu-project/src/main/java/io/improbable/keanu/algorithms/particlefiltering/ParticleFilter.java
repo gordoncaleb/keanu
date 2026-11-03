@@ -1,6 +1,7 @@
 package io.improbable.keanu.algorithms.particlefiltering;
 
 import io.improbable.keanu.KeanuRandom;
+import io.improbable.keanu.algorithms.graphtraversal.TopologicalSort;
 import io.improbable.keanu.vertices.Probabilistic;
 import io.improbable.keanu.vertices.Vertex;
 
@@ -124,9 +125,16 @@ public class ParticleFilter {
                                               Vertex<?, ?> observedVertex,
                                               Set<Vertex> vertexDependencies) {
 
+        // Parents must be sampled before children so that each latent is drawn conditioned on its parents' values
+        final List<Vertex> orderedDependencies = TopologicalSort.sort(vertexDependencies);
+
         for (Particle particle : particles) {
+            // The network holds the values of whichever particle was evaluated last, so restore this particle's
+            // state before sampling new latents that may depend on latents it already holds.
+            particle.applyLatentVertexValues();
+
             particle.addObservedVertex(observedVertex);
-            for (Vertex<?, ?> latentVertex : vertexDependencies) {
+            for (Vertex<?, ?> latentVertex : orderedDependencies) {
                 sampleValueAndAddToParticle(latentVertex, particle);
             }
 
@@ -136,6 +144,7 @@ public class ParticleFilter {
 
     private <T> void sampleValueAndAddToParticle(Vertex<T, ?> vertex, Particle particle) {
         T sample = ((Probabilistic<T>) vertex).sample(random);
+        vertex.setAndCascade(sample);
         particle.addLatentVertex(vertex, sample);
     }
 
@@ -148,23 +157,48 @@ public class ParticleFilter {
 
     private List<Particle> sampleAndCopy(List<Particle> particles, int numToSample) {
 
-        double sumWeights = particles.stream().mapToDouble(p -> Math.exp(p.logProb())).sum();
+        final double[] weights = normalisedWeights(particles);
         List<Particle> sampledParticles = new ArrayList<>();
         for (int i = 0; i < numToSample; i++) {
-            Particle sampledParticle = weightedRandomParticle(particles, sumWeights);
+            Particle sampledParticle = weightedRandomParticle(particles, weights);
             sampledParticles.add(sampledParticle.shallowCopy());
         }
 
         return sampledParticles;
     }
 
-    private Particle weightedRandomParticle(List<Particle> particles, double sumWeights) {
+    /**
+     * Weights are exp(logProb) scaled by exp(-maxLogProb) so that they don't all underflow to zero
+     * when the log probabilities are very negative.
+     */
+    static double[] normalisedWeights(List<Particle> particles) {
+        final double maxLogProb = particles.stream().mapToDouble(Particle::logProb).max().orElse(0.0);
+        final double[] weights = new double[particles.size()];
+
+        if (maxLogProb == Double.NEGATIVE_INFINITY || Double.isNaN(maxLogProb)) {
+            // nothing to distinguish particles so pick uniformly
+            java.util.Arrays.fill(weights, 1.0);
+            return weights;
+        }
+
+        for (int i = 0; i < weights.length; i++) {
+            weights[i] = Math.exp(particles.get(i).logProb() - maxLogProb);
+        }
+        return weights;
+    }
+
+    private Particle weightedRandomParticle(List<Particle> particles, double[] weights) {
+        double sumWeights = 0;
+        for (double weight : weights) {
+            sumWeights += weight;
+        }
+
         double r = random.nextDouble() * sumWeights;
         double cumulativeWeight = 0;
         Particle p = particles.get(0);
         for (int i = 0; i < particles.size(); i++) {
             p = particles.get(i);
-            cumulativeWeight += Math.exp(p.logProb());
+            cumulativeWeight += weights[i];
             if (cumulativeWeight > r) {
                 break;
             }

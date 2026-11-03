@@ -76,11 +76,10 @@ public final class SlicerIndexMapper implements IndexMapper {
     private long[] getIndicesOfSource(final long[] shapeIndices) {
 
         for (int i = 0; i < shapeIndices.length; i++) {
-            if (resultShapeWithoutRankLoss[i] != sourceShape[i]) {
-                final Slicer.Slice slice = slicer.getSlice(i, shapeIndices.length);
-
-                shapeIndices[i] = slice.getStart(sourceShape[i]) + shapeIndices[i] * slice.getStep();
-            }
+            // Always map, even when the dimension length is unchanged: e.g. a reversing slice (::-1) keeps the length
+            // but changes which source index each result index maps to.
+            final Slicer.Slice slice = slicer.getSlice(i, shapeIndices.length);
+            shapeIndices[i] = slice.getStart(sourceShape[i]) + shapeIndices[i] * slice.getStep();
         }
 
         return shapeIndices;

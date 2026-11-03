@@ -1,7 +1,6 @@
 package io.improbable.keanu.vertices.tensor.number.fixed.intgr.probabilistic;
 
 import io.improbable.keanu.KeanuRandom;
-import io.improbable.keanu.annotation.ExportVertexToPythonBindings;
 import io.improbable.keanu.distributions.discrete.UniformInt;
 import io.improbable.keanu.tensor.Tensor;
 import io.improbable.keanu.tensor.dbl.DoubleTensor;
@@ -64,7 +63,6 @@ public class UniformIntVertex extends VertexImpl<IntegerTensor, IntegerVertex> i
         this(shape, new ConstantIntegerVertex(min), max);
     }
 
-    @ExportVertexToPythonBindings
     public UniformIntVertex(Vertex<IntegerTensor, ?> min, Vertex<IntegerTensor, ?> max) {
         this(checkHasOneNonLengthOneShapeOrAllLengthOne(min.getShape(), max.getShape()), min, max);
     }
@@ -112,7 +110,7 @@ public class UniformIntVertex extends VertexImpl<IntegerTensor, IntegerVertex> i
 
     @Override
     public Map<Vertex, DoubleTensor> dLogProb(IntegerTensor value, Set<? extends Vertex> withRespectTo) {
-        throw new UnsupportedOperationException();
+        throw new UnsupportedOperationException("UniformInt is a discrete distribution so it has no gradient");
     }
 
     @Override

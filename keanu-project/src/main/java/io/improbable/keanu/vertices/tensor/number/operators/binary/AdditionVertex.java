@@ -1,7 +1,6 @@
 package io.improbable.keanu.vertices.tensor.number.operators.binary;
 
 import io.improbable.keanu.annotation.DisplayInformationForOutput;
-import io.improbable.keanu.annotation.ExportVertexToPythonBindings;
 import io.improbable.keanu.tensor.NumberTensor;
 import io.improbable.keanu.vertices.LoadVertexParam;
 import io.improbable.keanu.vertices.NonProbabilisticVertex;
@@ -27,7 +26,6 @@ public class AdditionVertex<T extends Number, TENSOR extends NumberTensor<T, TEN
      * @param left  a vertex to add
      * @param right a vertex to add
      */
-    @ExportVertexToPythonBindings
     public AdditionVertex(@LoadVertexParam(LEFT_NAME) TensorVertex<T, TENSOR, VERTEX> left,
                           @LoadVertexParam(RIGHT_NAME) TensorVertex<T, TENSOR, VERTEX> right) {
         super(left, right, left.ofType());

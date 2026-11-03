@@ -64,12 +64,15 @@ class AdaptiveStepSize {
      */
     public double adaptStepSize(Tree tree) {
 
-        if (stepNum <= adaptCount) {
+        if (stepNum < adaptCount) {
 
             stepSize = Math.exp(updateLogStepSize(tree));
 
-        } else if (stepNum == adaptCount + 1) {
+        } else if (stepNum == adaptCount) {
 
+            // Final adaptation step: switch to the averaged step size now so that the very first
+            // post-adaptation sample uses it, rather than the last noisy adapted value.
+            updateLogStepSize(tree);
             stepSize = Math.exp(logStepSizeBar);
         }
 

@@ -36,8 +36,9 @@ public class TextMessaging {
         // in bad proposals and by extension bad samples.
         final double alpha = 10;
 
-        ExponentialVertex earlyRate = new ExponentialVertex(alpha);
-        ExponentialVertex lateRate = new ExponentialVertex(alpha);
+        // ExponentialVertex takes a rate, so a prior with mean alpha has rate 1 / alpha
+        ExponentialVertex earlyRate = new ExponentialVertex(1.0 / alpha);
+        ExponentialVertex lateRate = new ExponentialVertex(1.0 / alpha);
         UniformIntVertex switchPoint = new UniformIntVertex(0, numberOfDays);
 
         IntegerVertex days = ConstantVertex.of(data.day);

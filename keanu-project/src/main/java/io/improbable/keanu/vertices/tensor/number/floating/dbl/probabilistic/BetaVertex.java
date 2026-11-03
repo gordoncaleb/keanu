@@ -1,7 +1,6 @@
 package io.improbable.keanu.vertices.tensor.number.floating.dbl.probabilistic;
 
 import io.improbable.keanu.KeanuRandom;
-import io.improbable.keanu.annotation.ExportVertexToPythonBindings;
 import io.improbable.keanu.distributions.continuous.Beta;
 import io.improbable.keanu.distributions.hyperparam.Diffs;
 import io.improbable.keanu.tensor.TensorShape;
@@ -65,7 +64,6 @@ public class BetaVertex extends VertexImpl<DoubleTensor, DoubleVertex> implement
      * @param alpha the alpha of the Beta with either the same tensorShape as specified for this vertex or a scalar
      * @param beta  the beta of the Beta with either the same tensorShape as specified for this vertex or a scalar
      */
-    @ExportVertexToPythonBindings
     public BetaVertex(Vertex<DoubleTensor, ?> alpha, Vertex<DoubleTensor, ?> beta) {
         this(TensorShape.getBroadcastResultShape(alpha.getShape(), beta.getShape()), alpha, beta);
     }

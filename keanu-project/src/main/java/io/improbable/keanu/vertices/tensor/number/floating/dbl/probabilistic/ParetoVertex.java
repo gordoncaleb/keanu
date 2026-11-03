@@ -1,7 +1,6 @@
 package io.improbable.keanu.vertices.tensor.number.floating.dbl.probabilistic;
 
 import io.improbable.keanu.KeanuRandom;
-import io.improbable.keanu.annotation.ExportVertexToPythonBindings;
 import io.improbable.keanu.distributions.continuous.Pareto;
 import io.improbable.keanu.distributions.hyperparam.Diffs;
 import io.improbable.keanu.tensor.TensorShape;
@@ -55,7 +54,6 @@ public class ParetoVertex extends VertexImpl<DoubleTensor, DoubleVertex> impleme
         setParents(location, scale);
     }
 
-    @ExportVertexToPythonBindings
     public ParetoVertex(Vertex<DoubleTensor, ?> location, Vertex<DoubleTensor, ?> scale) {
         this(checkHasOneNonLengthOneShapeOrAllLengthOne(location.getShape(), scale.getShape()), location, scale);
     }

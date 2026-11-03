@@ -53,26 +53,3 @@ NetworkSamples posteriorSamples = Keanu.Sampling.MetropolisHastings.withDefaultC
 );
 DoubleTensor autocorrelation = posteriorSamples.getDoubleTensorSamples(A).getAutocorrelation(0, 1);
 ```
-
-#### Python
-
-It's also possible to calculate the autocorrelation of samples in Python.
-
-```python
-algo = MetropolisHastingsSampler(proposal_distribution='prior', latents=bayes_net.iter_latent_vertices())
-posterior_samples = sample(net=bayes_net, sample_from=bayes_net.iter_latent_vertices(),
-                           sampling_algorithm=algo, draws=100)
-vertex_samples = posterior_samples.get('a')
-ac = stats.autocorrelation(vertex_samples)
-```
-
-When the samples are `ndarrays` the index on which to calculate the autocorrelation can be specified 
-as a tuple.
-
-```python
-algo = MetropolisHastingsSampler(proposal_distribution='prior', latents=bayes_net.iter_latent_vertices())
-posterior_samples = sample(net=bayes_net, sample_from=bayes_net.iter_latent_vertices(),
-                           sampling_algorithm=algo, draws=100)
-vertex_samples = posterior_samples.get(('a', (0, 1)))
-ac = stats.autocorrelation(vertex_samples)
-```

@@ -78,21 +78,3 @@ in the stored model.  This can be achieved in a few lines of code as below:
 ```java
 {% snippet LoadFromJSON %}
 ```
-
-### Python Saving Examples
-
-Saving a model in Python is also straightforward requiring only that you construct your saver and pass it a fully
-qualified file name and the network to save (along with an optional metadata map).  An example for each of the savers
-is given below:
-
-```python
-{% snippet PythonSaveSnippet %}
-```
-
-### Python Loading Examples
-
-Once again, networks can be loaded using Python API via the JSON or Protobuf Loader objects.  Example below:
-
-```python
-{% snippet PythonLoadSnippet %}
-```

@@ -1,6 +1,5 @@
 package io.improbable.keanu.vertices.tensor.number.fixed.intgr.nonprobabilistic;
 
-import io.improbable.keanu.annotation.ExportVertexToPythonBindings;
 import io.improbable.keanu.tensor.intgr.IntegerTensor;
 import io.improbable.keanu.vertices.ConstantVertex;
 import io.improbable.keanu.vertices.LoadVertexParam;
@@ -13,7 +12,6 @@ public class ConstantIntegerVertex extends VertexImpl<IntegerTensor, IntegerVert
 
     private final static String CONSTANT_NAME = "constant";
 
-    @ExportVertexToPythonBindings
     public ConstantIntegerVertex(@LoadVertexParam(CONSTANT_NAME) IntegerTensor constant) {
         super(constant.getShape());
         setValue(constant);

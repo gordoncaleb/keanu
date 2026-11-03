@@ -1,7 +1,6 @@
 package io.improbable.keanu.vertices.tensor.number.operators.binary;
 
 import io.improbable.keanu.annotation.DisplayInformationForOutput;
-import io.improbable.keanu.annotation.ExportVertexToPythonBindings;
 import io.improbable.keanu.tensor.NumberTensor;
 import io.improbable.keanu.tensor.dbl.DoubleTensor;
 import io.improbable.keanu.vertices.LoadVertexParam;
@@ -27,7 +26,6 @@ public class DivisionVertex<T extends Number, TENSOR extends NumberTensor<T, TEN
      * @param left  the vertex to be divided
      * @param right the vertex to divide
      */
-    @ExportVertexToPythonBindings
     public DivisionVertex(@LoadVertexParam(LEFT_NAME) TensorVertex<T, TENSOR, VERTEX> left,
                           @LoadVertexParam(RIGHT_NAME) TensorVertex<T, TENSOR, VERTEX> right) {
         super(left, right, left.ofType());

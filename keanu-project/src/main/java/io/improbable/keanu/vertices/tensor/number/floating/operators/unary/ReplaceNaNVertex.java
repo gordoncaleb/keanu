@@ -1,6 +1,5 @@
 package io.improbable.keanu.vertices.tensor.number.floating.operators.unary;
 
-import io.improbable.keanu.annotation.ExportVertexToPythonBindings;
 import io.improbable.keanu.tensor.FloatingPointTensor;
 import io.improbable.keanu.vertices.LoadVertexParam;
 import io.improbable.keanu.vertices.NonProbabilisticVertex;
@@ -15,7 +14,6 @@ public class ReplaceNaNVertex<T extends Number, TENSOR extends FloatingPointTens
     private static final String REPLACE_WITH_VALUE = "REPLACE_WITH_VALUE";
     private final T replaceWithValue;
 
-    @ExportVertexToPythonBindings
     public ReplaceNaNVertex(@LoadVertexParam(INPUT_NAME) TensorVertex<T, TENSOR, VERTEX> inputVertex,
                             @LoadVertexParam(REPLACE_WITH_VALUE) T replaceWithValue) {
         super(inputVertex);

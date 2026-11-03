@@ -60,7 +60,6 @@ Let's create vectors of doubles, integers and booleans that share the same value
 {% snippet TensorSharedValue %}
 ```
 
-
 Let's make some 2x2 matrices of doubles, integers and booleans.
 
 ```java
@@ -92,7 +91,6 @@ A complete list of tensor operations is available here:
 - [Integer Tensor](https://static.javadoc.io/io.improbable/keanu/{{ site.current_version }}/io/improbable/keanu/tensor/intgr/IntegerTensor.html)
 - [Boolean Tensor](https://static.javadoc.io/io.improbable/keanu/{{ site.current_version }}/io/improbable/keanu/tensor/bool/SimpleBooleanTensor.html)
 - [Generic Tensor](https://static.javadoc.io/io.improbable/keanu/{{ site.current_version }}/io/improbable/keanu/tensor/generic/GenericTensor.html)
-
 
 ### Creating Vertices with Tensors
 
@@ -146,7 +144,6 @@ Let’s define B as a tensor of shape `[]`. It’s therefore a rank 0 value (a s
 
 We can do operations as normal between the two, even though they have different shapes. 
 The resulting tensor will always have the shape of the initial tensor.
-
 
 ### Tensor and Tensor
 
@@ -204,7 +201,6 @@ Operating on a `[2, 3]` and a `[2, 1]`
 {% snippet TensorBroadcastColumnExample %}
 ```
 
-
 ## Example of Tensors
 Tensors can provide us with a more succinct way of describing problems and can allow us to solve problems computationally efficiently on the GPU. 
 Without using tensors we have to iterate over the data and aggregate some results. 
@@ -231,16 +227,4 @@ In Keanu the above problem would be written as:
 
 ```java
 {% snippet TensorFinal %}
-```
-
-## Python
-
-We do not expose Tensors in the Python API. Numpy provides the same concept 
-through its `ndarray` class and these are converted to/from Tensors for you.
-
-All of the operations that used Tensor within Java can be replaced with `ndarray` in Python.
-For example, to create a vertex:
-
-```python
-{% snippet PythonVertexFromNDArray %}
 ```

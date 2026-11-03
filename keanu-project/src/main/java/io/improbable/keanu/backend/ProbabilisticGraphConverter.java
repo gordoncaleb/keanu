@@ -5,6 +5,7 @@ import io.improbable.keanu.network.BayesianNetwork;
 import io.improbable.keanu.vertices.LogProbGraph;
 import io.improbable.keanu.vertices.LogProbGraphSupplier;
 import io.improbable.keanu.vertices.Vertex;
+import io.improbable.keanu.vertices.tensor.number.floating.dbl.DoubleVertex;
 import lombok.experimental.UtilityClass;
 
 import java.util.List;
@@ -60,8 +61,14 @@ public class ProbabilisticGraphConverter {
                                                      ComputableGraphBuilder<?> graphBuilder) {
 
         graphBuilder.connect(logProbGraph.getInputs());
-        graphBuilder.convert(logProbGraph.getLogProbOutput().getConnectedGraph());
-        return logProbGraph.getLogProbOutput().getReference();
+
+        // Most distributions return an element-wise log prob so it needs summing to give the vertex's total log prob.
+        // This must happen before the per-vertex outputs are added together, otherwise they would broadcast.
+        final DoubleVertex logProbOutput = logProbGraph.getLogProbOutput();
+        final DoubleVertex totalLogProb = logProbOutput.getShape().length == 0 ? logProbOutput : logProbOutput.sum();
+
+        graphBuilder.convert(totalLogProb.getConnectedGraph());
+        return totalLogProb.getReference();
     }
 
 }

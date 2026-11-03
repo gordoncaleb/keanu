@@ -161,7 +161,7 @@ class NUTSSampler implements SamplingAlgorithm {
             potential.update(proposal.getPosition());
         }
 
-        if (stepCount > adaptCount) {
+        if (stepCount >= adaptCount) {
             if (tree.isDiverged()) {
                 statistics.store(NUTS.Metrics.DIVERGENT_SAMPLE, (double) stepCount);
                 log.warn("Divergent NUTS sample after adaption ended. Increase the number or samples to adapt for or the max energy change.");

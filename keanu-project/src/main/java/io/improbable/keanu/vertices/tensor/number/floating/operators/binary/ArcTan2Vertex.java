@@ -1,6 +1,5 @@
 package io.improbable.keanu.vertices.tensor.number.floating.operators.binary;
 
-import io.improbable.keanu.annotation.ExportVertexToPythonBindings;
 import io.improbable.keanu.tensor.FloatingPointTensor;
 import io.improbable.keanu.tensor.dbl.DoubleTensor;
 import io.improbable.keanu.vertices.LoadVertexParam;
@@ -29,7 +28,6 @@ public class ArcTan2Vertex<T extends Number, TENSOR extends FloatingPointTensor<
      * @param x x coordinate
      * @param y y coordinate
      */
-    @ExportVertexToPythonBindings
     public ArcTan2Vertex(@LoadVertexParam(X_NAME) TensorVertex<T, TENSOR, VERTEX> x,
                          @LoadVertexParam(Y_NAME) TensorVertex<T, TENSOR, VERTEX> y) {
         super(x, y, x.ofType());

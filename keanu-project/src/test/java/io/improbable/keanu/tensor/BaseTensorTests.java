@@ -4,12 +4,10 @@ import io.improbable.keanu.tensor.bool.BooleanTensor;
 import io.improbable.keanu.tensor.bool.JVMBooleanTensor;
 import io.improbable.keanu.tensor.dbl.JVMDoubleTensor;
 import io.improbable.keanu.tensor.dbl.JVMDoubleTensorFactory;
-import io.improbable.keanu.tensor.dbl.Nd4jDoubleTensor;
 import io.improbable.keanu.tensor.generic.GenericTensor;
 import io.improbable.keanu.tensor.intgr.IntegerTensor;
 import io.improbable.keanu.tensor.intgr.JVMIntegerTensor;
 import io.improbable.keanu.tensor.intgr.JVMIntegerTensorFactory;
-import io.improbable.keanu.tensor.intgr.Nd4jIntegerTensor;
 import lombok.AllArgsConstructor;
 import lombok.Value;
 import org.junit.Test;
@@ -52,17 +50,11 @@ public class BaseTensorTests {
 
         List<TensorImpl> tensorImpls = new ArrayList<>();
 
-        tensorImpls.add(new TensorImpl(
-            (shape) -> Nd4jDoubleTensor.arange(0, getLength(shape)).reshape(shape), Nd4jDoubleTensor.class
-        ));
 
         tensorImpls.add(new TensorImpl(
             (shape) -> JVMDoubleTensorFactory.INSTANCE.arange(0, getLength(shape)).reshape(shape), JVMDoubleTensor.class
         ));
 
-        tensorImpls.add(new TensorImpl(
-            (shape) -> Nd4jIntegerTensor.arange(0, (int) getLength(shape)).reshape(shape), Nd4jIntegerTensor.class
-        ));
 
         tensorImpls.add(new TensorImpl(
             (shape) -> JVMIntegerTensorFactory.INSTANCE.arange(0, (int) getLength(shape)).reshape(shape), JVMIntegerTensor.class

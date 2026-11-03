@@ -15,10 +15,10 @@ import lombok.AllArgsConstructor;
 import lombok.Getter;
 import lombok.NonNull;
 
-import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 import static io.improbable.keanu.algorithms.mcmc.proposal.MHStepVariableSelector.SINGLE_VARIABLE_SELECTOR;
 
@@ -88,11 +88,11 @@ public class SimulatedAnnealing {
 
         for (int sampleNum = 0; sampleNum < sampleCount; sampleNum++) {
 
-            Variable<?, ?> chosenVariable = latentVariables.get(sampleNum % latentVariables.size());
+            Set<Variable> chosenVariables = variableSelector.select(latentVariables, sampleNum);
 
             double temperature = annealingSchedule.getTemperature(sampleNum);
             logProbabilityBeforeStep = mhStep.step(
-                Collections.singleton(chosenVariable),
+                chosenVariables,
                 logProbabilityBeforeStep,
                 temperature
             ).getLogProbabilityAfterStep();

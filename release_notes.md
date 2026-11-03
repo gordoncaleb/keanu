@@ -1,3 +1,36 @@
+## Unreleased
+
+#### Breaking changes
+- Removed the ND4J tensor implementations and the ND4J dependency. Keanu's tensors are now pure JVM.
+- Removed the OpenBLAS (JavaCPP) dependency. Matrix multiply, LU, inverse, determinant and Cholesky are implemented in pure Java (`KeanuLapack`).
+- Removed the Python package (`keanu-python`), the Python code generator (`codegen`), the Py4j byte array converter and the `@ExportVertexToPythonBindings` annotation.
+- `ExponentialVertex` now treats its parameter as a rate, as documented (pdf = rate * exp(-rate * x)). Previously it was treated as the mean (scale). To keep old models unchanged pass `1 / oldValue`.
+- Element-wise floating point equality now uses IEEE 754 semantics everywhere (`NaN != NaN`, `0.0 == -0.0`).
+- `argMax`/`argMin` on floating point tensors now return the index of the first NaN, as numpy does. Use `nanArgMax`/`nanArgMin` to ignore NaNs.
+- Integer and long `pow` with a negative exponent now truncates `1 / base^|exponent|` (0 raised to a negative power throws), consistently across all code paths.
+- `reshape` with `-1` now throws if the length doesn't divide evenly.
+- Slicing now follows numpy for negative steps and steps greater than 1 (e.g. `"::-1"` reverses, `"3:3:2"` is empty).
+- The build requires Gradle 9 (wrapper included) and compiles with a JDK 17 toolchain.
+
+#### Bug fixes
+- Gamma sampling (and Beta, Dirichlet, ChiSquared and StudentT, which use it) was biased when the shape k < 1 because the wrong constant (Euler-Mascheroni instead of e) was used.
+- Multinomial gradient with respect to p was wrong.
+- UniformInt sampling was biased, and could return the exclusive upper bound, for ranges including negative numbers.
+- Triangular logProb was -infinity at the mode and NaN when the mode equalled xMin or xMax. Triangular now also has a gradient.
+- Poisson sampling did not broadcast mu correctly. Binomial and Poisson logProb were NaN instead of -infinity outside of their support.
+- MultivariateGaussian logProbGraph used the wrong dimension when mu was batched, and compiled log prob graphs failed for non-scalar latents of most distributions.
+- Metropolis Hastings with the prior proposal and several dependent variables proposed at once used the wrong Hastings correction.
+- Particle filter: latents were sampled using another particle's parent values, resampling weights underflowed to zero, and building one failed on Java 9+.
+- NUTS could not be reused for a second sampling run (all steps diverged). The first post-adaptation sample now uses the averaged step size.
+- Adam's default convergence check never converged when the optimum was near zero, and the initial "flat gradient" check could reject steep negative gradients.
+- `NetworkSamples.downSample` reported the wrong size.
+- Forward mode auto diff with several requested vertices only returned the first one reached.
+- Simulated annealing ignored the configured variable selector.
+- Tensors: `atan2` with a scalar argument had its arguments swapped, `max`/`min` ignored infinities, `diagPart` was wrong for batches of non-square matrices, `matrixDeterminant` returned a single 0 for a whole batch with one singular matrix, `tensorMultiply` failed with negative dimensions and mutated its arguments, `logAddExp`/`logAddExp2` returned NaN for two matching infinities, `argMax`/`argMin` rejected negative axes.
+
+#### New
+- Auto diff for `cumSum`, `cumProd`, `tensorMultiply`, `choleskyDecomposition`, `choleskyInverse`, `standardize`, `standardDeviation`, `trigamma`, `logAddExp` and `logAddExp2`.
+
 ## Version 0.0.27
 
 ### Java
