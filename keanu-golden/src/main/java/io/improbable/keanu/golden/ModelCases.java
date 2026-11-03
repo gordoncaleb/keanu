@@ -60,6 +60,7 @@ final class ModelCases {
         models.put("betaBinomial", ModelCases::betaBinomial);
         models.put("gammaPoisson", ModelCases::gammaPoisson);
         models.put("randomWalkSequence", ModelCases::randomWalkSequence);
+        models.put("catalog", CatalogModel::build);
 
         List<Map<String, Object>> cases = new ArrayList<>();
         for (Map.Entry<String, Supplier<BayesianNetwork>> entry : models.entrySet()) {
@@ -102,7 +103,8 @@ final class ModelCases {
         VertexId.resetIdGenerator();
         BayesianNetwork reloaded = loader.loadNetwork(new ByteArrayInputStream(bytes));
         Map<String, Object> actual = evaluate(reloaded);
-        if (!Json.write(actual).equals(Json.write(expected))) {
+        // gradient contributions are summed in hash set order, which depends on vertex ids, so allow for the last bits
+        if (!approximatelyEqual(actual, expected)) {
             throw new IllegalStateException("Model " + name + " does not round trip through " + format
                 + "\nexpected " + Json.write(expected) + "\nactual " + Json.write(actual));
         }
@@ -135,8 +137,22 @@ final class ModelCases {
             }
         }
 
+        // the value of every labeled vertex, so deterministic nodes are checked too
+        List<Vertex> labeled = new ArrayList<>();
+        for (Vertex vertex : network.getAllVertices()) {
+            if (vertex.getLabel() != null) {
+                labeled.add(vertex);
+            }
+        }
+        labeled.sort(Comparator.comparing(ModelCases::name));
+        Map<String, Object> nodeValues = new LinkedHashMap<>();
+        for (Vertex vertex : labeled) {
+            nodeValues.put(name(vertex), Cases.encode(vertex.getValue()));
+        }
+
         Map<String, Object> result = new LinkedHashMap<>();
         result.put("latentValues", latentValues);
+        result.put("nodeValues", nodeValues);
         result.put("logProb", model.logProb());
         result.put("logLikelihood", model.logLikelihood());
         result.put("dLogProb", dLogProb);
@@ -267,5 +283,41 @@ final class ModelCases {
         total.setLabel("total");
 
         return new BayesianNetwork(rate.getConnectedGraph());
+    }
+
+    private static boolean approximatelyEqual(Object a, Object b) {
+        if (a instanceof Map && b instanceof Map) {
+            Map<?, ?> ma = (Map<?, ?>) a;
+            Map<?, ?> mb = (Map<?, ?>) b;
+            return ma.keySet().equals(mb.keySet()) && ma.keySet().stream().allMatch(k -> approximatelyEqual(ma.get(k), mb.get(k)));
+        }
+        if (a instanceof double[] && b instanceof double[]) {
+            double[] da = (double[]) a;
+            double[] db = (double[]) b;
+            if (da.length != db.length) {
+                return false;
+            }
+            for (int i = 0; i < da.length; i++) {
+                if (!approximatelyEqual((Object) da[i], (Object) db[i])) {
+                    return false;
+                }
+            }
+            return true;
+        }
+        if (a instanceof Double && b instanceof Double) {
+            double x = (Double) a;
+            double y = (Double) b;
+            return Double.compare(x, y) == 0 || Math.abs(x - y) <= 1e-12 * Math.max(1.0, Math.abs(y));
+        }
+        if (a instanceof long[] && b instanceof long[]) {
+            return java.util.Arrays.equals((long[]) a, (long[]) b);
+        }
+        if (a instanceof int[] && b instanceof int[]) {
+            return java.util.Arrays.equals((int[]) a, (int[]) b);
+        }
+        if (a instanceof boolean[] && b instanceof boolean[]) {
+            return java.util.Arrays.equals((boolean[]) a, (boolean[]) b);
+        }
+        return java.util.Objects.equals(a, b);
     }
 }

@@ -17,6 +17,7 @@ struct Inner {
     error: Option<GraphError>,
     values: Vec<Option<Value>>,
     observed: Vec<bool>,
+    sequences: usize,
 }
 
 /// Builds a [`Graph`] through typed handles ([`DoubleVar`], [`IntVar`], [`BoolVar`]) that support arithmetic
@@ -53,7 +54,7 @@ impl GraphBuilder {
         self.inner.borrow().error.clone()
     }
 
-    fn record(&self, error: GraphError) {
+    pub(crate) fn record(&self, error: GraphError) {
         let mut inner = self.inner.borrow_mut();
         if inner.error.is_none() {
             inner.error = Some(error);
@@ -154,6 +155,136 @@ impl GraphBuilder {
             observed: inner.observed,
         };
         Ok((graph, state))
+    }
+
+    /// The next sequence identifier: 1 for the first sequence built with this builder, then 2, ...
+    pub(crate) fn next_sequence_identifier(&self) -> usize {
+        let mut inner = self.inner.borrow_mut();
+        inner.sequences += 1;
+        inner.sequences
+    }
+
+    /// The number of nodes created so far.
+    pub fn node_count(&self) -> usize {
+        self.inner.borrow().nodes.len()
+    }
+
+    /// The type of a node created so far.
+    pub fn dtype(&self, id: NodeId) -> DType {
+        self.dtype_shape(id).0
+    }
+
+    /// The value of a node created so far if it is a constant.
+    pub fn constant_value(&self, id: NodeId) -> Option<Value> {
+        match &self.inner.borrow().nodes.get(id.0)?.op {
+            Op::Constant(value) => Some(value.clone()),
+            _ => None,
+        }
+    }
+
+    /// The label of a node created so far.
+    pub fn label_of(&self, id: NodeId) -> Option<String> {
+        self.inner.borrow().nodes[id.0].label.clone()
+    }
+
+    // ----- untyped construction, for loaders and other generic code -----
+    //
+    // These return errors immediately instead of recording them for `build`.
+
+    fn take_error_since(&self, before: Option<GraphError>) -> Result<()> {
+        let mut inner = self.inner.borrow_mut();
+        if before.is_none()
+            && let Some(e) = inner.error.take()
+        {
+            return Err(e);
+        }
+        Ok(())
+    }
+
+    /// Adds a deterministic node with the given op and parents, inferring its type and shape.
+    pub fn add_node(&self, op: Op, parents: &[NodeId]) -> Result<NodeId> {
+        if matches!(op, Op::Distribution(_)) {
+            return Err(GraphError::InvalidNode {
+                op: op.name(),
+                message: "use add_distribution for probabilistic nodes".into(),
+            });
+        }
+        if let Some(&p) = parents.iter().find(|p| p.0 >= self.node_count()) {
+            return Err(GraphError::InvalidNode {
+                op: op.name(),
+                message: format!("unknown parent {p:?}"),
+            });
+        }
+        let types: Vec<(DType, Shape)> = parents.iter().map(|&p| self.dtype_shape(p)).collect();
+        let refs: Vec<(DType, &[usize])> = types.iter().map(|(t, s)| (*t, s.as_slice())).collect();
+        let (dtype, _) = output_type(&op, &refs)?;
+        let before = self.error();
+        let id = self.add(op, parents, dtype);
+        self.take_error_since(before)?;
+        Ok(id)
+    }
+
+    /// Adds a probabilistic node. `shape` is the requested shape (None for the parameters' broadcast shape).
+    pub fn add_distribution(
+        &self,
+        kind: DistributionKind,
+        shape: Option<&[usize]>,
+        parameters: &[NodeId],
+    ) -> Result<NodeId> {
+        if let Some(&p) = parameters.iter().find(|p| p.0 >= self.node_count()) {
+            return Err(GraphError::InvalidNode {
+                op: "distribution",
+                message: format!("unknown parent {p:?}"),
+            });
+        }
+        let before = self.error();
+        let id = self.distribution(kind, shape, parameters);
+        self.take_error_since(before)?;
+        Ok(id)
+    }
+
+    /// Adds an unconnected proxy node of the given type and shape.
+    pub fn add_proxy(&self, dtype: DType, shape: &[usize]) -> NodeId {
+        self.proxy(dtype, shape)
+    }
+
+    /// Connects a proxy node to the (earlier) node it stands for.
+    pub fn connect_ids(&self, proxy: NodeId, parent: NodeId) -> Result<()> {
+        let before = self.error();
+        match self.dtype(proxy) {
+            DType::F64 => self.connect(self.double_var(proxy), self.double_var(parent)),
+            DType::I64 => self.connect(IntVar::new(self, proxy), IntVar::new(self, parent)),
+            DType::Bool => self.connect(BoolVar::new(self, proxy), BoolVar::new(self, parent)),
+        }
+        self.take_error_since(before)
+    }
+
+    /// Labels a node.
+    pub fn set_label_of(&self, id: NodeId, label: &str) {
+        self.set_label(id, label);
+    }
+
+    /// Sets the initial value of a node, checking its type and shape.
+    pub fn set_value_of(&self, id: NodeId, value: Value) -> Result<()> {
+        let before = self.error();
+        if self.check_value(id, &value) {
+            let mut inner = self.inner.borrow_mut();
+            if !inner.observed[id.0] {
+                inner.values[id.0] = Some(value);
+            }
+        }
+        self.take_error_since(before)
+    }
+
+    /// Observes a node, checking its type and shape. Only probabilistic and boolean nodes can be observed.
+    pub fn observe_of(&self, id: NodeId, value: Value) -> Result<()> {
+        let before = self.error();
+        match self.dtype(id) {
+            DType::F64 => self.observe(self.double_var(id), value),
+            DType::I64 => self.observe(IntVar::new(self, id), value),
+            DType::Bool => self.observe(BoolVar::new(self, id), value),
+        }
+        self.take_error_since(before)
     }
 
     // ----- constants -----

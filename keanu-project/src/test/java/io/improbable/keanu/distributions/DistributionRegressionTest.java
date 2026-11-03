@@ -259,4 +259,41 @@ public class DistributionRegressionTest {
         assertArrayEquals(new long[]{3}, io.improbable.keanu.distributions.continuous.Laplace.withParameters(DoubleTensor.create(1.0, 2.0, 3.0), DoubleTensor.scalar(2.0)).sample(new long[0], random).getShape());
         assertArrayEquals(new long[]{3}, Poisson.withParameters(DoubleTensor.create(1.0, 2.0, 3.0)).sample(new long[0], random).getShape());
     }
+
+    @Test
+    public void kdeEvaluatesAtItsOwnScalarShape() {
+        io.improbable.keanu.vertices.tensor.number.floating.dbl.probabilistic.KDEVertex kde =
+            new io.improbable.keanu.vertices.tensor.number.floating.dbl.probabilistic.KDEVertex(DoubleTensor.create(0.1, 0.4, 0.5, 1.2), 0.3);
+        kde.setValue(DoubleTensor.scalar(0.45));
+
+        double vectorLogProb = kde.logProb(DoubleTensor.create(0.45));
+        assertEquals(vectorLogProb, kde.logProb(DoubleTensor.scalar(0.45)), 1e-12);
+
+        DoubleTensor gradient = kde.dLogProbAtValue(kde).get(kde);
+        assertArrayEquals(new long[0], gradient.getShape());
+        double h = 1e-6;
+        double numeric = (kde.logProb(DoubleTensor.scalar(0.45 + h)) - kde.logProb(DoubleTensor.scalar(0.45 - h))) / (2 * h);
+        assertEquals(numeric, gradient.scalar(), 1e-5);
+    }
+
+    @Test
+    public void modelsContainingUniformIntCanComputeGradients() {
+        io.improbable.keanu.vertices.tensor.number.floating.dbl.probabilistic.GaussianVertex mu =
+            new io.improbable.keanu.vertices.tensor.number.floating.dbl.probabilistic.GaussianVertex(0, 1);
+        mu.setValue(0.5);
+        io.improbable.keanu.vertices.tensor.number.floating.dbl.probabilistic.GaussianVertex x =
+            new io.improbable.keanu.vertices.tensor.number.floating.dbl.probabilistic.GaussianVertex(mu, 1);
+        x.observe(1.0);
+        io.improbable.keanu.vertices.tensor.number.fixed.intgr.probabilistic.UniformIntVertex k =
+            new io.improbable.keanu.vertices.tensor.number.fixed.intgr.probabilistic.UniformIntVertex(0, 5);
+        k.observe(IntegerTensor.scalar(2));
+
+        java.util.Set<io.improbable.keanu.vertices.Vertex> vertices = new java.util.HashSet<>(mu.getConnectedGraph());
+        vertices.addAll(k.getConnectedGraph());
+        io.improbable.keanu.network.KeanuProbabilisticModelWithGradient model =
+            new io.improbable.keanu.network.KeanuProbabilisticModelWithGradient(new io.improbable.keanu.network.BayesianNetwork(vertices));
+
+        // d/dmu [log N(mu; 0, 1) + log N(1; mu, 1)] = -mu + (1 - mu)
+        assertEquals(-0.5 + 0.5, model.logProbGradients().get(mu.getId()).scalar(), 1e-12);
+    }
 }

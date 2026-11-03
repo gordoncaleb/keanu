@@ -35,7 +35,7 @@ The verify task regenerates everything from scratch, so it also fails if the exp
 | `tensors.json` | Tensor operations on f64 / i32 / i64 / bool tensors: element-wise unary and binary ops (with broadcasting), reductions and scans, shape manipulation, numpy-style slicing, linear algebra, integer arithmetic, boolean logic, and their error cases |
 | `distributions.json` | For each distribution and several parameter settings: element-wise `logProb` over a grid of x values, inside and outside the support, and the element-wise derivatives of the log prob with respect to x and each parameter |
 | `vertices.json` | Small vertex graphs: the output value, plus forward-mode and reverse-mode partial derivatives of the output with respect to each input |
-| `models.json`, `models/` | Whole models saved in Keanu's protobuf (`.pb`) and JSON formats, with the expected log prob, log likelihood, and their gradients with respect to each latent at the saved values |
+| `models.json`, `models/` | Whole models saved in Keanu's protobuf (`.pb`) and JSON formats, with the expected log prob, log likelihood, their gradients with respect to each latent, and the value of every labelled vertex. `catalog` contains one labelled instance of every saveable vertex type, recording each type's Java class name and parameter names |
 
 ## Format
 
@@ -98,9 +98,14 @@ Each case is `{"name", "protobuf", "json", "expected"}`, where the two paths are
 - `latentValues`: the value of each latent, keyed by vertex label
 - `logProb` and `logLikelihood`
 - `dLogProb` and `dLogLikelihood`: gradients keyed by latent label
+- `nodeValues`: the value of every labelled vertex, so deterministic vertices are checked too
 
-Every model is reloaded from both formats in Java during export and must reproduce `expected` exactly. A model
-whose save and load round trip breaks therefore fails the export.
+Every model is reloaded from both formats in Java during export and must reproduce `expected` (to 1e-12, because
+gradient contributions are summed in an order that depends on vertex ids). A model whose save and load round trip
+breaks therefore fails the export.
+
+The reverse direction is checked too: Rust writes files (`rust/keanu-io/tests/fixtures/rust-written`), and the
+`RustWrittenModelsTest` in `keanu-golden` loads them in Java and compares with the values Rust computed.
 
 ## Comparing
 

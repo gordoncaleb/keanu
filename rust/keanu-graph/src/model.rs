@@ -1,0 +1,278 @@
+//! Probabilistic models over a graph: the latent and observed nodes, their joint log probability and its gradient,
+//! and the lambda sections that let samplers update the log probability incrementally.
+//!
+//! This is the equivalent of Java's `BayesianNetwork`, `KeanuProbabilisticModel`,
+//! `KeanuProbabilisticModelWithGradient` and `LambdaSection`.
+
+use crate::error::{GraphError, Result};
+use crate::graph::{Graph, NodeId};
+use crate::logprob::{LogProbGradient, log_prob_gradient, node_log_prob};
+use crate::op::eval;
+use crate::state::State;
+use crate::value::{DType, Value};
+use std::collections::HashSet;
+use std::sync::Arc;
+
+/// A set of nodes reached from some starting nodes by walking towards children (downstream) or parents
+/// (upstream), stopping at (but including) probabilistic and observed nodes. The starting nodes are included.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LambdaSection {
+    nodes: Vec<NodeId>,
+    latent_and_observed: Vec<NodeId>,
+}
+
+impl LambdaSection {
+    /// Every node in the section, in topological order.
+    pub fn nodes(&self) -> &[NodeId] {
+        &self.nodes
+    }
+
+    /// The probabilistic and observed nodes in the section, in topological order.
+    pub fn latent_and_observed(&self) -> &[NodeId] {
+        &self.latent_and_observed
+    }
+}
+
+fn is_stop(graph: &Graph, state: &State, id: NodeId) -> bool {
+    graph.node(id).is_probabilistic() || state.is_observed(id)
+}
+
+fn lambda_section(
+    graph: &Graph,
+    state: &State,
+    from: &[NodeId],
+    downstream: bool,
+) -> LambdaSection {
+    let mut seen: HashSet<NodeId> = from.iter().copied().collect();
+    let mut stack: Vec<NodeId> = from.to_vec();
+    while let Some(id) = stack.pop() {
+        let next = if downstream {
+            graph.children(id)
+        } else {
+            graph.parents(id)
+        };
+        for &n in next {
+            if seen.insert(n) && !is_stop(graph, state, n) {
+                stack.push(n);
+            }
+        }
+    }
+    let mut nodes: Vec<NodeId> = seen.into_iter().collect();
+    nodes.sort();
+    let latent_and_observed = nodes
+        .iter()
+        .copied()
+        .filter(|&id| is_stop(graph, state, id))
+        .collect();
+    LambdaSection {
+        nodes,
+        latent_and_observed,
+    }
+}
+
+/// The nodes whose log probability can change when the values of `from` change: walking towards children and
+/// stopping at probabilistic and observed nodes.
+pub fn downstream_lambda_section(graph: &Graph, state: &State, from: &[NodeId]) -> LambdaSection {
+    lambda_section(graph, state, from, true)
+}
+
+/// The nodes `from` depends on, walking towards parents and stopping at probabilistic and observed nodes.
+pub fn upstream_lambda_section(graph: &Graph, state: &State, from: &[NodeId]) -> LambdaSection {
+    lambda_section(graph, state, from, false)
+}
+
+/// True if a deterministic observed node's value differs from what its parents compute (a violated constraint).
+fn contradicts_observation(graph: &Graph, state: &State, id: NodeId) -> Result<bool> {
+    let node = graph.node(id);
+    let Some(observed) = state.value(id) else {
+        return Ok(false);
+    };
+    let parents: Vec<&Value> = node
+        .parents()
+        .iter()
+        .map(|&p| state.value(p).ok_or(GraphError::MissingValue(p.0)))
+        .collect::<Result<_>>()?;
+    let computed = eval(node.op(), &parents)?;
+    Ok(&computed != observed)
+}
+
+/// A probabilistic model: a shared graph with its latent nodes (unobserved probabilistic nodes) and observed
+/// nodes, as they were in the state the model was created from.
+///
+/// The model doesn't own values; every method takes the [`State`] to work on, so one model can serve many
+/// chains.
+#[derive(Debug, Clone)]
+pub struct Model {
+    graph: Arc<Graph>,
+    latents: Vec<NodeId>,
+    observed: Vec<NodeId>,
+    /// For each node, the probabilistic and observed nodes whose log probability depends on its value.
+    sections: Vec<Option<Vec<NodeId>>>,
+}
+
+impl Model {
+    /// A model of every latent and observed node of the graph, in the given state. Fails if there are neither.
+    pub fn new(graph: impl Into<Arc<Graph>>, state: &State) -> Result<Self> {
+        let graph = graph.into();
+        let latents: Vec<NodeId> = graph
+            .probabilistic()
+            .filter(|&id| !state.is_observed(id))
+            .collect();
+        let observed: Vec<NodeId> = graph.ids().filter(|&id| state.is_observed(id)).collect();
+        if latents.is_empty() && observed.is_empty() {
+            return Err(GraphError::InvalidValue(
+                "a model needs at least one latent or observed node".into(),
+            ));
+        }
+        let sections = graph
+            .ids()
+            .map(|id| {
+                graph.node(id).is_probabilistic().then(|| {
+                    downstream_lambda_section(&graph, state, &[id])
+                        .latent_and_observed()
+                        .to_vec()
+                })
+            })
+            .collect();
+        Ok(Self {
+            graph,
+            latents,
+            observed,
+            sections,
+        })
+    }
+
+    pub fn graph(&self) -> &Arc<Graph> {
+        &self.graph
+    }
+
+    /// The unobserved probabilistic nodes, in topological order.
+    pub fn latents(&self) -> &[NodeId] {
+        &self.latents
+    }
+
+    /// The latent nodes holding f64 values (those gradients can be taken with respect to).
+    pub fn continuous_latents(&self) -> Vec<NodeId> {
+        self.latents
+            .iter()
+            .copied()
+            .filter(|&id| self.graph.node(id).dtype() == DType::F64)
+            .collect()
+    }
+
+    /// The latent nodes holding integer or boolean values.
+    pub fn discrete_latents(&self) -> Vec<NodeId> {
+        self.latents
+            .iter()
+            .copied()
+            .filter(|&id| self.graph.node(id).dtype() != DType::F64)
+            .collect()
+    }
+
+    /// The observed nodes (probabilistic, and observed boolean constraints), in topological order.
+    pub fn observed(&self) -> &[NodeId] {
+        &self.observed
+    }
+
+    /// The node with this label.
+    pub fn find(&self, label: &str) -> Option<NodeId> {
+        self.graph.find(label)
+    }
+
+    /// Log probability of the given latent / observed nodes: the sum of the probabilistic nodes' log probabilities,
+    /// or -∞ if any is impossible (-∞ or NaN) or any observed deterministic node contradicts its observation.
+    fn log_prob_of(&self, state: &State, nodes: &[NodeId]) -> Result<f64> {
+        let mut sum = 0.0;
+        for &id in nodes {
+            if self.graph.node(id).is_probabilistic() {
+                let lp = node_log_prob(&self.graph, state, id)?;
+                if lp == f64::NEG_INFINITY || lp.is_nan() {
+                    return Ok(f64::NEG_INFINITY);
+                }
+                sum += lp;
+            } else if contradicts_observation(&self.graph, state, id)? {
+                return Ok(f64::NEG_INFINITY);
+            }
+        }
+        Ok(sum)
+    }
+
+    /// The joint log probability of the latent and observed nodes.
+    pub fn log_prob(&self, state: &State) -> Result<f64> {
+        let mut nodes = self.latents.clone();
+        nodes.extend_from_slice(&self.observed);
+        self.log_prob_of(state, &nodes)
+    }
+
+    /// The log likelihood: the log probability of the observed nodes.
+    pub fn log_likelihood(&self, state: &State) -> Result<f64> {
+        self.log_prob_of(state, &self.observed)
+    }
+
+    /// The gradient of the joint log probability with respect to each continuous latent.
+    pub fn log_prob_gradient(&self, state: &State) -> Result<LogProbGradient> {
+        let of: Vec<NodeId> = self
+            .latents
+            .iter()
+            .chain(&self.observed)
+            .copied()
+            .filter(|&id| self.graph.node(id).is_probabilistic())
+            .collect();
+        log_prob_gradient(&self.graph, state, &of, &self.continuous_latents())
+    }
+
+    /// The gradient of the log likelihood with respect to each continuous latent.
+    pub fn log_likelihood_gradient(&self, state: &State) -> Result<LogProbGradient> {
+        let of: Vec<NodeId> = self
+            .observed
+            .iter()
+            .copied()
+            .filter(|&id| self.graph.node(id).is_probabilistic())
+            .collect();
+        log_prob_gradient(&self.graph, state, &of, &self.continuous_latents())
+    }
+
+    /// Sets the values of some nodes and recomputes their deterministic descendants.
+    pub fn set_and_cascade(&self, state: &mut State, values: &[(NodeId, Value)]) -> Result<()> {
+        for (id, value) in values {
+            state.set(&self.graph, *id, value.clone())?;
+        }
+        let from: Vec<NodeId> = values.iter().map(|(id, _)| *id).collect();
+        state.cascade(&self.graph, &from)
+    }
+
+    /// The probabilistic and observed nodes whose log probability depends on the values of `nodes`.
+    pub fn affected_by(&self, nodes: &[NodeId]) -> Vec<NodeId> {
+        let mut affected: Vec<NodeId> = Vec::new();
+        for &id in nodes {
+            match &self.sections[id.0] {
+                Some(section) => affected.extend_from_slice(section),
+                None => affected.push(id),
+            }
+        }
+        affected.sort();
+        affected.dedup();
+        affected
+    }
+
+    /// Applies a proposal (new values for some latents, cascading to their deterministic descendants) and returns
+    /// the new joint log probability, computed incrementally from `log_prob_before` (the log probability before
+    /// the proposal) by recomputing only the affected nodes, as Java's `KeanuProbabilisticModel.logProbAfter`.
+    pub fn log_prob_after(
+        &self,
+        state: &mut State,
+        proposal: &[(NodeId, Value)],
+        log_prob_before: f64,
+    ) -> Result<f64> {
+        let ids: Vec<NodeId> = proposal.iter().map(|(id, _)| *id).collect();
+        let affected = self.affected_by(&ids);
+        let before = self.log_prob_of(state, &affected)?;
+        self.set_and_cascade(state, proposal)?;
+        let after = self.log_prob_of(state, &affected)?;
+        if !(before.is_finite() && after.is_finite() && log_prob_before.is_finite()) {
+            // an impossible state on either side can't be updated incrementally
+            return self.log_prob(state);
+        }
+        Ok(log_prob_before + (after - before))
+    }
+}

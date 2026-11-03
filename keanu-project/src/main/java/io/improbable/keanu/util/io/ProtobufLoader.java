@@ -196,6 +196,15 @@ public class ProtobufLoader implements NetworkLoader {
 
         for (int i = 0; i < constructorParameters.length; i++) {
             Object parameter = getParameter(constructorParameters[i], paramMap, vertex);
+            if (constructorParameters[i].getType() == boolean[].class && parameter instanceof BooleanTensor) {
+                // boolean[] parameters are saved as boolean tensors
+                final Boolean[] values = ((BooleanTensor) parameter).asFlatArray();
+                final boolean[] primitive = new boolean[values.length];
+                for (int v = 0; v < values.length; v++) {
+                    primitive[v] = values[v];
+                }
+                parameter = primitive;
+            }
             arguments[i] = parameter;
 
             Class<?> argumentClass;

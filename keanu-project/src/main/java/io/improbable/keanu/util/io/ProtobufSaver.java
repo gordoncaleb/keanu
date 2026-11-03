@@ -146,7 +146,7 @@ public class ProtobufSaver implements NetworkSaver {
 
         if (param == null) {
             if (!isNullable) {
-                throw new IllegalArgumentException("No value returned from Save Function");
+                throw new IllegalArgumentException("No value returned from Save Function for parameter " + paramName + " of " + vertex.getClass().getSimpleName());
             } else {
                 return null;
             }
@@ -174,12 +174,17 @@ public class ProtobufSaver implements NetworkSaver {
             return getParam(paramName, builder -> builder.setStringParam((String) param));
         } else if (Boolean.class.isAssignableFrom(param.getClass())) {
             return getParam(paramName, builder -> builder.setBoolParam((boolean) param));
-        } else if (Long[].class.isAssignableFrom(param.getClass())) {
+        } else if (param instanceof long[]) {
+            // the getters return primitive arrays; checking for Long[] / Integer[] never matched them
             return getParam(paramName, (long[]) param);
         } else if (Vertex[].class.isAssignableFrom(param.getClass())) {
             return getParam(paramName, (Vertex[]) param);
-        } else if (Integer[].class.isAssignableFrom(param.getClass())) {
+        } else if (param instanceof int[]) {
             return getParam(paramName, (int[]) param);
+        } else if (param instanceof boolean[]) {
+            // the schema has no boolean array, so boolean[] is saved as a boolean tensor (and converted back on load)
+            final boolean[] values = (boolean[]) param;
+            return getParam(paramName, builder -> builder.setBoolTensorParam(getBooleanTensor(BooleanTensor.create(values, new long[]{values.length}))));
         } else {
             throw new IllegalArgumentException("Unknown Parameter Type to Save: " + param.getClass().toString());
         }

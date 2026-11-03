@@ -40,7 +40,7 @@ public class StridedSliceVertex<T, TENSOR extends Tensor<T, TENSOR>, VERTEX exte
                               @LoadVertexParam(START_NAME) long[] start,
                               @LoadVertexParam(END_NAME) long[] end,
                               @LoadVertexParam(STRIDE_NAME) long[] stride,
-                              @LoadVertexParam(ELLIPSIS_NAME) Integer ellipsis,
+                              @LoadVertexParam(value = ELLIPSIS_NAME, isNullable = true) Integer ellipsis,
                               @LoadVertexParam(UPPER_BOUND_STOP_NAME) boolean[] upperBoundStop,
                               @LoadVertexParam(DROP_DIMENSION_NAME) boolean[] dropDimension) {
         this(inputVertex, new Slicer(start, end, stride, ellipsis, upperBoundStop, dropDimension));
@@ -138,7 +138,7 @@ public class StridedSliceVertex<T, TENSOR extends Tensor<T, TENSOR>, VERTEX exte
         return this.dropDimension;
     }
 
-    @SaveVertexParam(ELLIPSIS_NAME)
+    @SaveVertexParam(value = ELLIPSIS_NAME, isNullable = true)
     public Integer getEllipsis() {
         return this.ellipsis;
     }

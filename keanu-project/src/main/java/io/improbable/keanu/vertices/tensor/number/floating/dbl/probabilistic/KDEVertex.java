@@ -59,15 +59,20 @@ public class KDEVertex extends VertexImpl<DoubleTensor, DoubleVertex> implements
         return samples;
     }
 
+    /**
+     * (x_j - sample_i) / bandwidth shaped [samples, values], working on x flattened so any shape (including the
+     * vertex's own scalar shape) is supported.
+     */
     private DoubleTensor getDiffs(DoubleTensor x) {
-        return x.broadcast(samples.getShape()[0], x.getShape()[0])
+        final DoubleTensor flat = x.reshape(x.getLength());
+        return flat.broadcast(samples.getShape()[0], flat.getShape()[0])
             .minusInPlace(samples.reshape(samples.getShape()[0], 1))
             .divInPlace(bandwidth);
     }
 
     public DoubleTensor pdf(DoubleTensor x) {
         DoubleTensor diffs = getDiffs(x);
-        return gaussianKernel(diffs).sum(0).divInPlace(samples.getLength() * bandwidth);
+        return gaussianKernel(diffs).sum(0).divInPlace(samples.getLength() * bandwidth).reshape(x.getShape());
     }
 
     @Override
@@ -90,7 +95,7 @@ public class KDEVertex extends VertexImpl<DoubleTensor, DoubleVertex> implements
     private DoubleTensor dPdx(DoubleTensor x) {
         DoubleTensor diff = getDiffs(x);
         return gaussianKernel(diff).timesInPlace(diff).unaryMinusInPlace().sum(0)
-            .divInPlace(bandwidth * bandwidth * samples.getLength());
+            .divInPlace(bandwidth * bandwidth * samples.getLength()).reshape(x.getShape());
     }
 
     private DoubleTensor gaussianKernel(DoubleTensor x) {

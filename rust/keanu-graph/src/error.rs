@@ -22,6 +22,8 @@ pub enum GraphError {
     NotObservable(String),
     /// A proxy node was evaluated before being connected, or connected to an invalid parent.
     Proxy(String),
+    /// A sequence (plate) could not be built, e.g. a proxy with no matching node in the previous item.
+    Sequence(String),
     /// An assertion node's predicate was false.
     AssertionFailed(String),
     /// A lambda node's function failed.
@@ -46,6 +48,7 @@ impl fmt::Display for GraphError {
             Self::UnknownLabel(l) => write!(f, "no node is labelled {l:?}"),
             Self::NotObservable(m) => write!(f, "{m}"),
             Self::Proxy(m) => write!(f, "{m}"),
+            Self::Sequence(m) => write!(f, "sequence: {m}"),
             Self::AssertionFailed(m) => write!(f, "assertion failed: {m}"),
             Self::Lambda(m) => write!(f, "lambda failed: {m}"),
             Self::NoPartial { of, wrt } => write!(

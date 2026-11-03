@@ -1,0 +1,173 @@
+{
+  "graph": {
+    "defaultState": [
+      {
+        "id": {
+          "id": "[0]"
+        },
+        "value": {
+          "doubleVal": {
+            "values": [
+              2.0
+            ]
+          }
+        }
+      },
+      {
+        "id": {
+          "id": "[1]"
+        },
+        "value": {
+          "doubleVal": {
+            "values": [
+              3.0
+            ]
+          }
+        }
+      },
+      {
+        "id": {
+          "id": "[2]"
+        },
+        "value": {
+          "doubleVal": {
+            "values": [
+              0.35
+            ]
+          }
+        }
+      },
+      {
+        "id": {
+          "id": "[3]"
+        },
+        "value": {
+          "intVal": {
+            "values": [
+              10
+            ]
+          }
+        }
+      },
+      {
+        "id": {
+          "id": "[4]"
+        },
+        "isObserved": true,
+        "value": {
+          "intVal": {
+            "shape": [
+              "4"
+            ],
+            "values": [
+              3,
+              5,
+              2,
+              4
+            ]
+          }
+        }
+      }
+    ],
+    "vertices": [
+      {
+        "id": {
+          "id": "[0]"
+        },
+        "parameters": [
+          {
+            "doubleTensorParam": {
+              "values": [
+                2.0
+              ]
+            },
+            "name": "constant"
+          }
+        ],
+        "vertexType": "io.improbable.keanu.vertices.tensor.number.floating.dbl.nonprobabilistic.ConstantDoubleVertex"
+      },
+      {
+        "id": {
+          "id": "[1]"
+        },
+        "parameters": [
+          {
+            "doubleTensorParam": {
+              "values": [
+                3.0
+              ]
+            },
+            "name": "constant"
+          }
+        ],
+        "vertexType": "io.improbable.keanu.vertices.tensor.number.floating.dbl.nonprobabilistic.ConstantDoubleVertex"
+      },
+      {
+        "id": {
+          "id": "[2]"
+        },
+        "label": "p",
+        "parameters": [
+          {
+            "name": "alpha",
+            "parentVertex": {
+              "id": "[0]"
+            }
+          },
+          {
+            "name": "beta",
+            "parentVertex": {
+              "id": "[1]"
+            }
+          }
+        ],
+        "vertexType": "io.improbable.keanu.vertices.tensor.number.floating.dbl.probabilistic.BetaVertex"
+      },
+      {
+        "id": {
+          "id": "[3]"
+        },
+        "parameters": [
+          {
+            "intTensorParam": {
+              "values": [
+                10
+              ]
+            },
+            "name": "constant"
+          }
+        ],
+        "vertexType": "io.improbable.keanu.vertices.tensor.number.fixed.intgr.nonprobabilistic.ConstantIntegerVertex"
+      },
+      {
+        "id": {
+          "id": "[4]"
+        },
+        "label": "successes",
+        "parameters": [
+          {
+            "name": "n",
+            "parentVertex": {
+              "id": "[3]"
+            }
+          },
+          {
+            "name": "p",
+            "parentVertex": {
+              "id": "[2]"
+            }
+          }
+        ],
+        "shape": [
+          "4"
+        ],
+        "vertexType": "io.improbable.keanu.vertices.tensor.number.fixed.intgr.probabilistic.BinomialVertex"
+      }
+    ]
+  },
+  "metadata": {
+    "metadataInfo": {
+      "name": "betaBinomial"
+    }
+  }
+}

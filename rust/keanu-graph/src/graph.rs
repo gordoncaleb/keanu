@@ -17,6 +17,11 @@ impl NodeId {
     pub fn index(self) -> usize {
         self.0
     }
+
+    /// The id of the node at a position (creation index) in a graph or builder.
+    pub fn from_index(index: usize) -> Self {
+        Self(index)
+    }
 }
 
 impl fmt::Debug for NodeId {

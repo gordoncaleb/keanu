@@ -1,0 +1,323 @@
+{
+  "graph": {
+    "defaultState": [
+      {
+        "id": {
+          "id": "[0]"
+        },
+        "value": {
+          "doubleVal": {
+            "values": [
+              0.0
+            ]
+          }
+        }
+      },
+      {
+        "id": {
+          "id": "[1]"
+        },
+        "value": {
+          "doubleVal": {
+            "values": [
+              10.0
+            ]
+          }
+        }
+      },
+      {
+        "id": {
+          "id": "[2]"
+        },
+        "value": {
+          "doubleVal": {
+            "values": [
+              1.2
+            ]
+          }
+        }
+      },
+      {
+        "id": {
+          "id": "[3]"
+        },
+        "value": {
+          "doubleVal": {
+            "values": [
+              2.0
+            ]
+          }
+        }
+      },
+      {
+        "id": {
+          "id": "[4]"
+        },
+        "value": {
+          "doubleVal": {
+            "values": [
+              0.0
+            ]
+          }
+        }
+      },
+      {
+        "id": {
+          "id": "[6]"
+        },
+        "value": {
+          "doubleVal": {
+            "values": [
+              0.8
+            ]
+          }
+        }
+      },
+      {
+        "id": {
+          "id": "[7]"
+        },
+        "value": {
+          "doubleVal": {
+            "shape": [
+              "3"
+            ],
+            "values": [
+              0.5,
+              1.5,
+              2.0
+            ]
+          }
+        }
+      },
+      {
+        "id": {
+          "id": "[8]"
+        },
+        "value": {
+          "doubleVal": {
+            "values": [
+              1.0
+            ]
+          }
+        }
+      },
+      {
+        "id": {
+          "id": "[9]"
+        },
+        "isObserved": true,
+        "value": {
+          "doubleVal": {
+            "shape": [
+              "2",
+              "3"
+            ],
+            "values": [
+              0.4,
+              1.9,
+              2.2,
+              0.7,
+              1.1,
+              2.6
+            ]
+          }
+        }
+      }
+    ],
+    "vertices": [
+      {
+        "id": {
+          "id": "[0]"
+        },
+        "parameters": [
+          {
+            "doubleTensorParam": {
+              "values": [
+                0.0
+              ]
+            },
+            "name": "constant"
+          }
+        ],
+        "vertexType": "io.improbable.keanu.vertices.tensor.number.floating.dbl.nonprobabilistic.ConstantDoubleVertex"
+      },
+      {
+        "id": {
+          "id": "[1]"
+        },
+        "parameters": [
+          {
+            "doubleTensorParam": {
+              "values": [
+                10.0
+              ]
+            },
+            "name": "constant"
+          }
+        ],
+        "vertexType": "io.improbable.keanu.vertices.tensor.number.floating.dbl.nonprobabilistic.ConstantDoubleVertex"
+      },
+      {
+        "id": {
+          "id": "[2]"
+        },
+        "label": "mu",
+        "parameters": [
+          {
+            "name": "mu",
+            "parentVertex": {
+              "id": "[0]"
+            }
+          },
+          {
+            "name": "sigma",
+            "parentVertex": {
+              "id": "[1]"
+            }
+          }
+        ],
+        "vertexType": "io.improbable.keanu.vertices.tensor.number.floating.dbl.probabilistic.GaussianVertex"
+      },
+      {
+        "id": {
+          "id": "[3]"
+        },
+        "parameters": [
+          {
+            "doubleTensorParam": {
+              "values": [
+                2.0
+              ]
+            },
+            "name": "constant"
+          }
+        ],
+        "vertexType": "io.improbable.keanu.vertices.tensor.number.floating.dbl.nonprobabilistic.ConstantDoubleVertex"
+      },
+      {
+        "id": {
+          "id": "[4]"
+        },
+        "parameters": [
+          {
+            "doubleTensorParam": {
+              "values": [
+                0.0
+              ]
+            },
+            "name": "constant"
+          }
+        ],
+        "vertexType": "io.improbable.keanu.vertices.tensor.number.floating.dbl.nonprobabilistic.ConstantDoubleVertex"
+      },
+      {
+        "id": {
+          "id": "[5]"
+        },
+        "parameters": [
+          {
+            "doubleTensorParam": {
+              "values": [
+                0.0
+              ]
+            },
+            "name": "constant"
+          }
+        ],
+        "vertexType": "io.improbable.keanu.vertices.tensor.number.floating.dbl.nonprobabilistic.ConstantDoubleVertex"
+      },
+      {
+        "id": {
+          "id": "[6]"
+        },
+        "label": "sigma",
+        "parameters": [
+          {
+            "name": "mu",
+            "parentVertex": {
+              "id": "[5]"
+            }
+          },
+          {
+            "name": "sigma",
+            "parentVertex": {
+              "id": "[3]"
+            }
+          }
+        ],
+        "vertexType": "io.improbable.keanu.vertices.tensor.number.floating.dbl.probabilistic.HalfGaussianVertex"
+      },
+      {
+        "id": {
+          "id": "[7]"
+        },
+        "label": "groupMeans",
+        "parameters": [
+          {
+            "name": "mu",
+            "parentVertex": {
+              "id": "[2]"
+            }
+          },
+          {
+            "name": "sigma",
+            "parentVertex": {
+              "id": "[6]"
+            }
+          }
+        ],
+        "shape": [
+          "3"
+        ],
+        "vertexType": "io.improbable.keanu.vertices.tensor.number.floating.dbl.probabilistic.GaussianVertex"
+      },
+      {
+        "id": {
+          "id": "[8]"
+        },
+        "parameters": [
+          {
+            "doubleTensorParam": {
+              "values": [
+                1.0
+              ]
+            },
+            "name": "constant"
+          }
+        ],
+        "vertexType": "io.improbable.keanu.vertices.tensor.number.floating.dbl.nonprobabilistic.ConstantDoubleVertex"
+      },
+      {
+        "id": {
+          "id": "[9]"
+        },
+        "label": "observations",
+        "parameters": [
+          {
+            "name": "mu",
+            "parentVertex": {
+              "id": "[7]"
+            }
+          },
+          {
+            "name": "sigma",
+            "parentVertex": {
+              "id": "[8]"
+            }
+          }
+        ],
+        "shape": [
+          "2",
+          "3"
+        ],
+        "vertexType": "io.improbable.keanu.vertices.tensor.number.floating.dbl.probabilistic.GaussianVertex"
+      }
+    ]
+  },
+  "metadata": {
+    "metadataInfo": {
+      "name": "hierarchicalGaussian"
+    }
+  }
+}

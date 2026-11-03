@@ -1,0 +1,155 @@
+{
+  "graph": {
+    "defaultState": [
+      {
+        "id": {
+          "id": "[0]"
+        },
+        "value": {
+          "doubleVal": {
+            "values": [
+              2.0
+            ]
+          }
+        }
+      },
+      {
+        "id": {
+          "id": "[1]"
+        },
+        "value": {
+          "doubleVal": {
+            "values": [
+              1.5
+            ]
+          }
+        }
+      },
+      {
+        "id": {
+          "id": "[2]"
+        },
+        "value": {
+          "doubleVal": {
+            "values": [
+              2.4
+            ]
+          }
+        }
+      },
+      {
+        "id": {
+          "id": "[3]"
+        },
+        "isObserved": true,
+        "value": {
+          "intVal": {
+            "shape": [
+              "5"
+            ],
+            "values": [
+              1,
+              4,
+              2,
+              0,
+              3
+            ]
+          }
+        }
+      }
+    ],
+    "vertices": [
+      {
+        "id": {
+          "id": "[0]"
+        },
+        "parameters": [
+          {
+            "doubleTensorParam": {
+              "values": [
+                2.0
+              ]
+            },
+            "name": "constant"
+          }
+        ],
+        "vertexType": "io.improbable.keanu.vertices.tensor.number.floating.dbl.nonprobabilistic.ConstantDoubleVertex"
+      },
+      {
+        "id": {
+          "id": "[1]"
+        },
+        "parameters": [
+          {
+            "doubleTensorParam": {
+              "values": [
+                1.5
+              ]
+            },
+            "name": "constant"
+          }
+        ],
+        "vertexType": "io.improbable.keanu.vertices.tensor.number.floating.dbl.nonprobabilistic.ConstantDoubleVertex"
+      },
+      {
+        "id": {
+          "id": "[2]"
+        },
+        "label": "rate",
+        "parameters": [
+          {
+            "name": "k",
+            "parentVertex": {
+              "id": "[1]"
+            }
+          },
+          {
+            "name": "theta",
+            "parentVertex": {
+              "id": "[0]"
+            }
+          }
+        ],
+        "vertexType": "io.improbable.keanu.vertices.tensor.number.floating.dbl.probabilistic.GammaVertex"
+      },
+      {
+        "id": {
+          "id": "[3]"
+        },
+        "label": "counts",
+        "parameters": [
+          {
+            "name": "mu",
+            "parentVertex": {
+              "id": "[2]"
+            }
+          }
+        ],
+        "shape": [
+          "5"
+        ],
+        "vertexType": "io.improbable.keanu.vertices.tensor.number.fixed.intgr.probabilistic.PoissonVertex"
+      },
+      {
+        "id": {
+          "id": "[4]"
+        },
+        "label": "total",
+        "parameters": [
+          {
+            "name": "inputVertex",
+            "parentVertex": {
+              "id": "[3]"
+            }
+          }
+        ],
+        "vertexType": "io.improbable.keanu.vertices.tensor.number.operators.unary.SumVertex"
+      }
+    ]
+  },
+  "metadata": {
+    "metadataInfo": {
+      "name": "gammaPoisson"
+    }
+  }
+}

@@ -17,7 +17,7 @@ public class ArgMinVertex<T extends Number, TENSOR extends NumberTensor<T, TENSO
     }
 
     public ArgMinVertex(@LoadVertexParam(INPUT_NAME) TensorVertex<T, TENSOR, VERTEX> inputVertex,
-                        @LoadVertexParam(AXIS) Integer axis) {
+                        @LoadVertexParam(value = AXIS, isNullable = true) Integer axis) {
         super(inputVertex);
         this.axis = axis;
     }
@@ -31,7 +31,7 @@ public class ArgMinVertex<T extends Number, TENSOR extends NumberTensor<T, TENSO
         }
     }
 
-    @SaveVertexParam(AXIS)
+    @SaveVertexParam(value = AXIS, isNullable = true)
     public Integer getAxis() {
         return axis;
     }

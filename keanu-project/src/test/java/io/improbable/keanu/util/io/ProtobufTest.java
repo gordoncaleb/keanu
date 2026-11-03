@@ -614,4 +614,50 @@ public class ProtobufTest {
         Vertex<?, ?> reloadedTotal = reloaded.getVertexByLabel(new VertexLabel("total"));
         assertEquals(total.eval(), reloadedTotal.eval());
     }
+
+    @Test
+    public void verticesWithArrayParametersCanBeSavedAndLoaded() throws IOException {
+        GaussianVertex a = new GaussianVertex(new long[]{2, 3}, 0, 1);
+        a.setValue(DoubleTensor.arange(0, 6).reshape(2, 3));
+        DoubleVertex result = a.reshape(3, 2).permute(1, 0).sum(0).plus(a.tensorMultiply(a, new int[]{0}, new int[]{0}).sum(0));
+        result.setLabel("result");
+
+        ByteArrayOutputStream output = new ByteArrayOutputStream();
+        new ProtobufSaver(new BayesianNetwork(a.getConnectedGraph())).save(output, true);
+        BayesianNetwork reloaded = new ProtobufLoader().loadNetwork(new ByteArrayInputStream(output.toByteArray()));
+
+        Vertex<?, ?> reloadedResult = reloaded.getVertexByLabel(new VertexLabel("result"));
+        assertEquals(result.eval(), reloadedResult.eval());
+    }
+
+    @Test
+    public void argReductionsOverEveryElementCanBeSavedAndLoaded() throws IOException {
+        GaussianVertex a = new GaussianVertex(new long[]{2, 3}, 0, 1);
+        a.setValue(DoubleTensor.create(new double[]{0.1, 0.9, 0.3, 0.5, 0.2, 0.7}, 2, 3));
+        io.improbable.keanu.vertices.tensor.number.fixed.intgr.IntegerVertex argMax = a.argMax();
+        argMax.setLabel("argMax");
+
+        ByteArrayOutputStream output = new ByteArrayOutputStream();
+        new ProtobufSaver(new BayesianNetwork(a.getConnectedGraph())).save(output, true);
+        BayesianNetwork reloaded = new ProtobufLoader().loadNetwork(new ByteArrayInputStream(output.toByteArray()));
+
+        assertEquals(argMax.eval(), reloaded.getVertexByLabel(new VertexLabel("argMax")).eval());
+    }
+
+    @Test
+    public void stridedSlicesCanBeSavedAndLoaded() throws IOException {
+        GaussianVertex a = new GaussianVertex(new long[]{2, 3}, 0, 1);
+        a.setValue(DoubleTensor.arange(0, 6).reshape(2, 3));
+        DoubleVertex sliced = a.slice("::-1, 1:");
+        sliced.setLabel("sliced");
+        DoubleVertex withEllipsis = a.slice("..., 0");
+        withEllipsis.setLabel("withEllipsis");
+
+        ByteArrayOutputStream output = new ByteArrayOutputStream();
+        new ProtobufSaver(new BayesianNetwork(a.getConnectedGraph())).save(output, true);
+        BayesianNetwork reloaded = new ProtobufLoader().loadNetwork(new ByteArrayInputStream(output.toByteArray()));
+
+        assertEquals(sliced.eval(), reloaded.getVertexByLabel(new VertexLabel("sliced")).eval());
+        assertEquals(withEllipsis.eval(), reloaded.getVertexByLabel(new VertexLabel("withEllipsis")).eval());
+    }
 }

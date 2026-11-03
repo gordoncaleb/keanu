@@ -6,6 +6,15 @@ description = 'Generates golden test vectors from the Java implementation, used 
 
 dependencies {
     implementation project(':keanu-project')
+
+    testImplementation 'junit:junit:4.13.2'
+    testImplementation 'com.fasterxml.jackson.core:jackson-databind:2.18.2'
+}
+
+test {
+    // the Rust implementation's saved files, checked against what Java computes from them
+    systemProperty 'keanu.rustWrittenFixtures', rootProject.file('rust/keanu-io/tests/fixtures/rust-written').absolutePath
+    inputs.dir(rootProject.file('rust/keanu-io/tests/fixtures/rust-written'))
 }
 
 application {

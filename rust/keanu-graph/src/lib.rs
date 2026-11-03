@@ -35,7 +35,9 @@ mod distributions;
 mod error;
 mod graph;
 mod logprob;
+mod model;
 pub mod op;
+pub mod sequence;
 mod state;
 mod value;
 mod vars;
@@ -51,6 +53,7 @@ pub use logprob::{
     log_likelihood_gradient, log_prior, log_prob, log_prob_gradient, node_log_prob,
     node_log_prob_gradient,
 };
+pub use model::{LambdaSection, Model, downstream_lambda_section, upstream_lambda_section};
 pub use state::State;
 pub use value::{DType, Value};
 pub use vars::{BoolVar, DoubleVar, IntVar, IntoBoolVar, IntoDoubleVar, IntoIntVar, Var};

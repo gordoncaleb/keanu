@@ -261,6 +261,48 @@ Differences from Java that are intentional:
 - A finite-difference gradient test passes for every differentiable op. Port `AutoDiffRegressionTest` and the per-vertex tests.
 
 ### Phase 4: Model layer and IO (`keanu-io`)
+
+**Status: done.**
+- **Model layer (`keanu-graph`: `Model`, `LambdaSection`).** It lives in `keanu-graph` rather than a separate
+  crate because it's a thin layer over `Graph`, `State` and log probs, and the algorithms crate needs all three.
+  `Model` is built from an `Arc<Graph>` and a state; it holds the latent and observed nodes and works on any
+  `State`. It implements Java's semantics:
+  - joint log prob and log likelihood, with impossible terms and violated observed constraints giving −∞
+  - gradients with respect to the continuous latents
+  - `set_and_cascade`
+  - `log_prob_after(proposal)`, which recomputes only the affected lambda sections, as Java's `logProbAfter`
+- **Sequences (`keanu_graph::sequence`).** `SequenceBuilder` (`count`, `from_iter`, `named`,
+  `with_initial_state`, `with_transition`), with Java's label scheme and proxy connection rules. The sequence
+  identifier counts per `GraphBuilder` (1, 2, ...) instead of being a global, so labels are reproducible.
+- **`keanu-io`.** It reads and writes protobuf and JSON in the shared schema (vendored `.proto` files). The
+  generated code is committed, so no `protoc` or build script is needed, and a test regenerates it with the pure
+  Rust `protox` to catch staleness. Vertex types and parameters use the Java class and parameter names, so files
+  round-trip both ways. DOT export is included. Features: `protobuf`, `json` and `dot`, all on by default.
+- **Tests.**
+  - Every golden model loads from both its `.pb` and its `.json` file. Deterministic values are recomputed in
+    Rust, and log prob, log likelihood, both gradients and every labelled node's value match Java to 1e-10. That
+    covers the new `catalog` model, which has one instance of each of 139 vertex types.
+  - Rust save then Rust load round-trips every model, plus a Rust-built model using Rust-only ops.
+  - Rust save then Java load is checked by `RustWrittenModelsTest` against committed Rust-written fixtures.
+- **Intentional differences.**
+  - Rust ops with no single Java vertex are saved as small Java subgraphs:
+    - `neg` as `x * -1`
+    - `reciprocal` as `1 / x`
+    - `sqrt` as `x ^ 0.5`
+    - `transpose` as a permute
+    - the full symmetric `cholesky_inverse`
+    - half distributions with an explicit zero location
+  - On load, Java's `CholeskyInverseVertex`, `AllFalseVertex` and `AnyFalseVertex` become small Rust subgraphs.
+  - Not supported: `PrintVertex` and `GetBooleanIndexVertex`; lambda, CPT and categorical nodes (Java can't save
+    them either); max, min and standard deviation over some axes, and equality masks (no Java vertex); MIR
+    (deferred).
+  - Non-finite doubles in JSON are written as `"NaN"` / `"Infinity"` / `"-Infinity"`, as Java does.
+- **Java bugs fixed** (see `release_notes.md`):
+  - array parameters couldn't be saved
+  - nullable arg-reduction and ellipsis parameters weren't nullable
+  - `KDEVertex` failed at its own scalar shape
+  - `UniformIntVertex` broke gradient models
+
 - Port `BayesianNetwork`, the probabilistic model (with and without gradient), and lambda sections.
 - Port loading and saving of `BayesNet.proto` / MIR with `prost`, plus JSON. Load must accept files written by Java.
 - Port `Sequence` (plates / templating).

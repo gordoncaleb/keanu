@@ -17,7 +17,7 @@ public class NaNArgMaxVertex<T extends Number, TENSOR extends FloatingPointTenso
     }
 
     public NaNArgMaxVertex(@LoadVertexParam(INPUT_NAME) TensorVertex<T, TENSOR, VERTEX> inputVertex,
-                           @LoadVertexParam(AXIS) Integer axis) {
+                           @LoadVertexParam(value = AXIS, isNullable = true) Integer axis) {
         super(inputVertex);
         this.axis = axis;
     }
@@ -31,7 +31,7 @@ public class NaNArgMaxVertex<T extends Number, TENSOR extends FloatingPointTenso
         }
     }
 
-    @SaveVertexParam(AXIS)
+    @SaveVertexParam(value = AXIS, isNullable = true)
     public Integer getAxis() {
         return axis;
     }

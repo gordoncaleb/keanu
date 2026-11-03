@@ -1,0 +1,44 @@
+[package]
+name = "keanu-io"
+version = "0.1.0"
+description = "Saving and loading Keanu models (protobuf and JSON) and exporting them as DOT graphs"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[features]
+default = ["protobuf", "json", "dot"]
+# binary protobuf files (.pb)
+protobuf = []
+# JSON files (the protobuf JSON mapping, as Java's JsonSaver writes)
+json = ["dep:pbjson", "dep:serde", "dep:serde_json"]
+# Graphviz DOT export
+dot = []
+
+[dependencies]
+keanu-distributions = { path = "../keanu-distributions" }
+keanu-graph = { path = "../keanu-graph" }
+keanu-tensor = { path = "../keanu-tensor" }
+prost = "0.14"
+pbjson = { version = "0.9", optional = true }
+serde = { version = "1", optional = true }
+serde_json = { version = "1", features = ["float_roundtrip"], optional = true }
+
+[dev-dependencies]
+keanu-parity = { path = "../keanu-parity" }
+pbjson-build = "0.9"
+prost-build = "0.14"
+protox = "0.10"
+serde_json = { version = "1", features = ["float_roundtrip"] }
+
+[[test]]
+name = "golden_models"
+required-features = ["protobuf", "json"]
+
+[[test]]
+name = "round_trip"
+required-features = ["protobuf", "json"]
+
+[lints]
+workspace = true

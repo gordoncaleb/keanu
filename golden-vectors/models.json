@@ -13,6 +13,23 @@
             "data": [25.3]
           }
         },
+        "nodeValues": {
+          "temperature": {
+            "dtype": "f64",
+            "shape": [],
+            "data": [25.3]
+          },
+          "thermometerOne": {
+            "dtype": "f64",
+            "shape": [],
+            "data": [25.0]
+          },
+          "thermometerTwo": {
+            "dtype": "f64",
+            "shape": [],
+            "data": [30.0]
+          }
+        },
         "logProb": -7.115190803711647,
         "logLikelihood": -4.812605710717601,
         "dLogProb": {
@@ -46,6 +63,28 @@
             "dtype": "f64",
             "shape": [],
             "data": [1.2]
+          },
+          "sigma": {
+            "dtype": "f64",
+            "shape": [],
+            "data": [0.8]
+          }
+        },
+        "nodeValues": {
+          "groupMeans": {
+            "dtype": "f64",
+            "shape": [3],
+            "data": [0.5, 1.5, 2.0]
+          },
+          "mu": {
+            "dtype": "f64",
+            "shape": [],
+            "data": [1.2]
+          },
+          "observations": {
+            "dtype": "f64",
+            "shape": [2, 3],
+            "data": [0.4, 1.9, 2.2, 0.7, 1.1, 2.6]
           },
           "sigma": {
             "dtype": "f64",
@@ -103,6 +142,33 @@
             "data": [0.7, -1.1]
           }
         },
+        "nodeValues": {
+          "intercept": {
+            "dtype": "f64",
+            "shape": [],
+            "data": [0.3]
+          },
+          "noise": {
+            "dtype": "f64",
+            "shape": [],
+            "data": [0.6]
+          },
+          "weights": {
+            "dtype": "f64",
+            "shape": [2, 1],
+            "data": [0.7, -1.1]
+          },
+          "x": {
+            "dtype": "f64",
+            "shape": [4, 2],
+            "data": [1.0, 0.5, 2.0, -1.0, 3.0, 0.2, -0.5, 1.5]
+          },
+          "y": {
+            "dtype": "f64",
+            "shape": [4, 1],
+            "data": [0.1, 3.2, 1.5, -1.0]
+          }
+        },
         "logProb": -9.072496858131789,
         "logLikelihood": -3.3475905266436166,
         "dLogProb": {
@@ -153,6 +219,18 @@
             "data": [0.35]
           }
         },
+        "nodeValues": {
+          "p": {
+            "dtype": "f64",
+            "shape": [],
+            "data": [0.35]
+          },
+          "successes": {
+            "dtype": "i32",
+            "shape": [4],
+            "data": [3, 5, 2, 4]
+          }
+        },
         "logProb": -5.853656017499604,
         "logLikelihood": -6.427174710604018,
         "dLogProb": {
@@ -181,6 +259,23 @@
             "dtype": "f64",
             "shape": [],
             "data": [2.4]
+          }
+        },
+        "nodeValues": {
+          "counts": {
+            "dtype": "i32",
+            "shape": [5],
+            "data": [1, 4, 2, 0, 3]
+          },
+          "rate": {
+            "dtype": "f64",
+            "shape": [],
+            "data": [2.4]
+          },
+          "total": {
+            "dtype": "i32",
+            "shape": [],
+            "data": [10]
           }
         },
         "logProb": -10.58947727112467,
@@ -228,6 +323,68 @@
             "data": [1.4]
           }
         },
+        "nodeValues": {
+          "Sequence_Item_0.1.proxy_for.x": {
+            "dtype": "f64",
+            "shape": [],
+            "data": [0.0]
+          },
+          "Sequence_Item_0.1.x": {
+            "dtype": "f64",
+            "shape": [],
+            "data": [0.2]
+          },
+          "Sequence_Item_0.1.y": {
+            "dtype": "f64",
+            "shape": [],
+            "data": [0.3]
+          },
+          "Sequence_Item_1.1.proxy_for.x": {
+            "dtype": "f64",
+            "shape": [],
+            "data": [0.2]
+          },
+          "Sequence_Item_1.1.x": {
+            "dtype": "f64",
+            "shape": [],
+            "data": [0.7]
+          },
+          "Sequence_Item_1.1.y": {
+            "dtype": "f64",
+            "shape": [],
+            "data": [0.9]
+          },
+          "Sequence_Item_2.1.proxy_for.x": {
+            "dtype": "f64",
+            "shape": [],
+            "data": [0.7]
+          },
+          "Sequence_Item_2.1.x": {
+            "dtype": "f64",
+            "shape": [],
+            "data": [0.6]
+          },
+          "Sequence_Item_2.1.y": {
+            "dtype": "f64",
+            "shape": [],
+            "data": [0.4]
+          },
+          "Sequence_Item_3.1.proxy_for.x": {
+            "dtype": "f64",
+            "shape": [],
+            "data": [0.6]
+          },
+          "Sequence_Item_3.1.x": {
+            "dtype": "f64",
+            "shape": [],
+            "data": [1.4]
+          },
+          "Sequence_Item_3.1.y": {
+            "dtype": "f64",
+            "shape": [],
+            "data": [1.6]
+          }
+        },
         "logProb": -6.5239195433976,
         "logLikelihood": -3.7407541328186906,
         "dLogProb": {
@@ -272,6 +429,1043 @@
             "dtype": "f64",
             "shape": [],
             "data": [0.20000000000000018]
+          }
+        }
+      }
+    },
+    {
+      "name": "catalog",
+      "protobuf": "models/catalog.pb",
+      "json": "models/catalog.json",
+      "expected": {
+        "latentValues": {
+          "beta": {
+            "dtype": "f64",
+            "shape": [],
+            "data": [0.35]
+          },
+          "cauchy": {
+            "dtype": "f64",
+            "shape": [],
+            "data": [0.7]
+          },
+          "chiSquared": {
+            "dtype": "f64",
+            "shape": [],
+            "data": [2.5]
+          },
+          "dirichlet": {
+            "dtype": "f64",
+            "shape": [3],
+            "data": [0.2, 0.3, 0.5]
+          },
+          "exponential": {
+            "dtype": "f64",
+            "shape": [],
+            "data": [0.4]
+          },
+          "gamma": {
+            "dtype": "f64",
+            "shape": [],
+            "data": [2.4]
+          },
+          "gaussian": {
+            "dtype": "f64",
+            "shape": [3],
+            "data": [0.1, -0.4, 0.8]
+          },
+          "halfCauchy": {
+            "dtype": "f64",
+            "shape": [],
+            "data": [1.2]
+          },
+          "halfGaussian": {
+            "dtype": "f64",
+            "shape": [2],
+            "data": [0.5, 2.0]
+          },
+          "inverseGamma": {
+            "dtype": "f64",
+            "shape": [],
+            "data": [0.3]
+          },
+          "kde": {
+            "dtype": "f64",
+            "shape": [],
+            "data": [0.45]
+          },
+          "laplace": {
+            "dtype": "f64",
+            "shape": [],
+            "data": [-0.2]
+          },
+          "logNormal": {
+            "dtype": "f64",
+            "shape": [],
+            "data": [1.3]
+          },
+          "logistic": {
+            "dtype": "f64",
+            "shape": [],
+            "data": [0.6]
+          },
+          "mu": {
+            "dtype": "f64",
+            "shape": [],
+            "data": [0.3]
+          },
+          "multivariateGaussian": {
+            "dtype": "f64",
+            "shape": [2],
+            "data": [1.0, -0.5]
+          },
+          "pareto": {
+            "dtype": "f64",
+            "shape": [],
+            "data": [1.7]
+          },
+          "studentT": {
+            "dtype": "f64",
+            "shape": [],
+            "data": [-0.8]
+          },
+          "triangular": {
+            "dtype": "f64",
+            "shape": [],
+            "data": [0.6]
+          },
+          "uniform": {
+            "dtype": "f64",
+            "shape": [],
+            "data": [0.5]
+          }
+        },
+        "nodeValues": {
+          "a": {
+            "dtype": "f64",
+            "shape": [2, 3],
+            "data": [0.2, 0.5, 0.7, 0.3, 0.9, 0.4]
+          },
+          "abs": {
+            "dtype": "f64",
+            "shape": [3],
+            "data": [1.5, 2.5, 3.5]
+          },
+          "acos": {
+            "dtype": "f64",
+            "shape": [2, 3],
+            "data": [1.369438406004566, 1.0471975511965979, 0.7953988301841436, 1.2661036727794992, 0.45102681179626236, 1.1592794807274085]
+          },
+          "acosh": {
+            "dtype": "f64",
+            "shape": [2, 3],
+            "data": [1.123230982587296, 1.3169578969248166, 1.4254169430706127, 1.1929107309930491, 1.5220793674636532, 1.2571958266003804]
+          },
+          "allFalse": {
+            "dtype": "bool",
+            "shape": [],
+            "data": [false]
+          },
+          "allTrue": {
+            "dtype": "bool",
+            "shape": [],
+            "data": [false]
+          },
+          "and": {
+            "dtype": "bool",
+            "shape": [3],
+            "data": [false, false, true]
+          },
+          "anyFalse": {
+            "dtype": "bool",
+            "shape": [],
+            "data": [true]
+          },
+          "anyTrue": {
+            "dtype": "bool",
+            "shape": [],
+            "data": [true]
+          },
+          "argMax": {
+            "dtype": "i32",
+            "shape": [2],
+            "data": [2, 1]
+          },
+          "argMin": {
+            "dtype": "i32",
+            "shape": [],
+            "data": [0]
+          },
+          "asin": {
+            "dtype": "f64",
+            "shape": [2, 3],
+            "data": [0.2013579207903308, 0.5235987755982989, 0.775397496610753, 0.3046926540153975, 1.1197695149986342, 0.41151684606748806]
+          },
+          "asinh": {
+            "dtype": "f64",
+            "shape": [2, 3],
+            "data": [0.19869011034924142, 0.48121182505960347, 0.6526665660823557, 0.2956730475634225, 0.8088669356527826, 0.3900353197707155]
+          },
+          "assert": {
+            "dtype": "bool",
+            "shape": [3],
+            "data": [true, true, true]
+          },
+          "atan": {
+            "dtype": "f64",
+            "shape": [2, 3],
+            "data": [0.19739555984988078, 0.4636476090008061, 0.6107259643892086, 0.2914567944778671, 0.7328151017865066, 0.3805063771123649]
+          },
+          "atan2": {
+            "dtype": "f64",
+            "shape": [2, 3],
+            "data": [1.2490457723982544, 0.19739555984988078, 0.8519663271732721, 0.6947382761967033, 0.37089128881266237, 0.8441539861131709]
+          },
+          "atanh": {
+            "dtype": "f64",
+            "shape": [2, 3],
+            "data": [0.2027325540540821, 0.5493061443340549, 0.8673005276940532, 0.3095196042031118, 1.4722194895832204, 0.42364893019360184]
+          },
+          "b": {
+            "dtype": "f64",
+            "shape": [2, 3],
+            "data": [0.6, 0.1, 0.8, 0.25, 0.35, 0.45]
+          },
+          "bernoulli": {
+            "dtype": "bool",
+            "shape": [3],
+            "data": [true, false, true]
+          },
+          "beta": {
+            "dtype": "f64",
+            "shape": [],
+            "data": [0.35]
+          },
+          "big": {
+            "dtype": "f64",
+            "shape": [3],
+            "data": [1.5, -2.5, 3.5]
+          },
+          "binomial": {
+            "dtype": "i32",
+            "shape": [2],
+            "data": [2, 4]
+          },
+          "boolConcat": {
+            "dtype": "bool",
+            "shape": [6],
+            "data": [true, false, true, false, false, true]
+          },
+          "boolProxy": {
+            "dtype": "bool",
+            "shape": [3],
+            "data": [true, false, true]
+          },
+          "boolToDoubleMask": {
+            "dtype": "f64",
+            "shape": [3],
+            "data": [1.0, 0.0, 1.0]
+          },
+          "boolToIntegerMask": {
+            "dtype": "i32",
+            "shape": [3],
+            "data": [1, 0, 1]
+          },
+          "broadcast": {
+            "dtype": "f64",
+            "shape": [2, 3],
+            "data": [0.3, 0.6, 0.9, 0.3, 0.6, 0.9]
+          },
+          "broadcastPlus": {
+            "dtype": "f64",
+            "shape": [2, 3],
+            "data": [0.5, 1.1, 1.6, 0.6, 1.5, 1.3]
+          },
+          "cauchy": {
+            "dtype": "f64",
+            "shape": [],
+            "data": [0.7]
+          },
+          "ceil": {
+            "dtype": "f64",
+            "shape": [3],
+            "data": [2.0, -2.0, 4.0]
+          },
+          "chiSquared": {
+            "dtype": "f64",
+            "shape": [],
+            "data": [2.5]
+          },
+          "cholesky": {
+            "dtype": "f64",
+            "shape": [3, 3],
+            "data": [2.0, 0.0, 0.0, 0.5, 1.6583123951777, 0.0, 0.25, 0.04522670168666455, 1.391206147720224]
+          },
+          "choleskyInverse": {
+            "dtype": "f64",
+            "shape": [3, 3],
+            "data": [0.2799436355096289, 0.0, 0.0, -0.08924377642085486, 0.36402066697980273, 0.0, -0.06106153123532174, -0.014091122592766557, 0.516674495068107]
+          },
+          "concat": {
+            "dtype": "f64",
+            "shape": [4, 3],
+            "data": [0.2, 0.5, 0.7, 0.3, 0.9, 0.4, 0.6, 0.1, 0.8, 0.25, 0.35, 0.45]
+          },
+          "cos": {
+            "dtype": "f64",
+            "shape": [2, 3],
+            "data": [0.9800665778412416, 0.8775825618903728, 0.7648421872844885, 0.955336489125606, 0.6216099682706644, 0.9210609940028851]
+          },
+          "cosh": {
+            "dtype": "f64",
+            "shape": [2, 3],
+            "data": [1.020066755619076, 1.1276259652063807, 1.255169005630943, 1.0453385141288605, 1.4330863854487743, 1.0810723718384547]
+          },
+          "cumProd": {
+            "dtype": "f64",
+            "shape": [2, 3],
+            "data": [0.2, 0.5, 0.7, 0.06, 0.45, 0.27999999999999997]
+          },
+          "cumSum": {
+            "dtype": "f64",
+            "shape": [2, 3],
+            "data": [0.2, 0.7, 1.4, 0.3, 1.2, 1.6]
+          },
+          "diag": {
+            "dtype": "f64",
+            "shape": [3, 3],
+            "data": [0.3, 0.0, 0.0, 0.0, 0.6, 0.0, 0.0, 0.0, 0.9]
+          },
+          "diagPart": {
+            "dtype": "f64",
+            "shape": [3],
+            "data": [4.0, 3.0, 2.0]
+          },
+          "digamma": {
+            "dtype": "f64",
+            "shape": [2, 3],
+            "data": [-5.2890398994360135, -1.963510028796937, -1.2200235564290474, -3.502524225020958, -0.7549269526346446, -2.561384547383171]
+          },
+          "dirichlet": {
+            "dtype": "f64",
+            "shape": [3],
+            "data": [0.2, 0.3, 0.5]
+          },
+          "div": {
+            "dtype": "f64",
+            "shape": [2, 3],
+            "data": [0.33333333333333337, 5.0, 0.8749999999999999, 1.2, 2.5714285714285716, 0.888888888888889]
+          },
+          "doubleToBoolean": {
+            "dtype": "bool",
+            "shape": [3],
+            "data": [false, false, false]
+          },
+          "doubleToInteger": {
+            "dtype": "i32",
+            "shape": [3],
+            "data": [1, -2, 3]
+          },
+          "equals": {
+            "dtype": "bool",
+            "shape": [2, 3],
+            "data": [false, false, false, false, false, false]
+          },
+          "equalsWithinEpsilon": {
+            "dtype": "bool",
+            "shape": [2, 3],
+            "data": [false, false, true, true, false, true]
+          },
+          "exp": {
+            "dtype": "f64",
+            "shape": [2, 3],
+            "data": [1.2214027581601699, 1.6487212707001282, 2.0137527074704766, 1.3498588075760032, 2.45960311115695, 1.4918246976412703]
+          },
+          "exp2": {
+            "dtype": "f64",
+            "shape": [2, 3],
+            "data": [1.148698354997035, 1.4142135623730951, 1.624504792712471, 1.2311444133449163, 1.8660659830736148, 1.3195079107728942]
+          },
+          "expM1": {
+            "dtype": "f64",
+            "shape": [2, 3],
+            "data": [0.22140275816016985, 0.6487212707001282, 1.0137527074704764, 0.3498588075760031, 1.4596031111569496, 0.49182469764127035]
+          },
+          "exponential": {
+            "dtype": "f64",
+            "shape": [],
+            "data": [0.4]
+          },
+          "f": {
+            "dtype": "bool",
+            "shape": [3],
+            "data": [false, false, true]
+          },
+          "fillTriangular": {
+            "dtype": "f64",
+            "shape": [3, 3],
+            "data": [1.0, 2.0, 3.0, 2.0, 4.0, 5.0, 3.0, 5.0, 6.0]
+          },
+          "floor": {
+            "dtype": "f64",
+            "shape": [3],
+            "data": [1.0, -3.0, 3.0]
+          },
+          "gamma": {
+            "dtype": "f64",
+            "shape": [],
+            "data": [2.4]
+          },
+          "gaussian": {
+            "dtype": "f64",
+            "shape": [3],
+            "data": [0.1, -0.4, 0.8]
+          },
+          "gaussianObserved": {
+            "dtype": "f64",
+            "shape": [2, 3],
+            "data": [0.4, 0.9, 1.1, 0.6, 1.3, 0.5]
+          },
+          "geMask": {
+            "dtype": "f64",
+            "shape": [2, 3],
+            "data": [0.0, 1.0, 0.0, 1.0, 1.0, 0.0]
+          },
+          "geometric": {
+            "dtype": "i32",
+            "shape": [2],
+            "data": [1, 3]
+          },
+          "greaterThan": {
+            "dtype": "bool",
+            "shape": [2, 3],
+            "data": [false, true, false, true, true, false]
+          },
+          "greaterThanOrEqual": {
+            "dtype": "bool",
+            "shape": [2, 3],
+            "data": [false, true, false, true, true, false]
+          },
+          "gtMask": {
+            "dtype": "f64",
+            "shape": [2, 3],
+            "data": [0.0, 1.0, 0.0, 1.0, 1.0, 0.0]
+          },
+          "halfCauchy": {
+            "dtype": "f64",
+            "shape": [],
+            "data": [1.2]
+          },
+          "halfGaussian": {
+            "dtype": "f64",
+            "shape": [2],
+            "data": [0.5, 2.0]
+          },
+          "i": {
+            "dtype": "i32",
+            "shape": [2, 3],
+            "data": [-7, -3, 0, 5, 9, 2]
+          },
+          "intAbs": {
+            "dtype": "i32",
+            "shape": [2, 3],
+            "data": [7, 3, 0, 5, 9, 2]
+          },
+          "intConcat": {
+            "dtype": "i32",
+            "shape": [4, 3],
+            "data": [-7, -3, 0, 5, 9, 2, -7, -3, 0, 5, 9, 2]
+          },
+          "intDiv": {
+            "dtype": "i32",
+            "shape": [2, 3],
+            "data": [-3, 1, 0, 2, -4, 0]
+          },
+          "intMax": {
+            "dtype": "i32",
+            "shape": [2, 3],
+            "data": [2, -2, 3, 5, 9, 3]
+          },
+          "intMinus": {
+            "dtype": "i32",
+            "shape": [2, 3],
+            "data": [-9, -1, -3, 3, 11, -1]
+          },
+          "intMod": {
+            "dtype": "i32",
+            "shape": [2, 3],
+            "data": [-1, -1, 0, 1, 1, 2]
+          },
+          "intPlus": {
+            "dtype": "i32",
+            "shape": [2, 3],
+            "data": [-5, -5, 3, 7, 7, 5]
+          },
+          "intPow": {
+            "dtype": "i32",
+            "shape": [2, 3],
+            "data": [49, 0, 0, 25, 0, 8]
+          },
+          "intProxy": {
+            "dtype": "i32",
+            "shape": [3],
+            "data": [2, -2, 3]
+          },
+          "intSum": {
+            "dtype": "i32",
+            "shape": [],
+            "data": [6]
+          },
+          "intTimes": {
+            "dtype": "i32",
+            "shape": [2, 3],
+            "data": [-14, 6, 0, 10, -18, 6]
+          },
+          "integerToDouble": {
+            "dtype": "f64",
+            "shape": [2, 3],
+            "data": [-7.0, -3.0, 0.0, 5.0, 9.0, 2.0]
+          },
+          "inverseGamma": {
+            "dtype": "f64",
+            "shape": [],
+            "data": [0.3]
+          },
+          "isFinite": {
+            "dtype": "bool",
+            "shape": [3],
+            "data": [true, false, true]
+          },
+          "isInfinite": {
+            "dtype": "bool",
+            "shape": [3],
+            "data": [false, false, false]
+          },
+          "isNaN": {
+            "dtype": "bool",
+            "shape": [3],
+            "data": [false, true, false]
+          },
+          "isNegativeInfinity": {
+            "dtype": "bool",
+            "shape": [3],
+            "data": [false, false, false]
+          },
+          "isPositiveInfinity": {
+            "dtype": "bool",
+            "shape": [3],
+            "data": [false, false, false]
+          },
+          "j": {
+            "dtype": "i32",
+            "shape": [3],
+            "data": [2, -2, 3]
+          },
+          "kde": {
+            "dtype": "f64",
+            "shape": [],
+            "data": [0.45]
+          },
+          "laplace": {
+            "dtype": "f64",
+            "shape": [],
+            "data": [-0.2]
+          },
+          "leMask": {
+            "dtype": "f64",
+            "shape": [2, 3],
+            "data": [1.0, 0.0, 1.0, 0.0, 0.0, 1.0]
+          },
+          "lessThan": {
+            "dtype": "bool",
+            "shape": [2, 3],
+            "data": [true, false, true, false, false, true]
+          },
+          "lessThanOrEqual": {
+            "dtype": "bool",
+            "shape": [2, 3],
+            "data": [true, false, true, false, false, true]
+          },
+          "log": {
+            "dtype": "f64",
+            "shape": [2, 3],
+            "data": [-1.6094379124341003, -0.6931471805599453, -0.35667494393873245, -1.2039728043259361, -0.10536051565782628, -0.916290731874155]
+          },
+          "log10": {
+            "dtype": "f64",
+            "shape": [2, 3],
+            "data": [-0.6989700043360187, -0.3010299956639812, -0.1549019599857432, -0.5228787452803376, -0.045757490560675115, -0.3979400086720376]
+          },
+          "log1p": {
+            "dtype": "f64",
+            "shape": [2, 3],
+            "data": [0.18232155679395465, 0.4054651081081644, 0.5306282510621704, 0.26236426446749106, 0.6418538861723948, 0.33647223662121295]
+          },
+          "log2": {
+            "dtype": "f64",
+            "shape": [2, 3],
+            "data": [-2.321928094887362, -1.0, -0.5145731728297583, -1.7369655941662063, -0.15200309344504997, -1.3219280948873622]
+          },
+          "logAddExp": {
+            "dtype": "f64",
+            "shape": [2, 3],
+            "data": [1.1130152523999526, 1.0130152523999527, 1.444396660073571, 0.9684596480132863, 1.3554924814633376, 1.1184596480132862]
+          },
+          "logAddExp2": {
+            "dtype": "f64",
+            "shape": [2, 3],
+            "data": [1.4138187665642792, 1.3138187665642793, 1.7508662605808967, 1.2752165976541467, 1.6510524309378054, 1.4252165976541469]
+          },
+          "logGamma": {
+            "dtype": "f64",
+            "shape": [2, 3],
+            "data": [1.5240638224307843, 0.5723649429247001, 0.2608672465316666, 1.0957979948180756, 0.06637623973474296, 0.7966778177017837]
+          },
+          "logNormal": {
+            "dtype": "f64",
+            "shape": [],
+            "data": [1.3]
+          },
+          "logistic": {
+            "dtype": "f64",
+            "shape": [],
+            "data": [0.6]
+          },
+          "ltMask": {
+            "dtype": "f64",
+            "shape": [2, 3],
+            "data": [1.0, 0.0, 1.0, 0.0, 0.0, 1.0]
+          },
+          "matrixDeterminant": {
+            "dtype": "f64",
+            "shape": [],
+            "data": [21.29]
+          },
+          "matrixInverse": {
+            "dtype": "f64",
+            "shape": [3, 3],
+            "data": [0.2799436355096289, -0.08924377642085486, -0.06106153123532174, -0.08924377642085486, 0.36402066697980273, -0.014091122592766557, -0.061061531235321743, -0.014091122592766559, 0.516674495068107]
+          },
+          "matrixMultiply": {
+            "dtype": "f64",
+            "shape": [2, 3],
+            "data": [1.65, 1.8399999999999999, 1.5999999999999999, 2.3000000000000003, 3.08, 1.1300000000000001]
+          },
+          "maxBinary": {
+            "dtype": "f64",
+            "shape": [2, 3],
+            "data": [0.6, 0.5, 0.8, 0.3, 0.9, 0.45]
+          },
+          "maxUnary": {
+            "dtype": "f64",
+            "shape": [],
+            "data": [0.9]
+          },
+          "mean": {
+            "dtype": "f64",
+            "shape": [],
+            "data": [0.5]
+          },
+          "meanDims": {
+            "dtype": "f64",
+            "shape": [2],
+            "data": [0.4666666666666666, 0.5333333333333333]
+          },
+          "minBinary": {
+            "dtype": "f64",
+            "shape": [2, 3],
+            "data": [0.2, 0.1, 0.7, 0.25, 0.35, 0.4]
+          },
+          "minUnary": {
+            "dtype": "f64",
+            "shape": [],
+            "data": [0.2]
+          },
+          "minus": {
+            "dtype": "f64",
+            "shape": [2, 3],
+            "data": [-0.39999999999999997, 0.4, -0.10000000000000009, 0.04999999999999999, 0.55, -0.04999999999999999]
+          },
+          "mu": {
+            "dtype": "f64",
+            "shape": [],
+            "data": [0.3]
+          },
+          "multinomial": {
+            "dtype": "i32",
+            "shape": [3],
+            "data": [1, 3, 1]
+          },
+          "multiplexer": {
+            "dtype": "f64",
+            "shape": [2, 3],
+            "data": [0.6, 0.1, 0.8, 0.25, 0.35, 0.45]
+          },
+          "multivariateGaussian": {
+            "dtype": "f64",
+            "shape": [2],
+            "data": [1.0, -0.5]
+          },
+          "nanArgMax": {
+            "dtype": "i32",
+            "shape": [],
+            "data": [2]
+          },
+          "nanArgMin": {
+            "dtype": "i32",
+            "shape": [],
+            "data": [0]
+          },
+          "not": {
+            "dtype": "bool",
+            "shape": [3],
+            "data": [false, true, false]
+          },
+          "notEquals": {
+            "dtype": "bool",
+            "shape": [2, 3],
+            "data": [true, true, true, true, true, true]
+          },
+          "notNaN": {
+            "dtype": "bool",
+            "shape": [3],
+            "data": [true, false, true]
+          },
+          "or": {
+            "dtype": "bool",
+            "shape": [3],
+            "data": [true, false, true]
+          },
+          "pareto": {
+            "dtype": "f64",
+            "shape": [],
+            "data": [1.7]
+          },
+          "permute": {
+            "dtype": "f64",
+            "shape": [3, 2],
+            "data": [0.2, 0.3, 0.5, 0.9, 0.7, 0.4]
+          },
+          "plus": {
+            "dtype": "f64",
+            "shape": [2, 3],
+            "data": [0.8, 0.6, 1.5, 0.55, 1.25, 0.8500000000000001]
+          },
+          "poisson": {
+            "dtype": "i32",
+            "shape": [3],
+            "data": [0, 2, 1]
+          },
+          "pow": {
+            "dtype": "f64",
+            "shape": [2, 3],
+            "data": [0.3807307877431757, 0.9330329915368074, 0.7517586466500455, 0.7400828044922853, 0.9637954646528334, 0.6621051959878331]
+          },
+          "product": {
+            "dtype": "f64",
+            "shape": [],
+            "data": [0.007560000000000001]
+          },
+          "productDims": {
+            "dtype": "f64",
+            "shape": [3],
+            "data": [0.06, 0.45, 0.27999999999999997]
+          },
+          "reciprocal": {
+            "dtype": "f64",
+            "shape": [2, 3],
+            "data": [5.0, 2.0, 1.4285714285714286, 3.3333333333333335, 1.1111111111111112, 2.5]
+          },
+          "replaceNaN": {
+            "dtype": "f64",
+            "shape": [3],
+            "data": [1.0, 0.5, 3.0]
+          },
+          "reshape": {
+            "dtype": "f64",
+            "shape": [3, 2],
+            "data": [0.2, 0.5, 0.7, 0.3, 0.9, 0.4]
+          },
+          "round": {
+            "dtype": "f64",
+            "shape": [3],
+            "data": [2.0, -3.0, 4.0]
+          },
+          "row": {
+            "dtype": "f64",
+            "shape": [3],
+            "data": [0.3, 0.6, 0.9]
+          },
+          "safeLogTimes": {
+            "dtype": "f64",
+            "shape": [2, 3],
+            "data": [-0.9656627474604601, -0.06931471805599453, -0.285339955150986, -0.30099320108148403, -0.0368761804802392, -0.41233082934336973]
+          },
+          "setWithMask": {
+            "dtype": "f64",
+            "shape": [2, 3],
+            "data": [0.2, 9.0, 0.7, 9.0, 9.0, 0.4]
+          },
+          "sigmoid": {
+            "dtype": "f64",
+            "shape": [2, 3],
+            "data": [0.549833997312478, 0.6224593312018546, 0.6681877721681662, 0.574442516811659, 0.7109495026250039, 0.598687660112452]
+          },
+          "sign": {
+            "dtype": "f64",
+            "shape": [3],
+            "data": [1.0, -1.0, 1.0]
+          },
+          "sin": {
+            "dtype": "f64",
+            "shape": [2, 3],
+            "data": [0.19866933079506122, 0.479425538604203, 0.644217687237691, 0.29552020666133955, 0.7833269096274834, 0.3894183423086505]
+          },
+          "sinh": {
+            "dtype": "f64",
+            "shape": [2, 3],
+            "data": [0.201336002541094, 0.5210953054937474, 0.7585837018395335, 0.3045202934471426, 1.0265167257081753, 0.4107523258028155]
+          },
+          "sliceIndex": {
+            "dtype": "f64",
+            "shape": [2],
+            "data": [0.2, 0.3]
+          },
+          "sqrt": {
+            "dtype": "f64",
+            "shape": [2, 3],
+            "data": [0.4472135954999579, 0.7071067811865476, 0.8366600265340756, 0.5477225575051661, 0.9486832980505138, 0.6324555320336759]
+          },
+          "square": {
+            "dtype": "f64",
+            "shape": [3, 3],
+            "data": [4.0, 1.0, 0.5, 1.0, 3.0, 0.2, 0.5, 0.2, 2.0]
+          },
+          "standardDeviation": {
+            "dtype": "f64",
+            "shape": [],
+            "data": [0.2607680962081059]
+          },
+          "standardize": {
+            "dtype": "f64",
+            "shape": [2, 3],
+            "data": [-1.1504474832710554, 0.0, 0.7669649888473702, -0.7669649888473704, 1.5339299776947408, -0.3834824944236851]
+          },
+          "stridedSlice": {
+            "dtype": "f64",
+            "shape": [2, 2],
+            "data": [0.9, 0.4, 0.5, 0.7]
+          },
+          "studentT": {
+            "dtype": "f64",
+            "shape": [],
+            "data": [-0.8]
+          },
+          "sumAll": {
+            "dtype": "f64",
+            "shape": [],
+            "data": [3.0]
+          },
+          "sumDims": {
+            "dtype": "f64",
+            "shape": [2],
+            "data": [1.4, 1.6]
+          },
+          "t": {
+            "dtype": "bool",
+            "shape": [3],
+            "data": [true, false, true]
+          },
+          "take": {
+            "dtype": "f64",
+            "shape": [],
+            "data": [0.4]
+          },
+          "tan": {
+            "dtype": "f64",
+            "shape": [2, 3],
+            "data": [0.2027100355086725, 0.5463024898437905, 0.8422883804630794, 0.30933624960962325, 1.2601582175503392, 0.4227932187381618]
+          },
+          "tanh": {
+            "dtype": "f64",
+            "shape": [2, 3],
+            "data": [0.197375320224904, 0.46211715726000974, 0.6043677771171635, 0.2913126124515909, 0.7162978701990245, 0.3799489622552249]
+          },
+          "tensorMultiply": {
+            "dtype": "f64",
+            "shape": [2, 3],
+            "data": [1.65, 1.8399999999999999, 1.5999999999999999, 2.3000000000000003, 3.08, 1.1300000000000001]
+          },
+          "times": {
+            "dtype": "f64",
+            "shape": [2, 3],
+            "data": [0.12, 0.05, 0.5599999999999999, 0.075, 0.315, 0.18000000000000002]
+          },
+          "triLower": {
+            "dtype": "f64",
+            "shape": [3, 3],
+            "data": [4.0, 0.0, 0.0, 1.0, 3.0, 0.0, 0.5, 0.2, 2.0]
+          },
+          "triUpper": {
+            "dtype": "f64",
+            "shape": [3, 3],
+            "data": [0.0, 1.0, 0.5, 0.0, 0.0, 0.2, 0.0, 0.0, 0.0]
+          },
+          "trianglePart": {
+            "dtype": "f64",
+            "shape": [6],
+            "data": [4.0, 1.0, 0.5, 3.0, 0.2, 2.0]
+          },
+          "triangular": {
+            "dtype": "f64",
+            "shape": [],
+            "data": [0.6]
+          },
+          "trigamma": {
+            "dtype": "f64",
+            "shape": [2, 3],
+            "data": [26.267377205423706, 4.934802200544614, 2.8340491566945474, 12.245364546107663, 1.9225399594771417, 7.2753565905295305]
+          },
+          "unaryMinus": {
+            "dtype": "f64",
+            "shape": [3],
+            "data": [-1.5, 2.5, -3.5]
+          },
+          "uniform": {
+            "dtype": "f64",
+            "shape": [],
+            "data": [0.5]
+          },
+          "uniformInt": {
+            "dtype": "i32",
+            "shape": [2],
+            "data": [-1, 2]
+          },
+          "where": {
+            "dtype": "f64",
+            "shape": [2, 3],
+            "data": [0.6, 0.5, 0.8, 0.3, 0.9, 0.45]
+          },
+          "withNaN": {
+            "dtype": "f64",
+            "shape": [3],
+            "data": [1.0, "NaN", 3.0]
+          },
+          "xor": {
+            "dtype": "bool",
+            "shape": [3],
+            "data": [true, false, false]
+          }
+        },
+        "logProb": -41.667201782871466,
+        "logLikelihood": -20.215064829525094,
+        "dLogProb": {
+          "beta": {
+            "dtype": "f64",
+            "shape": [],
+            "data": [-0.21978021978021944]
+          },
+          "cauchy": {
+            "dtype": "f64",
+            "shape": [],
+            "data": [-0.689655172413793]
+          },
+          "chiSquared": {
+            "dtype": "f64",
+            "shape": [],
+            "data": [-0.3]
+          },
+          "dirichlet": {
+            "dtype": "f64",
+            "shape": [3],
+            "data": [0.0, 3.3333333333333335, 4.0]
+          },
+          "exponential": {
+            "dtype": "f64",
+            "shape": [],
+            "data": [-1.5]
+          },
+          "gamma": {
+            "dtype": "f64",
+            "shape": [],
+            "data": [-0.29166666666666663]
+          },
+          "gaussian": {
+            "dtype": "f64",
+            "shape": [3],
+            "data": [0.049999999999999996, 0.175, -0.125]
+          },
+          "halfCauchy": {
+            "dtype": "f64",
+            "shape": [],
+            "data": [-0.44117647058823534]
+          },
+          "halfGaussian": {
+            "dtype": "f64",
+            "shape": [2],
+            "data": [-0.2222222222222222, -0.8888888888888888]
+          },
+          "inverseGamma": {
+            "dtype": "f64",
+            "shape": [],
+            "data": [-7.777777777777777]
+          },
+          "kde": {
+            "dtype": "f64",
+            "shape": [],
+            "data": [-0.6354105671867764]
+          },
+          "laplace": {
+            "dtype": "f64",
+            "shape": [],
+            "data": [2.0]
+          },
+          "logNormal": {
+            "dtype": "f64",
+            "shape": [],
+            "data": [-0.9710494342057623]
+          },
+          "logistic": {
+            "dtype": "f64",
+            "shape": [],
+            "data": [-0.291312612451591]
+          },
+          "mu": {
+            "dtype": "f64",
+            "shape": [],
+            "data": [-2.759921250314215]
+          },
+          "multivariateGaussian": {
+            "dtype": "f64",
+            "shape": [2],
+            "data": [-0.1832460732984293, -0.44502617801047134]
+          },
+          "pareto": {
+            "dtype": "f64",
+            "shape": [],
+            "data": [-1.7647058823529411]
+          },
+          "studentT": {
+            "dtype": "f64",
+            "shape": [],
+            "data": [0.8620689655172413]
+          },
+          "triangular": {
+            "dtype": "f64",
+            "shape": [],
+            "data": [-2.5]
+          },
+          "uniform": {
+            "dtype": "f64",
+            "shape": [],
+            "data": [0.0]
+          }
+        },
+        "dLogLikelihood": {
+          "mu": {
+            "dtype": "f64",
+            "shape": [],
+            "data": [-1.0495764227280084]
           }
         }
       }

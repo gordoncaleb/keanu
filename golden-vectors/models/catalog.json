@@ -1,0 +1,4118 @@
+{
+  "graph": {
+    "vertices": [{
+      "id": {
+        "id": "[0]"
+      },
+      "label": "a",
+      "vertexType": "io.improbable.keanu.vertices.tensor.number.floating.dbl.nonprobabilistic.ConstantDoubleVertex",
+      "parameters": [{
+        "name": "constant",
+        "doubleTensorParam": {
+          "shape": ["2", "3"],
+          "values": [0.2, 0.5, 0.7, 0.3, 0.9, 0.4]
+        }
+      }],
+      "shape": ["2", "3"]
+    }, {
+      "id": {
+        "id": "[1]"
+      },
+      "label": "b",
+      "vertexType": "io.improbable.keanu.vertices.tensor.number.floating.dbl.nonprobabilistic.ConstantDoubleVertex",
+      "parameters": [{
+        "name": "constant",
+        "doubleTensorParam": {
+          "shape": ["2", "3"],
+          "values": [0.6, 0.1, 0.8, 0.25, 0.35, 0.45]
+        }
+      }],
+      "shape": ["2", "3"]
+    }, {
+      "id": {
+        "id": "[2]"
+      },
+      "label": "row",
+      "vertexType": "io.improbable.keanu.vertices.tensor.number.floating.dbl.nonprobabilistic.ConstantDoubleVertex",
+      "parameters": [{
+        "name": "constant",
+        "doubleTensorParam": {
+          "shape": ["3"],
+          "values": [0.3, 0.6, 0.9]
+        }
+      }],
+      "shape": ["3"]
+    }, {
+      "id": {
+        "id": "[3]"
+      },
+      "label": "square",
+      "vertexType": "io.improbable.keanu.vertices.tensor.number.floating.dbl.nonprobabilistic.ConstantDoubleVertex",
+      "parameters": [{
+        "name": "constant",
+        "doubleTensorParam": {
+          "shape": ["3", "3"],
+          "values": [4.0, 1.0, 0.5, 1.0, 3.0, 0.2, 0.5, 0.2, 2.0]
+        }
+      }],
+      "shape": ["3", "3"]
+    }, {
+      "id": {
+        "id": "[4]"
+      },
+      "label": "big",
+      "vertexType": "io.improbable.keanu.vertices.tensor.number.floating.dbl.nonprobabilistic.ConstantDoubleVertex",
+      "parameters": [{
+        "name": "constant",
+        "doubleTensorParam": {
+          "shape": ["3"],
+          "values": [1.5, -2.5, 3.5]
+        }
+      }],
+      "shape": ["3"]
+    }, {
+      "id": {
+        "id": "[5]"
+      },
+      "label": "withNaN",
+      "vertexType": "io.improbable.keanu.vertices.tensor.number.floating.dbl.nonprobabilistic.ConstantDoubleVertex",
+      "parameters": [{
+        "name": "constant",
+        "doubleTensorParam": {
+          "shape": ["3"],
+          "values": [1.0, "NaN", 3.0]
+        }
+      }],
+      "shape": ["3"]
+    }, {
+      "id": {
+        "id": "[6]"
+      },
+      "label": "i",
+      "vertexType": "io.improbable.keanu.vertices.tensor.number.fixed.intgr.nonprobabilistic.ConstantIntegerVertex",
+      "parameters": [{
+        "name": "constant",
+        "intTensorParam": {
+          "shape": ["2", "3"],
+          "values": [-7, -3, 0, 5, 9, 2]
+        }
+      }],
+      "shape": ["2", "3"]
+    }, {
+      "id": {
+        "id": "[7]"
+      },
+      "label": "j",
+      "vertexType": "io.improbable.keanu.vertices.tensor.number.fixed.intgr.nonprobabilistic.ConstantIntegerVertex",
+      "parameters": [{
+        "name": "constant",
+        "intTensorParam": {
+          "shape": ["3"],
+          "values": [2, -2, 3]
+        }
+      }],
+      "shape": ["3"]
+    }, {
+      "id": {
+        "id": "[10]"
+      },
+      "label": "t",
+      "vertexType": "io.improbable.keanu.vertices.tensor.bool.nonprobabilistic.ConstantBooleanVertex",
+      "parameters": [{
+        "name": "constant",
+        "boolTensorParam": {
+          "shape": ["3"],
+          "values": [true, false, true]
+        }
+      }],
+      "shape": ["3"]
+    }, {
+      "id": {
+        "id": "[11]"
+      },
+      "label": "f",
+      "vertexType": "io.improbable.keanu.vertices.tensor.bool.nonprobabilistic.ConstantBooleanVertex",
+      "parameters": [{
+        "name": "constant",
+        "boolTensorParam": {
+          "shape": ["3"],
+          "values": [false, false, true]
+        }
+      }],
+      "shape": ["3"]
+    }, {
+      "id": {
+        "id": "[12]"
+      },
+      "label": "plus",
+      "vertexType": "io.improbable.keanu.vertices.tensor.number.operators.binary.AdditionVertex",
+      "parameters": [{
+        "name": "left",
+        "parentVertex": {
+          "id": "[0]"
+        }
+      }, {
+        "name": "right",
+        "parentVertex": {
+          "id": "[1]"
+        }
+      }],
+      "shape": ["2", "3"]
+    }, {
+      "id": {
+        "id": "[13]"
+      },
+      "label": "minus",
+      "vertexType": "io.improbable.keanu.vertices.tensor.number.operators.binary.DifferenceVertex",
+      "parameters": [{
+        "name": "left",
+        "parentVertex": {
+          "id": "[0]"
+        }
+      }, {
+        "name": "right",
+        "parentVertex": {
+          "id": "[1]"
+        }
+      }],
+      "shape": ["2", "3"]
+    }, {
+      "id": {
+        "id": "[14]"
+      },
+      "label": "times",
+      "vertexType": "io.improbable.keanu.vertices.tensor.number.operators.binary.MultiplicationVertex",
+      "parameters": [{
+        "name": "left",
+        "parentVertex": {
+          "id": "[0]"
+        }
+      }, {
+        "name": "right",
+        "parentVertex": {
+          "id": "[1]"
+        }
+      }],
+      "shape": ["2", "3"]
+    }, {
+      "id": {
+        "id": "[15]"
+      },
+      "label": "div",
+      "vertexType": "io.improbable.keanu.vertices.tensor.number.operators.binary.DivisionVertex",
+      "parameters": [{
+        "name": "left",
+        "parentVertex": {
+          "id": "[0]"
+        }
+      }, {
+        "name": "right",
+        "parentVertex": {
+          "id": "[1]"
+        }
+      }],
+      "shape": ["2", "3"]
+    }, {
+      "id": {
+        "id": "[16]"
+      },
+      "label": "pow",
+      "vertexType": "io.improbable.keanu.vertices.tensor.number.operators.binary.PowerVertex",
+      "parameters": [{
+        "name": "left",
+        "parentVertex": {
+          "id": "[0]"
+        }
+      }, {
+        "name": "right",
+        "parentVertex": {
+          "id": "[1]"
+        }
+      }],
+      "shape": ["2", "3"]
+    }, {
+      "id": {
+        "id": "[17]"
+      },
+      "vertexType": "io.improbable.keanu.vertices.tensor.bool.nonprobabilistic.operators.binary.compare.GreaterThanOrEqualVertex",
+      "parameters": [{
+        "name": "left",
+        "parentVertex": {
+          "id": "[0]"
+        }
+      }, {
+        "name": "right",
+        "parentVertex": {
+          "id": "[1]"
+        }
+      }],
+      "shape": ["2", "3"]
+    }, {
+      "id": {
+        "id": "[18]"
+      },
+      "label": "maxBinary",
+      "vertexType": "io.improbable.keanu.vertices.tensor.number.operators.binary.MaxVertex",
+      "parameters": [{
+        "name": "else",
+        "parentVertex": {
+          "id": "[1]"
+        }
+      }, {
+        "name": "predicate",
+        "parentVertex": {
+          "id": "[17]"
+        }
+      }, {
+        "name": "then",
+        "parentVertex": {
+          "id": "[0]"
+        }
+      }],
+      "shape": ["2", "3"]
+    }, {
+      "id": {
+        "id": "[19]"
+      },
+      "vertexType": "io.improbable.keanu.vertices.tensor.bool.nonprobabilistic.operators.binary.compare.LessThanOrEqualVertex",
+      "parameters": [{
+        "name": "left",
+        "parentVertex": {
+          "id": "[0]"
+        }
+      }, {
+        "name": "right",
+        "parentVertex": {
+          "id": "[1]"
+        }
+      }],
+      "shape": ["2", "3"]
+    }, {
+      "id": {
+        "id": "[20]"
+      },
+      "label": "minBinary",
+      "vertexType": "io.improbable.keanu.vertices.tensor.number.operators.binary.MinVertex",
+      "parameters": [{
+        "name": "else",
+        "parentVertex": {
+          "id": "[1]"
+        }
+      }, {
+        "name": "predicate",
+        "parentVertex": {
+          "id": "[19]"
+        }
+      }, {
+        "name": "then",
+        "parentVertex": {
+          "id": "[0]"
+        }
+      }],
+      "shape": ["2", "3"]
+    }, {
+      "id": {
+        "id": "[21]"
+      },
+      "label": "atan2",
+      "vertexType": "io.improbable.keanu.vertices.tensor.number.floating.operators.binary.ArcTan2Vertex",
+      "parameters": [{
+        "name": "left",
+        "parentVertex": {
+          "id": "[0]"
+        }
+      }, {
+        "name": "right",
+        "parentVertex": {
+          "id": "[1]"
+        }
+      }],
+      "shape": ["2", "3"]
+    }, {
+      "id": {
+        "id": "[22]"
+      },
+      "label": "logAddExp",
+      "vertexType": "io.improbable.keanu.vertices.tensor.number.floating.operators.binary.LogAddExpVertex",
+      "parameters": [{
+        "name": "left",
+        "parentVertex": {
+          "id": "[0]"
+        }
+      }, {
+        "name": "right",
+        "parentVertex": {
+          "id": "[1]"
+        }
+      }],
+      "shape": ["2", "3"]
+    }, {
+      "id": {
+        "id": "[23]"
+      },
+      "label": "logAddExp2",
+      "vertexType": "io.improbable.keanu.vertices.tensor.number.floating.operators.binary.LogAddExp2Vertex",
+      "parameters": [{
+        "name": "left",
+        "parentVertex": {
+          "id": "[0]"
+        }
+      }, {
+        "name": "right",
+        "parentVertex": {
+          "id": "[1]"
+        }
+      }],
+      "shape": ["2", "3"]
+    }, {
+      "id": {
+        "id": "[24]"
+      },
+      "label": "safeLogTimes",
+      "vertexType": "io.improbable.keanu.vertices.tensor.number.floating.operators.binary.SafeLogTimesVertex",
+      "parameters": [{
+        "name": "left",
+        "parentVertex": {
+          "id": "[0]"
+        }
+      }, {
+        "name": "right",
+        "parentVertex": {
+          "id": "[1]"
+        }
+      }],
+      "shape": ["2", "3"]
+    }, {
+      "id": {
+        "id": "[25]"
+      },
+      "label": "gtMask",
+      "vertexType": "io.improbable.keanu.vertices.tensor.number.operators.binary.GreaterThanMaskVertex",
+      "parameters": [{
+        "name": "left",
+        "parentVertex": {
+          "id": "[0]"
+        }
+      }, {
+        "name": "right",
+        "parentVertex": {
+          "id": "[1]"
+        }
+      }],
+      "shape": ["2", "3"]
+    }, {
+      "id": {
+        "id": "[26]"
+      },
+      "label": "geMask",
+      "vertexType": "io.improbable.keanu.vertices.tensor.number.operators.binary.GreaterThanOrEqualToMaskVertex",
+      "parameters": [{
+        "name": "left",
+        "parentVertex": {
+          "id": "[0]"
+        }
+      }, {
+        "name": "right",
+        "parentVertex": {
+          "id": "[1]"
+        }
+      }],
+      "shape": ["2", "3"]
+    }, {
+      "id": {
+        "id": "[27]"
+      },
+      "label": "ltMask",
+      "vertexType": "io.improbable.keanu.vertices.tensor.number.operators.binary.LessThanMaskVertex",
+      "parameters": [{
+        "name": "left",
+        "parentVertex": {
+          "id": "[0]"
+        }
+      }, {
+        "name": "right",
+        "parentVertex": {
+          "id": "[1]"
+        }
+      }],
+      "shape": ["2", "3"]
+    }, {
+      "id": {
+        "id": "[28]"
+      },
+      "label": "leMask",
+      "vertexType": "io.improbable.keanu.vertices.tensor.number.operators.binary.LessThanOrEqualToMaskVertex",
+      "parameters": [{
+        "name": "left",
+        "parentVertex": {
+          "id": "[0]"
+        }
+      }, {
+        "name": "right",
+        "parentVertex": {
+          "id": "[1]"
+        }
+      }],
+      "shape": ["2", "3"]
+    }, {
+      "id": {
+        "id": "[29]"
+      },
+      "label": "broadcastPlus",
+      "vertexType": "io.improbable.keanu.vertices.tensor.number.operators.binary.AdditionVertex",
+      "parameters": [{
+        "name": "left",
+        "parentVertex": {
+          "id": "[0]"
+        }
+      }, {
+        "name": "right",
+        "parentVertex": {
+          "id": "[2]"
+        }
+      }],
+      "shape": ["2", "3"]
+    }, {
+      "id": {
+        "id": "[30]"
+      },
+      "label": "abs",
+      "vertexType": "io.improbable.keanu.vertices.tensor.number.operators.unary.AbsVertex",
+      "parameters": [{
+        "name": "inputVertex",
+        "parentVertex": {
+          "id": "[4]"
+        }
+      }],
+      "shape": ["3"]
+    }, {
+      "id": {
+        "id": "[31]"
+      },
+      "vertexType": "io.improbable.keanu.vertices.tensor.number.floating.dbl.nonprobabilistic.ConstantDoubleVertex",
+      "parameters": [{
+        "name": "constant",
+        "doubleTensorParam": {
+          "values": [-1.0]
+        }
+      }]
+    }, {
+      "id": {
+        "id": "[32]"
+      },
+      "label": "unaryMinus",
+      "vertexType": "io.improbable.keanu.vertices.tensor.number.operators.binary.MultiplicationVertex",
+      "parameters": [{
+        "name": "left",
+        "parentVertex": {
+          "id": "[4]"
+        }
+      }, {
+        "name": "right",
+        "parentVertex": {
+          "id": "[31]"
+        }
+      }],
+      "shape": ["3"]
+    }, {
+      "id": {
+        "id": "[33]"
+      },
+      "label": "sign",
+      "vertexType": "io.improbable.keanu.vertices.tensor.number.operators.unary.SignVertex",
+      "parameters": [{
+        "name": "inputVertex",
+        "parentVertex": {
+          "id": "[4]"
+        }
+      }],
+      "shape": ["3"]
+    }, {
+      "id": {
+        "id": "[34]"
+      },
+      "label": "exp",
+      "vertexType": "io.improbable.keanu.vertices.tensor.number.floating.operators.unary.ExpVertex",
+      "parameters": [{
+        "name": "inputVertex",
+        "parentVertex": {
+          "id": "[0]"
+        }
+      }],
+      "shape": ["2", "3"]
+    }, {
+      "id": {
+        "id": "[35]"
+      },
+      "label": "exp2",
+      "vertexType": "io.improbable.keanu.vertices.tensor.number.floating.operators.unary.Exp2Vertex",
+      "parameters": [{
+        "name": "inputVertex",
+        "parentVertex": {
+          "id": "[0]"
+        }
+      }],
+      "shape": ["2", "3"]
+    }, {
+      "id": {
+        "id": "[36]"
+      },
+      "label": "expM1",
+      "vertexType": "io.improbable.keanu.vertices.tensor.number.floating.operators.unary.ExpM1Vertex",
+      "parameters": [{
+        "name": "inputVertex",
+        "parentVertex": {
+          "id": "[0]"
+        }
+      }],
+      "shape": ["2", "3"]
+    }, {
+      "id": {
+        "id": "[37]"
+      },
+      "label": "log",
+      "vertexType": "io.improbable.keanu.vertices.tensor.number.floating.operators.unary.LogVertex",
+      "parameters": [{
+        "name": "inputVertex",
+        "parentVertex": {
+          "id": "[0]"
+        }
+      }],
+      "shape": ["2", "3"]
+    }, {
+      "id": {
+        "id": "[38]"
+      },
+      "label": "log1p",
+      "vertexType": "io.improbable.keanu.vertices.tensor.number.floating.operators.unary.Log1pVertex",
+      "parameters": [{
+        "name": "inputVertex",
+        "parentVertex": {
+          "id": "[0]"
+        }
+      }],
+      "shape": ["2", "3"]
+    }, {
+      "id": {
+        "id": "[39]"
+      },
+      "label": "log2",
+      "vertexType": "io.improbable.keanu.vertices.tensor.number.floating.operators.unary.Log2Vertex",
+      "parameters": [{
+        "name": "inputVertex",
+        "parentVertex": {
+          "id": "[0]"
+        }
+      }],
+      "shape": ["2", "3"]
+    }, {
+      "id": {
+        "id": "[40]"
+      },
+      "label": "log10",
+      "vertexType": "io.improbable.keanu.vertices.tensor.number.floating.operators.unary.Log10Vertex",
+      "parameters": [{
+        "name": "inputVertex",
+        "parentVertex": {
+          "id": "[0]"
+        }
+      }],
+      "shape": ["2", "3"]
+    }, {
+      "id": {
+        "id": "[41]"
+      },
+      "vertexType": "io.improbable.keanu.vertices.tensor.number.floating.dbl.nonprobabilistic.ConstantDoubleVertex",
+      "parameters": [{
+        "name": "constant",
+        "doubleTensorParam": {
+          "values": [0.5]
+        }
+      }]
+    }, {
+      "id": {
+        "id": "[42]"
+      },
+      "label": "sqrt",
+      "vertexType": "io.improbable.keanu.vertices.tensor.number.operators.binary.PowerVertex",
+      "parameters": [{
+        "name": "left",
+        "parentVertex": {
+          "id": "[0]"
+        }
+      }, {
+        "name": "right",
+        "parentVertex": {
+          "id": "[41]"
+        }
+      }],
+      "shape": ["2", "3"]
+    }, {
+      "id": {
+        "id": "[43]"
+      },
+      "vertexType": "io.improbable.keanu.vertices.tensor.number.floating.dbl.nonprobabilistic.ConstantDoubleVertex",
+      "parameters": [{
+        "name": "constant",
+        "doubleTensorParam": {
+          "values": [1.0]
+        }
+      }]
+    }, {
+      "id": {
+        "id": "[44]"
+      },
+      "label": "reciprocal",
+      "vertexType": "io.improbable.keanu.vertices.tensor.number.operators.binary.DivisionVertex",
+      "parameters": [{
+        "name": "left",
+        "parentVertex": {
+          "id": "[43]"
+        }
+      }, {
+        "name": "right",
+        "parentVertex": {
+          "id": "[0]"
+        }
+      }],
+      "shape": ["2", "3"]
+    }, {
+      "id": {
+        "id": "[45]"
+      },
+      "label": "sin",
+      "vertexType": "io.improbable.keanu.vertices.tensor.number.floating.operators.unary.SinVertex",
+      "parameters": [{
+        "name": "inputVertex",
+        "parentVertex": {
+          "id": "[0]"
+        }
+      }],
+      "shape": ["2", "3"]
+    }, {
+      "id": {
+        "id": "[46]"
+      },
+      "label": "cos",
+      "vertexType": "io.improbable.keanu.vertices.tensor.number.floating.operators.unary.CosVertex",
+      "parameters": [{
+        "name": "inputVertex",
+        "parentVertex": {
+          "id": "[0]"
+        }
+      }],
+      "shape": ["2", "3"]
+    }, {
+      "id": {
+        "id": "[47]"
+      },
+      "label": "tan",
+      "vertexType": "io.improbable.keanu.vertices.tensor.number.floating.operators.unary.TanVertex",
+      "parameters": [{
+        "name": "inputVertex",
+        "parentVertex": {
+          "id": "[0]"
+        }
+      }],
+      "shape": ["2", "3"]
+    }, {
+      "id": {
+        "id": "[48]"
+      },
+      "label": "asin",
+      "vertexType": "io.improbable.keanu.vertices.tensor.number.floating.operators.unary.ArcSinVertex",
+      "parameters": [{
+        "name": "inputVertex",
+        "parentVertex": {
+          "id": "[0]"
+        }
+      }],
+      "shape": ["2", "3"]
+    }, {
+      "id": {
+        "id": "[49]"
+      },
+      "label": "acos",
+      "vertexType": "io.improbable.keanu.vertices.tensor.number.floating.operators.unary.ArcCosVertex",
+      "parameters": [{
+        "name": "inputVertex",
+        "parentVertex": {
+          "id": "[0]"
+        }
+      }],
+      "shape": ["2", "3"]
+    }, {
+      "id": {
+        "id": "[50]"
+      },
+      "label": "atan",
+      "vertexType": "io.improbable.keanu.vertices.tensor.number.floating.operators.unary.ArcTanVertex",
+      "parameters": [{
+        "name": "inputVertex",
+        "parentVertex": {
+          "id": "[0]"
+        }
+      }],
+      "shape": ["2", "3"]
+    }, {
+      "id": {
+        "id": "[51]"
+      },
+      "label": "sinh",
+      "vertexType": "io.improbable.keanu.vertices.tensor.number.floating.operators.unary.SinhVertex",
+      "parameters": [{
+        "name": "inputVertex",
+        "parentVertex": {
+          "id": "[0]"
+        }
+      }],
+      "shape": ["2", "3"]
+    }, {
+      "id": {
+        "id": "[52]"
+      },
+      "label": "cosh",
+      "vertexType": "io.improbable.keanu.vertices.tensor.number.floating.operators.unary.CoshVertex",
+      "parameters": [{
+        "name": "inputVertex",
+        "parentVertex": {
+          "id": "[0]"
+        }
+      }],
+      "shape": ["2", "3"]
+    }, {
+      "id": {
+        "id": "[53]"
+      },
+      "label": "tanh",
+      "vertexType": "io.improbable.keanu.vertices.tensor.number.floating.operators.unary.TanhVertex",
+      "parameters": [{
+        "name": "inputVertex",
+        "parentVertex": {
+          "id": "[0]"
+        }
+      }],
+      "shape": ["2", "3"]
+    }, {
+      "id": {
+        "id": "[54]"
+      },
+      "label": "asinh",
+      "vertexType": "io.improbable.keanu.vertices.tensor.number.floating.operators.unary.ArcSinhVertex",
+      "parameters": [{
+        "name": "inputVertex",
+        "parentVertex": {
+          "id": "[0]"
+        }
+      }],
+      "shape": ["2", "3"]
+    }, {
+      "id": {
+        "id": "[55]"
+      },
+      "vertexType": "io.improbable.keanu.vertices.tensor.number.floating.dbl.nonprobabilistic.ConstantDoubleVertex",
+      "parameters": [{
+        "name": "constant",
+        "doubleTensorParam": {
+          "values": [1.5]
+        }
+      }]
+    }, {
+      "id": {
+        "id": "[56]"
+      },
+      "vertexType": "io.improbable.keanu.vertices.tensor.number.operators.binary.AdditionVertex",
+      "parameters": [{
+        "name": "left",
+        "parentVertex": {
+          "id": "[0]"
+        }
+      }, {
+        "name": "right",
+        "parentVertex": {
+          "id": "[55]"
+        }
+      }],
+      "shape": ["2", "3"]
+    }, {
+      "id": {
+        "id": "[57]"
+      },
+      "label": "acosh",
+      "vertexType": "io.improbable.keanu.vertices.tensor.number.floating.operators.unary.ArcCoshVertex",
+      "parameters": [{
+        "name": "inputVertex",
+        "parentVertex": {
+          "id": "[56]"
+        }
+      }],
+      "shape": ["2", "3"]
+    }, {
+      "id": {
+        "id": "[58]"
+      },
+      "label": "atanh",
+      "vertexType": "io.improbable.keanu.vertices.tensor.number.floating.operators.unary.ArcTanhVertex",
+      "parameters": [{
+        "name": "inputVertex",
+        "parentVertex": {
+          "id": "[0]"
+        }
+      }],
+      "shape": ["2", "3"]
+    }, {
+      "id": {
+        "id": "[59]"
+      },
+      "label": "sigmoid",
+      "vertexType": "io.improbable.keanu.vertices.tensor.number.floating.operators.unary.SigmoidVertex",
+      "parameters": [{
+        "name": "inputVertex",
+        "parentVertex": {
+          "id": "[0]"
+        }
+      }],
+      "shape": ["2", "3"]
+    }, {
+      "id": {
+        "id": "[60]"
+      },
+      "label": "floor",
+      "vertexType": "io.improbable.keanu.vertices.tensor.number.floating.operators.unary.FloorVertex",
+      "parameters": [{
+        "name": "inputVertex",
+        "parentVertex": {
+          "id": "[4]"
+        }
+      }],
+      "shape": ["3"]
+    }, {
+      "id": {
+        "id": "[61]"
+      },
+      "label": "ceil",
+      "vertexType": "io.improbable.keanu.vertices.tensor.number.floating.operators.unary.CeilVertex",
+      "parameters": [{
+        "name": "inputVertex",
+        "parentVertex": {
+          "id": "[4]"
+        }
+      }],
+      "shape": ["3"]
+    }, {
+      "id": {
+        "id": "[62]"
+      },
+      "label": "round",
+      "vertexType": "io.improbable.keanu.vertices.tensor.number.floating.operators.unary.RoundVertex",
+      "parameters": [{
+        "name": "inputVertex",
+        "parentVertex": {
+          "id": "[4]"
+        }
+      }],
+      "shape": ["3"]
+    }, {
+      "id": {
+        "id": "[63]"
+      },
+      "label": "logGamma",
+      "vertexType": "io.improbable.keanu.vertices.tensor.number.floating.operators.unary.LogGammaVertex",
+      "parameters": [{
+        "name": "inputVertex",
+        "parentVertex": {
+          "id": "[0]"
+        }
+      }],
+      "shape": ["2", "3"]
+    }, {
+      "id": {
+        "id": "[64]"
+      },
+      "label": "digamma",
+      "vertexType": "io.improbable.keanu.vertices.tensor.number.floating.operators.unary.DigammaVertex",
+      "parameters": [{
+        "name": "inputVertex",
+        "parentVertex": {
+          "id": "[0]"
+        }
+      }],
+      "shape": ["2", "3"]
+    }, {
+      "id": {
+        "id": "[65]"
+      },
+      "label": "trigamma",
+      "vertexType": "io.improbable.keanu.vertices.tensor.number.floating.operators.unary.TrigammaVertex",
+      "parameters": [{
+        "name": "inputVertex",
+        "parentVertex": {
+          "id": "[0]"
+        }
+      }],
+      "shape": ["2", "3"]
+    }, {
+      "id": {
+        "id": "[66]"
+      },
+      "label": "replaceNaN",
+      "vertexType": "io.improbable.keanu.vertices.tensor.number.floating.operators.unary.ReplaceNaNVertex",
+      "parameters": [{
+        "name": "REPLACE_WITH_VALUE",
+        "doubleParam": 0.5
+      }, {
+        "name": "inputVertex",
+        "parentVertex": {
+          "id": "[5]"
+        }
+      }],
+      "shape": ["3"]
+    }, {
+      "id": {
+        "id": "[67]"
+      },
+      "vertexType": "io.improbable.keanu.vertices.tensor.number.operators.binary.GreaterThanMaskVertex",
+      "parameters": [{
+        "name": "left",
+        "parentVertex": {
+          "id": "[0]"
+        }
+      }, {
+        "name": "right",
+        "parentVertex": {
+          "id": "[1]"
+        }
+      }],
+      "shape": ["2", "3"]
+    }, {
+      "id": {
+        "id": "[68]"
+      },
+      "vertexType": "io.improbable.keanu.vertices.tensor.number.floating.dbl.nonprobabilistic.ConstantDoubleVertex",
+      "parameters": [{
+        "name": "constant",
+        "doubleTensorParam": {
+          "values": [9.0]
+        }
+      }]
+    }, {
+      "id": {
+        "id": "[69]"
+      },
+      "label": "setWithMask",
+      "vertexType": "io.improbable.keanu.vertices.tensor.number.operators.ternary.SetWithMaskVertex",
+      "parameters": [{
+        "name": "mask",
+        "parentVertex": {
+          "id": "[67]"
+        }
+      }, {
+        "name": "operand",
+        "parentVertex": {
+          "id": "[0]"
+        }
+      }, {
+        "name": "setValue",
+        "parentVertex": {
+          "id": "[68]"
+        }
+      }],
+      "shape": ["2", "3"]
+    }, {
+      "id": {
+        "id": "[70]"
+      },
+      "label": "sumAll",
+      "vertexType": "io.improbable.keanu.vertices.tensor.number.operators.unary.SumVertex",
+      "parameters": [{
+        "name": "inputVertex",
+        "parentVertex": {
+          "id": "[0]"
+        }
+      }]
+    }, {
+      "id": {
+        "id": "[71]"
+      },
+      "label": "sumDims",
+      "vertexType": "io.improbable.keanu.vertices.tensor.number.operators.unary.SumVertex",
+      "parameters": [{
+        "name": "inputVertex",
+        "parentVertex": {
+          "id": "[0]"
+        }
+      }, {
+        "name": "overDimensions",
+        "intArrayParam": {
+          "values": [1]
+        }
+      }],
+      "shape": ["2"]
+    }, {
+      "id": {
+        "id": "[72]"
+      },
+      "label": "product",
+      "vertexType": "io.improbable.keanu.vertices.tensor.number.operators.unary.ProductVertex",
+      "parameters": [{
+        "name": "inputVertex",
+        "parentVertex": {
+          "id": "[0]"
+        }
+      }]
+    }, {
+      "id": {
+        "id": "[73]"
+      },
+      "label": "productDims",
+      "vertexType": "io.improbable.keanu.vertices.tensor.number.operators.unary.ProductVertex",
+      "parameters": [{
+        "name": "inputVertex",
+        "parentVertex": {
+          "id": "[0]"
+        }
+      }, {
+        "name": "overDimensions",
+        "intArrayParam": {
+          "values": [0]
+        }
+      }],
+      "shape": ["3"]
+    }, {
+      "id": {
+        "id": "[74]"
+      },
+      "label": "mean",
+      "vertexType": "io.improbable.keanu.vertices.tensor.number.floating.operators.unary.MeanVertex",
+      "parameters": [{
+        "name": "inputVertex",
+        "parentVertex": {
+          "id": "[0]"
+        }
+      }]
+    }, {
+      "id": {
+        "id": "[75]"
+      },
+      "label": "meanDims",
+      "vertexType": "io.improbable.keanu.vertices.tensor.number.floating.operators.unary.MeanVertex",
+      "parameters": [{
+        "name": "inputVertex",
+        "parentVertex": {
+          "id": "[0]"
+        }
+      }, {
+        "name": "overDimensions",
+        "intArrayParam": {
+          "values": [1]
+        }
+      }],
+      "shape": ["2"]
+    }, {
+      "id": {
+        "id": "[76]"
+      },
+      "label": "maxUnary",
+      "vertexType": "io.improbable.keanu.vertices.tensor.number.operators.unary.MaxUnaryVertex",
+      "parameters": [{
+        "name": "inputVertex",
+        "parentVertex": {
+          "id": "[0]"
+        }
+      }]
+    }, {
+      "id": {
+        "id": "[77]"
+      },
+      "label": "minUnary",
+      "vertexType": "io.improbable.keanu.vertices.tensor.number.operators.unary.MinUnaryVertex",
+      "parameters": [{
+        "name": "inputVertex",
+        "parentVertex": {
+          "id": "[0]"
+        }
+      }]
+    }, {
+      "id": {
+        "id": "[78]"
+      },
+      "label": "standardDeviation",
+      "vertexType": "io.improbable.keanu.vertices.tensor.number.floating.operators.unary.StandardDeviationVertex",
+      "parameters": [{
+        "name": "inputVertex",
+        "parentVertex": {
+          "id": "[0]"
+        }
+      }]
+    }, {
+      "id": {
+        "id": "[79]"
+      },
+      "label": "standardize",
+      "vertexType": "io.improbable.keanu.vertices.tensor.number.floating.operators.unary.StandardizeVertex",
+      "parameters": [{
+        "name": "inputVertex",
+        "parentVertex": {
+          "id": "[0]"
+        }
+      }],
+      "shape": ["2", "3"]
+    }, {
+      "id": {
+        "id": "[80]"
+      },
+      "label": "cumSum",
+      "vertexType": "io.improbable.keanu.vertices.tensor.number.operators.unary.CumSumVertex",
+      "parameters": [{
+        "name": "inputVertex",
+        "parentVertex": {
+          "id": "[0]"
+        }
+      }, {
+        "name": "requestedDimension",
+        "intParam": 1
+      }],
+      "shape": ["2", "3"]
+    }, {
+      "id": {
+        "id": "[81]"
+      },
+      "label": "cumProd",
+      "vertexType": "io.improbable.keanu.vertices.tensor.number.operators.unary.CumProdVertex",
+      "parameters": [{
+        "name": "inputVertex",
+        "parentVertex": {
+          "id": "[0]"
+        }
+      }, {
+        "name": "requestedDimension",
+        "intParam": 0
+      }],
+      "shape": ["2", "3"]
+    }, {
+      "id": {
+        "id": "[82]"
+      },
+      "label": "argMax",
+      "vertexType": "io.improbable.keanu.vertices.tensor.number.fixed.intgr.nonprobabilistic.operators.unary.ArgMaxVertex",
+      "parameters": [{
+        "name": "axis",
+        "intParam": 1
+      }, {
+        "name": "inputVertex",
+        "parentVertex": {
+          "id": "[0]"
+        }
+      }],
+      "shape": ["2", "3"]
+    }, {
+      "id": {
+        "id": "[83]"
+      },
+      "label": "argMin",
+      "vertexType": "io.improbable.keanu.vertices.tensor.number.fixed.intgr.nonprobabilistic.operators.unary.ArgMinVertex",
+      "parameters": [{
+        "name": "inputVertex",
+        "parentVertex": {
+          "id": "[0]"
+        }
+      }],
+      "shape": ["2", "3"]
+    }, {
+      "id": {
+        "id": "[84]"
+      },
+      "label": "nanArgMax",
+      "vertexType": "io.improbable.keanu.vertices.tensor.number.fixed.intgr.nonprobabilistic.operators.unary.NaNArgMaxVertex",
+      "parameters": [{
+        "name": "inputVertex",
+        "parentVertex": {
+          "id": "[5]"
+        }
+      }],
+      "shape": ["3"]
+    }, {
+      "id": {
+        "id": "[85]"
+      },
+      "label": "nanArgMin",
+      "vertexType": "io.improbable.keanu.vertices.tensor.number.fixed.intgr.nonprobabilistic.operators.unary.NaNArgMinVertex",
+      "parameters": [{
+        "name": "inputVertex",
+        "parentVertex": {
+          "id": "[5]"
+        }
+      }],
+      "shape": ["3"]
+    }, {
+      "id": {
+        "id": "[86]"
+      },
+      "label": "reshape",
+      "vertexType": "io.improbable.keanu.vertices.tensor.ReshapeVertex",
+      "parameters": [{
+        "name": "inputVertex",
+        "parentVertex": {
+          "id": "[0]"
+        }
+      }, {
+        "name": "proposedShape",
+        "longArrayParam": {
+          "values": ["3", "2"]
+        }
+      }],
+      "shape": ["3", "2"]
+    }, {
+      "id": {
+        "id": "[87]"
+      },
+      "label": "permute",
+      "vertexType": "io.improbable.keanu.vertices.tensor.PermuteVertex",
+      "parameters": [{
+        "name": "inputVertex",
+        "parentVertex": {
+          "id": "[0]"
+        }
+      }, {
+        "name": "rearrange",
+        "intArrayParam": {
+          "values": [1, 0]
+        }
+      }],
+      "shape": ["3", "2"]
+    }, {
+      "id": {
+        "id": "[88]"
+      },
+      "label": "broadcast",
+      "vertexType": "io.improbable.keanu.vertices.tensor.BroadcastVertex",
+      "parameters": [{
+        "name": "inputVertex",
+        "parentVertex": {
+          "id": "[2]"
+        }
+      }, {
+        "name": "toShape",
+        "longArrayParam": {
+          "values": ["2", "3"]
+        }
+      }],
+      "shape": ["2", "3"]
+    }, {
+      "id": {
+        "id": "[89]"
+      },
+      "label": "sliceIndex",
+      "vertexType": "io.improbable.keanu.vertices.tensor.SliceVertex",
+      "parameters": [{
+        "name": "dimension",
+        "intParam": 1
+      }, {
+        "name": "index",
+        "longParam": "0"
+      }, {
+        "name": "inputVertex",
+        "parentVertex": {
+          "id": "[0]"
+        }
+      }],
+      "shape": ["2"]
+    }, {
+      "id": {
+        "id": "[90]"
+      },
+      "label": "stridedSlice",
+      "vertexType": "io.improbable.keanu.vertices.tensor.StridedSliceVertex",
+      "parameters": [{
+        "name": "dropDimension",
+        "boolTensorParam": {
+          "shape": ["2"],
+          "values": [false, false]
+        }
+      }, {
+        "name": "end",
+        "longArrayParam": {
+          "values": ["0", "0"]
+        }
+      }, {
+        "name": "inputVertex",
+        "parentVertex": {
+          "id": "[0]"
+        }
+      }, {
+        "name": "start",
+        "longArrayParam": {
+          "values": ["-1", "1"]
+        }
+      }, {
+        "name": "stride",
+        "longArrayParam": {
+          "values": ["-1", "1"]
+        }
+      }, {
+        "name": "upperBoundStop",
+        "boolTensorParam": {
+          "shape": ["2"],
+          "values": [true, true]
+        }
+      }],
+      "shape": ["2", "2"]
+    }, {
+      "id": {
+        "id": "[91]"
+      },
+      "label": "take",
+      "vertexType": "io.improbable.keanu.vertices.tensor.TakeVertex",
+      "parameters": [{
+        "name": "index",
+        "longArrayParam": {
+          "values": ["1", "2"]
+        }
+      }, {
+        "name": "inputVertex",
+        "parentVertex": {
+          "id": "[0]"
+        }
+      }]
+    }, {
+      "id": {
+        "id": "[92]"
+      },
+      "label": "diag",
+      "vertexType": "io.improbable.keanu.vertices.tensor.DiagVertex",
+      "parameters": [{
+        "name": "inputVertex",
+        "parentVertex": {
+          "id": "[2]"
+        }
+      }],
+      "shape": ["3", "3"]
+    }, {
+      "id": {
+        "id": "[93]"
+      },
+      "label": "diagPart",
+      "vertexType": "io.improbable.keanu.vertices.tensor.DiagPartVertex",
+      "parameters": [{
+        "name": "inputVertex",
+        "parentVertex": {
+          "id": "[3]"
+        }
+      }],
+      "shape": ["3"]
+    }, {
+      "id": {
+        "id": "[94]"
+      },
+      "label": "triLower",
+      "vertexType": "io.improbable.keanu.vertices.tensor.TriLowerVertex",
+      "parameters": [{
+        "name": "inputVertex",
+        "parentVertex": {
+          "id": "[3]"
+        }
+      }, {
+        "name": "k",
+        "intParam": 0
+      }],
+      "shape": ["3", "3"]
+    }, {
+      "id": {
+        "id": "[95]"
+      },
+      "label": "triUpper",
+      "vertexType": "io.improbable.keanu.vertices.tensor.TriUpperVertex",
+      "parameters": [{
+        "name": "inputVertex",
+        "parentVertex": {
+          "id": "[3]"
+        }
+      }, {
+        "name": "k",
+        "intParam": 1
+      }],
+      "shape": ["3", "3"]
+    }, {
+      "id": {
+        "id": "[96]"
+      },
+      "vertexType": "io.improbable.keanu.vertices.tensor.number.floating.dbl.nonprobabilistic.ConstantDoubleVertex",
+      "parameters": [{
+        "name": "constant",
+        "doubleTensorParam": {
+          "shape": ["6"],
+          "values": [1.0, 2.0, 3.0, 4.0, 5.0, 6.0]
+        }
+      }],
+      "shape": ["6"]
+    }, {
+      "id": {
+        "id": "[97]"
+      },
+      "label": "fillTriangular",
+      "vertexType": "io.improbable.keanu.vertices.tensor.FillTriangularVertex",
+      "parameters": [{
+        "name": "fillLower",
+        "boolParam": true
+      }, {
+        "name": "fillUpper",
+        "boolParam": true
+      }, {
+        "name": "inputVertex",
+        "parentVertex": {
+          "id": "[96]"
+        }
+      }],
+      "shape": ["3", "3"]
+    }, {
+      "id": {
+        "id": "[98]"
+      },
+      "label": "trianglePart",
+      "vertexType": "io.improbable.keanu.vertices.tensor.TrianglePartVertex",
+      "parameters": [{
+        "name": "inputVertex",
+        "parentVertex": {
+          "id": "[3]"
+        }
+      }, {
+        "name": "upperPart",
+        "boolParam": true
+      }],
+      "shape": ["6"]
+    }, {
+      "id": {
+        "id": "[99]"
+      },
+      "label": "concat",
+      "vertexType": "io.improbable.keanu.vertices.tensor.number.floating.dbl.nonprobabilistic.operators.multiple.ConcatenationVertex",
+      "parameters": [{
+        "name": "dimension",
+        "intParam": 0
+      }, {
+        "name": "operands",
+        "vertexArrayParam": {
+          "values": [{
+            "id": "[0]"
+          }, {
+            "id": "[1]"
+          }]
+        }
+      }],
+      "shape": ["4", "3"]
+    }, {
+      "id": {
+        "id": "[100]"
+      },
+      "label": "intConcat",
+      "vertexType": "io.improbable.keanu.vertices.tensor.number.fixed.intgr.nonprobabilistic.operators.multiple.IntegerConcatenationVertex",
+      "parameters": [{
+        "name": "dimension",
+        "intParam": 0
+      }, {
+        "name": "operands",
+        "vertexArrayParam": {
+          "values": [{
+            "id": "[6]"
+          }, {
+            "id": "[6]"
+          }]
+        }
+      }],
+      "shape": ["4", "3"]
+    }, {
+      "id": {
+        "id": "[101]"
+      },
+      "label": "boolConcat",
+      "vertexType": "io.improbable.keanu.vertices.tensor.bool.nonprobabilistic.operators.multiple.BooleanConcatenationVertex",
+      "parameters": [{
+        "name": "dimension",
+        "intParam": 0
+      }, {
+        "name": "operands",
+        "vertexArrayParam": {
+          "values": [{
+            "id": "[10]"
+          }, {
+            "id": "[11]"
+          }]
+        }
+      }],
+      "shape": ["6"]
+    }, {
+      "id": {
+        "id": "[102]"
+      },
+      "label": "matrixMultiply",
+      "vertexType": "io.improbable.keanu.vertices.tensor.number.operators.binary.MatrixMultiplicationVertex",
+      "parameters": [{
+        "name": "left",
+        "parentVertex": {
+          "id": "[0]"
+        }
+      }, {
+        "name": "right",
+        "parentVertex": {
+          "id": "[3]"
+        }
+      }, {
+        "name": "transposeLeft",
+        "boolParam": false
+      }, {
+        "name": "transposeRight",
+        "boolParam": false
+      }],
+      "shape": ["2", "3"]
+    }, {
+      "id": {
+        "id": "[103]"
+      },
+      "label": "tensorMultiply",
+      "vertexType": "io.improbable.keanu.vertices.tensor.number.operators.binary.TensorMultiplicationVertex",
+      "parameters": [{
+        "name": "dimsLeft",
+        "intArrayParam": {
+          "values": [1]
+        }
+      }, {
+        "name": "dimsRight",
+        "intArrayParam": {
+          "values": [0]
+        }
+      }, {
+        "name": "left",
+        "parentVertex": {
+          "id": "[0]"
+        }
+      }, {
+        "name": "right",
+        "parentVertex": {
+          "id": "[3]"
+        }
+      }],
+      "shape": ["2", "3"]
+    }, {
+      "id": {
+        "id": "[104]"
+      },
+      "label": "matrixInverse",
+      "vertexType": "io.improbable.keanu.vertices.tensor.number.floating.operators.unary.MatrixInverseVertex",
+      "parameters": [{
+        "name": "inputVertex",
+        "parentVertex": {
+          "id": "[3]"
+        }
+      }],
+      "shape": ["3", "3"]
+    }, {
+      "id": {
+        "id": "[105]"
+      },
+      "label": "matrixDeterminant",
+      "vertexType": "io.improbable.keanu.vertices.tensor.number.floating.operators.unary.MatrixDeterminantVertex",
+      "parameters": [{
+        "name": "inputVertex",
+        "parentVertex": {
+          "id": "[3]"
+        }
+      }]
+    }, {
+      "id": {
+        "id": "[106]"
+      },
+      "label": "cholesky",
+      "vertexType": "io.improbable.keanu.vertices.tensor.number.floating.operators.unary.CholeskyDecompositionVertex",
+      "parameters": [{
+        "name": "inputVertex",
+        "parentVertex": {
+          "id": "[3]"
+        }
+      }],
+      "shape": ["3", "3"]
+    }, {
+      "id": {
+        "id": "[107]"
+      },
+      "vertexType": "io.improbable.keanu.vertices.tensor.number.floating.operators.unary.CholeskyDecompositionVertex",
+      "parameters": [{
+        "name": "inputVertex",
+        "parentVertex": {
+          "id": "[3]"
+        }
+      }],
+      "shape": ["3", "3"]
+    }, {
+      "id": {
+        "id": "[108]"
+      },
+      "label": "choleskyInverse",
+      "vertexType": "io.improbable.keanu.vertices.tensor.number.floating.operators.unary.CholeskyInverseVertex",
+      "parameters": [{
+        "name": "inputVertex",
+        "parentVertex": {
+          "id": "[107]"
+        }
+      }],
+      "shape": ["3", "3"]
+    }, {
+      "id": {
+        "id": "[109]"
+      },
+      "label": "greaterThan",
+      "vertexType": "io.improbable.keanu.vertices.tensor.bool.nonprobabilistic.operators.binary.compare.GreaterThanVertex",
+      "parameters": [{
+        "name": "left",
+        "parentVertex": {
+          "id": "[0]"
+        }
+      }, {
+        "name": "right",
+        "parentVertex": {
+          "id": "[1]"
+        }
+      }],
+      "shape": ["2", "3"]
+    }, {
+      "id": {
+        "id": "[110]"
+      },
+      "label": "greaterThanOrEqual",
+      "vertexType": "io.improbable.keanu.vertices.tensor.bool.nonprobabilistic.operators.binary.compare.GreaterThanOrEqualVertex",
+      "parameters": [{
+        "name": "left",
+        "parentVertex": {
+          "id": "[0]"
+        }
+      }, {
+        "name": "right",
+        "parentVertex": {
+          "id": "[1]"
+        }
+      }],
+      "shape": ["2", "3"]
+    }, {
+      "id": {
+        "id": "[111]"
+      },
+      "label": "lessThan",
+      "vertexType": "io.improbable.keanu.vertices.tensor.bool.nonprobabilistic.operators.binary.compare.LessThanVertex",
+      "parameters": [{
+        "name": "left",
+        "parentVertex": {
+          "id": "[0]"
+        }
+      }, {
+        "name": "right",
+        "parentVertex": {
+          "id": "[1]"
+        }
+      }],
+      "shape": ["2", "3"]
+    }, {
+      "id": {
+        "id": "[112]"
+      },
+      "label": "lessThanOrEqual",
+      "vertexType": "io.improbable.keanu.vertices.tensor.bool.nonprobabilistic.operators.binary.compare.LessThanOrEqualVertex",
+      "parameters": [{
+        "name": "left",
+        "parentVertex": {
+          "id": "[0]"
+        }
+      }, {
+        "name": "right",
+        "parentVertex": {
+          "id": "[1]"
+        }
+      }],
+      "shape": ["2", "3"]
+    }, {
+      "id": {
+        "id": "[113]"
+      },
+      "label": "equals",
+      "vertexType": "io.improbable.keanu.vertices.tensor.bool.nonprobabilistic.operators.binary.compare.EqualsVertex",
+      "parameters": [{
+        "name": "left",
+        "parentVertex": {
+          "id": "[0]"
+        }
+      }, {
+        "name": "right",
+        "parentVertex": {
+          "id": "[1]"
+        }
+      }],
+      "shape": ["2", "3"]
+    }, {
+      "id": {
+        "id": "[114]"
+      },
+      "label": "notEquals",
+      "vertexType": "io.improbable.keanu.vertices.tensor.bool.nonprobabilistic.operators.binary.compare.NotEqualsVertex",
+      "parameters": [{
+        "name": "left",
+        "parentVertex": {
+          "id": "[0]"
+        }
+      }, {
+        "name": "right",
+        "parentVertex": {
+          "id": "[1]"
+        }
+      }],
+      "shape": ["2", "3"]
+    }, {
+      "id": {
+        "id": "[115]"
+      },
+      "label": "equalsWithinEpsilon",
+      "vertexType": "io.improbable.keanu.vertices.tensor.bool.nonprobabilistic.operators.binary.compare.NumericalEqualsVertex",
+      "parameters": [{
+        "name": "a",
+        "parentVertex": {
+          "id": "[0]"
+        }
+      }, {
+        "name": "b",
+        "parentVertex": {
+          "id": "[1]"
+        }
+      }, {
+        "name": "epsilon",
+        "doubleParam": 0.3
+      }],
+      "shape": ["2", "3"]
+    }, {
+      "id": {
+        "id": "[116]"
+      },
+      "label": "and",
+      "vertexType": "io.improbable.keanu.vertices.tensor.bool.nonprobabilistic.operators.binary.AndBinaryVertex",
+      "parameters": [{
+        "name": "left",
+        "parentVertex": {
+          "id": "[10]"
+        }
+      }, {
+        "name": "right",
+        "parentVertex": {
+          "id": "[11]"
+        }
+      }],
+      "shape": ["3"]
+    }, {
+      "id": {
+        "id": "[117]"
+      },
+      "label": "or",
+      "vertexType": "io.improbable.keanu.vertices.tensor.bool.nonprobabilistic.operators.binary.OrBinaryVertex",
+      "parameters": [{
+        "name": "left",
+        "parentVertex": {
+          "id": "[10]"
+        }
+      }, {
+        "name": "right",
+        "parentVertex": {
+          "id": "[11]"
+        }
+      }],
+      "shape": ["3"]
+    }, {
+      "id": {
+        "id": "[118]"
+      },
+      "label": "xor",
+      "vertexType": "io.improbable.keanu.vertices.tensor.bool.nonprobabilistic.operators.binary.XorBinaryVertex",
+      "parameters": [{
+        "name": "left",
+        "parentVertex": {
+          "id": "[10]"
+        }
+      }, {
+        "name": "right",
+        "parentVertex": {
+          "id": "[11]"
+        }
+      }],
+      "shape": ["3"]
+    }, {
+      "id": {
+        "id": "[119]"
+      },
+      "label": "not",
+      "vertexType": "io.improbable.keanu.vertices.tensor.bool.nonprobabilistic.operators.unary.NotBinaryVertex",
+      "parameters": [{
+        "name": "inputVertex",
+        "parentVertex": {
+          "id": "[10]"
+        }
+      }],
+      "shape": ["3"]
+    }, {
+      "id": {
+        "id": "[120]"
+      },
+      "label": "allTrue",
+      "vertexType": "io.improbable.keanu.vertices.tensor.bool.nonprobabilistic.operators.unary.AllTrueVertex",
+      "parameters": [{
+        "name": "inputVertex",
+        "parentVertex": {
+          "id": "[10]"
+        }
+      }],
+      "shape": ["3"]
+    }, {
+      "id": {
+        "id": "[121]"
+      },
+      "label": "allFalse",
+      "vertexType": "io.improbable.keanu.vertices.tensor.bool.nonprobabilistic.operators.unary.AllFalseVertex",
+      "parameters": [{
+        "name": "inputVertex",
+        "parentVertex": {
+          "id": "[10]"
+        }
+      }],
+      "shape": ["3"]
+    }, {
+      "id": {
+        "id": "[122]"
+      },
+      "label": "anyTrue",
+      "vertexType": "io.improbable.keanu.vertices.tensor.bool.nonprobabilistic.operators.unary.AnyTrueVertex",
+      "parameters": [{
+        "name": "inputVertex",
+        "parentVertex": {
+          "id": "[10]"
+        }
+      }],
+      "shape": ["3"]
+    }, {
+      "id": {
+        "id": "[123]"
+      },
+      "label": "anyFalse",
+      "vertexType": "io.improbable.keanu.vertices.tensor.bool.nonprobabilistic.operators.unary.AnyFalseVertex",
+      "parameters": [{
+        "name": "inputVertex",
+        "parentVertex": {
+          "id": "[10]"
+        }
+      }],
+      "shape": ["3"]
+    }, {
+      "id": {
+        "id": "[124]"
+      },
+      "label": "isNaN",
+      "vertexType": "io.improbable.keanu.vertices.tensor.bool.nonprobabilistic.operators.unary.IsNaNVertex",
+      "parameters": [{
+        "name": "inputVertex",
+        "parentVertex": {
+          "id": "[5]"
+        }
+      }],
+      "shape": ["3"]
+    }, {
+      "id": {
+        "id": "[125]"
+      },
+      "label": "notNaN",
+      "vertexType": "io.improbable.keanu.vertices.tensor.bool.nonprobabilistic.operators.unary.NotNaNVertex",
+      "parameters": [{
+        "name": "inputVertex",
+        "parentVertex": {
+          "id": "[5]"
+        }
+      }],
+      "shape": ["3"]
+    }, {
+      "id": {
+        "id": "[126]"
+      },
+      "label": "isFinite",
+      "vertexType": "io.improbable.keanu.vertices.tensor.bool.nonprobabilistic.operators.unary.IsFiniteVertex",
+      "parameters": [{
+        "name": "inputVertex",
+        "parentVertex": {
+          "id": "[5]"
+        }
+      }],
+      "shape": ["3"]
+    }, {
+      "id": {
+        "id": "[127]"
+      },
+      "label": "isInfinite",
+      "vertexType": "io.improbable.keanu.vertices.tensor.bool.nonprobabilistic.operators.unary.IsInfiniteVertex",
+      "parameters": [{
+        "name": "inputVertex",
+        "parentVertex": {
+          "id": "[5]"
+        }
+      }],
+      "shape": ["3"]
+    }, {
+      "id": {
+        "id": "[128]"
+      },
+      "label": "isPositiveInfinity",
+      "vertexType": "io.improbable.keanu.vertices.tensor.bool.nonprobabilistic.operators.unary.IsPositiveInfinityVertex",
+      "parameters": [{
+        "name": "inputVertex",
+        "parentVertex": {
+          "id": "[5]"
+        }
+      }],
+      "shape": ["3"]
+    }, {
+      "id": {
+        "id": "[129]"
+      },
+      "label": "isNegativeInfinity",
+      "vertexType": "io.improbable.keanu.vertices.tensor.bool.nonprobabilistic.operators.unary.IsNegativeInfinityVertex",
+      "parameters": [{
+        "name": "inputVertex",
+        "parentVertex": {
+          "id": "[5]"
+        }
+      }],
+      "shape": ["3"]
+    }, {
+      "id": {
+        "id": "[130]"
+      },
+      "label": "boolToDoubleMask",
+      "vertexType": "io.improbable.keanu.vertices.tensor.bool.nonprobabilistic.operators.multiple.BooleanToDoubleMaskVertex",
+      "parameters": [{
+        "name": "inputName",
+        "parentVertex": {
+          "id": "[10]"
+        }
+      }]
+    }, {
+      "id": {
+        "id": "[131]"
+      },
+      "label": "boolToIntegerMask",
+      "vertexType": "io.improbable.keanu.vertices.tensor.bool.nonprobabilistic.operators.multiple.BooleanToIntegerMaskVertex",
+      "parameters": [{
+        "name": "inputName",
+        "parentVertex": {
+          "id": "[10]"
+        }
+      }]
+    }, {
+      "id": {
+        "id": "[132]"
+      },
+      "label": "doubleToInteger",
+      "vertexType": "io.improbable.keanu.vertices.tensor.number.fixed.intgr.nonprobabilistic.CastNumberToIntegerVertex",
+      "parameters": [{
+        "name": "inputVertex",
+        "parentVertex": {
+          "id": "[4]"
+        }
+      }],
+      "shape": ["3"]
+    }, {
+      "id": {
+        "id": "[133]"
+      },
+      "label": "integerToDouble",
+      "vertexType": "io.improbable.keanu.vertices.tensor.number.floating.dbl.nonprobabilistic.CastNumberToDoubleVertex",
+      "parameters": [{
+        "name": "inputVertex",
+        "parentVertex": {
+          "id": "[6]"
+        }
+      }],
+      "shape": ["2", "3"]
+    }, {
+      "id": {
+        "id": "[134]"
+      },
+      "label": "doubleToBoolean",
+      "vertexType": "io.improbable.keanu.vertices.tensor.bool.nonprobabilistic.CastNumberToBooleanVertex",
+      "parameters": [{
+        "name": "inputVertex",
+        "parentVertex": {
+          "id": "[4]"
+        }
+      }],
+      "shape": ["3"]
+    }, {
+      "id": {
+        "id": "[135]"
+      },
+      "label": "intPlus",
+      "vertexType": "io.improbable.keanu.vertices.tensor.number.operators.binary.AdditionVertex",
+      "parameters": [{
+        "name": "left",
+        "parentVertex": {
+          "id": "[6]"
+        }
+      }, {
+        "name": "right",
+        "parentVertex": {
+          "id": "[7]"
+        }
+      }],
+      "shape": ["2", "3"]
+    }, {
+      "id": {
+        "id": "[136]"
+      },
+      "label": "intMinus",
+      "vertexType": "io.improbable.keanu.vertices.tensor.number.operators.binary.DifferenceVertex",
+      "parameters": [{
+        "name": "left",
+        "parentVertex": {
+          "id": "[6]"
+        }
+      }, {
+        "name": "right",
+        "parentVertex": {
+          "id": "[7]"
+        }
+      }],
+      "shape": ["2", "3"]
+    }, {
+      "id": {
+        "id": "[137]"
+      },
+      "label": "intTimes",
+      "vertexType": "io.improbable.keanu.vertices.tensor.number.operators.binary.MultiplicationVertex",
+      "parameters": [{
+        "name": "left",
+        "parentVertex": {
+          "id": "[6]"
+        }
+      }, {
+        "name": "right",
+        "parentVertex": {
+          "id": "[7]"
+        }
+      }],
+      "shape": ["2", "3"]
+    }, {
+      "id": {
+        "id": "[138]"
+      },
+      "label": "intDiv",
+      "vertexType": "io.improbable.keanu.vertices.tensor.number.operators.binary.DivisionVertex",
+      "parameters": [{
+        "name": "left",
+        "parentVertex": {
+          "id": "[6]"
+        }
+      }, {
+        "name": "right",
+        "parentVertex": {
+          "id": "[7]"
+        }
+      }],
+      "shape": ["2", "3"]
+    }, {
+      "id": {
+        "id": "[139]"
+      },
+      "label": "intMod",
+      "vertexType": "io.improbable.keanu.vertices.tensor.number.fixed.operators.unary.ModVertex",
+      "parameters": [{
+        "name": "left",
+        "parentVertex": {
+          "id": "[6]"
+        }
+      }, {
+        "name": "right",
+        "parentVertex": {
+          "id": "[7]"
+        }
+      }],
+      "shape": ["2", "3"]
+    }, {
+      "id": {
+        "id": "[140]"
+      },
+      "label": "intPow",
+      "vertexType": "io.improbable.keanu.vertices.tensor.number.operators.binary.PowerVertex",
+      "parameters": [{
+        "name": "left",
+        "parentVertex": {
+          "id": "[6]"
+        }
+      }, {
+        "name": "right",
+        "parentVertex": {
+          "id": "[7]"
+        }
+      }],
+      "shape": ["2", "3"]
+    }, {
+      "id": {
+        "id": "[141]"
+      },
+      "label": "intAbs",
+      "vertexType": "io.improbable.keanu.vertices.tensor.number.operators.unary.AbsVertex",
+      "parameters": [{
+        "name": "inputVertex",
+        "parentVertex": {
+          "id": "[6]"
+        }
+      }],
+      "shape": ["2", "3"]
+    }, {
+      "id": {
+        "id": "[142]"
+      },
+      "label": "intSum",
+      "vertexType": "io.improbable.keanu.vertices.tensor.number.operators.unary.SumVertex",
+      "parameters": [{
+        "name": "inputVertex",
+        "parentVertex": {
+          "id": "[6]"
+        }
+      }]
+    }, {
+      "id": {
+        "id": "[143]"
+      },
+      "vertexType": "io.improbable.keanu.vertices.tensor.BroadcastVertex",
+      "parameters": [{
+        "name": "inputVertex",
+        "parentVertex": {
+          "id": "[7]"
+        }
+      }, {
+        "name": "toShape",
+        "longArrayParam": {
+          "values": ["2", "3"]
+        }
+      }],
+      "shape": ["2", "3"]
+    }, {
+      "id": {
+        "id": "[144]"
+      },
+      "vertexType": "io.improbable.keanu.vertices.tensor.bool.nonprobabilistic.operators.binary.compare.GreaterThanOrEqualVertex",
+      "parameters": [{
+        "name": "left",
+        "parentVertex": {
+          "id": "[6]"
+        }
+      }, {
+        "name": "right",
+        "parentVertex": {
+          "id": "[143]"
+        }
+      }],
+      "shape": ["2", "3"]
+    }, {
+      "id": {
+        "id": "[145]"
+      },
+      "label": "intMax",
+      "vertexType": "io.improbable.keanu.vertices.tensor.number.operators.binary.MaxVertex",
+      "parameters": [{
+        "name": "else",
+        "parentVertex": {
+          "id": "[143]"
+        }
+      }, {
+        "name": "predicate",
+        "parentVertex": {
+          "id": "[144]"
+        }
+      }, {
+        "name": "then",
+        "parentVertex": {
+          "id": "[6]"
+        }
+      }],
+      "shape": ["2", "3"]
+    }, {
+      "id": {
+        "id": "[146]"
+      },
+      "vertexType": "io.improbable.keanu.vertices.tensor.bool.nonprobabilistic.operators.binary.compare.GreaterThanVertex",
+      "parameters": [{
+        "name": "left",
+        "parentVertex": {
+          "id": "[0]"
+        }
+      }, {
+        "name": "right",
+        "parentVertex": {
+          "id": "[1]"
+        }
+      }],
+      "shape": ["2", "3"]
+    }, {
+      "id": {
+        "id": "[147]"
+      },
+      "label": "where",
+      "vertexType": "io.improbable.keanu.vertices.tensor.WhereVertex",
+      "parameters": [{
+        "name": "else",
+        "parentVertex": {
+          "id": "[1]"
+        }
+      }, {
+        "name": "predicate",
+        "parentVertex": {
+          "id": "[146]"
+        }
+      }, {
+        "name": "then",
+        "parentVertex": {
+          "id": "[0]"
+        }
+      }],
+      "shape": ["2", "3"]
+    }, {
+      "id": {
+        "id": "[148]"
+      },
+      "vertexType": "io.improbable.keanu.vertices.tensor.number.fixed.intgr.nonprobabilistic.ConstantIntegerVertex",
+      "parameters": [{
+        "name": "constant",
+        "intTensorParam": {
+          "values": [1]
+        }
+      }]
+    }, {
+      "id": {
+        "id": "[149]"
+      },
+      "label": "multiplexer",
+      "vertexType": "io.improbable.keanu.vertices.tensor.generic.nonprobabilistic.MultiplexerVertex",
+      "parameters": [{
+        "name": "selectVertices",
+        "vertexArrayParam": {
+          "values": [{
+            "id": "[0]"
+          }, {
+            "id": "[1]"
+          }]
+        }
+      }, {
+        "name": "selectorControlVertex",
+        "parentVertex": {
+          "id": "[148]"
+        }
+      }]
+    }, {
+      "id": {
+        "id": "[150]"
+      },
+      "vertexType": "io.improbable.keanu.vertices.tensor.bool.nonprobabilistic.operators.unary.NotBinaryVertex",
+      "parameters": [{
+        "name": "inputVertex",
+        "parentVertex": {
+          "id": "[10]"
+        }
+      }],
+      "shape": ["3"]
+    }, {
+      "id": {
+        "id": "[151]"
+      },
+      "vertexType": "io.improbable.keanu.vertices.tensor.bool.nonprobabilistic.operators.binary.OrBinaryVertex",
+      "parameters": [{
+        "name": "left",
+        "parentVertex": {
+          "id": "[10]"
+        }
+      }, {
+        "name": "right",
+        "parentVertex": {
+          "id": "[150]"
+        }
+      }],
+      "shape": ["3"]
+    }, {
+      "id": {
+        "id": "[152]"
+      },
+      "label": "assert",
+      "vertexType": "io.improbable.keanu.vertices.utility.AssertVertex",
+      "parameters": [{
+        "name": "error",
+        "stringParam": "always true"
+      }, {
+        "name": "predicate",
+        "parentVertex": {
+          "id": "[151]"
+        }
+      }],
+      "shape": ["3"]
+    }, {
+      "id": {
+        "id": "[153]"
+      },
+      "label": "intProxy",
+      "vertexType": "io.improbable.keanu.vertices.tensor.number.fixed.intgr.nonprobabilistic.IntegerProxyVertex",
+      "parameters": [{
+        "name": "label",
+        "stringParam": "intProxy"
+      }, {
+        "name": "parent",
+        "parentVertex": {
+          "id": "[7]"
+        }
+      }],
+      "shape": ["3"]
+    }, {
+      "id": {
+        "id": "[154]"
+      },
+      "label": "boolProxy",
+      "vertexType": "io.improbable.keanu.vertices.tensor.bool.nonprobabilistic.BooleanProxyVertex",
+      "parameters": [{
+        "name": "label",
+        "stringParam": "boolProxy"
+      }, {
+        "name": "parent",
+        "parentVertex": {
+          "id": "[10]"
+        }
+      }],
+      "shape": ["3"]
+    }, {
+      "id": {
+        "id": "[155]"
+      },
+      "vertexType": "io.improbable.keanu.vertices.tensor.number.floating.dbl.nonprobabilistic.ConstantDoubleVertex",
+      "parameters": [{
+        "name": "constant",
+        "doubleTensorParam": {
+          "values": [0.0]
+        }
+      }]
+    }, {
+      "id": {
+        "id": "[156]"
+      },
+      "vertexType": "io.improbable.keanu.vertices.tensor.number.floating.dbl.nonprobabilistic.ConstantDoubleVertex",
+      "parameters": [{
+        "name": "constant",
+        "doubleTensorParam": {
+          "values": [1.0]
+        }
+      }]
+    }, {
+      "id": {
+        "id": "[157]"
+      },
+      "label": "mu",
+      "vertexType": "io.improbable.keanu.vertices.tensor.number.floating.dbl.probabilistic.GaussianVertex",
+      "parameters": [{
+        "name": "mu",
+        "parentVertex": {
+          "id": "[155]"
+        }
+      }, {
+        "name": "sigma",
+        "parentVertex": {
+          "id": "[156]"
+        }
+      }]
+    }, {
+      "id": {
+        "id": "[158]"
+      },
+      "vertexType": "io.improbable.keanu.vertices.tensor.number.floating.dbl.nonprobabilistic.ConstantDoubleVertex",
+      "parameters": [{
+        "name": "constant",
+        "doubleTensorParam": {
+          "values": [2.0]
+        }
+      }]
+    }, {
+      "id": {
+        "id": "[159]"
+      },
+      "label": "gaussian",
+      "vertexType": "io.improbable.keanu.vertices.tensor.number.floating.dbl.probabilistic.GaussianVertex",
+      "parameters": [{
+        "name": "mu",
+        "parentVertex": {
+          "id": "[157]"
+        }
+      }, {
+        "name": "sigma",
+        "parentVertex": {
+          "id": "[158]"
+        }
+      }],
+      "shape": ["3"]
+    }, {
+      "id": {
+        "id": "[160]"
+      },
+      "vertexType": "io.improbable.keanu.vertices.tensor.number.floating.dbl.nonprobabilistic.ConstantDoubleVertex",
+      "parameters": [{
+        "name": "constant",
+        "doubleTensorParam": {
+          "values": [1.5]
+        }
+      }]
+    }, {
+      "id": {
+        "id": "[161]"
+      },
+      "vertexType": "io.improbable.keanu.vertices.tensor.number.floating.dbl.nonprobabilistic.ConstantDoubleVertex",
+      "parameters": [{
+        "name": "constant",
+        "doubleTensorParam": {
+          "values": [0.0]
+        }
+      }]
+    }, {
+      "id": {
+        "id": "[162]"
+      },
+      "label": "halfGaussian",
+      "vertexType": "io.improbable.keanu.vertices.tensor.number.floating.dbl.probabilistic.HalfGaussianVertex",
+      "parameters": [{
+        "name": "mu",
+        "parentVertex": {
+          "id": "[161]"
+        }
+      }, {
+        "name": "sigma",
+        "parentVertex": {
+          "id": "[160]"
+        }
+      }],
+      "shape": ["2"]
+    }, {
+      "id": {
+        "id": "[163]"
+      },
+      "vertexType": "io.improbable.keanu.vertices.tensor.number.floating.dbl.nonprobabilistic.ConstantDoubleVertex",
+      "parameters": [{
+        "name": "constant",
+        "doubleTensorParam": {
+          "values": [1.0]
+        }
+      }]
+    }, {
+      "id": {
+        "id": "[164]"
+      },
+      "label": "cauchy",
+      "vertexType": "io.improbable.keanu.vertices.tensor.number.floating.dbl.probabilistic.CauchyVertex",
+      "parameters": [{
+        "name": "location",
+        "parentVertex": {
+          "id": "[157]"
+        }
+      }, {
+        "name": "scale",
+        "parentVertex": {
+          "id": "[163]"
+        }
+      }]
+    }, {
+      "id": {
+        "id": "[165]"
+      },
+      "vertexType": "io.improbable.keanu.vertices.tensor.number.floating.dbl.nonprobabilistic.ConstantDoubleVertex",
+      "parameters": [{
+        "name": "constant",
+        "doubleTensorParam": {
+          "values": [0.0]
+        }
+      }]
+    }, {
+      "id": {
+        "id": "[166]"
+      },
+      "vertexType": "io.improbable.keanu.vertices.tensor.number.floating.dbl.nonprobabilistic.ConstantDoubleVertex",
+      "parameters": [{
+        "name": "constant",
+        "doubleTensorParam": {
+          "values": [2.0]
+        }
+      }]
+    }, {
+      "id": {
+        "id": "[167]"
+      },
+      "label": "halfCauchy",
+      "vertexType": "io.improbable.keanu.vertices.tensor.number.floating.dbl.probabilistic.HalfCauchyVertex",
+      "parameters": [{
+        "name": "location",
+        "parentVertex": {
+          "id": "[165]"
+        }
+      }, {
+        "name": "scale",
+        "parentVertex": {
+          "id": "[166]"
+        }
+      }]
+    }, {
+      "id": {
+        "id": "[168]"
+      },
+      "vertexType": "io.improbable.keanu.vertices.tensor.number.floating.dbl.nonprobabilistic.ConstantDoubleVertex",
+      "parameters": [{
+        "name": "constant",
+        "doubleTensorParam": {
+          "values": [2.0]
+        }
+      }]
+    }, {
+      "id": {
+        "id": "[169]"
+      },
+      "vertexType": "io.improbable.keanu.vertices.tensor.number.floating.dbl.nonprobabilistic.ConstantDoubleVertex",
+      "parameters": [{
+        "name": "constant",
+        "doubleTensorParam": {
+          "values": [3.0]
+        }
+      }]
+    }, {
+      "id": {
+        "id": "[170]"
+      },
+      "label": "beta",
+      "vertexType": "io.improbable.keanu.vertices.tensor.number.floating.dbl.probabilistic.BetaVertex",
+      "parameters": [{
+        "name": "alpha",
+        "parentVertex": {
+          "id": "[168]"
+        }
+      }, {
+        "name": "beta",
+        "parentVertex": {
+          "id": "[169]"
+        }
+      }]
+    }, {
+      "id": {
+        "id": "[171]"
+      },
+      "vertexType": "io.improbable.keanu.vertices.tensor.number.fixed.intgr.nonprobabilistic.ConstantIntegerVertex",
+      "parameters": [{
+        "name": "constant",
+        "intTensorParam": {
+          "values": [3]
+        }
+      }]
+    }, {
+      "id": {
+        "id": "[172]"
+      },
+      "label": "chiSquared",
+      "vertexType": "io.improbable.keanu.vertices.tensor.number.floating.dbl.probabilistic.ChiSquaredVertex",
+      "parameters": [{
+        "name": "k",
+        "parentVertex": {
+          "id": "[171]"
+        }
+      }]
+    }, {
+      "id": {
+        "id": "[173]"
+      },
+      "vertexType": "io.improbable.keanu.vertices.tensor.number.floating.dbl.nonprobabilistic.ConstantDoubleVertex",
+      "parameters": [{
+        "name": "constant",
+        "doubleTensorParam": {
+          "shape": ["3"],
+          "values": [1.0, 2.0, 3.0]
+        }
+      }],
+      "shape": ["3"]
+    }, {
+      "id": {
+        "id": "[174]"
+      },
+      "label": "dirichlet",
+      "vertexType": "io.improbable.keanu.vertices.tensor.number.floating.dbl.probabilistic.DirichletVertex",
+      "parameters": [{
+        "name": "concentration",
+        "parentVertex": {
+          "id": "[173]"
+        }
+      }],
+      "shape": ["3"]
+    }, {
+      "id": {
+        "id": "[175]"
+      },
+      "vertexType": "io.improbable.keanu.vertices.tensor.number.floating.dbl.nonprobabilistic.ConstantDoubleVertex",
+      "parameters": [{
+        "name": "constant",
+        "doubleTensorParam": {
+          "values": [1.5]
+        }
+      }]
+    }, {
+      "id": {
+        "id": "[176]"
+      },
+      "label": "exponential",
+      "vertexType": "io.improbable.keanu.vertices.tensor.number.floating.dbl.probabilistic.ExponentialVertex",
+      "parameters": [{
+        "name": "rate",
+        "parentVertex": {
+          "id": "[175]"
+        }
+      }]
+    }, {
+      "id": {
+        "id": "[177]"
+      },
+      "vertexType": "io.improbable.keanu.vertices.tensor.number.floating.dbl.nonprobabilistic.ConstantDoubleVertex",
+      "parameters": [{
+        "name": "constant",
+        "doubleTensorParam": {
+          "values": [2.0]
+        }
+      }]
+    }, {
+      "id": {
+        "id": "[178]"
+      },
+      "vertexType": "io.improbable.keanu.vertices.tensor.number.floating.dbl.nonprobabilistic.ConstantDoubleVertex",
+      "parameters": [{
+        "name": "constant",
+        "doubleTensorParam": {
+          "values": [1.5]
+        }
+      }]
+    }, {
+      "id": {
+        "id": "[179]"
+      },
+      "label": "gamma",
+      "vertexType": "io.improbable.keanu.vertices.tensor.number.floating.dbl.probabilistic.GammaVertex",
+      "parameters": [{
+        "name": "k",
+        "parentVertex": {
+          "id": "[178]"
+        }
+      }, {
+        "name": "theta",
+        "parentVertex": {
+          "id": "[177]"
+        }
+      }]
+    }, {
+      "id": {
+        "id": "[180]"
+      },
+      "vertexType": "io.improbable.keanu.vertices.tensor.number.floating.dbl.nonprobabilistic.ConstantDoubleVertex",
+      "parameters": [{
+        "name": "constant",
+        "doubleTensorParam": {
+          "values": [3.0]
+        }
+      }]
+    }, {
+      "id": {
+        "id": "[181]"
+      },
+      "vertexType": "io.improbable.keanu.vertices.tensor.number.floating.dbl.nonprobabilistic.ConstantDoubleVertex",
+      "parameters": [{
+        "name": "constant",
+        "doubleTensorParam": {
+          "values": [0.5]
+        }
+      }]
+    }, {
+      "id": {
+        "id": "[182]"
+      },
+      "label": "inverseGamma",
+      "vertexType": "io.improbable.keanu.vertices.tensor.number.floating.dbl.probabilistic.InverseGammaVertex",
+      "parameters": [{
+        "name": "alpha",
+        "parentVertex": {
+          "id": "[180]"
+        }
+      }, {
+        "name": "beta",
+        "parentVertex": {
+          "id": "[181]"
+        }
+      }]
+    }, {
+      "id": {
+        "id": "[183]"
+      },
+      "vertexType": "io.improbable.keanu.vertices.tensor.number.floating.dbl.nonprobabilistic.ConstantDoubleVertex",
+      "parameters": [{
+        "name": "constant",
+        "doubleTensorParam": {
+          "values": [0.5]
+        }
+      }]
+    }, {
+      "id": {
+        "id": "[184]"
+      },
+      "label": "laplace",
+      "vertexType": "io.improbable.keanu.vertices.tensor.number.floating.dbl.probabilistic.LaplaceVertex",
+      "parameters": [{
+        "name": "beta",
+        "parentVertex": {
+          "id": "[183]"
+        }
+      }, {
+        "name": "mu",
+        "parentVertex": {
+          "id": "[157]"
+        }
+      }]
+    }, {
+      "id": {
+        "id": "[185]"
+      },
+      "vertexType": "io.improbable.keanu.vertices.tensor.number.floating.dbl.nonprobabilistic.ConstantDoubleVertex",
+      "parameters": [{
+        "name": "constant",
+        "doubleTensorParam": {
+          "values": [0.0]
+        }
+      }]
+    }, {
+      "id": {
+        "id": "[186]"
+      },
+      "vertexType": "io.improbable.keanu.vertices.tensor.number.floating.dbl.nonprobabilistic.ConstantDoubleVertex",
+      "parameters": [{
+        "name": "constant",
+        "doubleTensorParam": {
+          "values": [1.0]
+        }
+      }]
+    }, {
+      "id": {
+        "id": "[187]"
+      },
+      "label": "logNormal",
+      "vertexType": "io.improbable.keanu.vertices.tensor.number.floating.dbl.probabilistic.LogNormalVertex",
+      "parameters": [{
+        "name": "mu",
+        "parentVertex": {
+          "id": "[185]"
+        }
+      }, {
+        "name": "sigma",
+        "parentVertex": {
+          "id": "[186]"
+        }
+      }]
+    }, {
+      "id": {
+        "id": "[188]"
+      },
+      "vertexType": "io.improbable.keanu.vertices.tensor.number.floating.dbl.nonprobabilistic.ConstantDoubleVertex",
+      "parameters": [{
+        "name": "constant",
+        "doubleTensorParam": {
+          "values": [0.0]
+        }
+      }]
+    }, {
+      "id": {
+        "id": "[189]"
+      },
+      "vertexType": "io.improbable.keanu.vertices.tensor.number.floating.dbl.nonprobabilistic.ConstantDoubleVertex",
+      "parameters": [{
+        "name": "constant",
+        "doubleTensorParam": {
+          "values": [1.0]
+        }
+      }]
+    }, {
+      "id": {
+        "id": "[190]"
+      },
+      "label": "logistic",
+      "vertexType": "io.improbable.keanu.vertices.tensor.number.floating.dbl.probabilistic.LogisticVertex",
+      "parameters": [{
+        "name": "mu",
+        "parentVertex": {
+          "id": "[188]"
+        }
+      }, {
+        "name": "s",
+        "parentVertex": {
+          "id": "[189]"
+        }
+      }]
+    }, {
+      "id": {
+        "id": "[191]"
+      },
+      "vertexType": "io.improbable.keanu.vertices.tensor.number.floating.dbl.nonprobabilistic.ConstantDoubleVertex",
+      "parameters": [{
+        "name": "constant",
+        "doubleTensorParam": {
+          "shape": ["2"],
+          "values": [0.5, -1.0]
+        }
+      }],
+      "shape": ["2"]
+    }, {
+      "id": {
+        "id": "[192]"
+      },
+      "vertexType": "io.improbable.keanu.vertices.tensor.number.floating.dbl.nonprobabilistic.ConstantDoubleVertex",
+      "parameters": [{
+        "name": "constant",
+        "doubleTensorParam": {
+          "shape": ["2", "2"],
+          "values": [2.0, 0.3, 0.3, 1.0]
+        }
+      }],
+      "shape": ["2", "2"]
+    }, {
+      "id": {
+        "id": "[193]"
+      },
+      "label": "multivariateGaussian",
+      "vertexType": "io.improbable.keanu.vertices.tensor.number.floating.dbl.probabilistic.MultivariateGaussianVertex",
+      "parameters": [{
+        "name": "covariance",
+        "parentVertex": {
+          "id": "[192]"
+        }
+      }, {
+        "name": "mu",
+        "parentVertex": {
+          "id": "[191]"
+        }
+      }],
+      "shape": ["2"]
+    }, {
+      "id": {
+        "id": "[194]"
+      },
+      "vertexType": "io.improbable.keanu.vertices.tensor.number.floating.dbl.nonprobabilistic.ConstantDoubleVertex",
+      "parameters": [{
+        "name": "constant",
+        "doubleTensorParam": {
+          "values": [1.0]
+        }
+      }]
+    }, {
+      "id": {
+        "id": "[195]"
+      },
+      "vertexType": "io.improbable.keanu.vertices.tensor.number.floating.dbl.nonprobabilistic.ConstantDoubleVertex",
+      "parameters": [{
+        "name": "constant",
+        "doubleTensorParam": {
+          "values": [2.0]
+        }
+      }]
+    }, {
+      "id": {
+        "id": "[196]"
+      },
+      "label": "pareto",
+      "vertexType": "io.improbable.keanu.vertices.tensor.number.floating.dbl.probabilistic.ParetoVertex",
+      "parameters": [{
+        "name": "location",
+        "parentVertex": {
+          "id": "[194]"
+        }
+      }, {
+        "name": "scale",
+        "parentVertex": {
+          "id": "[195]"
+        }
+      }]
+    }, {
+      "id": {
+        "id": "[197]"
+      },
+      "vertexType": "io.improbable.keanu.vertices.tensor.number.fixed.intgr.nonprobabilistic.ConstantIntegerVertex",
+      "parameters": [{
+        "name": "constant",
+        "intTensorParam": {
+          "values": [4]
+        }
+      }]
+    }, {
+      "id": {
+        "id": "[198]"
+      },
+      "label": "studentT",
+      "vertexType": "io.improbable.keanu.vertices.tensor.number.floating.dbl.probabilistic.StudentTVertex",
+      "parameters": [{
+        "name": "v",
+        "parentVertex": {
+          "id": "[197]"
+        }
+      }]
+    }, {
+      "id": {
+        "id": "[199]"
+      },
+      "vertexType": "io.improbable.keanu.vertices.tensor.number.floating.dbl.nonprobabilistic.ConstantDoubleVertex",
+      "parameters": [{
+        "name": "constant",
+        "doubleTensorParam": {
+          "values": [0.0]
+        }
+      }]
+    }, {
+      "id": {
+        "id": "[200]"
+      },
+      "vertexType": "io.improbable.keanu.vertices.tensor.number.floating.dbl.nonprobabilistic.ConstantDoubleVertex",
+      "parameters": [{
+        "name": "constant",
+        "doubleTensorParam": {
+          "values": [1.0]
+        }
+      }]
+    }, {
+      "id": {
+        "id": "[201]"
+      },
+      "vertexType": "io.improbable.keanu.vertices.tensor.number.floating.dbl.nonprobabilistic.ConstantDoubleVertex",
+      "parameters": [{
+        "name": "constant",
+        "doubleTensorParam": {
+          "values": [0.25]
+        }
+      }]
+    }, {
+      "id": {
+        "id": "[202]"
+      },
+      "label": "triangular",
+      "vertexType": "io.improbable.keanu.vertices.tensor.number.floating.dbl.probabilistic.TriangularVertex",
+      "parameters": [{
+        "name": "c",
+        "parentVertex": {
+          "id": "[201]"
+        }
+      }, {
+        "name": "xMax",
+        "parentVertex": {
+          "id": "[200]"
+        }
+      }, {
+        "name": "xMin",
+        "parentVertex": {
+          "id": "[199]"
+        }
+      }]
+    }, {
+      "id": {
+        "id": "[203]"
+      },
+      "vertexType": "io.improbable.keanu.vertices.tensor.number.floating.dbl.nonprobabilistic.ConstantDoubleVertex",
+      "parameters": [{
+        "name": "constant",
+        "doubleTensorParam": {
+          "values": [-1.0]
+        }
+      }]
+    }, {
+      "id": {
+        "id": "[204]"
+      },
+      "vertexType": "io.improbable.keanu.vertices.tensor.number.floating.dbl.nonprobabilistic.ConstantDoubleVertex",
+      "parameters": [{
+        "name": "constant",
+        "doubleTensorParam": {
+          "values": [2.0]
+        }
+      }]
+    }, {
+      "id": {
+        "id": "[205]"
+      },
+      "label": "uniform",
+      "vertexType": "io.improbable.keanu.vertices.tensor.number.floating.dbl.probabilistic.UniformVertex",
+      "parameters": [{
+        "name": "xMax",
+        "parentVertex": {
+          "id": "[204]"
+        }
+      }, {
+        "name": "xMin",
+        "parentVertex": {
+          "id": "[203]"
+        }
+      }]
+    }, {
+      "id": {
+        "id": "[206]"
+      },
+      "label": "kde",
+      "vertexType": "io.improbable.keanu.vertices.tensor.number.floating.dbl.probabilistic.KDEVertex",
+      "parameters": [{
+        "name": "bandwidth",
+        "doubleParam": 0.3
+      }, {
+        "name": "samples",
+        "doubleTensorParam": {
+          "shape": ["4"],
+          "values": [0.1, 0.4, 0.5, 1.2]
+        }
+      }]
+    }, {
+      "id": {
+        "id": "[207]"
+      },
+      "vertexType": "io.improbable.keanu.vertices.tensor.number.floating.dbl.nonprobabilistic.ConstantDoubleVertex",
+      "parameters": [{
+        "name": "constant",
+        "doubleTensorParam": {
+          "values": [0.3]
+        }
+      }]
+    }, {
+      "id": {
+        "id": "[208]"
+      },
+      "label": "bernoulli",
+      "vertexType": "io.improbable.keanu.vertices.tensor.bool.probabilistic.BernoulliVertex",
+      "parameters": [{
+        "name": "probTrue",
+        "parentVertex": {
+          "id": "[207]"
+        }
+      }],
+      "shape": ["3"]
+    }, {
+      "id": {
+        "id": "[209]"
+      },
+      "vertexType": "io.improbable.keanu.vertices.tensor.number.floating.dbl.nonprobabilistic.ConstantDoubleVertex",
+      "parameters": [{
+        "name": "constant",
+        "doubleTensorParam": {
+          "values": [0.4]
+        }
+      }]
+    }, {
+      "id": {
+        "id": "[210]"
+      },
+      "vertexType": "io.improbable.keanu.vertices.tensor.number.fixed.intgr.nonprobabilistic.ConstantIntegerVertex",
+      "parameters": [{
+        "name": "constant",
+        "intTensorParam": {
+          "values": [5]
+        }
+      }]
+    }, {
+      "id": {
+        "id": "[211]"
+      },
+      "label": "binomial",
+      "vertexType": "io.improbable.keanu.vertices.tensor.number.fixed.intgr.probabilistic.BinomialVertex",
+      "parameters": [{
+        "name": "n",
+        "parentVertex": {
+          "id": "[210]"
+        }
+      }, {
+        "name": "p",
+        "parentVertex": {
+          "id": "[209]"
+        }
+      }],
+      "shape": ["2"]
+    }, {
+      "id": {
+        "id": "[212]"
+      },
+      "vertexType": "io.improbable.keanu.vertices.tensor.number.floating.dbl.nonprobabilistic.ConstantDoubleVertex",
+      "parameters": [{
+        "name": "constant",
+        "doubleTensorParam": {
+          "values": [0.25]
+        }
+      }]
+    }, {
+      "id": {
+        "id": "[213]"
+      },
+      "label": "geometric",
+      "vertexType": "io.improbable.keanu.vertices.tensor.number.fixed.intgr.probabilistic.GeometricVertex",
+      "parameters": [{
+        "name": "p",
+        "parentVertex": {
+          "id": "[212]"
+        }
+      }],
+      "shape": ["2"]
+    }, {
+      "id": {
+        "id": "[214]"
+      },
+      "vertexType": "io.improbable.keanu.vertices.tensor.number.floating.dbl.nonprobabilistic.ConstantDoubleVertex",
+      "parameters": [{
+        "name": "constant",
+        "doubleTensorParam": {
+          "shape": ["3"],
+          "values": [0.2, 0.5, 0.3]
+        }
+      }],
+      "shape": ["3"]
+    }, {
+      "id": {
+        "id": "[215]"
+      },
+      "vertexType": "io.improbable.keanu.vertices.tensor.number.fixed.intgr.nonprobabilistic.ConstantIntegerVertex",
+      "parameters": [{
+        "name": "constant",
+        "intTensorParam": {
+          "values": [5]
+        }
+      }]
+    }, {
+      "id": {
+        "id": "[216]"
+      },
+      "label": "multinomial",
+      "vertexType": "io.improbable.keanu.vertices.tensor.number.fixed.intgr.probabilistic.MultinomialVertex",
+      "parameters": [{
+        "name": "n",
+        "parentVertex": {
+          "id": "[215]"
+        }
+      }, {
+        "name": "p",
+        "parentVertex": {
+          "id": "[214]"
+        }
+      }],
+      "shape": ["3"]
+    }, {
+      "id": {
+        "id": "[217]"
+      },
+      "vertexType": "io.improbable.keanu.vertices.tensor.number.floating.operators.unary.ExpVertex",
+      "parameters": [{
+        "name": "inputVertex",
+        "parentVertex": {
+          "id": "[157]"
+        }
+      }]
+    }, {
+      "id": {
+        "id": "[218]"
+      },
+      "label": "poisson",
+      "vertexType": "io.improbable.keanu.vertices.tensor.number.fixed.intgr.probabilistic.PoissonVertex",
+      "parameters": [{
+        "name": "mu",
+        "parentVertex": {
+          "id": "[217]"
+        }
+      }],
+      "shape": ["3"]
+    }, {
+      "id": {
+        "id": "[219]"
+      },
+      "vertexType": "io.improbable.keanu.vertices.tensor.number.fixed.intgr.nonprobabilistic.ConstantIntegerVertex",
+      "parameters": [{
+        "name": "constant",
+        "intTensorParam": {
+          "values": [-2]
+        }
+      }]
+    }, {
+      "id": {
+        "id": "[220]"
+      },
+      "vertexType": "io.improbable.keanu.vertices.tensor.number.fixed.intgr.nonprobabilistic.ConstantIntegerVertex",
+      "parameters": [{
+        "name": "constant",
+        "intTensorParam": {
+          "values": [3]
+        }
+      }]
+    }, {
+      "id": {
+        "id": "[221]"
+      },
+      "label": "uniformInt",
+      "vertexType": "io.improbable.keanu.vertices.tensor.number.fixed.intgr.probabilistic.UniformIntVertex",
+      "parameters": [{
+        "name": "max",
+        "parentVertex": {
+          "id": "[220]"
+        }
+      }, {
+        "name": "min",
+        "parentVertex": {
+          "id": "[219]"
+        }
+      }],
+      "shape": ["2"]
+    }, {
+      "id": {
+        "id": "[222]"
+      },
+      "vertexType": "io.improbable.keanu.vertices.tensor.number.operators.binary.AdditionVertex",
+      "parameters": [{
+        "name": "left",
+        "parentVertex": {
+          "id": "[0]"
+        }
+      }, {
+        "name": "right",
+        "parentVertex": {
+          "id": "[157]"
+        }
+      }],
+      "shape": ["2", "3"]
+    }, {
+      "id": {
+        "id": "[223]"
+      },
+      "vertexType": "io.improbable.keanu.vertices.tensor.number.floating.dbl.nonprobabilistic.ConstantDoubleVertex",
+      "parameters": [{
+        "name": "constant",
+        "doubleTensorParam": {
+          "values": [0.5]
+        }
+      }]
+    }, {
+      "id": {
+        "id": "[224]"
+      },
+      "label": "gaussianObserved",
+      "vertexType": "io.improbable.keanu.vertices.tensor.number.floating.dbl.probabilistic.GaussianVertex",
+      "parameters": [{
+        "name": "mu",
+        "parentVertex": {
+          "id": "[222]"
+        }
+      }, {
+        "name": "sigma",
+        "parentVertex": {
+          "id": "[223]"
+        }
+      }],
+      "shape": ["2", "3"]
+    }],
+    "defaultState": [{
+      "value": {
+        "doubleVal": {
+          "shape": ["2", "3"],
+          "values": [0.2, 0.5, 0.7, 0.3, 0.9, 0.4]
+        }
+      },
+      "id": {
+        "id": "[0]"
+      }
+    }, {
+      "value": {
+        "doubleVal": {
+          "shape": ["2", "3"],
+          "values": [0.6, 0.1, 0.8, 0.25, 0.35, 0.45]
+        }
+      },
+      "id": {
+        "id": "[1]"
+      }
+    }, {
+      "value": {
+        "doubleVal": {
+          "shape": ["3"],
+          "values": [0.3, 0.6, 0.9]
+        }
+      },
+      "id": {
+        "id": "[2]"
+      }
+    }, {
+      "value": {
+        "doubleVal": {
+          "shape": ["3", "3"],
+          "values": [4.0, 1.0, 0.5, 1.0, 3.0, 0.2, 0.5, 0.2, 2.0]
+        }
+      },
+      "id": {
+        "id": "[3]"
+      }
+    }, {
+      "value": {
+        "doubleVal": {
+          "shape": ["3"],
+          "values": [1.5, -2.5, 3.5]
+        }
+      },
+      "id": {
+        "id": "[4]"
+      }
+    }, {
+      "value": {
+        "doubleVal": {
+          "shape": ["3"],
+          "values": [1.0, "NaN", 3.0]
+        }
+      },
+      "id": {
+        "id": "[5]"
+      }
+    }, {
+      "value": {
+        "intVal": {
+          "shape": ["2", "3"],
+          "values": [-7, -3, 0, 5, 9, 2]
+        }
+      },
+      "id": {
+        "id": "[6]"
+      }
+    }, {
+      "value": {
+        "intVal": {
+          "shape": ["3"],
+          "values": [2, -2, 3]
+        }
+      },
+      "id": {
+        "id": "[7]"
+      }
+    }, {
+      "value": {
+        "boolVal": {
+          "shape": ["3"],
+          "values": [true, false, true]
+        }
+      },
+      "id": {
+        "id": "[10]"
+      }
+    }, {
+      "value": {
+        "boolVal": {
+          "shape": ["3"],
+          "values": [false, false, true]
+        }
+      },
+      "id": {
+        "id": "[11]"
+      }
+    }, {
+      "value": {
+        "doubleVal": {
+          "values": [-1.0]
+        }
+      },
+      "id": {
+        "id": "[31]"
+      }
+    }, {
+      "value": {
+        "doubleVal": {
+          "values": [0.5]
+        }
+      },
+      "id": {
+        "id": "[41]"
+      }
+    }, {
+      "value": {
+        "doubleVal": {
+          "values": [1.0]
+        }
+      },
+      "id": {
+        "id": "[43]"
+      }
+    }, {
+      "value": {
+        "doubleVal": {
+          "values": [1.5]
+        }
+      },
+      "id": {
+        "id": "[55]"
+      }
+    }, {
+      "value": {
+        "doubleVal": {
+          "values": [9.0]
+        }
+      },
+      "id": {
+        "id": "[68]"
+      }
+    }, {
+      "value": {
+        "doubleVal": {
+          "shape": ["6"],
+          "values": [1.0, 2.0, 3.0, 4.0, 5.0, 6.0]
+        }
+      },
+      "id": {
+        "id": "[96]"
+      }
+    }, {
+      "value": {
+        "intVal": {
+          "values": [1]
+        }
+      },
+      "id": {
+        "id": "[148]"
+      }
+    }, {
+      "value": {
+        "doubleVal": {
+          "values": [0.0]
+        }
+      },
+      "id": {
+        "id": "[155]"
+      }
+    }, {
+      "value": {
+        "doubleVal": {
+          "values": [1.0]
+        }
+      },
+      "id": {
+        "id": "[156]"
+      }
+    }, {
+      "value": {
+        "doubleVal": {
+          "values": [0.3]
+        }
+      },
+      "id": {
+        "id": "[157]"
+      }
+    }, {
+      "value": {
+        "doubleVal": {
+          "values": [2.0]
+        }
+      },
+      "id": {
+        "id": "[158]"
+      }
+    }, {
+      "value": {
+        "doubleVal": {
+          "shape": ["3"],
+          "values": [0.1, -0.4, 0.8]
+        }
+      },
+      "id": {
+        "id": "[159]"
+      }
+    }, {
+      "value": {
+        "doubleVal": {
+          "values": [1.5]
+        }
+      },
+      "id": {
+        "id": "[160]"
+      }
+    }, {
+      "value": {
+        "doubleVal": {
+          "values": [0.0]
+        }
+      },
+      "id": {
+        "id": "[161]"
+      }
+    }, {
+      "value": {
+        "doubleVal": {
+          "shape": ["2"],
+          "values": [0.5, 2.0]
+        }
+      },
+      "id": {
+        "id": "[162]"
+      }
+    }, {
+      "value": {
+        "doubleVal": {
+          "values": [1.0]
+        }
+      },
+      "id": {
+        "id": "[163]"
+      }
+    }, {
+      "value": {
+        "doubleVal": {
+          "values": [0.7]
+        }
+      },
+      "id": {
+        "id": "[164]"
+      }
+    }, {
+      "value": {
+        "doubleVal": {
+          "values": [0.0]
+        }
+      },
+      "id": {
+        "id": "[165]"
+      }
+    }, {
+      "value": {
+        "doubleVal": {
+          "values": [2.0]
+        }
+      },
+      "id": {
+        "id": "[166]"
+      }
+    }, {
+      "value": {
+        "doubleVal": {
+          "values": [1.2]
+        }
+      },
+      "id": {
+        "id": "[167]"
+      }
+    }, {
+      "value": {
+        "doubleVal": {
+          "values": [2.0]
+        }
+      },
+      "id": {
+        "id": "[168]"
+      }
+    }, {
+      "value": {
+        "doubleVal": {
+          "values": [3.0]
+        }
+      },
+      "id": {
+        "id": "[169]"
+      }
+    }, {
+      "value": {
+        "doubleVal": {
+          "values": [0.35]
+        }
+      },
+      "id": {
+        "id": "[170]"
+      }
+    }, {
+      "value": {
+        "intVal": {
+          "values": [3]
+        }
+      },
+      "id": {
+        "id": "[171]"
+      }
+    }, {
+      "value": {
+        "doubleVal": {
+          "values": [2.5]
+        }
+      },
+      "id": {
+        "id": "[172]"
+      }
+    }, {
+      "value": {
+        "doubleVal": {
+          "shape": ["3"],
+          "values": [1.0, 2.0, 3.0]
+        }
+      },
+      "id": {
+        "id": "[173]"
+      }
+    }, {
+      "value": {
+        "doubleVal": {
+          "shape": ["3"],
+          "values": [0.2, 0.3, 0.5]
+        }
+      },
+      "id": {
+        "id": "[174]"
+      }
+    }, {
+      "value": {
+        "doubleVal": {
+          "values": [1.5]
+        }
+      },
+      "id": {
+        "id": "[175]"
+      }
+    }, {
+      "value": {
+        "doubleVal": {
+          "values": [0.4]
+        }
+      },
+      "id": {
+        "id": "[176]"
+      }
+    }, {
+      "value": {
+        "doubleVal": {
+          "values": [2.0]
+        }
+      },
+      "id": {
+        "id": "[177]"
+      }
+    }, {
+      "value": {
+        "doubleVal": {
+          "values": [1.5]
+        }
+      },
+      "id": {
+        "id": "[178]"
+      }
+    }, {
+      "value": {
+        "doubleVal": {
+          "values": [2.4]
+        }
+      },
+      "id": {
+        "id": "[179]"
+      }
+    }, {
+      "value": {
+        "doubleVal": {
+          "values": [3.0]
+        }
+      },
+      "id": {
+        "id": "[180]"
+      }
+    }, {
+      "value": {
+        "doubleVal": {
+          "values": [0.5]
+        }
+      },
+      "id": {
+        "id": "[181]"
+      }
+    }, {
+      "value": {
+        "doubleVal": {
+          "values": [0.3]
+        }
+      },
+      "id": {
+        "id": "[182]"
+      }
+    }, {
+      "value": {
+        "doubleVal": {
+          "values": [0.5]
+        }
+      },
+      "id": {
+        "id": "[183]"
+      }
+    }, {
+      "value": {
+        "doubleVal": {
+          "values": [-0.2]
+        }
+      },
+      "id": {
+        "id": "[184]"
+      }
+    }, {
+      "value": {
+        "doubleVal": {
+          "values": [0.0]
+        }
+      },
+      "id": {
+        "id": "[185]"
+      }
+    }, {
+      "value": {
+        "doubleVal": {
+          "values": [1.0]
+        }
+      },
+      "id": {
+        "id": "[186]"
+      }
+    }, {
+      "value": {
+        "doubleVal": {
+          "values": [1.3]
+        }
+      },
+      "id": {
+        "id": "[187]"
+      }
+    }, {
+      "value": {
+        "doubleVal": {
+          "values": [0.0]
+        }
+      },
+      "id": {
+        "id": "[188]"
+      }
+    }, {
+      "value": {
+        "doubleVal": {
+          "values": [1.0]
+        }
+      },
+      "id": {
+        "id": "[189]"
+      }
+    }, {
+      "value": {
+        "doubleVal": {
+          "values": [0.6]
+        }
+      },
+      "id": {
+        "id": "[190]"
+      }
+    }, {
+      "value": {
+        "doubleVal": {
+          "shape": ["2"],
+          "values": [0.5, -1.0]
+        }
+      },
+      "id": {
+        "id": "[191]"
+      }
+    }, {
+      "value": {
+        "doubleVal": {
+          "shape": ["2", "2"],
+          "values": [2.0, 0.3, 0.3, 1.0]
+        }
+      },
+      "id": {
+        "id": "[192]"
+      }
+    }, {
+      "value": {
+        "doubleVal": {
+          "shape": ["2"],
+          "values": [1.0, -0.5]
+        }
+      },
+      "id": {
+        "id": "[193]"
+      }
+    }, {
+      "value": {
+        "doubleVal": {
+          "values": [1.0]
+        }
+      },
+      "id": {
+        "id": "[194]"
+      }
+    }, {
+      "value": {
+        "doubleVal": {
+          "values": [2.0]
+        }
+      },
+      "id": {
+        "id": "[195]"
+      }
+    }, {
+      "value": {
+        "doubleVal": {
+          "values": [1.7]
+        }
+      },
+      "id": {
+        "id": "[196]"
+      }
+    }, {
+      "value": {
+        "intVal": {
+          "values": [4]
+        }
+      },
+      "id": {
+        "id": "[197]"
+      }
+    }, {
+      "value": {
+        "doubleVal": {
+          "values": [-0.8]
+        }
+      },
+      "id": {
+        "id": "[198]"
+      }
+    }, {
+      "value": {
+        "doubleVal": {
+          "values": [0.0]
+        }
+      },
+      "id": {
+        "id": "[199]"
+      }
+    }, {
+      "value": {
+        "doubleVal": {
+          "values": [1.0]
+        }
+      },
+      "id": {
+        "id": "[200]"
+      }
+    }, {
+      "value": {
+        "doubleVal": {
+          "values": [0.25]
+        }
+      },
+      "id": {
+        "id": "[201]"
+      }
+    }, {
+      "value": {
+        "doubleVal": {
+          "values": [0.6]
+        }
+      },
+      "id": {
+        "id": "[202]"
+      }
+    }, {
+      "value": {
+        "doubleVal": {
+          "values": [-1.0]
+        }
+      },
+      "id": {
+        "id": "[203]"
+      }
+    }, {
+      "value": {
+        "doubleVal": {
+          "values": [2.0]
+        }
+      },
+      "id": {
+        "id": "[204]"
+      }
+    }, {
+      "value": {
+        "doubleVal": {
+          "values": [0.5]
+        }
+      },
+      "id": {
+        "id": "[205]"
+      }
+    }, {
+      "value": {
+        "doubleVal": {
+          "values": [0.45]
+        }
+      },
+      "id": {
+        "id": "[206]"
+      }
+    }, {
+      "value": {
+        "doubleVal": {
+          "values": [0.3]
+        }
+      },
+      "id": {
+        "id": "[207]"
+      }
+    }, {
+      "value": {
+        "boolVal": {
+          "shape": ["3"],
+          "values": [true, false, true]
+        }
+      },
+      "id": {
+        "id": "[208]"
+      },
+      "isObserved": true
+    }, {
+      "value": {
+        "doubleVal": {
+          "values": [0.4]
+        }
+      },
+      "id": {
+        "id": "[209]"
+      }
+    }, {
+      "value": {
+        "intVal": {
+          "values": [5]
+        }
+      },
+      "id": {
+        "id": "[210]"
+      }
+    }, {
+      "value": {
+        "intVal": {
+          "shape": ["2"],
+          "values": [2, 4]
+        }
+      },
+      "id": {
+        "id": "[211]"
+      },
+      "isObserved": true
+    }, {
+      "value": {
+        "doubleVal": {
+          "values": [0.25]
+        }
+      },
+      "id": {
+        "id": "[212]"
+      }
+    }, {
+      "value": {
+        "intVal": {
+          "shape": ["2"],
+          "values": [1, 3]
+        }
+      },
+      "id": {
+        "id": "[213]"
+      },
+      "isObserved": true
+    }, {
+      "value": {
+        "doubleVal": {
+          "shape": ["3"],
+          "values": [0.2, 0.5, 0.3]
+        }
+      },
+      "id": {
+        "id": "[214]"
+      }
+    }, {
+      "value": {
+        "intVal": {
+          "values": [5]
+        }
+      },
+      "id": {
+        "id": "[215]"
+      }
+    }, {
+      "value": {
+        "intVal": {
+          "shape": ["3"],
+          "values": [1, 3, 1]
+        }
+      },
+      "id": {
+        "id": "[216]"
+      },
+      "isObserved": true
+    }, {
+      "value": {
+        "intVal": {
+          "shape": ["3"],
+          "values": [0, 2, 1]
+        }
+      },
+      "id": {
+        "id": "[218]"
+      },
+      "isObserved": true
+    }, {
+      "value": {
+        "intVal": {
+          "values": [-2]
+        }
+      },
+      "id": {
+        "id": "[219]"
+      }
+    }, {
+      "value": {
+        "intVal": {
+          "values": [3]
+        }
+      },
+      "id": {
+        "id": "[220]"
+      }
+    }, {
+      "value": {
+        "intVal": {
+          "shape": ["2"],
+          "values": [-1, 2]
+        }
+      },
+      "id": {
+        "id": "[221]"
+      },
+      "isObserved": true
+    }, {
+      "value": {
+        "doubleVal": {
+          "values": [0.5]
+        }
+      },
+      "id": {
+        "id": "[223]"
+      }
+    }, {
+      "value": {
+        "doubleVal": {
+          "shape": ["2", "3"],
+          "values": [0.4, 0.9, 1.1, 0.6, 1.3, 0.5]
+        }
+      },
+      "id": {
+        "id": "[224]"
+      },
+      "isObserved": true
+    }]
+  },
+  "metadata": {
+    "metadataInfo": {
+      "name": "catalog"
+    }
+  }
+}

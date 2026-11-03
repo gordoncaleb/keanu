@@ -110,7 +110,8 @@ public class UniformIntVertex extends VertexImpl<IntegerTensor, IntegerVertex> i
 
     @Override
     public Map<Vertex, DoubleTensor> dLogProb(IntegerTensor value, Set<? extends Vertex> withRespectTo) {
-        throw new UnsupportedOperationException("UniformInt is a discrete distribution so it has no gradient");
+        // discrete value and integer parameters: nothing it depends on has a gradient
+        return java.util.Collections.emptyMap();
     }
 
     @Override

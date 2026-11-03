@@ -1,0 +1,609 @@
+{
+  "graph": {
+    "defaultState": [
+      {
+        "id": {
+          "id": "[0]"
+        },
+        "value": {
+          "doubleVal": {
+            "values": [
+              0.0
+            ]
+          }
+        }
+      },
+      {
+        "id": {
+          "id": "[2]"
+        },
+        "value": {
+          "doubleVal": {
+            "values": [
+              0.5
+            ]
+          }
+        }
+      },
+      {
+        "id": {
+          "id": "[3]"
+        },
+        "value": {
+          "doubleVal": {
+            "values": [
+              0.2
+            ]
+          }
+        }
+      },
+      {
+        "id": {
+          "id": "[4]"
+        },
+        "value": {
+          "doubleVal": {
+            "values": [
+              1.0
+            ]
+          }
+        }
+      },
+      {
+        "id": {
+          "id": "[5]"
+        },
+        "isObserved": true,
+        "value": {
+          "doubleVal": {
+            "values": [
+              0.3
+            ]
+          }
+        }
+      },
+      {
+        "id": {
+          "id": "[7]"
+        },
+        "value": {
+          "doubleVal": {
+            "values": [
+              0.5
+            ]
+          }
+        }
+      },
+      {
+        "id": {
+          "id": "[8]"
+        },
+        "value": {
+          "doubleVal": {
+            "values": [
+              0.7
+            ]
+          }
+        }
+      },
+      {
+        "id": {
+          "id": "[9]"
+        },
+        "value": {
+          "doubleVal": {
+            "values": [
+              1.0
+            ]
+          }
+        }
+      },
+      {
+        "id": {
+          "id": "[10]"
+        },
+        "isObserved": true,
+        "value": {
+          "doubleVal": {
+            "values": [
+              0.9
+            ]
+          }
+        }
+      },
+      {
+        "id": {
+          "id": "[12]"
+        },
+        "value": {
+          "doubleVal": {
+            "values": [
+              0.5
+            ]
+          }
+        }
+      },
+      {
+        "id": {
+          "id": "[13]"
+        },
+        "value": {
+          "doubleVal": {
+            "values": [
+              0.6
+            ]
+          }
+        }
+      },
+      {
+        "id": {
+          "id": "[14]"
+        },
+        "value": {
+          "doubleVal": {
+            "values": [
+              1.0
+            ]
+          }
+        }
+      },
+      {
+        "id": {
+          "id": "[15]"
+        },
+        "isObserved": true,
+        "value": {
+          "doubleVal": {
+            "values": [
+              0.4
+            ]
+          }
+        }
+      },
+      {
+        "id": {
+          "id": "[17]"
+        },
+        "value": {
+          "doubleVal": {
+            "values": [
+              0.5
+            ]
+          }
+        }
+      },
+      {
+        "id": {
+          "id": "[18]"
+        },
+        "value": {
+          "doubleVal": {
+            "values": [
+              1.4
+            ]
+          }
+        }
+      },
+      {
+        "id": {
+          "id": "[19]"
+        },
+        "value": {
+          "doubleVal": {
+            "values": [
+              1.0
+            ]
+          }
+        }
+      },
+      {
+        "id": {
+          "id": "[20]"
+        },
+        "isObserved": true,
+        "value": {
+          "doubleVal": {
+            "values": [
+              1.6
+            ]
+          }
+        }
+      }
+    ],
+    "vertices": [
+      {
+        "id": {
+          "id": "[0]"
+        },
+        "parameters": [
+          {
+            "doubleTensorParam": {
+              "values": [
+                0.0
+              ]
+            },
+            "name": "constant"
+          }
+        ],
+        "vertexType": "io.improbable.keanu.vertices.tensor.number.floating.dbl.nonprobabilistic.ConstantDoubleVertex"
+      },
+      {
+        "id": {
+          "id": "[1]"
+        },
+        "label": "Sequence_Item_0.1.proxy_for.x",
+        "parameters": [
+          {
+            "name": "label",
+            "stringParam": "Sequence_Item_0.1.proxy_for.x"
+          },
+          {
+            "name": "parent",
+            "parentVertex": {
+              "id": "[0]"
+            }
+          }
+        ],
+        "vertexType": "io.improbable.keanu.vertices.tensor.number.floating.dbl.nonprobabilistic.DoubleProxyVertex"
+      },
+      {
+        "id": {
+          "id": "[2]"
+        },
+        "parameters": [
+          {
+            "doubleTensorParam": {
+              "values": [
+                0.5
+              ]
+            },
+            "name": "constant"
+          }
+        ],
+        "vertexType": "io.improbable.keanu.vertices.tensor.number.floating.dbl.nonprobabilistic.ConstantDoubleVertex"
+      },
+      {
+        "id": {
+          "id": "[3]"
+        },
+        "label": "Sequence_Item_0.1.x",
+        "parameters": [
+          {
+            "name": "mu",
+            "parentVertex": {
+              "id": "[1]"
+            }
+          },
+          {
+            "name": "sigma",
+            "parentVertex": {
+              "id": "[2]"
+            }
+          }
+        ],
+        "vertexType": "io.improbable.keanu.vertices.tensor.number.floating.dbl.probabilistic.GaussianVertex"
+      },
+      {
+        "id": {
+          "id": "[4]"
+        },
+        "parameters": [
+          {
+            "doubleTensorParam": {
+              "values": [
+                1.0
+              ]
+            },
+            "name": "constant"
+          }
+        ],
+        "vertexType": "io.improbable.keanu.vertices.tensor.number.floating.dbl.nonprobabilistic.ConstantDoubleVertex"
+      },
+      {
+        "id": {
+          "id": "[5]"
+        },
+        "label": "Sequence_Item_0.1.y",
+        "parameters": [
+          {
+            "name": "mu",
+            "parentVertex": {
+              "id": "[3]"
+            }
+          },
+          {
+            "name": "sigma",
+            "parentVertex": {
+              "id": "[4]"
+            }
+          }
+        ],
+        "vertexType": "io.improbable.keanu.vertices.tensor.number.floating.dbl.probabilistic.GaussianVertex"
+      },
+      {
+        "id": {
+          "id": "[6]"
+        },
+        "label": "Sequence_Item_1.1.proxy_for.x",
+        "parameters": [
+          {
+            "name": "label",
+            "stringParam": "Sequence_Item_1.1.proxy_for.x"
+          },
+          {
+            "name": "parent",
+            "parentVertex": {
+              "id": "[3]"
+            }
+          }
+        ],
+        "vertexType": "io.improbable.keanu.vertices.tensor.number.floating.dbl.nonprobabilistic.DoubleProxyVertex"
+      },
+      {
+        "id": {
+          "id": "[7]"
+        },
+        "parameters": [
+          {
+            "doubleTensorParam": {
+              "values": [
+                0.5
+              ]
+            },
+            "name": "constant"
+          }
+        ],
+        "vertexType": "io.improbable.keanu.vertices.tensor.number.floating.dbl.nonprobabilistic.ConstantDoubleVertex"
+      },
+      {
+        "id": {
+          "id": "[8]"
+        },
+        "label": "Sequence_Item_1.1.x",
+        "parameters": [
+          {
+            "name": "mu",
+            "parentVertex": {
+              "id": "[6]"
+            }
+          },
+          {
+            "name": "sigma",
+            "parentVertex": {
+              "id": "[7]"
+            }
+          }
+        ],
+        "vertexType": "io.improbable.keanu.vertices.tensor.number.floating.dbl.probabilistic.GaussianVertex"
+      },
+      {
+        "id": {
+          "id": "[9]"
+        },
+        "parameters": [
+          {
+            "doubleTensorParam": {
+              "values": [
+                1.0
+              ]
+            },
+            "name": "constant"
+          }
+        ],
+        "vertexType": "io.improbable.keanu.vertices.tensor.number.floating.dbl.nonprobabilistic.ConstantDoubleVertex"
+      },
+      {
+        "id": {
+          "id": "[10]"
+        },
+        "label": "Sequence_Item_1.1.y",
+        "parameters": [
+          {
+            "name": "mu",
+            "parentVertex": {
+              "id": "[8]"
+            }
+          },
+          {
+            "name": "sigma",
+            "parentVertex": {
+              "id": "[9]"
+            }
+          }
+        ],
+        "vertexType": "io.improbable.keanu.vertices.tensor.number.floating.dbl.probabilistic.GaussianVertex"
+      },
+      {
+        "id": {
+          "id": "[11]"
+        },
+        "label": "Sequence_Item_2.1.proxy_for.x",
+        "parameters": [
+          {
+            "name": "label",
+            "stringParam": "Sequence_Item_2.1.proxy_for.x"
+          },
+          {
+            "name": "parent",
+            "parentVertex": {
+              "id": "[8]"
+            }
+          }
+        ],
+        "vertexType": "io.improbable.keanu.vertices.tensor.number.floating.dbl.nonprobabilistic.DoubleProxyVertex"
+      },
+      {
+        "id": {
+          "id": "[12]"
+        },
+        "parameters": [
+          {
+            "doubleTensorParam": {
+              "values": [
+                0.5
+              ]
+            },
+            "name": "constant"
+          }
+        ],
+        "vertexType": "io.improbable.keanu.vertices.tensor.number.floating.dbl.nonprobabilistic.ConstantDoubleVertex"
+      },
+      {
+        "id": {
+          "id": "[13]"
+        },
+        "label": "Sequence_Item_2.1.x",
+        "parameters": [
+          {
+            "name": "mu",
+            "parentVertex": {
+              "id": "[11]"
+            }
+          },
+          {
+            "name": "sigma",
+            "parentVertex": {
+              "id": "[12]"
+            }
+          }
+        ],
+        "vertexType": "io.improbable.keanu.vertices.tensor.number.floating.dbl.probabilistic.GaussianVertex"
+      },
+      {
+        "id": {
+          "id": "[14]"
+        },
+        "parameters": [
+          {
+            "doubleTensorParam": {
+              "values": [
+                1.0
+              ]
+            },
+            "name": "constant"
+          }
+        ],
+        "vertexType": "io.improbable.keanu.vertices.tensor.number.floating.dbl.nonprobabilistic.ConstantDoubleVertex"
+      },
+      {
+        "id": {
+          "id": "[15]"
+        },
+        "label": "Sequence_Item_2.1.y",
+        "parameters": [
+          {
+            "name": "mu",
+            "parentVertex": {
+              "id": "[13]"
+            }
+          },
+          {
+            "name": "sigma",
+            "parentVertex": {
+              "id": "[14]"
+            }
+          }
+        ],
+        "vertexType": "io.improbable.keanu.vertices.tensor.number.floating.dbl.probabilistic.GaussianVertex"
+      },
+      {
+        "id": {
+          "id": "[16]"
+        },
+        "label": "Sequence_Item_3.1.proxy_for.x",
+        "parameters": [
+          {
+            "name": "label",
+            "stringParam": "Sequence_Item_3.1.proxy_for.x"
+          },
+          {
+            "name": "parent",
+            "parentVertex": {
+              "id": "[13]"
+            }
+          }
+        ],
+        "vertexType": "io.improbable.keanu.vertices.tensor.number.floating.dbl.nonprobabilistic.DoubleProxyVertex"
+      },
+      {
+        "id": {
+          "id": "[17]"
+        },
+        "parameters": [
+          {
+            "doubleTensorParam": {
+              "values": [
+                0.5
+              ]
+            },
+            "name": "constant"
+          }
+        ],
+        "vertexType": "io.improbable.keanu.vertices.tensor.number.floating.dbl.nonprobabilistic.ConstantDoubleVertex"
+      },
+      {
+        "id": {
+          "id": "[18]"
+        },
+        "label": "Sequence_Item_3.1.x",
+        "parameters": [
+          {
+            "name": "mu",
+            "parentVertex": {
+              "id": "[16]"
+            }
+          },
+          {
+            "name": "sigma",
+            "parentVertex": {
+              "id": "[17]"
+            }
+          }
+        ],
+        "vertexType": "io.improbable.keanu.vertices.tensor.number.floating.dbl.probabilistic.GaussianVertex"
+      },
+      {
+        "id": {
+          "id": "[19]"
+        },
+        "parameters": [
+          {
+            "doubleTensorParam": {
+              "values": [
+                1.0
+              ]
+            },
+            "name": "constant"
+          }
+        ],
+        "vertexType": "io.improbable.keanu.vertices.tensor.number.floating.dbl.nonprobabilistic.ConstantDoubleVertex"
+      },
+      {
+        "id": {
+          "id": "[20]"
+        },
+        "label": "Sequence_Item_3.1.y",
+        "parameters": [
+          {
+            "name": "mu",
+            "parentVertex": {
+              "id": "[18]"
+            }
+          },
+          {
+            "name": "sigma",
+            "parentVertex": {
+              "id": "[19]"
+            }
+          }
+        ],
+        "vertexType": "io.improbable.keanu.vertices.tensor.number.floating.dbl.probabilistic.GaussianVertex"
+      }
+    ]
+  },
+  "metadata": {
+    "metadataInfo": {
+      "name": "randomWalkSequence"
+    }
+  }
+}
