@@ -1,0 +1,19 @@
+[package]
+name = "keanu-graph"
+version = "0.1.0"
+description = "Computation graphs, value propagation and auto diff for the Keanu probabilistic programming library"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+keanu-tensor = { path = "../keanu-tensor" }
+keanu-distributions = { path = "../keanu-distributions" }
+smallvec = { version = "1", features = ["union"] }
+
+[dev-dependencies]
+keanu-parity = { path = "../keanu-parity" }
+
+[lints]
+workspace = true

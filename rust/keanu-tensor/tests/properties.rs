@@ -106,4 +106,12 @@ proptest! {
         prop_assert_eq!(joined.slice("0:2").unwrap(), a);
         prop_assert_eq!(joined.slice("2:3").unwrap(), b);
     }
+
+    #[test]
+    fn triangle_part_inverts_fill_triangular(n in 1usize..5, upper: bool, batch in 1usize..3) {
+        let m = n * (n + 1) / 2;
+        let v = DoubleTensor::new(&[batch, m], (0..batch * m).map(|i| i as f64 + 1.0).collect()).unwrap();
+        let filled = v.fill_triangular(upper, !upper).unwrap();
+        prop_assert_eq!(filled.triangle_part(upper).unwrap(), v);
+    }
 }

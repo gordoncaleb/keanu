@@ -633,6 +633,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "keanu-graph"
+version = "0.1.0"
+dependencies = [
+ "keanu-distributions",
+ "keanu-parity",
+ "keanu-tensor",
+ "smallvec",
+]
+
+[[package]]
 name = "keanu-parity"
 version = "0.1.0"
 dependencies = [

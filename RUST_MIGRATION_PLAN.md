@@ -205,6 +205,25 @@ Intentional differences from Java:
 - Finite-difference checks pass for every `d_log_prob`.
 
 ### Phase 3: `keanu-graph`
+
+**Status: step 1 of 3 done** (design: `rust/docs/decisions/0002-graph-design.md`). `rust/keanu-graph` has:
+
+- the immutable arena `Graph` (`Send + Sync`) and a separate, cloneable `State`;
+- `GraphBuilder`, whose typed `DoubleVar`/`IntVar`/`BoolVar` handles support `std::ops`, and which defers
+  construction errors to `build()`;
+- Java's eval / lazy eval / cascade / observe semantics;
+- every deterministic op;
+- proxies, lambdas, asserts, multiplexer and CPT;
+- every distribution as a node, sampled through eval.
+
+All 121 cases in `golden-vectors/vertices.json` match Java's values, with none skipped. Next come step 2 (autodiff)
+and step 3 (log prob and its gradient). Differences from Java that are intentional:
+
+- `where` broadcasts all three operands, whereas Java required then/else to have equal shapes.
+- `GetBooleanIndexVertex` isn't ported, because its value-dependent shape can't be a static node shape.
+- Java's n-ary `AndMultiple`/`OrMultiple` are chains of `&` / `|`.
+- `PrintVertex` and generic-object vertices aren't ported (see the design record).
+
 - Port the arena graph, all ops (vertex types), value propagation (cascade / lazy eval) and observation.
 - Port forward and reverse autodiff and `LogProbGraph`.
 - Port the generic and boolean ops, and `If` / multiplexer / where.

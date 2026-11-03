@@ -224,6 +224,39 @@ impl<T: Element> Tensor<T> {
         Ok(Tensor::from_parts(out_shape, data))
     }
 
+    /// The upper or lower triangle (including the diagonal) of each square matrix as a vector of length
+    /// n(n + 1) / 2: the upper triangle row by row, or the lower triangle column by column. This is the inverse of
+    /// [`fill_triangular`](Self::fill_triangular).
+    pub fn triangle_part(&self, upper: bool) -> Result<Self> {
+        let (rows, cols) = self.check_matrix("triangle_part")?;
+        if rows != cols {
+            return Err(TensorError::InvalidArgument(
+                "triangle_part needs square matrices".into(),
+            ));
+        }
+        let n = rows;
+        let mut out_shape: Shape = self.shape[..self.rank() - 2].into();
+        out_shape.push(n * (n + 1) / 2);
+        let mut data = Vec::with_capacity(shape::length(&out_shape));
+        for matrix in self
+            .data
+            .chunks((n * n).max(1))
+            .take(shape::length(&out_shape[..out_shape.len() - 1]))
+        {
+            for a in 0..n {
+                for b in a..n {
+                    // upper: row a, column b; lower: column a, row b
+                    data.push(if upper {
+                        matrix[a * n + b]
+                    } else {
+                        matrix[b * n + a]
+                    });
+                }
+            }
+        }
+        Ok(Tensor::from_parts(out_shape, data))
+    }
+
     /// numpy style slicing from a string, e.g. `"1, ..., ::-1"`. Integer indices remove their dimension.
     pub fn slice(&self, spec: &str) -> Result<Self> {
         let plan = slicing::plan(spec, &self.shape)?;
