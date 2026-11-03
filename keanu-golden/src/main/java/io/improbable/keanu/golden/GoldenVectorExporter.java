@@ -49,6 +49,7 @@ public final class GoldenVectorExporter {
         files.put("models.json", ModelCases.generate(outputDir.resolve("models")));
         files.put("algorithms.json", AlgorithmCases.generate());
         files.put("samplers.json", SamplerCases.generate());
+        files.put("regression.json", RegressionCases.generate());
 
         Map<String, Object> counts = new LinkedHashMap<>();
         for (Map.Entry<String, List<Map<String, Object>>> file : files.entrySet()) {

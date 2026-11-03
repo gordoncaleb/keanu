@@ -35,6 +35,7 @@ pub mod forward;
 pub mod mcmc;
 pub mod optimizer;
 pub mod particle_filter;
+pub mod regression;
 pub mod samples;
 pub mod statistics;
 

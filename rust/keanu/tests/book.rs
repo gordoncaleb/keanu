@@ -411,3 +411,75 @@ fn custom_distributions() -> keanu::Result<()> {
     assert!(mean > 0.0 && mean < 1.0, "{mean}");
     Ok(())
 }
+
+#[test]
+fn regression() -> keanu::Result<()> {
+    // ANCHOR: regression
+    // y = 3 x1 - 2 x2 + 1, plus a little noise
+    let mut rng = KeanuRng::seed_from_u64(3);
+    let n = 200;
+    let x = DoubleTensor::new(
+        &[n, 2],
+        (0..2 * n)
+            .map(|_| rng.next_f64_between(-5.0, 5.0))
+            .collect(),
+    )?;
+    let xs = x.as_slice();
+    let y = DoubleTensor::vector(
+        (0..n)
+            .map(|i| 3.0 * xs[2 * i] - 2.0 * xs[2 * i + 1] + 1.0 + 0.1 * rng.next_gaussian())
+            .collect(),
+    );
+
+    let model = RegressionModel::linear(&x, &y)?.fit()?;
+    println!(
+        "weights {:?}, intercept {}",
+        model.weights().as_slice(),
+        model.intercept()
+    );
+
+    let ridge = RegressionModel::linear(&x, &y)?
+        .regularization(Regularization::Ridge)
+        .prior_on_weights_and_intercept(0.0, 0.1)
+        .fit()?;
+
+    let x_new = DoubleTensor::new(&[1, 2], vec![1.0, 1.0])?;
+    let prediction = model.predict(&x_new)?; // about 3 - 2 + 1 = 2
+    let r2 = coefficient_of_determination(&model.predict(&x)?, &y)?;
+    // ANCHOR_END: regression
+    assert!((model.weights().as_slice()[0] - 3.0).abs() < 0.05);
+    assert!((model.intercept() - 1.0).abs() < 0.05);
+    assert!(ridge.weights().as_slice()[0].abs() < model.weights().as_slice()[0].abs());
+    assert!((prediction.as_slice()[0] - 2.0).abs() < 0.1);
+    assert!(r2 > 0.99);
+    Ok(())
+}
+
+#[test]
+fn regression_sampling() -> keanu::Result<()> {
+    let x = DoubleTensor::vector(vec![0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0]);
+    let y = DoubleTensor::vector(vec![1.2, 2.9, 5.1, 7.0, 8.8, 11.1, 13.0, 15.1]);
+    // ANCHOR: regression_sampling
+    let mh = MetropolisHastings::new().proposal(GaussianProposal::new(0.25));
+    let model = RegressionModel::linear(&x, &y)?
+        .prior_on_weights_and_intercept(0.0, 10.0)
+        .sampling(SamplingFitting::new(
+            Sampler::MetropolisHastings(mh),
+            20_000,
+            1,
+        ))
+        .fit()?;
+    let samples = model.samples().expect("fitted by sampling");
+    let weight = samples
+        .f64(model.weights_node())
+        .expect("weights are recorded");
+    println!(
+        "weight {} ± {}",
+        weight.mean()?.as_slice()[0],
+        weight.variance()?.as_slice()[0].sqrt()
+    );
+    // ANCHOR_END: regression_sampling
+    let mean = weight.mean()?.as_slice()[0];
+    assert!((mean - 2.0).abs() < 0.2, "{mean}");
+    Ok(())
+}

@@ -54,7 +54,7 @@ class LinearRegressionTestUtils {
 
         DoubleTensor x1Data = x1Generator.sample();
         x1Generator.setAndCascade(x1Data);
-        DoubleTensor x2Data = x1Generator.sample();
+        DoubleTensor x2Data = x2Generator.sample();
         x2Generator.setAndCascade(x2Data);
         DoubleTensor yData = yGenerator.sample();
 
@@ -72,7 +72,7 @@ class LinearRegressionTestUtils {
 
         DoubleTensor x1Data = x1Generator.sample();
         x1Generator.setAndCascade(x1Data);
-        DoubleTensor x2Data = x1Generator.sample();
+        DoubleTensor x2Data = x2Generator.sample();
         x2Generator.setAndCascade(x2Data);
         DoubleTensor yData = yGenerator.sample();
 

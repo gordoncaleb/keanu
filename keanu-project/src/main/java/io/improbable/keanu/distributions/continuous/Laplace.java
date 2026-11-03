@@ -76,10 +76,9 @@ public class Laplace implements ContinuousDistribution {
         final DoubleTensor muMinusX = mu.minus(x);
         final DoubleTensor muMinusXAbs = muMinusX.abs();
 
-        final DoubleTensor denominator = muMinusXAbs.times(beta);
-
-        final DoubleTensor dLogPdx = muMinusX.divInPlace(denominator);
-        final DoubleTensor dLogPdMu = x.minus(mu).divInPlace(denominator);
+        // sign(mu - x) / beta: the subgradient at the mode (x == mu) is taken to be 0 rather than 0 / 0 = NaN
+        final DoubleTensor dLogPdx = muMinusX.sign().divInPlace(beta);
+        final DoubleTensor dLogPdMu = dLogPdx.unaryMinus();
         final DoubleTensor dLogPdBeta = muMinusXAbs.minusInPlace(beta).divInPlace(beta.pow(2));
 
         return new Diffs()

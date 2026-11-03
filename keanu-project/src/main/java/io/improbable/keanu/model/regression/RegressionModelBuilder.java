@@ -41,11 +41,14 @@ public class RegressionModelBuilder<OUTPUT extends Tensor> {
         return this;
     }
 
-    private static <T extends Tensor> T reshapeToMatrix(T data) {
+    /**
+     * Scalars become a 1 x 1 matrix and vectors become a column (n samples of one feature).
+     */
+    static <T extends Tensor> T reshapeToMatrix(T data) {
         if (data.getRank() == 0) {
             return (T) data.reshape(1, 1);
         } else if (data.getRank() == 1) {
-            return (T) data.reshape(1, data.getShape()[0]);
+            return (T) data.reshape(data.getShape()[0], 1);
         } else {
             return data;
         }

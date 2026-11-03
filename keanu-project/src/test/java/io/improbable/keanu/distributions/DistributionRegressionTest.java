@@ -296,4 +296,12 @@ public class DistributionRegressionTest {
         // d/dmu [log N(mu; 0, 1) + log N(1; mu, 1)] = -mu + (1 - mu)
         assertEquals(-0.5 + 0.5, model.logProbGradients().get(mu.getId()).scalar(), 1e-12);
     }
+
+    @Test
+    public void laplaceGradientIsZeroAtTheModeRatherThanNaN() {
+        Diffs diffs = io.improbable.keanu.distributions.continuous.Laplace.withParameters(DoubleTensor.scalar(1.0), DoubleTensor.scalar(0.5))
+            .dLogProb(DoubleTensor.create(1.0, 2.0, 0.0));
+        assertArrayEquals(new double[]{0.0, -2.0, 2.0}, diffs.get(X).getValue().asFlatDoubleArray(), 0.0);
+        assertArrayEquals(new double[]{0.0, 2.0, -2.0}, diffs.get(io.improbable.keanu.distributions.hyperparam.Diffs.MU).getValue().asFlatDoubleArray(), 0.0);
+    }
 }

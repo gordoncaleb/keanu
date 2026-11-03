@@ -621,8 +621,9 @@ impl Laplace {
     pub fn d_log_prob(&self, x: &DoubleTensor) -> Result<LaplaceGradient> {
         let (m, b) = (&self.mu, &self.beta);
         Ok(LaplaceGradient {
-            x: map3(x, m, b, |x, m, b| (m - x) / ((m - x).abs() * b))?,
-            mu: map3(x, m, b, |x, m, b| (x - m) / ((m - x).abs() * b))?,
+            // sign(mu - x) / beta, with the subgradient at the mode taken to be 0 (not 0 / 0)
+            x: map3(x, m, b, |x, m, b| sign(m - x) / b)?,
+            mu: map3(x, m, b, |x, m, b| sign(x - m) / b)?,
             beta: map3(x, m, b, |x, m, b| ((m - x).abs() - b) / (b * b))?,
         })
     }
@@ -1005,5 +1006,16 @@ impl Uniform {
             .uniform(shape)
             .mul(&self.x_max.sub(&self.x_min)?)?
             .add(&self.x_min)?)
+    }
+}
+
+/// -1, 0 or 1 (0 for both signed zeros).
+fn sign(v: f64) -> f64 {
+    if v > 0.0 {
+        1.0
+    } else if v < 0.0 {
+        -1.0
+    } else {
+        0.0
     }
 }

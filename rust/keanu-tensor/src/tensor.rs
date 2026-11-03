@@ -395,3 +395,10 @@ pub(crate) fn scan<T: Copy>(
     }
     out
 }
+
+/// A scalar tensor holding the value.
+impl<T: Element> From<T> for Tensor<T> {
+    fn from(value: T) -> Self {
+        Self::scalar(value)
+    }
+}

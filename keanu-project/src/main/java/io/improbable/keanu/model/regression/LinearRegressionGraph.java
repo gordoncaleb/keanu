@@ -44,7 +44,7 @@ public class LinearRegressionGraph<OUTPUT> implements ModelGraph<DoubleTensor, O
     }
 
     public OUTPUT predict(DoubleTensor input) {
-        xVertex.setAndCascade(input);
+        xVertex.setAndCascade(RegressionModelBuilder.reshapeToMatrix(input));
         return yVertex.getValue();
     }
 

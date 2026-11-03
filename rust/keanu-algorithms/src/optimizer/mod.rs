@@ -34,6 +34,13 @@ pub enum Algorithm {
     ConjugateGradient(ConjugateGradient),
 }
 
+/// Conjugate gradient, the default (as in Java).
+impl Default for Algorithm {
+    fn default() -> Self {
+        Self::ConjugateGradient(ConjugateGradient::default())
+    }
+}
+
 impl From<Adam> for Algorithm {
     fn from(a: Adam) -> Self {
         Self::Adam(a)

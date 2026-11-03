@@ -437,9 +437,20 @@ Intentional differences:
   Java vs Rust comparison. Tensors are 1.4–2.6× faster in Rust (geometric means). Graph evaluation and
   Metropolis–Hastings are about level. Gradients are 2–8× slower, which makes NUTS 2× slower; that's the main
   performance item for Phase 7.
-- **Not ported:** Java's `model` package (`ModelFitter`, `RegressionModel` and the linear regression builders).
-  It's a convenience layer over the optimizers and samplers, so it needs a decision on whether to port it before
-  Java is deleted.
+- **The model package** (Java's `model`: `ModelFitter`, `RegressionModel`, the regression builders and
+  `ModelScoring`) is ported as `keanu_algorithms::regression` and re-exported from the `keanu` prelude:
+  `RegressionModel::linear` / `logistic`, `Regularization` (none, ridge, lasso), priors, `Fitter` (maximum
+  likelihood, MAP or sampling, usable on any `Model`), `SamplingFitting`, `PredictiveModel`,
+  `coefficient_of_determination` and `accuracy`. `golden-vectors/regression.json` (27 cases: linear and logistic,
+  each regularization, default and custom priors, one and three features, and scores) records Java's fits. Rust
+  reaches a fitness at least as good as Java's parameters with matching parameters, except three logistic lasso
+  cases whose optimal intercept sits on the Laplace prior's kink at 0, where both optimizers stall short of the
+  optimum and Rust must be within 0.05 in log probability. Java's e2e regression tests are ported, and there is a
+  book chapter. Differences from Java:
+  - Fitting is deterministic: the weights and intercept start at their prior means, not at a random prior draw.
+  - Predictions are computed from the fitted weights, so they can have any number of rows.
+  - The intercept prior is given as numbers (Java also accepted vertices).
+  - The module is named `regression` rather than `model`, which `keanu_graph::Model` already uses.
 
 ### Phase 7: Library hardening and first crates.io release
 - Review the public API:

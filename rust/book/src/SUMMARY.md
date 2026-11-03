@@ -14,5 +14,6 @@
 - [Saving and loading](save-and-load.md)
 - [Particle filter](particle-filter.md)
 - [Custom distributions](custom-distributions.md)
+- [Regression models](regression.md)
 - [Examples](examples.md)
 - [Coming from Java Keanu](from-java.md)

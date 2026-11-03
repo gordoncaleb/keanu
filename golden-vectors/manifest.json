@@ -7,7 +7,8 @@
     "vertices.json": 121,
     "models.json": 7,
     "algorithms.json": 48,
-    "samplers.json": 12
+    "samplers.json": 12,
+    "regression.json": 27
   },
   "verticesWithoutAVertexMethod": [],
   "knownIssues": []

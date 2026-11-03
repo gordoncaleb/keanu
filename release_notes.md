@@ -13,6 +13,10 @@
 - The build requires Gradle 9 (wrapper included) and compiles with a JDK 17 toolchain.
 
 #### Bug fixes
+- `RegressionModel` treated rank 1 training data as a single sample with many features; a vector is now samples
+  of one feature (and is reshaped the same way for `predict`).
+- The Laplace distribution's gradient with respect to x and mu was NaN at the mode (0 / 0); it is now the
+  subgradient 0.
 - Gamma sampling (and Beta, Dirichlet, ChiSquared and StudentT, which use it) was biased when the shape k < 1 because the wrong constant (Euler-Mascheroni instead of e) was used.
 - Multinomial gradient with respect to p was wrong.
 - UniformInt sampling was biased, and could return the exclusive upper bound, for ranges including negative numbers.
