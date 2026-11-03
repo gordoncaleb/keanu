@@ -22,6 +22,13 @@ pub(crate) fn row_major_strides(shape: &[usize]) -> Shape {
 
 /// The numpy broadcast of two shapes.
 pub fn broadcast_shape(left: &[usize], right: &[usize]) -> Result<Shape> {
+    // the common cases: equal shapes, or one side a scalar
+    if left == right || right.is_empty() {
+        return Ok(Shape::from_slice(left));
+    }
+    if left.is_empty() {
+        return Ok(Shape::from_slice(right));
+    }
     let rank = left.len().max(right.len());
     let mut out: Shape = smallvec::smallvec![0; rank];
     for (i, dim) in out.iter_mut().enumerate() {

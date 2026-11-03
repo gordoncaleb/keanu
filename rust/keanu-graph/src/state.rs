@@ -141,8 +141,8 @@ impl State {
     /// Recomputes the deterministic descendants of `from` (and `from` itself if deterministic), in topological
     /// order, stopping at probabilistic nodes.
     pub fn cascade(&mut self, graph: &Graph, from: &[NodeId]) -> Result<()> {
-        let mut plan = vec![Plan::None; graph.len()];
-        let mut stack: Vec<NodeId> = from.to_vec();
+        let mut plan: smallvec::SmallVec<[Plan; 64]> = smallvec::smallvec![Plan::None; graph.len()];
+        let mut stack: smallvec::SmallVec<[NodeId; 16]> = from.iter().copied().collect();
         for &id in from {
             plan[id.0] = Plan::Update;
         }
@@ -223,7 +223,7 @@ impl State {
                 "node {id:?} is not probabilistic, so it has no prior to sample from"
             )));
         };
-        let parents: Vec<&Value> = node
+        let parents: smallvec::SmallVec<[&Value; 4]> = node
             .parents
             .iter()
             .map(|&p| {
@@ -242,7 +242,7 @@ impl State {
         if self.observed[id.0] {
             return Ok(());
         }
-        let parents: Vec<&Value> = node
+        let parents: smallvec::SmallVec<[&Value; 4]> = node
             .parents
             .iter()
             .map(|&p| {
@@ -272,6 +272,7 @@ impl State {
             }
             op => eval(op, &parents)?,
         };
+        drop(parents);
         self.values[id.0] = Some(value);
         Ok(())
     }

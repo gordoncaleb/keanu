@@ -30,7 +30,7 @@ use super::common::{
 };
 use super::geometry::{geostep, setdrop_tr};
 use super::initialize::{inith, initq, initxf};
-use super::linalg::{Mat, fmax, fmin, maxloc, norm, sum_abs};
+use super::linalg::{Mat, Vector, fmax, fmin, maxloc, norm, sum_abs};
 use super::rescue::{RescueState, rescue};
 use super::trustregion::{trrad, trsbox};
 use super::update::{tryqalt, updateh, updateq, updatexf};
@@ -128,7 +128,7 @@ pub(crate) fn bobyqb(
                 &xpt,
             );
         } else {
-            let step: Vec<f64> = (0..n).map(|i| xpt[(i, kopt)] + d[i]).collect();
+            let step: Vector = (0..n).map(|i| xpt[(i, kopt)] + d[i]).collect();
             x = xinbd(&xbase, &step, xl, xu, &sl, &su);
             f = evaluate(calfun, &x);
             nf += 1;
@@ -201,7 +201,7 @@ pub(crate) fn bobyqb(
                 let xdrop = xpt.col(knew).to_vec();
                 let xosav = xpt.col(kopt).to_vec();
                 updateh(knew, kopt, &d, &xpt, &mut bmat, &mut zmat);
-                let xnew: Vec<f64> = (0..n)
+                let xnew: Vector = (0..n)
                     .map(|i| fmax(sl[i], fmin(su[i], xosav[i] + d[i])))
                     .collect();
                 updatexf(knew, ximproved, f, &xnew, &mut kopt, &mut fval, &mut xpt);
@@ -209,7 +209,7 @@ pub(crate) fn bobyqb(
                     knew, ximproved, &bmat, &d, moderr, &xdrop, &xosav, &xpt, &zmat, &mut gopt,
                     &mut hq, &mut pq,
                 );
-                let fshift: Vec<f64> = fval.iter().map(|v| v - fval[kopt]).collect();
+                let fshift: Vector = fval.iter().map(|v| v - fval[kopt]).collect();
                 let xopt = xpt.col(kopt).to_vec();
                 tryqalt(
                     &bmat, &fshift, ratio, &sl, &su, &xopt, &xpt, &zmat, &mut itest, &mut gopt,
@@ -224,7 +224,7 @@ pub(crate) fn bobyqb(
 
         let accurate_mod =
             moderr_rec.iter().all(|m| m.abs() <= ebound) && dnorm_rec.iter().all(|&dn| dn <= rho);
-        let distsq: Vec<f64> = (0..npt)
+        let distsq: Vector = (0..npt)
             .map(|k| (0..n).map(|i| (xpt[(i, k)] - xpt[(i, kopt)]).powi(2)).sum())
             .collect();
         let close_itpset = distsq
@@ -281,7 +281,7 @@ pub(crate) fn bobyqb(
                 dnorm_rec = [REALMAX; 2];
                 moderr_rec = [REALMAX; 2];
             } else {
-                let step: Vec<f64> = (0..n).map(|i| xpt[(i, kopt)] + d[i]).collect();
+                let step: Vector = (0..n).map(|i| xpt[(i, kopt)] + d[i]).collect();
                 x = xinbd(&xbase, &step, xl, xu, &sl, &su);
                 f = evaluate(calfun, &x);
                 nf += 1;
@@ -298,7 +298,7 @@ pub(crate) fn bobyqb(
                 let xdrop = xpt.col(knew_geo).to_vec();
                 let xosav = xpt.col(kopt).to_vec();
                 updateh(knew_geo, kopt, &d, &xpt, &mut bmat, &mut zmat);
-                let xnew: Vec<f64> = (0..n)
+                let xnew: Vector = (0..n)
                     .map(|i| fmax(sl[i], fmin(su[i], xosav[i] + d[i])))
                     .collect();
                 updatexf(
@@ -340,7 +340,7 @@ pub(crate) fn bobyqb(
     }
 
     if info == ExitStatus::SmallTrustRegionRadius && shortd && dnorm > 0.1 * rhoend && nf < maxfun {
-        let step: Vec<f64> = (0..n).map(|i| xpt[(i, kopt)] + d[i]).collect();
+        let step: Vector = (0..n).map(|i| xpt[(i, kopt)] + d[i]).collect();
         x = xinbd(&xbase, &step, xl, xu, &sl, &su);
         f = evaluate(calfun, &x);
         nf += 1;

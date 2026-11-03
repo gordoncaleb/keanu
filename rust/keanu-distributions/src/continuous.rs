@@ -5,7 +5,9 @@
 
 use crate::error::{Result, invalid_parameter};
 use crate::rng::KeanuRng;
-use crate::util::{digamma, ln_gamma, map2, map3, map4, safe_ln_times, sample_each, scalar};
+use crate::util::{
+    digamma, ln_gamma, map2, map3, map3_pair, map4, safe_ln_times, sample_each, scalar,
+};
 use keanu_tensor::{DoubleTensor, IntTensor};
 use std::f64::consts::{LN_2, PI};
 
@@ -54,11 +56,11 @@ impl Gaussian {
 
     /// The element-wise derivatives of [`Self::log_prob`] with respect to x and each parameter.
     pub fn d_log_prob(&self, x: &DoubleTensor) -> Result<GaussianGradient> {
-        let d_mu = map3(x, &self.mu, &self.sigma, |x, mu, sigma| {
-            (x - mu) / (sigma * sigma)
-        })?;
-        let d_sigma = map3(x, &self.mu, &self.sigma, |x, mu, sigma| {
-            (x - mu).powi(2) / (sigma * sigma * sigma) - 1.0 / sigma
+        let (d_mu, d_sigma) = map3_pair(x, &self.mu, &self.sigma, |x, mu, sigma| {
+            (
+                (x - mu) / (sigma * sigma),
+                (x - mu).powi(2) / (sigma * sigma * sigma) - 1.0 / sigma,
+            )
         })?;
         Ok(GaussianGradient {
             x: d_mu.neg(),

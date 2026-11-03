@@ -7,6 +7,7 @@ use crate::samples::NetworkSamples;
 use keanu_distributions::KeanuRng;
 use keanu_graph::{Graph, Model, NodeId, State, Value};
 use keanu_tensor::DoubleTensor;
+use std::rc::Rc;
 
 /// The adaptive diagonal quadratic potential (mass matrix) settings (Java's `AdaptiveQuadraticPotential`).
 ///
@@ -176,8 +177,8 @@ impl Nuts {
             latents,
             nodes: nodes.to_vec(),
             proposal: Candidate {
-                position,
-                gradient,
+                position: Rc::new(position),
+                gradient: Rc::new(gradient),
                 log_prob,
             },
             step_count: 0,
@@ -249,26 +250,28 @@ fn gradient_at(
 /// A chosen point of a trajectory.
 #[derive(Debug, Clone)]
 struct Candidate {
-    position: Vec<DoubleTensor>,
-    gradient: Vec<DoubleTensor>,
+    position: Rc<Vec<DoubleTensor>>,
+    gradient: Rc<Vec<DoubleTensor>>,
     log_prob: f64,
 }
 
-#[derive(Debug, Clone)]
+/// A point of a trajectory. Immutable once made: trees share them (and their position and gradient with
+/// candidates) through reference counting rather than copying.
+#[derive(Debug)]
 struct LeapfrogState {
-    position: Vec<DoubleTensor>,
+    position: Rc<Vec<DoubleTensor>>,
     momentum: Vec<DoubleTensor>,
     velocity: Vec<DoubleTensor>,
-    gradient: Vec<DoubleTensor>,
+    gradient: Rc<Vec<DoubleTensor>>,
     log_prob: f64,
     energy: f64,
 }
 
 impl LeapfrogState {
     fn new(
-        position: Vec<DoubleTensor>,
+        position: Rc<Vec<DoubleTensor>>,
         momentum: Vec<DoubleTensor>,
-        gradient: Vec<DoubleTensor>,
+        gradient: Rc<Vec<DoubleTensor>>,
         log_prob: f64,
         potential: &PotentialState,
     ) -> Result<Self> {
@@ -489,15 +492,21 @@ impl Integrator<'_, '_> {
         let gradient = gradient_at(self.model, state, self.latents, log_prob)?;
 
         let momentum = axpy(&momentum, half, &gradient)?;
-        LeapfrogState::new(position, momentum, gradient, log_prob, self.potential)
+        LeapfrogState::new(
+            Rc::new(position),
+            momentum,
+            Rc::new(gradient),
+            log_prob,
+            self.potential,
+        )
     }
 }
 
 /// A (sub)trajectory and the candidate sampled from it.
 #[derive(Debug, Clone)]
 struct Tree {
-    forward: LeapfrogState,
-    backward: LeapfrogState,
+    forward: Rc<LeapfrogState>,
+    backward: Rc<LeapfrogState>,
     sum_momentum: Vec<DoubleTensor>,
     proposal: Option<Candidate>,
     log_sum_weight: f64,
@@ -543,12 +552,12 @@ impl Integrator<'_, '_> {
         direction: f64,
         step_size: f64,
     ) -> Result<Tree> {
-        let after = self.leapfrog(state, from, step_size * direction)?;
+        let after = Rc::new(self.leapfrog(state, from, step_size * direction)?);
         let energy_change = after.energy - self.start_energy;
         if energy_change.abs() >= self.max_energy_change || energy_change.is_nan() {
             return Ok(Tree {
                 sum_momentum: after.momentum.clone(),
-                forward: after.clone(),
+                forward: Rc::clone(&after),
                 backward: after,
                 proposal: None,
                 log_sum_weight: f64::NEG_INFINITY,
@@ -563,11 +572,11 @@ impl Integrator<'_, '_> {
         Ok(Tree {
             sum_momentum: after.momentum.clone(),
             proposal: Some(Candidate {
-                position: after.position.clone(),
-                gradient: after.gradient.clone(),
+                position: Rc::clone(&after.position),
+                gradient: Rc::clone(&after.gradient),
                 log_prob: after.log_prob,
             }),
-            forward: after.clone(),
+            forward: Rc::clone(&after),
             backward: after,
             log_sum_weight,
             diverged: false,
@@ -593,17 +602,16 @@ impl Integrator<'_, '_> {
         }
         let mut tree = self.build(state, from, direction, height - 1, step_size, rng)?;
         if tree.should_continue() {
-            let edge = if direction < 0.0 {
+            let edge = Rc::clone(if direction < 0.0 {
                 &tree.backward
             } else {
                 &tree.forward
-            }
-            .clone();
+            });
             let extension = self.build(state, &edge, direction, height - 1, step_size, rng)?;
             if direction < 0.0 {
-                tree.backward = extension.backward.clone();
+                tree.backward = Rc::clone(&extension.backward);
             } else {
-                tree.forward = extension.forward.clone();
+                tree.forward = Rc::clone(&extension.forward);
             }
             tree.diverged = extension.diverged;
             tree.u_turned = extension.u_turned;
@@ -617,7 +625,7 @@ impl Integrator<'_, '_> {
                 let total = log_sum_exp(tree.log_sum_weight, extension.log_sum_weight);
                 tree.log_sum_weight = total;
                 if accept_with_log_probability(extension.log_sum_weight - total, rng) {
-                    tree.proposal = extension.proposal.clone();
+                    tree.proposal = extension.proposal;
                 }
             }
             tree.sum_metropolis_acceptance += extension.sum_metropolis_acceptance;
@@ -635,23 +643,22 @@ impl Integrator<'_, '_> {
         rng: &mut KeanuRng,
     ) -> Result<()> {
         let direction = if rng.next_bool() { 1.0 } else { -1.0 };
-        let edge = if direction < 0.0 {
+        let edge = Rc::clone(if direction < 0.0 {
             &tree.backward
         } else {
             &tree.forward
-        }
-        .clone();
+        });
         let other = self.build(state, &edge, direction, tree.height, step_size, rng)?;
         if direction < 0.0 {
-            tree.backward = other.backward.clone();
+            tree.backward = Rc::clone(&other.backward);
         } else {
-            tree.forward = other.forward.clone();
+            tree.forward = Rc::clone(&other.forward);
         }
         tree.sum_metropolis_acceptance += other.sum_metropolis_acceptance;
         tree.size += other.size;
         if other.should_continue() {
             if accept_with_log_probability(other.log_sum_weight - tree.log_sum_weight, rng) {
-                tree.proposal = other.proposal.clone();
+                tree.proposal = other.proposal;
             }
             tree.log_sum_weight = log_sum_exp(tree.log_sum_weight, other.log_sum_weight);
             tree.sum_momentum = add_all(&tree.sum_momentum, &other.sum_momentum)?;
@@ -699,13 +706,13 @@ impl NutsSampler<'_> {
 impl SamplingAlgorithm for NutsSampler<'_> {
     fn step(&mut self, state: &mut State, rng: &mut KeanuRng) -> Result<()> {
         let momentum = self.potential.random_momentum(rng)?;
-        let start = LeapfrogState::new(
-            self.proposal.position.clone(),
+        let start = Rc::new(LeapfrogState::new(
+            Rc::clone(&self.proposal.position),
             momentum,
-            self.proposal.gradient.clone(),
+            Rc::clone(&self.proposal.gradient),
             self.proposal.log_prob,
             &self.potential,
-        )?;
+        )?);
         let integrator = Integrator {
             model: self.model,
             latents: &self.latents,
@@ -715,7 +722,7 @@ impl SamplingAlgorithm for NutsSampler<'_> {
         };
         let mut tree = Tree {
             sum_momentum: start.momentum.clone(),
-            forward: start.clone(),
+            forward: Rc::clone(&start),
             backward: start,
             proposal: Some(self.proposal.clone()),
             log_sum_weight: 0.0,
@@ -729,7 +736,7 @@ impl SamplingAlgorithm for NutsSampler<'_> {
         while tree.should_continue() && tree.height < self.config.max_tree_height {
             integrator.grow(state, &mut tree, step_size, rng)?;
         }
-        if let Some(chosen) = tree.proposal.clone() {
+        if let Some(chosen) = tree.proposal.take() {
             self.proposal = chosen;
         }
 
@@ -737,7 +744,7 @@ impl SamplingAlgorithm for NutsSampler<'_> {
         let values: Vec<(NodeId, Value)> = self
             .latents
             .iter()
-            .zip(&self.proposal.position)
+            .zip(self.proposal.position.iter())
             .map(|(&id, x)| (id, Value::F64(x.clone())))
             .collect();
         self.model.set_and_cascade(state, &values)?;

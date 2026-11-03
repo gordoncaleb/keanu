@@ -108,6 +108,13 @@ pub struct Model {
     observed: Vec<NodeId>,
     /// For each node, the probabilistic and observed nodes whose log probability depends on its value.
     sections: Vec<Option<Vec<NodeId>>>,
+    /// Cached per model: latents then observed nodes.
+    joint: Vec<NodeId>,
+    /// The probabilistic nodes of `joint`, and of `observed`.
+    probabilistic_joint: Vec<NodeId>,
+    probabilistic_observed: Vec<NodeId>,
+    /// The latents holding f64 values.
+    continuous: Vec<NodeId>,
 }
 
 impl Model {
@@ -134,11 +141,24 @@ impl Model {
                 })
             })
             .collect();
+        let joint: Vec<NodeId> = latents.iter().chain(&observed).copied().collect();
+        let is_probabilistic = |id: &NodeId| graph.node(*id).is_probabilistic();
+        let probabilistic_joint = joint.iter().copied().filter(is_probabilistic).collect();
+        let probabilistic_observed = observed.iter().copied().filter(is_probabilistic).collect();
+        let continuous = latents
+            .iter()
+            .copied()
+            .filter(|&id| graph.node(id).dtype() == DType::F64)
+            .collect();
         Ok(Self {
             graph,
             latents,
             observed,
             sections,
+            joint,
+            probabilistic_joint,
+            probabilistic_observed,
+            continuous,
         })
     }
 
@@ -154,11 +174,7 @@ impl Model {
 
     /// The latent nodes holding f64 values (those gradients can be taken with respect to).
     pub fn continuous_latents(&self) -> Vec<NodeId> {
-        self.latents
-            .iter()
-            .copied()
-            .filter(|&id| self.graph.node(id).dtype() == DType::F64)
-            .collect()
+        self.continuous.clone()
     }
 
     /// The latent nodes holding integer or boolean values.
@@ -200,9 +216,7 @@ impl Model {
 
     /// The joint log probability of the latent and observed nodes.
     pub fn log_prob(&self, state: &State) -> Result<f64> {
-        let mut nodes = self.latents.clone();
-        nodes.extend_from_slice(&self.observed);
-        self.log_prob_of(state, &nodes)
+        self.log_prob_of(state, &self.joint)
     }
 
     /// The log likelihood: the log probability of the observed nodes.
@@ -212,25 +226,22 @@ impl Model {
 
     /// The gradient of the joint log probability with respect to each continuous latent.
     pub fn log_prob_gradient(&self, state: &State) -> Result<LogProbGradient> {
-        let of: Vec<NodeId> = self
-            .latents
-            .iter()
-            .chain(&self.observed)
-            .copied()
-            .filter(|&id| self.graph.node(id).is_probabilistic())
-            .collect();
-        log_prob_gradient(&self.graph, state, &of, &self.continuous_latents())
+        log_prob_gradient(
+            &self.graph,
+            state,
+            &self.probabilistic_joint,
+            &self.continuous,
+        )
     }
 
     /// The gradient of the log likelihood with respect to each continuous latent.
     pub fn log_likelihood_gradient(&self, state: &State) -> Result<LogProbGradient> {
-        let of: Vec<NodeId> = self
-            .observed
-            .iter()
-            .copied()
-            .filter(|&id| self.graph.node(id).is_probabilistic())
-            .collect();
-        log_prob_gradient(&self.graph, state, &of, &self.continuous_latents())
+        log_prob_gradient(
+            &self.graph,
+            state,
+            &self.probabilistic_observed,
+            &self.continuous,
+        )
     }
 
     /// Sets the values of some nodes and recomputes their deterministic descendants.
@@ -238,7 +249,7 @@ impl Model {
         for (id, value) in values {
             state.set(&self.graph, *id, value.clone())?;
         }
-        let from: Vec<NodeId> = values.iter().map(|(id, _)| *id).collect();
+        let from: smallvec::SmallVec<[NodeId; 8]> = values.iter().map(|(id, _)| *id).collect();
         state.cascade(&self.graph, &from)
     }
 

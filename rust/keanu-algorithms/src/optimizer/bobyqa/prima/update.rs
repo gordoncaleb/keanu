@@ -26,7 +26,7 @@
 //! (PRIMA's `update.f90` for BOBYQA).
 
 use super::common::{calbeta, calvlag, hess_mul, planerot, rotate_cols};
-use super::linalg::{Mat, dot, fmax, fmin, sum_abs};
+use super::linalg::{Mat, Vector, dot, fmax, fmin, sum_abs};
 
 /// HQ += ALPHA * X * Xᵀ, computed on the lower triangle and mirrored so HQ stays exactly symmetric
 /// (PRIMA's `r1update`).
@@ -52,7 +52,7 @@ pub(crate) fn r2update(hq: &mut Mat, alpha: f64, x: &[f64], y: &[f64]) {
 }
 
 /// The KNEW-th column of H (the inverse of the KKT matrix): [ZMAT * ZMAT(KNEW, :)ᵀ; BMAT(:, KNEW)].
-fn hcol(knew: usize, bmat: &Mat, zmat: &Mat) -> Vec<f64> {
+fn hcol(knew: usize, bmat: &Mat, zmat: &Mat) -> Vector {
     let mut h = zmat.mul_vec(&zmat.row(knew));
     h.extend_from_slice(bmat.col(knew));
     h
@@ -230,7 +230,7 @@ pub(crate) fn tryqalt(
     }
     if *itest >= 3 {
         *gopt = galt;
-        *pq = pqalt;
+        *pq = pqalt.into_vec();
         hq.fill(0.0);
         *itest = 0;
     }

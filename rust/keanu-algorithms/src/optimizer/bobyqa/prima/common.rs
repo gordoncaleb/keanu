@@ -26,7 +26,7 @@
 //! (`checkexit`, `evaluate`, `xinbd`, `redrho`, `redrat`, `interval_max`, `planerot` and the `powalg` and
 //! `shiftbase` routines for the quadratic model and the inverse of the KKT matrix).
 
-use super::linalg::{Mat, dot, fmax, fmin, maxloc, norm, sign, sum_sq};
+use super::linalg::{Mat, Vector, dot, fmax, fmin, maxloc, norm, sign, sum_sq};
 
 pub(crate) const EPS: f64 = f64::EPSILON;
 pub(crate) const REALMAX: f64 = f64::MAX;
@@ -272,7 +272,7 @@ pub(crate) fn rotate_cols(m: &mut Mat, a: usize, b: usize, g: [[f64; 2]; 2]) {
 }
 
 /// XPT * (PQ .* (XPTᵀ * X)) + HQ * X: the product of the model's Hessian with X.
-pub(crate) fn hess_mul(x: &[f64], xpt: &Mat, pq: &[f64], hq: Option<&Mat>) -> Vec<f64> {
+pub(crate) fn hess_mul(x: &[f64], xpt: &Mat, pq: &[f64], hq: Option<&Mat>) -> Vector {
     let w: Vec<f64> = xpt.tmul_vec(x).iter().zip(pq).map(|(a, b)| a * b).collect();
     let mut y = xpt.mul_vec(&w);
     if let Some(hq) = hq {
@@ -305,7 +305,7 @@ fn wcheck(kref: usize, d: &[f64], xpt: &Mat) -> Vec<f64> {
 }
 
 /// Columns [0, npt) of the product H * [WCHECK; D] without the +1 at KREF.
-fn vlag_raw(bmat: &Mat, d: &[f64], zmat: &Mat, w: &[f64]) -> Vec<f64> {
+fn vlag_raw(bmat: &Mat, d: &[f64], zmat: &Mat, w: &[f64]) -> Vector {
     let npt = zmat.rows;
     let n = bmat.rows;
     let zw = zmat.tmul_vec(w);
@@ -321,7 +321,7 @@ fn vlag_raw(bmat: &Mat, d: &[f64], zmat: &Mat, w: &[f64]) -> Vec<f64> {
 }
 
 /// The values of the Lagrange functions at XPT(:, KREF) + D (PRIMA's `calvlag`).
-pub(crate) fn calvlag(kref: usize, bmat: &Mat, d: &[f64], xpt: &Mat, zmat: &Mat) -> Vec<f64> {
+pub(crate) fn calvlag(kref: usize, bmat: &Mat, d: &[f64], xpt: &Mat, zmat: &Mat) -> Vector {
     let w = wcheck(kref, d, xpt);
     let mut vlag = vlag_raw(bmat, d, zmat, &w);
     vlag[kref] += 1.0;

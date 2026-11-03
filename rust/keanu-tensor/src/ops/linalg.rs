@@ -2,7 +2,10 @@
 
 use crate::error::{Result, TensorError};
 use crate::shape::{self, Shape};
-use crate::tensor::{DoubleTensor, Tensor};
+use crate::tensor::{DoubleTensor, Storage, Tensor};
+
+/// Scratch space for one matrix, on the stack up to 8 × 8.
+type Scratch = smallvec::SmallVec<[f64; 64]>;
 use faer::{MatRef, Side};
 
 impl DoubleTensor {
@@ -60,7 +63,7 @@ impl DoubleTensor {
         let right_strides = shape::broadcast_strides(other.batch_shape(), &batch);
         let batch_strides = shape::row_major_strides(&batch);
 
-        let mut data = vec![0.0; batch_len * m * n];
+        let mut data: Storage<f64> = smallvec::smallvec![0.0; batch_len * m * n];
         for (i, out) in data.chunks_mut((m * n).max(1)).enumerate().take(batch_len) {
             let (mut l, mut r) = (0, 0);
             for d in 0..batch.len() {
@@ -68,22 +71,14 @@ impl DoubleTensor {
                 l += index * left_strides[d];
                 r += index * right_strides[d];
             }
-            let lhs =
-                MatRef::from_row_major_slice(&self.data[l * ar * ac..(l + 1) * ar * ac], ar, ac);
-            let rhs =
-                MatRef::from_row_major_slice(&other.data[r * br * bc..(r + 1) * br * bc], br, bc);
-            let lhs = if transpose_left { lhs.transpose() } else { lhs };
-            let rhs = if transpose_right {
-                rhs.transpose()
-            } else {
-                rhs
-            };
-            let product = lhs * rhs;
-            for row in 0..m {
-                for col in 0..n {
-                    out[row * n + col] = product[(row, col)];
-                }
-            }
+            matmul_into(
+                &self.data[l * ar * ac..(l + 1) * ar * ac],
+                (ar, ac, transpose_left),
+                &other.data[r * br * bc..(r + 1) * br * bc],
+                (br, bc, transpose_right),
+                out,
+                (m, k, n),
+            );
         }
         let mut out_shape = batch;
         out_shape.extend([m, n]);
@@ -94,8 +89,12 @@ impl DoubleTensor {
     /// triangle of the input is read.
     pub fn cholesky(&self) -> Result<Self> {
         let n = self.square_dims("cholesky")?;
-        let mut data = vec![0.0; self.len()];
+        let mut data: Storage<f64> = smallvec::smallvec![0.0; self.len()];
         for (input, out) in self.data.chunks(n * n).zip(data.chunks_mut(n * n)) {
+            if n <= SMALL_CHOLESKY {
+                cholesky_lower_into(input, n, out)?;
+                continue;
+            }
             let llt = MatRef::from_row_major_slice(input, n, n)
                 .llt(Side::Lower)
                 .map_err(|_| TensorError::NotPositiveDefinite)?;
@@ -113,10 +112,10 @@ impl DoubleTensor {
     /// triangle of the input is read. The result is the full symmetric inverse.
     pub fn cholesky_inverse(&self) -> Result<Self> {
         let n = self.square_dims("cholesky_inverse")?;
-        let mut data = vec![0.0; self.len()];
+        let mut data: Storage<f64> = smallvec::smallvec![0.0; self.len()];
         for (l, out) in self.data.chunks(n * n).zip(data.chunks_mut(n * n)) {
             // inverse of L by forward substitution
-            let mut l_inv = vec![0.0; n * n];
+            let mut l_inv: Scratch = smallvec::smallvec![0.0; n * n];
             for j in 0..n {
                 let diagonal = l[j * n + j];
                 if diagonal == 0.0 {
@@ -143,7 +142,7 @@ impl DoubleTensor {
     /// Inverse of each square matrix. A matrix with an exactly zero pivot is singular, which is an error.
     pub fn inverse(&self) -> Result<Self> {
         let n = self.square_dims("inverse")?;
-        let mut data = vec![0.0; self.len()];
+        let mut data: Storage<f64> = smallvec::smallvec![0.0; self.len()];
         for (input, out) in self.data.chunks(n * n).zip(data.chunks_mut(n * n)) {
             let lu = Lu::factor(input, n);
             if lu.singular {
@@ -158,14 +157,11 @@ impl DoubleTensor {
     pub fn determinant(&self) -> Result<Self> {
         let n = self.square_dims("determinant")?;
         let batch: Shape = self.batch_shape().into();
-        let data = self
+        let data: Storage<f64> = self
             .data
             .chunks(n * n)
             .take(shape::length(&batch))
-            .map(|input| {
-                let lu = Lu::factor(input, n);
-                if lu.singular { 0.0 } else { lu.determinant() }
-            })
+            .map(|input| lu_determinant(input, n))
             .collect();
         Ok(Tensor::from_parts(batch, data))
     }
@@ -220,51 +216,73 @@ impl DoubleTensor {
     }
 }
 
+/// Factors `lu` (row-major n × n) in place into L and U with partial pivoting, P A = L U, recording the row
+/// swapped with row k at step k in `pivots`. Returns whether a pivot was exactly zero (the matrix is singular).
+fn lu_in_place(lu: &mut [f64], n: usize, pivots: &mut [usize]) -> bool {
+    let mut singular = false;
+    for k in 0..n {
+        let mut pivot = k;
+        let mut largest = lu[k * n + k].abs();
+        for i in k + 1..n {
+            let candidate = lu[i * n + k].abs();
+            if candidate > largest {
+                largest = candidate;
+                pivot = i;
+            }
+        }
+        pivots[k] = pivot;
+        if pivot != k {
+            for j in 0..n {
+                lu.swap(k * n + j, pivot * n + j);
+            }
+        }
+        let ukk = lu[k * n + k];
+        if ukk == 0.0 {
+            singular = true;
+            continue;
+        }
+        // eliminate below the pivot, row by row (slices avoid bounds checks in the inner loop)
+        let (above, below) = lu.split_at_mut((k + 1) * n);
+        let pivot_row = &above[k * n + k + 1..(k + 1) * n];
+        for row in below.chunks_exact_mut(n) {
+            let factor = row[k] / ukk;
+            row[k] = factor;
+            if factor != 0.0 {
+                for (a, &p) in row[k + 1..].iter_mut().zip(pivot_row) {
+                    *a -= factor * p;
+                }
+            }
+        }
+    }
+    singular
+}
+
+/// The determinant of one row-major n × n matrix by LU factorisation (0 if a pivot is exactly zero).
+fn lu_determinant(matrix: &[f64], n: usize) -> f64 {
+    let mut lu: Scratch = Scratch::from_slice(matrix);
+    let mut pivots: smallvec::SmallVec<[usize; 8]> = smallvec::smallvec![0; n];
+    if lu_in_place(&mut lu, n, &mut pivots) {
+        return 0.0;
+    }
+    let swaps = pivots.iter().enumerate().filter(|&(i, &p)| i != p).count();
+    let sign = if swaps % 2 == 0 { 1.0 } else { -1.0 };
+    sign * (0..n).map(|i| lu[i * n + i]).product::<f64>()
+}
+
 /// LU factorisation with partial pivoting, P A = L U, on one row-major n × n matrix.
 struct Lu {
     n: usize,
-    lu: Vec<f64>,
+    lu: Scratch,
     /// row i was swapped with row pivots[i] at step i
-    pivots: Vec<usize>,
+    pivots: smallvec::SmallVec<[usize; 8]>,
     singular: bool,
 }
 
 impl Lu {
     fn factor(matrix: &[f64], n: usize) -> Self {
-        let mut lu = matrix.to_vec();
-        let mut pivots = vec![0; n];
-        let mut singular = false;
-        for k in 0..n {
-            let mut pivot = k;
-            let mut largest = lu[k * n + k].abs();
-            for i in k + 1..n {
-                let candidate = lu[i * n + k].abs();
-                if candidate > largest {
-                    largest = candidate;
-                    pivot = i;
-                }
-            }
-            pivots[k] = pivot;
-            if pivot != k {
-                for j in 0..n {
-                    lu.swap(k * n + j, pivot * n + j);
-                }
-            }
-            let ukk = lu[k * n + k];
-            if ukk == 0.0 {
-                singular = true;
-                continue;
-            }
-            for i in k + 1..n {
-                let factor = lu[i * n + k] / ukk;
-                lu[i * n + k] = factor;
-                if factor != 0.0 {
-                    for j in k + 1..n {
-                        lu[i * n + j] -= factor * lu[k * n + j];
-                    }
-                }
-            }
-        }
+        let mut lu: Scratch = Scratch::from_slice(matrix);
+        let mut pivots: smallvec::SmallVec<[usize; 8]> = smallvec::smallvec![0; n];
+        let singular = lu_in_place(&mut lu, n, &mut pivots);
         Self {
             n,
             lu,
@@ -273,21 +291,11 @@ impl Lu {
         }
     }
 
-    fn determinant(&self) -> f64 {
-        let n = self.n;
-        let swaps = self
-            .pivots
-            .iter()
-            .enumerate()
-            .filter(|&(i, &p)| i != p)
-            .count();
-        let sign = if swaps % 2 == 0 { 1.0 } else { -1.0 };
-        sign * (0..n).map(|i| self.lu[i * n + i]).product::<f64>()
-    }
-
     fn inverse_into(&self, out: &mut [f64]) {
         let n = self.n;
-        let mut column = vec![0.0; n];
+        let lu: &[f64] = &self.lu;
+        let mut column_storage: smallvec::SmallVec<[f64; 8]> = smallvec::smallvec![0.0; n];
+        let column: &mut [f64] = &mut column_storage;
         for c in 0..n {
             column.iter_mut().for_each(|x| *x = 0.0);
             column[c] = 1.0;
@@ -295,7 +303,7 @@ impl Lu {
                 column.swap(k, p);
             }
             for i in 0..n {
-                let row = &self.lu[i * n..i * n + i];
+                let row = &lu[i * n..i * n + i];
                 let sum = row
                     .iter()
                     .zip(&column[..i])
@@ -303,16 +311,98 @@ impl Lu {
                 column[i] = sum;
             }
             for i in (0..n).rev() {
-                let row = &self.lu[i * n + i + 1..(i + 1) * n];
+                let row = &lu[i * n + i + 1..(i + 1) * n];
                 let sum = row
                     .iter()
                     .zip(&column[i + 1..])
                     .fold(column[i], |sum, (u, x)| sum - u * x);
-                column[i] = sum / self.lu[i * n + i];
+                column[i] = sum / lu[i * n + i];
             }
             for r in 0..n {
                 out[r * n + c] = column[r];
             }
         }
     }
+}
+
+/// Below this many multiply-adds a matrix product uses a plain loop: faer's dispatch (and its thread pool) costs
+/// more than the arithmetic for the small matrices typical of models.
+const SMALL_MATMUL: usize = 32 * 32 * 32;
+/// Below this many multiply-adds faer runs sequentially; above it, on its global (rayon) parallelism.
+const SEQUENTIAL_MATMUL: usize = 256 * 256 * 256;
+/// Up to this size Cholesky uses a direct loop rather than faer.
+const SMALL_CHOLESKY: usize = 64;
+
+/// out[m × n] = op(A) op(B), row-major, where op optionally transposes. `a` is (rows, cols, transposed) of A as
+/// stored, and similarly for `b`.
+fn matmul_into(
+    a: &[f64],
+    (ar, ac, ta): (usize, usize, bool),
+    b: &[f64],
+    (br, bc, tb): (usize, usize, bool),
+    out: &mut [f64],
+    (m, k, n): (usize, usize, usize),
+) {
+    let work = m * n * k;
+    if work <= SMALL_MATMUL {
+        out.iter_mut().for_each(|x| *x = 0.0);
+        let a_at = |i: usize, p: usize| if ta { a[p * ac + i] } else { a[i * ac + p] };
+        for i in 0..m {
+            let row = &mut out[i * n..(i + 1) * n];
+            for p in 0..k {
+                let aip = a_at(i, p);
+                if tb {
+                    for (j, o) in row.iter_mut().enumerate() {
+                        *o += aip * b[j * bc + p];
+                    }
+                } else {
+                    let b_row = &b[p * bc..(p + 1) * bc];
+                    for (o, &bpj) in row.iter_mut().zip(b_row) {
+                        *o += aip * bpj;
+                    }
+                }
+            }
+        }
+        return;
+    }
+    let lhs = MatRef::from_row_major_slice(a, ar, ac);
+    let rhs = MatRef::from_row_major_slice(b, br, bc);
+    let lhs = if ta { lhs.transpose() } else { lhs };
+    let rhs = if tb { rhs.transpose() } else { rhs };
+    let par = if work <= SEQUENTIAL_MATMUL {
+        faer::Par::Seq
+    } else {
+        faer::get_global_parallelism()
+    };
+    faer::linalg::matmul::matmul(
+        faer::MatMut::from_row_major_slice_mut(out, m, n),
+        faer::Accum::Replace,
+        lhs,
+        rhs,
+        1.0,
+        par,
+    );
+}
+
+/// Lower Cholesky factor of one n × n matrix (reading only its lower triangle) into `out`, which must be zeroed.
+fn cholesky_lower_into(a: &[f64], n: usize, out: &mut [f64]) -> Result<()> {
+    for j in 0..n {
+        let row_j = j * n;
+        let diagonal = a[row_j + j] - out[row_j..row_j + j].iter().map(|l| l * l).sum::<f64>();
+        if diagonal.is_nan() || diagonal <= 0.0 {
+            return Err(TensorError::NotPositiveDefinite);
+        }
+        let ljj = diagonal.sqrt();
+        out[row_j + j] = ljj;
+        for i in j + 1..n {
+            let row_i = i * n;
+            let dot: f64 = out[row_i..row_i + j]
+                .iter()
+                .zip(&out[row_j..row_j + j])
+                .map(|(x, y)| x * y)
+                .sum();
+            out[row_i + j] = (a[row_i + j] - dot) / ljj;
+        }
+    }
+    Ok(())
 }

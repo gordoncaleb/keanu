@@ -168,72 +168,177 @@ impl ConjugateGradient {
 }
 
 const GOLDEN: f64 = std::f64::consts::GOLDEN_RATIO;
+/// Relative precision of the step found by the line search (that of a typical line search for nonlinear CG:
+/// finer precision costs evaluations without improving the optimum the outer iteration converges to).
+const LINE_SEARCH_TOLERANCE: f64 = 1e-8;
 
-/// Finds the step α >= 0 that maximizes φ(α): grows a bracket from a small initial step until φ falls, then
-/// narrows it with golden section search.
+/// Finds the step α >= 0 that maximizes φ(α): grows a bracket from a small initial step (with parabolic
+/// extrapolation) until φ falls, then narrows it with Brent's method (parabolic interpolation, falling back to
+/// golden section steps).
 fn line_search(
     mut phi: impl FnMut(f64, &mut State) -> Result<f64>,
     state: &mut State,
 ) -> Result<f64> {
-    let f0 = phi(0.0, state)?;
+    // work with h(α) = -φ(α), minimised
+    let mut h = |alpha: f64, s: &mut State| -> Result<f64> { Ok(-phi(alpha, s)?) };
+    let h0 = h(0.0, state)?;
 
-    // bracket: find a < b < c with φ(b) >= φ(a) and φ(b) >= φ(c)
-    let (mut a, mut fa) = (0.0, f0);
+    // bracket: a < b < c with h(b) <= h(a) and h(b) <= h(c)
+    let (mut a, mut ha) = (0.0, h0);
     let mut b = 1e-8;
-    let mut fb = phi(b, state)?;
-    if fb < fa {
-        // even a tiny step decreases φ: shrink towards zero
+    let mut hb = h(b, state)?;
+    if hb > ha {
+        // even a tiny step makes things worse: shrink towards zero
         for _ in 0..60 {
             b *= 0.1;
-            fb = phi(b, state)?;
-            if fb >= fa {
+            hb = h(b, state)?;
+            if hb <= ha {
                 break;
             }
         }
-        if fb < fa {
+        if hb > ha {
             return Ok(0.0);
         }
     }
     let mut c = b + GOLDEN * (b - a);
-    let mut fc = phi(c, state)?;
+    let mut hc = h(c, state)?;
     let mut expansions = 0;
-    while fc > fb && expansions < 200 {
+    while hc < hb && expansions < 200 {
+        // parabolic extrapolation through (a, b, c), limited to 100 × the current step
+        let r = (b - a) * (hb - hc);
+        let q = (b - c) * (hb - ha);
+        let denominator = 2.0 * (q - r);
+        let limit = b + 100.0 * (c - b);
+        let mut u = if denominator.abs() > 1e-300 {
+            b - ((b - c) * q - (b - a) * r) / denominator
+        } else {
+            c + GOLDEN * (c - b)
+        };
+        let mut hu;
+        if (b - u) * (u - c) > 0.0 {
+            // u between b and c
+            hu = h(u, state)?;
+            if hu < hc {
+                a = b;
+                ha = hb;
+                b = u;
+                hb = hu;
+                break;
+            } else if hu > hb {
+                c = u;
+                break;
+            }
+            u = c + GOLDEN * (c - b);
+            hu = h(u, state)?;
+        } else if (c - u) * (u - limit) > 0.0 {
+            // u between c and the limit
+            hu = h(u, state)?;
+            if hu < hc {
+                b = c;
+                hb = hc;
+                c = u;
+                hc = hu;
+                u = c + GOLDEN * (c - b);
+                hu = h(u, state)?;
+            }
+        } else if (u - limit) * (limit - c) >= 0.0 {
+            u = limit;
+            hu = h(u, state)?;
+        } else {
+            u = c + GOLDEN * (c - b);
+            hu = h(u, state)?;
+        }
         a = b;
-        fa = fb;
+        ha = hb;
         b = c;
-        fb = fc;
-        c = b + GOLDEN * (b - a);
-        fc = phi(c, state)?;
+        hb = hc;
+        c = u;
+        hc = hu;
         expansions += 1;
     }
-    let _ = fa;
+    let _ = ha;
+    let (lo, hi) = if a < c { (a, c) } else { (c, a) };
+    let (best, h_best) = brent_minimize(&mut h, state, lo, hi, b, hb)?;
+    // never return a step worse than the bracket's middle point
+    Ok(if h_best <= hb { best } else { b })
+}
 
-    // golden section search on [a, c]
+/// Brent's method: minimises h on [lo, hi] given an interior point `x` with value `hx`, to a relative precision
+/// of `LINE_SEARCH_TOLERANCE`. Returns the best point and its value.
+fn brent_minimize(
+    h: &mut impl FnMut(f64, &mut State) -> Result<f64>,
+    state: &mut State,
+    mut lo: f64,
+    mut hi: f64,
+    x: f64,
+    hx: f64,
+) -> Result<(f64, f64)> {
     let ratio = 2.0 - GOLDEN; // 0.381966...
-    let (mut lo, mut hi) = (a, c);
-    let mut x1 = lo + ratio * (hi - lo);
-    let mut x2 = hi - ratio * (hi - lo);
-    let mut f1 = phi(x1, state)?;
-    let mut f2 = phi(x2, state)?;
+    let (mut x, mut w, mut v) = (x, x, x);
+    let (mut fx, mut fw, mut fv) = (hx, hx, hx);
+    let mut d: f64 = 0.0;
+    let mut e: f64 = 0.0;
     for _ in 0..200 {
-        if (hi - lo).abs() <= 1e-10 * (x1.abs() + x2.abs()) + 1e-300 {
+        let middle = 0.5 * (lo + hi);
+        let tol1 = LINE_SEARCH_TOLERANCE * x.abs() + 1e-300;
+        let tol2 = 2.0 * tol1;
+        if (x - middle).abs() <= tol2 - 0.5 * (hi - lo) {
             break;
         }
-        if f1 >= f2 {
-            hi = x2;
-            x2 = x1;
-            f2 = f1;
-            x1 = lo + ratio * (hi - lo);
-            f1 = phi(x1, state)?;
+        let mut golden = true;
+        if e.abs() > tol1 {
+            // try a parabola through x, w, v
+            let r = (x - w) * (fx - fv);
+            let mut q = (x - v) * (fx - fw);
+            let mut p = (x - v) * q - (x - w) * r;
+            q = 2.0 * (q - r);
+            if q > 0.0 {
+                p = -p;
+            }
+            q = q.abs();
+            let previous_e = e;
+            if p.abs() < (0.5 * q * previous_e).abs() && p > q * (lo - x) && p < q * (hi - x) {
+                e = d;
+                d = p / q;
+                let u = x + d;
+                if u - lo < tol2 || hi - u < tol2 {
+                    d = if middle >= x { tol1 } else { -tol1 };
+                }
+                golden = false;
+            }
+        }
+        if golden {
+            e = if x >= middle { lo - x } else { hi - x };
+            d = ratio * e;
+        }
+        let u = if d.abs() >= tol1 {
+            x + d
         } else {
-            lo = x1;
-            x1 = x2;
-            f1 = f2;
-            x2 = hi - ratio * (hi - lo);
-            f2 = phi(x2, state)?;
+            x + tol1.copysign(d)
+        };
+        let fu = h(u, state)?;
+        if fu <= fx {
+            if u >= x {
+                lo = x;
+            } else {
+                hi = x;
+            }
+            (v, fv) = (w, fw);
+            (w, fw) = (x, fx);
+            (x, fx) = (u, fu);
+        } else {
+            if u < x {
+                lo = u;
+            } else {
+                hi = u;
+            }
+            if fu <= fw || w == x {
+                (v, fv) = (w, fw);
+                (w, fw) = (u, fu);
+            } else if fu <= fv || v == x || v == w {
+                (v, fv) = (u, fu);
+            }
         }
     }
-    let best = if f1 >= f2 { x1 } else { x2 };
-    // never return a step worse than the bracket's middle point
-    Ok(if phi(best, state)? >= fb { best } else { b })
+    Ok((x, fx))
 }

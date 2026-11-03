@@ -25,7 +25,7 @@
 //! Choosing the interpolation point to drop and the geometry-improving step (PRIMA's `geometry.f90` for BOBYQA).
 
 use super::common::{calden, hess_mul};
-use super::linalg::{Mat, dot, fmax, fmin, maxloc, norm, sign, sum_abs};
+use super::linalg::{Mat, Vector, dot, fmax, fmin, maxloc, norm, sign, sum_abs};
 
 fn distsq_from(xpt: &Mat, centre: &[f64]) -> Vec<f64> {
     (0..xpt.cols)
@@ -52,7 +52,7 @@ pub(crate) fn setdrop_tr(
 ) -> Option<usize> {
     let n = xpt.rows;
     let distsq = if ximproved {
-        let centre: Vec<f64> = (0..n).map(|i| xpt[(i, kopt)] + d[i]).collect();
+        let centre: Vector = (0..n).map(|i| xpt[(i, kopt)] + d[i]).collect();
         distsq_from(xpt, &centre)
     } else {
         distsq_from(xpt, xpt.col(kopt))
@@ -97,7 +97,7 @@ pub(crate) fn geostep(
     let n = xpt.rows;
     let npt = xpt.cols;
     let fallback = |xpt: &Mat, xopt: &[f64]| -> Vec<f64> {
-        let d: Vec<f64> = (0..n).map(|i| xpt[(i, knew)] - xopt[i]).collect();
+        let d: Vector = (0..n).map(|i| xpt[(i, knew)] - xopt[i]).collect();
         let scale = fmin(0.5, delbar / norm(&d));
         d.iter().map(|v| scale * v).collect()
     };
@@ -129,7 +129,7 @@ pub(crate) fn geostep(
         let mut ilbd = 0i64;
         let mut iubd = 0i64;
         let sumin = fmin(1.0, subd);
-        let xdiff: Vec<f64> = (0..n).map(|i| xpt[(i, k)] - xopt[i]).collect();
+        let xdiff: Vector = (0..n).map(|i| xpt[(i, k)] - xopt[i]).collect();
         let mut lfrac: Vec<f64> = xdiff.iter().map(|&x| sign(subd, -x)).collect();
         let mut ufrac: Vec<f64> = xdiff.iter().map(|&x| sign(subd, x)).collect();
         for i in 0..n {
@@ -315,10 +315,10 @@ pub(crate) fn geostep(
             vlagsq_cauchy = vlagsq;
         }
     }
-    let s: Vec<f64> = (0..n).map(|i| xcauchy[i] - xopt[i]).collect();
+    let s: Vector = (0..n).map(|i| xcauchy[i] - xopt[i]).collect();
     let den_cauchy = calden(kopt, bmat, &s, xpt, zmat);
     if den_cauchy[knew] > fmax(den_line[knew], 0.0) || den_line[knew].is_nan() {
-        d = s;
+        d = s.into_vec();
     }
     if sum_abs(&d) <= 0.0 || !sum_abs(&d).is_finite() {
         d = fallback(xpt, &xopt);

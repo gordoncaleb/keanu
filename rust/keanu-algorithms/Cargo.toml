@@ -12,6 +12,7 @@ publish.workspace = true
 keanu-tensor = { path = "../keanu-tensor" }
 keanu-distributions = { path = "../keanu-distributions" }
 keanu-graph = { path = "../keanu-graph" }
+smallvec = { version = "1", features = ["union"] }
 rayon = { version = "1", optional = true }
 
 [features]

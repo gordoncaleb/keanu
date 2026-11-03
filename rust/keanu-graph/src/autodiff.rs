@@ -23,6 +23,7 @@ use crate::op::{BinaryOp, Op, ReduceOp, ScanOp, UnaryOp, eval};
 use crate::state::State;
 use crate::value::{DType, Value};
 use keanu_tensor::{DoubleTensor, special};
+use smallvec::SmallVec;
 use std::collections::HashMap;
 
 /// Partial derivatives keyed by node: each shaped `[of shape..., wrt shape...]`.
@@ -148,7 +149,7 @@ pub fn forward_partials(
             .parents
             .iter()
             .map(|&p| value(state, p))
-            .collect::<Result<Vec<_>>>()?;
+            .collect::<Result<SmallVec<[&Value; 4]>>>()?;
         let out = value(state, id)?;
         tangents[i] = jvp(node, &parent_values, out, &parent_tangents, n)?;
     }
@@ -227,19 +228,25 @@ pub fn reverse_partials_from(
 
     let mut cotangents: Vec<Option<DoubleTensor>> = vec![None; of.0 + 1];
     cotangents[of.0] = Some(upstream.reshape(&batched(b, &of_shape))?);
+    let mut is_wrt = vec![false; of.0 + 1];
+    for &w in wrt {
+        if w.0 <= of.0 {
+            is_wrt[w.0] = true;
+        }
+    }
 
     for i in (0..=of.0).rev() {
         let id = NodeId(i);
         let Some(cotangent) = cotangents[i].take() else {
             continue;
         };
-        if wrt.contains(&id) {
+        if is_wrt[i] {
             let shape: Vec<isize> = outer
                 .iter()
                 .chain(graph.node(id).shape.iter())
                 .map(|&d| d as isize)
                 .collect();
-            result.partials.insert(id, cotangent.reshape(&shape)?);
+            result.partials.insert(id, cotangent.into_reshape(&shape)?);
             continue;
         }
         let node = graph.node(id);
@@ -250,9 +257,17 @@ pub fn reverse_partials_from(
             .parents
             .iter()
             .map(|&p| value(state, p))
-            .collect::<Result<Vec<_>>>()?;
+            .collect::<Result<SmallVec<[&Value; 4]>>>()?;
         let out = value(state, id)?;
-        let contributions = vjp(node, &parent_values, out, &cotangent, b)?;
+        let contributions: SmallVec<[Option<DoubleTensor>; 4]> = match (b == 1)
+            .then(|| scalar_vjp(node, &parent_values, out, &cotangent))
+            .flatten()
+        {
+            Some(fast) => fast,
+            None => vjp(node, &parent_values, out, &cotangent, b)?
+                .into_iter()
+                .collect(),
+        };
         for (&parent, contribution) in node.parents.iter().zip(contributions) {
             let Some(c) = contribution else { continue };
             if !is_differentiable(graph, parent) {
@@ -267,10 +282,75 @@ pub fn reverse_partials_from(
     Ok(result)
 }
 
+/// Reverse mode from several scalar-valued seeds at once: each seed is ∂f/∂node for one node (shaped like that
+/// node), and the result is ∂f/∂w for every node w in `wrt` reachable from a seed, shaped like w. Equivalent to
+/// summing [`reverse_partials_from`] over the seeds, but with a single sweep over the graph.
+pub(crate) fn reverse_from_seeds(
+    graph: &Graph,
+    state: &State,
+    seeds: impl IntoIterator<Item = (NodeId, DoubleTensor)>,
+    is_wrt: &[bool],
+    mut emit: impl FnMut(NodeId, DoubleTensor) -> Result<()>,
+) -> Result<()> {
+    let seeds: SmallVec<[(NodeId, DoubleTensor); 8]> = seeds.into_iter().collect();
+    let Some(top) = seeds.iter().map(|(id, _)| id.0).max() else {
+        return Ok(());
+    };
+    let mut cotangents: SmallVec<[Option<DoubleTensor>; 8]> = smallvec::smallvec![None; top + 1];
+    for (id, seed) in seeds {
+        let seed = seed.into_reshape(&batched(1, &graph.node(id).shape))?;
+        cotangents[id.0] = Some(match cotangents[id.0].take() {
+            Some(existing) => existing.add(&seed)?,
+            None => seed,
+        });
+    }
+    for i in (0..=top).rev() {
+        let id = NodeId(i);
+        let Some(cotangent) = cotangents[i].take() else {
+            continue;
+        };
+        if is_wrt.get(i).copied().unwrap_or(false) {
+            let shape: Dims = graph.node(id).shape.iter().map(|&d| d as isize).collect();
+            emit(id, cotangent.into_reshape(&shape)?)?;
+            continue;
+        }
+        let node = graph.node(id);
+        if node.is_probabilistic() || !is_differentiable(graph, id) {
+            continue;
+        }
+        let parent_values = node
+            .parents
+            .iter()
+            .map(|&p| value(state, p))
+            .collect::<Result<SmallVec<[&Value; 4]>>>()?;
+        let out = value(state, id)?;
+        let contributions = match scalar_vjp(node, &parent_values, out, &cotangent) {
+            Some(fast) => fast,
+            None => vjp(node, &parent_values, out, &cotangent, 1)?
+                .into_iter()
+                .collect(),
+        };
+        for (&parent, contribution) in node.parents.iter().zip(contributions) {
+            let Some(c) = contribution else { continue };
+            if !is_differentiable(graph, parent) {
+                continue;
+            }
+            cotangents[parent.0] = Some(match cotangents[parent.0].take() {
+                Some(existing) => existing.add(&c)?,
+                None => c,
+            });
+        }
+    }
+    Ok(())
+}
+
 // ---------------------------------------------------------------------------------------------------------------
 // helpers on batched tensors [B, shape...]
 
-fn batched(b: usize, shape: &[usize]) -> Vec<isize> {
+/// A small list of dimensions, inline for the ranks typical of models.
+type Dims = SmallVec<[isize; 6]>;
+
+fn batched(b: usize, shape: &[usize]) -> Dims {
     std::iter::once(b)
         .chain(shape.iter().copied())
         .map(|d| d as isize)
@@ -590,6 +670,113 @@ fn binary_derivatives(
             )));
         }
     })
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// scalar fast path: unary and binary ops whose operands and output are single f64 values (most nodes of typical
+// models). The formulas are exactly those of `unary_derivative` / `binary_derivatives` (which multiply by a tensor
+// of ones, an exact operation), so results are bit-for-bit the same as the tensor path.
+
+fn sign_of(x: f64) -> f64 {
+    if x > 0.0 {
+        1.0
+    } else if x < 0.0 {
+        -1.0
+    } else {
+        x
+    }
+}
+
+/// d y / d x for a unary op at x with y = op(x), or None if the op isn't differentiable.
+fn unary_derivative_scalar(u: UnaryOp, x: f64, y: f64) -> Option<f64> {
+    use std::f64::consts::{LN_2, LN_10};
+    Some(match u {
+        UnaryOp::Abs => sign_of(x),
+        UnaryOp::Neg => -1.0,
+        UnaryOp::Reciprocal => -y * y,
+        UnaryOp::Exp => y,
+        UnaryOp::Exp2 => y * LN_2,
+        UnaryOp::ExpM1 => y + 1.0,
+        UnaryOp::Ln => 1.0 / x,
+        UnaryOp::Ln1p => 1.0 / (1.0 + x),
+        UnaryOp::Log2 => 1.0 / (x * LN_2),
+        UnaryOp::Log10 => 1.0 / (x * LN_10),
+        UnaryOp::Sqrt => 0.5 / y,
+        UnaryOp::Sin => x.cos(),
+        UnaryOp::Cos => -x.sin(),
+        UnaryOp::Tan => 1.0 / (x.cos() * x.cos()),
+        UnaryOp::Asin => 1.0 / (1.0 - x * x).sqrt(),
+        UnaryOp::Acos => -1.0 / (1.0 - x * x).sqrt(),
+        UnaryOp::Atan => 1.0 / (1.0 + x * x),
+        UnaryOp::Sinh => x.cosh(),
+        UnaryOp::Cosh => x.sinh(),
+        UnaryOp::Tanh => 1.0 - y * y,
+        UnaryOp::Asinh => 1.0 / (x * x + 1.0).sqrt(),
+        UnaryOp::Acosh => 1.0 / (x * x - 1.0).sqrt(),
+        UnaryOp::Atanh => 1.0 / (1.0 - x * x),
+        UnaryOp::Sigmoid => y * (1.0 - y),
+        UnaryOp::LnGamma => special::digamma(x),
+        UnaryOp::Digamma => special::trigamma(x),
+        UnaryOp::Trigamma => special::tetragamma(x),
+        _ => return None,
+    })
+}
+
+/// (d y / d l, d y / d r) for a binary op at (l, r) with y = op(l, r), or None if it isn't differentiable.
+fn binary_derivatives_scalar(op: BinaryOp, l: f64, r: f64, y: f64) -> Option<(f64, f64)> {
+    Some(match op {
+        BinaryOp::Add => (1.0, 1.0),
+        BinaryOp::Sub => (1.0, -1.0),
+        BinaryOp::Mul => (r, l),
+        BinaryOp::Div => (1.0 / r, -l / (r * r)),
+        BinaryOp::Pow => (r * l.powf(r - 1.0), l.ln() * y),
+        BinaryOp::Max => {
+            let m = f64::from(u8::from(l >= r));
+            (m, 1.0 - m)
+        }
+        BinaryOp::Min => {
+            let m = f64::from(u8::from(l <= r));
+            (m, 1.0 - m)
+        }
+        BinaryOp::Atan2 => (-r / (l * l + r * r), l / (l * l + r * r)),
+        BinaryOp::LogAddExp => ((l - y).exp(), (r - y).exp()),
+        BinaryOp::LogAddExp2 => ((l - y).exp2(), (r - y).exp2()),
+        BinaryOp::SafeLnTimes => (r / l, if r == 0.0 { f64::NAN } else { l.ln() }),
+        _ => return None,
+    })
+}
+
+/// The scalar fast path of `vjp` for a cotangent of one element: contributions shaped [1] (a batch of one
+/// scalar), or None when the node isn't a scalar unary/binary op over scalar f64 parents.
+fn scalar_vjp(
+    node: &Node,
+    parents: &[&Value],
+    out: &Value,
+    g: &DoubleTensor,
+) -> Option<SmallVec<[Option<DoubleTensor>; 4]>> {
+    if g.len() != 1 || !node.shape.is_empty() {
+        return None;
+    }
+    let scalar = |v: &Value| match v {
+        Value::F64(t) if t.rank() == 0 => Some(t.as_slice()[0]),
+        _ => None,
+    };
+    let one = |v: f64| Some(DoubleTensor::from_fn(&[1], |_| v));
+    let g = g.as_slice()[0];
+    let y = scalar(out)?;
+    match &node.op {
+        Op::Unary(u) => {
+            let x = scalar(parents[0])?;
+            let d = unary_derivative_scalar(*u, x, y)?;
+            Some(smallvec::smallvec![one(g * d)])
+        }
+        Op::Binary(b) => {
+            let (l, r) = (scalar(parents[0])?, scalar(parents[1])?);
+            let (dl, dr) = binary_derivatives_scalar(*b, l, r, y)?;
+            Some(smallvec::smallvec![one(g * dl), one(g * dr)])
+        }
+        _ => None,
+    }
 }
 
 // ---------------------------------------------------------------------------------------------------------------

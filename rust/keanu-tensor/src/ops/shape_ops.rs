@@ -5,8 +5,19 @@ use crate::shape::{self, Shape};
 use crate::tensor::{Element, Tensor};
 
 impl<T: Element> Tensor<T> {
+    /// As [`reshape`](Self::reshape), but consumes the tensor so its data is moved rather than copied.
+    pub fn into_reshape(self, new_shape: &[isize]) -> Result<Self> {
+        let shape = self.reshape_target(new_shape)?;
+        Ok(Tensor::from_parts(shape, self.data))
+    }
+
     /// Reshapes to a new shape with the same length. At most one dimension may be -1, which is inferred.
     pub fn reshape(&self, new_shape: &[isize]) -> Result<Self> {
+        let shape = self.reshape_target(new_shape)?;
+        Ok(Tensor::from_parts(shape, self.data.clone()))
+    }
+
+    fn reshape_target(&self, new_shape: &[isize]) -> Result<Shape> {
         let invalid = || TensorError::InvalidReshape {
             from: self.shape.to_vec(),
             to: new_shape.to_vec(),
@@ -40,7 +51,7 @@ impl<T: Element> Tensor<T> {
         if shape::length(&resolved) != self.len() {
             return Err(invalid());
         }
-        Ok(Tensor::from_parts(resolved, self.data.clone()))
+        Ok(resolved)
     }
 
     /// Rearranges the dimensions: dimension `i` of the result is dimension `permutation[i]` of this tensor.

@@ -17,8 +17,12 @@ impl Element for bool {}
 #[derive(Clone, PartialEq)]
 pub struct Tensor<T: Element> {
     pub(crate) shape: Shape,
-    pub(crate) data: Vec<T>,
+    pub(crate) data: Storage<T>,
 }
+
+/// Element storage. Tensors with up to four elements (every scalar, and the small vectors typical of models) are
+/// stored inline, so creating them doesn't allocate.
+pub(crate) type Storage<T> = smallvec::SmallVec<[T; 4]>;
 
 /// A tensor of `f64`.
 pub type DoubleTensor = Tensor<f64>;
@@ -47,20 +51,30 @@ impl<T: Element> Tensor<T> {
         }
         Ok(Self {
             shape: Shape::from_slice(shape),
-            data,
+            data: Storage::from_vec(data),
         })
     }
 
-    pub(crate) fn from_parts(shape: Shape, data: Vec<T>) -> Self {
+    pub(crate) fn from_parts(shape: Shape, data: impl Into<Storage<T>>) -> Self {
+        let data = data.into();
         debug_assert_eq!(shape::length(&shape), data.len());
         Self { shape, data }
+    }
+
+    /// A tensor whose element at flat (row-major) index `i` is `f(i)`. Small tensors don't allocate.
+    pub fn from_fn(shape: &[usize], f: impl FnMut(usize) -> T) -> Self {
+        let n = shape::length(shape);
+        Self {
+            shape: Shape::from_slice(shape),
+            data: (0..n).map(f).collect(),
+        }
     }
 
     /// A rank 0 tensor holding one value.
     pub fn scalar(value: T) -> Self {
         Self {
             shape: Shape::new(),
-            data: vec![value],
+            data: smallvec::smallvec![value],
         }
     }
 
@@ -68,7 +82,7 @@ impl<T: Element> Tensor<T> {
     pub fn vector(data: Vec<T>) -> Self {
         Self {
             shape: Shape::from_slice(&[data.len()]),
-            data,
+            data: Storage::from_vec(data),
         }
     }
 
@@ -76,7 +90,7 @@ impl<T: Element> Tensor<T> {
     pub fn full(shape: &[usize], value: T) -> Self {
         Self {
             shape: Shape::from_slice(shape),
-            data: vec![value; shape::length(shape)],
+            data: smallvec::smallvec![value; shape::length(shape)],
         }
     }
 
@@ -112,7 +126,7 @@ impl<T: Element> Tensor<T> {
 
     /// The elements in row-major order.
     pub fn into_vec(self) -> Vec<T> {
-        self.data
+        self.data.into_vec()
     }
 
     /// The only element of a length one tensor.
@@ -215,15 +229,56 @@ pub(crate) fn broadcast_zip<A: Copy, B: Copy, C>(
     b_shape: &[usize],
     out: &[usize],
     f: impl Fn(A, B) -> C,
-) -> Vec<C> {
+) -> Storage<C> {
     let n = shape::length(out);
-    let mut data = Vec::with_capacity(n);
+    if n <= INLINE {
+        let mut data = Storage::new();
+        broadcast_zip_into(a, a_shape, b, b_shape, out, f, &mut data);
+        data
+    } else {
+        let mut data = Vec::with_capacity(n);
+        broadcast_zip_into(a, a_shape, b, b_shape, out, f, &mut data);
+        Storage::from_vec(data)
+    }
+}
+
+/// Number of elements stored inline in a tensor.
+const INLINE: usize = 4;
+
+/// An output buffer for the kernels: a `Vec` for large results (extending it is faster) or inline `Storage`
+/// for small ones (no allocation).
+trait Sink<T>: Extend<T> {
+    fn push_one(&mut self, value: T);
+}
+
+impl<T> Sink<T> for Vec<T> {
+    fn push_one(&mut self, value: T) {
+        self.push(value);
+    }
+}
+
+impl<T> Sink<T> for Storage<T> {
+    fn push_one(&mut self, value: T) {
+        self.push(value);
+    }
+}
+
+fn broadcast_zip_into<A: Copy, B: Copy, C>(
+    a: &[A],
+    a_shape: &[usize],
+    b: &[B],
+    b_shape: &[usize],
+    out: &[usize],
+    f: impl Fn(A, B) -> C,
+    data: &mut impl Sink<C>,
+) {
+    let n = shape::length(out);
     if n == 0 {
-        return data;
+        return;
     }
     if out.is_empty() {
-        data.push(f(a[0], b[0]));
-        return data;
+        data.push_one(f(a[0], b[0]));
+        return;
     }
     let sa = shape::broadcast_strides(a_shape, out);
     let sb = shape::broadcast_strides(b_shape, out);
@@ -266,20 +321,42 @@ pub(crate) fn broadcast_zip<A: Copy, B: Copy, C>(
             index[d] = 0;
         }
     }
-    data
 }
 
 /// Copies `src` read with arbitrary strides into a contiguous row-major buffer, with the last dimension as a
 /// tight inner loop.
-pub(crate) fn gather<T: Copy>(src: &[T], shape: &[usize], read: &[isize], offset: isize) -> Vec<T> {
+pub(crate) fn gather<T: Copy>(
+    src: &[T],
+    shape: &[usize],
+    read: &[isize],
+    offset: isize,
+) -> Storage<T> {
     let n = shape::length(shape);
-    let mut out = Vec::with_capacity(n);
+    if n <= INLINE {
+        let mut out = Storage::new();
+        gather_into(src, shape, read, offset, &mut out);
+        out
+    } else {
+        let mut out = Vec::with_capacity(n);
+        gather_into(src, shape, read, offset, &mut out);
+        Storage::from_vec(out)
+    }
+}
+
+fn gather_into<T: Copy>(
+    src: &[T],
+    shape: &[usize],
+    read: &[isize],
+    offset: isize,
+    out: &mut impl Sink<T>,
+) {
+    let n = shape::length(shape);
     if n == 0 {
-        return out;
+        return;
     }
     if shape.is_empty() {
-        out.push(src[offset as usize]);
-        return out;
+        out.push_one(src[offset as usize]);
+        return;
     }
     let rank = shape.len();
     let inner = shape[rank - 1];
@@ -290,11 +367,11 @@ pub(crate) fn gather<T: Copy>(src: &[T], shape: &[usize], read: &[isize], offset
     for _ in 0..shape::length(outer_shape) {
         if step == 1 {
             let start = position as usize;
-            out.extend_from_slice(&src[start..start + inner]);
+            out.extend(src[start..start + inner].iter().copied());
         } else {
             let mut p = position;
             for _ in 0..inner {
-                out.push(src[p as usize]);
+                out.push_one(src[p as usize]);
                 p += step;
             }
         }
@@ -308,7 +385,6 @@ pub(crate) fn gather<T: Copy>(src: &[T], shape: &[usize], read: &[isize], offset
             index[d] = 0;
         }
     }
-    out
 }
 
 /// Reduces over the dimensions marked in `reduce`, removing them (or keeping them with length 1 if `keep_dims`).
@@ -320,7 +396,7 @@ pub(crate) fn reduce<T: Copy, A: Copy>(
     keep_dims: bool,
     init: A,
     fold: impl Fn(A, T) -> A,
-) -> (Shape, Vec<A>) {
+) -> (Shape, Storage<A>) {
     let rank = shape.len();
     let kept_shape: Shape = (0..rank)
         .map(|i| if reduce[i] { 1 } else { shape[i] })
@@ -333,7 +409,7 @@ pub(crate) fn reduce<T: Copy, A: Copy>(
             .map(|i| shape[i])
             .collect()
     };
-    let mut out = vec![init; shape::length(&kept_shape)];
+    let mut out = smallvec::smallvec![init; shape::length(&kept_shape)];
     if data.is_empty() {
         return (out_shape, out);
     }
@@ -377,8 +453,8 @@ pub(crate) fn scan<T: Copy>(
     shape: &[usize],
     axis: usize,
     f: impl Fn(T, T) -> T,
-) -> Vec<T> {
-    let mut out = data.to_vec();
+) -> Storage<T> {
+    let mut out = Storage::from_slice(data);
     let stride = shape::row_major_strides(shape)[axis];
     let n = shape[axis];
     let block = stride * n;

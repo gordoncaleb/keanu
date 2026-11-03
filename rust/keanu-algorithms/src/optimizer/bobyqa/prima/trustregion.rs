@@ -26,7 +26,7 @@
 //! (PRIMA's `trustregion.f90` for BOBYQA).
 
 use super::common::{EPS, REALMAX, REALMIN, hess_mul, interval_max};
-use super::linalg::{Mat, fmax, fmin, minloc, sign};
+use super::linalg::{Mat, Vector, fmax, fmin, minloc, sign};
 
 fn free_dot(xbdi: &[i32], a: &[f64], b: &[f64]) -> f64 {
     xbdi.iter()
@@ -221,9 +221,9 @@ pub(crate) fn trsbox(
 
     let mut nactsav = nact as i64 - 1;
     let mut dredsq = 0.0;
-    let mut hdred = vec![0.0; n];
+    let mut hdred: Vector = smallvec::smallvec![0.0; n];
     for iter in 1..=maxiter {
-        let xnew: Vec<f64> = (0..n).map(|i| xopt[i] + d[i]).collect();
+        let xnew: Vector = (0..n).map(|i| xopt[i] + d[i]).collect();
         for i in 0..n {
             if xbdi[i] == 0 && xnew[i] >= su[i] {
                 xbdi[i] = 1;
@@ -240,7 +240,7 @@ pub(crate) fn trsbox(
         let dredg = free_dot(&xbdi, &d, &gnew);
         if iter == 1 || nact as i64 > nactsav {
             dredsq = free_sumsq(&xbdi, &d);
-            let dred: Vec<f64> = (0..n)
+            let dred: Vector = (0..n)
                 .map(|i| if xbdi[i] == 0 { d[i] } else { 0.0 })
                 .collect();
             hdred = hess_mul(&dred, xpt, &pq, Some(&hq));
@@ -352,14 +352,14 @@ pub(crate) fn trsbox(
             xnew[i] = su[i];
         }
     }
-    let d: Vec<f64> = (0..n).map(|i| xnew[i] - xopt[i]).collect();
+    let d: Vector = (0..n).map(|i| xnew[i] - xopt[i]).collect();
     if crvmin <= -REALMAX || crvmin.is_nan() {
         crvmin = 0.0;
     }
     if scaled && crvmin > 0.0 {
         crvmin /= modscal;
     }
-    (d, crvmin)
+    (d.into_vec(), crvmin)
 }
 
 fn interval_fun_trsbox(hangt: f64, args: &[f64; 5]) -> f64 {

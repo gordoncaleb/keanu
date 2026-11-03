@@ -42,3 +42,5 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
   are 0-based.
 - In `rescue`, the term W1'·(B1·W1 + B·W) is computed with W2 = WMV(NPT+1:NPT+N), as in Powell's original
   BOBYQA and the derivation in PRIMA's own comments. The ported revision uses WMV(1:N).
+- Temporary vectors in the linear algebra helpers and the main loops are stored inline (on the stack) for small
+  problems instead of being heap allocated. This is a performance change only; the arithmetic is unchanged.

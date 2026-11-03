@@ -839,6 +839,7 @@ dependencies = [
  "keanu-tensor",
  "rayon",
  "serde_json",
+ "smallvec",
 ]
 
 [[package]]

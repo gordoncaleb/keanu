@@ -27,6 +27,9 @@
 
 use std::ops::{Index, IndexMut};
 
+/// A temporary vector, inline for the small problems Keanu typically solves (Keanu change: avoids allocations).
+pub(crate) type Vector = smallvec::SmallVec<[f64; 16]>;
+
 /// A dense column-major matrix.
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct Mat {
@@ -56,7 +59,7 @@ impl Mat {
         self.col_mut(j).copy_from_slice(v);
     }
 
-    pub(crate) fn row(&self, i: usize) -> Vec<f64> {
+    pub(crate) fn row(&self, i: usize) -> Vector {
         (0..self.cols).map(|j| self[(i, j)]).collect()
     }
 
@@ -91,8 +94,8 @@ impl Mat {
     }
 
     /// self * v (length cols) -> length rows
-    pub(crate) fn mul_vec(&self, v: &[f64]) -> Vec<f64> {
-        let mut out = vec![0.0; self.rows];
+    pub(crate) fn mul_vec(&self, v: &[f64]) -> Vector {
+        let mut out: Vector = smallvec::smallvec![0.0; self.rows];
         for j in 0..self.cols {
             let vj = v[j];
             for (o, &a) in out.iter_mut().zip(self.col(j)) {
@@ -103,8 +106,8 @@ impl Mat {
     }
 
     /// Columns [0, ncols) of self times v (length ncols).
-    pub(crate) fn mul_vec_cols(&self, ncols: usize, v: &[f64]) -> Vec<f64> {
-        let mut out = vec![0.0; self.rows];
+    pub(crate) fn mul_vec_cols(&self, ncols: usize, v: &[f64]) -> Vector {
+        let mut out: Vector = smallvec::smallvec![0.0; self.rows];
         for (j, &vj) in v.iter().enumerate().take(ncols) {
             for (o, &a) in out.iter_mut().zip(self.col(j)) {
                 *o += a * vj;
@@ -114,12 +117,12 @@ impl Mat {
     }
 
     /// selfᵀ * v (length rows) -> length cols
-    pub(crate) fn tmul_vec(&self, v: &[f64]) -> Vec<f64> {
+    pub(crate) fn tmul_vec(&self, v: &[f64]) -> Vector {
         (0..self.cols).map(|j| dot(self.col(j), v)).collect()
     }
 
     /// Columns [0, ncols) of selfᵀ times v (length rows) -> length ncols
-    pub(crate) fn tmul_vec_cols(&self, ncols: usize, v: &[f64]) -> Vec<f64> {
+    pub(crate) fn tmul_vec_cols(&self, ncols: usize, v: &[f64]) -> Vector {
         (0..ncols).map(|j| dot(self.col(j), v)).collect()
     }
 

@@ -453,6 +453,13 @@ Intentional differences:
   - The module is named `regression` rather than `model`, which `keanu_graph::Model` already uses.
 
 ### Phase 7: Library hardening and first crates.io release
+
+**Status: step a (performance) done.** Rust is now at least as fast as Java on the model-level benchmarks: log prob
+and its gradient on every golden model, NUTS (1.2×), graph evaluation, the optimizers (conjugate gradient 1.9×,
+BOBYQA 1.1×, Adam 5×) and Metropolis–Hastings. The one exception is thermometers, which is level. Results are
+unchanged. The remaining gaps are tiny-tensor and tiny-matrix call overheads; see `rust/docs/benchmarks.md`. Still
+to do: the API review, docs, feature checks, MSRV and release checks.
+
 - Review the public API:
   - minimal surface, with crate internals marked `pub(crate)`
   - consistent naming
