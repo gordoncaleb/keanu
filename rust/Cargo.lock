@@ -639,6 +639,7 @@ dependencies = [
  "keanu-distributions",
  "keanu-parity",
  "keanu-tensor",
+ "serde_json",
  "smallvec",
 ]
 

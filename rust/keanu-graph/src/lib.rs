@@ -34,6 +34,7 @@ mod builder;
 mod distributions;
 mod error;
 mod graph;
+mod logprob;
 pub mod op;
 mod state;
 mod value;
@@ -45,6 +46,11 @@ pub use autodiff::{
 pub use builder::GraphBuilder;
 pub use error::{GraphError, Result};
 pub use graph::{Graph, Node, NodeId};
+pub use logprob::{
+    LogProbGradient, NodeLogProbGradient, joint_log_prob, joint_log_prob_gradient, log_likelihood,
+    log_likelihood_gradient, log_prior, log_prob, log_prob_gradient, node_log_prob,
+    node_log_prob_gradient,
+};
 pub use state::State;
 pub use value::{DType, Value};
 pub use vars::{BoolVar, DoubleVar, IntVar, IntoBoolVar, IntoDoubleVar, IntoIntVar, Var};

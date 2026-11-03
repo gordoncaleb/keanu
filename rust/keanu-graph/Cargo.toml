@@ -14,6 +14,7 @@ smallvec = { version = "1", features = ["union"] }
 
 [dev-dependencies]
 keanu-parity = { path = "../keanu-parity" }
+serde_json = { version = "1.0.154", features = ["float_roundtrip"] }
 
 [lints]
 workspace = true

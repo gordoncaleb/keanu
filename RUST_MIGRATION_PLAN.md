@@ -206,7 +206,7 @@ Intentional differences from Java:
 
 ### Phase 3: `keanu-graph`
 
-**Status: steps 1 and 2 of 3 done** (design: `rust/docs/decisions/0002-graph-design.md`). `rust/keanu-graph` has:
+**Status: done** (design: `rust/docs/decisions/0002-graph-design.md`). `rust/keanu-graph` has:
 
 - the immutable arena `Graph` (`Send + Sync`) and a separate, cloneable `State`;
 - `GraphBuilder`, whose typed `DoubleVar`/`IntVar`/`BoolVar` handles support `std::ops`, and which defers
@@ -222,7 +222,20 @@ every differentiable op. Partials are shaped `[of shape..., wrt shape...]`, and 
 
 All 121 cases in `golden-vectors/vertices.json` match Java's values, along with all 264 recorded forward and reverse
 partials, with none skipped. Finite-difference checks in both modes cover every differentiable op, plus the traversal
-rules. Step 3 (log prob and its gradient) is next.
+rules.
+
+Step 3 adds log probabilities and their gradients:
+- `node_log_prob`, `log_prob`, `joint_log_prob`, `log_likelihood` and `log_prior`;
+- `node_log_prob_gradient`;
+- `log_prob_gradient(of, wrt)`, a port of Java's `LogProbGradientCalculator`;
+- `joint_log_prob_gradient` and `log_likelihood_gradient`.
+
+All six models in `golden-vectors/models.json` are rebuilt with the builder (the sequence model through proxies) and
+match Java's log prob, log likelihood and both gradient maps, with none skipped. Finite-difference tests cover:
+- the gradient with respect to a deterministic parameter expression, for every continuous distribution and for the
+  discrete distributions' continuous parameters;
+- the gradient with respect to the node's own value, for every continuous distribution;
+- a multi-node model with shared parents, broadcasting parameters and an observed node.
 
 Differences from Java that are intentional:
 
@@ -233,6 +246,11 @@ Differences from Java that are intentional:
 - `multiplexer` is not differentiable, as in Java (only `where` and the f64 CPT route gradients).
 - Lambdas are made differentiable by supplying their Jacobian (`GraphBuilder::lambda_with_jacobian`), rather than
   Java's forward and reverse partial callbacks.
+- `UniformVertex`'s gradient with respect to its value is shaped like the value; Java shaped it like `xMax`. The two
+  only differ for scalar bounds with a non-scalar value.
+- Log probs and gradients read values from `State` and don't evaluate missing ones; evaluate first
+  (`State::lazy_eval`). A missing value is a `MissingValue` error.
+- Discrete nodes never contribute a gradient with respect to their own value, where Java's `UniformIntVertex` threw.
 
 - Port the arena graph, all ops (vertex types), value propagation (cascade / lazy eval) and observation.
 - Port forward and reverse autodiff and `LogProbGraph`.
