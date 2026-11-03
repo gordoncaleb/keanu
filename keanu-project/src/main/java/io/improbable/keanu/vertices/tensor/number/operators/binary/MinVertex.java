@@ -23,6 +23,13 @@ public class MinVertex<T extends Number, TENSOR extends NumberTensor<T, TENSOR>,
      */
     public MinVertex(@LoadVertexParam(LEFT_NAME) Vertex<TENSOR, ?> left,
                      @LoadVertexParam(RIGHT_NAME) Vertex<TENSOR, ?> right) {
-        super(new LessThanOrEqualVertex<>(left, right), left, right);
+        this(BroadcastOperands.broadcast(left, right));
+    }
+
+    /**
+     * @param operands left and right, broadcast to their common shape
+     */
+    private MinVertex(Vertex<TENSOR, ?>[] operands) {
+        super(new LessThanOrEqualVertex<>(operands[0], operands[1]), operands[0], operands[1]);
     }
 }

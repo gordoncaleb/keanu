@@ -200,6 +200,81 @@
           }
         }
       }
+    },
+    {
+      "name": "randomWalkSequence",
+      "protobuf": "models/randomWalkSequence.pb",
+      "json": "models/randomWalkSequence.json",
+      "expected": {
+        "latentValues": {
+          "Sequence_Item_0.1.x": {
+            "dtype": "f64",
+            "shape": [],
+            "data": [0.2]
+          },
+          "Sequence_Item_1.1.x": {
+            "dtype": "f64",
+            "shape": [],
+            "data": [0.7]
+          },
+          "Sequence_Item_2.1.x": {
+            "dtype": "f64",
+            "shape": [],
+            "data": [0.6]
+          },
+          "Sequence_Item_3.1.x": {
+            "dtype": "f64",
+            "shape": [],
+            "data": [1.4]
+          }
+        },
+        "logProb": -6.5239195433976,
+        "logLikelihood": -3.7407541328186906,
+        "dLogProb": {
+          "Sequence_Item_0.1.x": {
+            "dtype": "f64",
+            "shape": [],
+            "data": [1.2999999999999998]
+          },
+          "Sequence_Item_1.1.x": {
+            "dtype": "f64",
+            "shape": [],
+            "data": [-2.1999999999999997]
+          },
+          "Sequence_Item_2.1.x": {
+            "dtype": "f64",
+            "shape": [],
+            "data": [3.3999999999999995]
+          },
+          "Sequence_Item_3.1.x": {
+            "dtype": "f64",
+            "shape": [],
+            "data": [-2.9999999999999996]
+          }
+        },
+        "dLogLikelihood": {
+          "Sequence_Item_0.1.x": {
+            "dtype": "f64",
+            "shape": [],
+            "data": [0.09999999999999998]
+          },
+          "Sequence_Item_1.1.x": {
+            "dtype": "f64",
+            "shape": [],
+            "data": [0.20000000000000007]
+          },
+          "Sequence_Item_2.1.x": {
+            "dtype": "f64",
+            "shape": [],
+            "data": [-0.19999999999999996]
+          },
+          "Sequence_Item_3.1.x": {
+            "dtype": "f64",
+            "shape": [],
+            "data": [0.20000000000000018]
+          }
+        }
+      }
     }
   ]
 }

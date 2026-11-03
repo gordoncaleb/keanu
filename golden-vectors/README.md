@@ -128,16 +128,22 @@ defect. When the Java side is fixed, its entry is removed and the vectors are re
 - **Inference algorithms** (MCMC, NUTS, optimizers, particle filter). These are compared statistically, or by
   converged results on the models in `models/` (Phase 5).
 
-## Scope decisions (proposed, pending sign-off)
+## Scope decisions
 
-Phase 0 asks for an explicit decision on rarely used features that would be expensive to port. Proposed:
+Agreed on 2026-11-03. These features are not ported to Rust:
 
-| Feature | Java location | Proposal |
+| Feature | Java location | Decision |
 |---|---|---|
-| Runtime-compiled computable graph (jOOR) | `backend/keanu/compiled` | Replace with an interpreted op list. Same results, no code generation |
-| Lambda model vertex (runs an external process) | `vertices/model/LambdaModelVertex` | Defer. Keep only the in-process closure form |
-| CSV POJO reader (reflection-based binding) | `util/csv/pojo` | Drop. Use `serde` + `csv` |
-| DOT graph export | `util/io/DotSaver` | Keep (small, useful for debugging) |
-| MIR save/load | `util/io/MIRSaver`, `MIRLoader` | Defer. The protobuf and JSON formats are the parity boundary |
-| `PrintVertex`, `AssertVertex` | `vertices/tensor/generic`, `vertices/utility` | Keep `AssertVertex`; replace `PrintVertex` with tracing hooks |
-| Status bar | `util/status` | Drop. Use `tracing` / `indicatif` |
+| Runtime-compiled computable graph (jOOR) | `backend/keanu/compiled` | **Not ported** (Java-specific). Rust evaluates graphs directly |
+| CSV POJO reader (reflection-based binding) | `util/csv/pojo` | **Dropped** |
+| MIR save/load | `util/io/MIRSaver`, `MIRLoader` | **Deferred.** The protobuf and JSON formats are the parity boundary |
+| Lambda model vertex (runs an external process) | `vertices/model/LambdaModelVertex` | **Deferred** |
+| Models saved by older Java versions | | **Not supported.** Only files written by the final Java version need to load |
+
+These are kept and ported:
+
+| Feature | Java location |
+|---|---|
+| DOT graph export | `util/io/DotSaver` |
+| `AssertVertex` | `vertices/utility` |
+| `PrintVertex` | `vertices/tensor/generic`; becomes tracing hooks in Rust |

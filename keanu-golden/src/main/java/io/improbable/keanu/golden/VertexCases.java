@@ -131,7 +131,58 @@ final class VertexCases {
         add(cases, "graph/withConstant", "graph", inputs(inRange(0.1, 0.9, 2, 2)),
             in -> in.get(0).times(ConstantVertex.of(DoubleTensor.create(new double[]{1, -2, 3, -4}, 2, 2))).sigmoid().sum());
 
+        // If / where with gradients through both branches
+        add(cases, "control/if", "if", inputs(inRange(-1, 1, 2, 2), inRange(0.5, 2, 2, 2)),
+            in -> io.improbable.keanu.vertices.tensor.If.isTrue(in.get(0).greaterThan(ConstantVertex.of(0.0)))
+                .then(in.get(0).times(in.get(1)))
+                .orElse(in.get(1).exp()));
+
+        // graphs whose output isn't a double: values only
+        DoubleVertex p = ConstantVertex.of(DoubleTensor.create(new double[]{-1.5, 0.0, 2.0, 3.5}, 2, 2));
+        DoubleVertex q = ConstantVertex.of(DoubleTensor.create(new double[]{0.5, 0.0, 2.0, -1.0}, 2, 2));
+        addValue(cases, "bool/greaterThan", p::greaterThan, q);
+        addValue(cases, "bool/greaterThanOrEqual", p::greaterThanOrEqual, q);
+        addValue(cases, "bool/lessThan", p::lessThan, q);
+        addValue(cases, "bool/lessThanOrEqual", p::lessThanOrEqual, q);
+        addValue(cases, "bool/elementwiseEquals", p::elementwiseEquals, q);
+        addValue(cases, "bool/and", v -> p.greaterThan(q).and(p.lessThan(ConstantVertex.of(3.0))), q);
+        addValue(cases, "bool/or", v -> p.greaterThan(q).or(p.lessThan(ConstantVertex.of(0.0))), q);
+        addValue(cases, "bool/not", v -> p.greaterThan(q).not(), q);
+        addValue(cases, "bool/allTrue", v -> p.greaterThan(ConstantVertex.of(-2.0)).allTrue(), q);
+        addValue(cases, "bool/anyFalse", v -> p.greaterThan(ConstantVertex.of(-2.0)).anyFalse(), q);
+        addValue(cases, "bool/toDoubleMask", v -> p.greaterThan(q).toDoubleMask(), q);
+
+        io.improbable.keanu.vertices.tensor.number.fixed.intgr.IntegerVertex i =
+            ConstantVertex.of(io.improbable.keanu.tensor.intgr.IntegerTensor.create(new int[]{-7, -3, 0, 5, 9, 2}, 2, 3));
+        io.improbable.keanu.vertices.tensor.number.fixed.intgr.IntegerVertex j =
+            ConstantVertex.of(io.improbable.keanu.tensor.intgr.IntegerTensor.create(2, -2, 3));
+        addValue(cases, "integer/plus", v -> i.plus(j), q);
+        addValue(cases, "integer/times", v -> i.times(j), q);
+        addValue(cases, "integer/div", v -> i.div(j), q);
+        addValue(cases, "integer/mod", v -> i.mod(j), q);
+        addValue(cases, "integer/abs", v -> i.abs(), q);
+        addValue(cases, "integer/sum", v -> i.sum(), q);
+        addValue(cases, "integer/sumDim", v -> i.sum(1), q);
+        addValue(cases, "integer/max", v -> i.max(j), q);
+        addValue(cases, "integer/argMax", v -> i.argMax(1), q);
+        addValue(cases, "integer/toDouble", v -> i.toDouble(), q);
+        addValue(cases, "double/toInteger", v -> p.toInteger(), q);
+        addValue(cases, "generic/take", v -> p.take(1, 0), q);
+        addValue(cases, "generic/where", v -> io.improbable.keanu.vertices.tensor.If.isTrue(p.greaterThan(q))
+            .then(ConstantVertex.of(io.improbable.keanu.tensor.intgr.IntegerTensor.create(new int[]{1, 2, 3, 4}, 2, 2)))
+            .orElse(ConstantVertex.of(io.improbable.keanu.tensor.intgr.IntegerTensor.create(new int[]{-1, -2, -3, -4}, 2, 2))), q);
+        addValue(cases, "generic/concat", v -> io.improbable.keanu.vertices.tensor.number.floating.dbl.DoubleVertex.concat(0, p, q), q);
+
         return cases;
+    }
+
+    /**
+     * A case with no inputs or gradients, only the value of a (possibly non-double) vertex.
+     */
+    private static void addValue(List<Map<String, Object>> cases, String name, Function<DoubleVertex, io.improbable.keanu.vertices.Vertex<?, ?>> graph, DoubleVertex argument) {
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("value", result(() -> graph.apply(argument).eval()));
+        cases.add(testCase(name, name.substring(name.indexOf('/') + 1), new ArrayList<>(), null, result));
     }
 
     private static List<DoubleTensor> inputs(DoubleTensor... values) {

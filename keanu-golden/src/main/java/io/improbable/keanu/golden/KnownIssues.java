@@ -18,18 +18,7 @@ final class KnownIssues {
     static List<Map<String, Object>> all() {
         List<Map<String, Object>> issues = new ArrayList<>();
 
-        issue(issues, "vertices.json",
-            new String[]{"unary/sign", "unary/floor", "unary/ceil", "unary/round", "reduce/max", "reduce/min"},
-            "Auto diff through sign, floor, ceil, round and the max/min reductions throws NullPointerException "
-                + "(and for round, forward mode succeeds while reverse mode throws).",
-            "sign/floor/ceil/round have a zero derivative almost everywhere; max/min reductions pass the gradient to the "
-                + "selected element(s).");
-
-        issue(issues, "vertices.json",
-            new String[]{"binary/max/[2,3]x[3]", "binary/max/[]x[2,2]", "binary/min/[2,3]x[3]", "binary/min/[]x[2,2]"},
-            "The binary max/min vertices reject broadcasting shapes at construction, although the tensor operations "
-                + "(tensors.json binary/max and binary/min) broadcast them.",
-            "Broadcast like the tensor operations.");
+        // none at the moment: add entries here rather than letting the vectors encode a known defect
 
         return issues;
     }

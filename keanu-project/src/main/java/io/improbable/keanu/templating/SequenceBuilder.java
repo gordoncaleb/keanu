@@ -20,6 +20,25 @@ import java.util.function.Consumer;
  */
 public class SequenceBuilder<T> {
 
+    /**
+     * Identifies each built sequence so that the labels of different sequences don't clash. A counter (rather than
+     * an identity hash code) keeps labels unique and makes them the same every time a program is run, so saved
+     * models are reproducible.
+     */
+    private static final java.util.concurrent.atomic.AtomicInteger SEQUENCE_IDENTIFIER = new java.util.concurrent.atomic.AtomicInteger(0);
+
+    static int nextSequenceIdentifier() {
+        return SEQUENCE_IDENTIFIER.incrementAndGet();
+    }
+
+    /**
+     * Restarts the sequence identifiers, in the same way as {@link io.improbable.keanu.vertices.VertexId#resetIdGenerator()}.
+     */
+    public static void resetSequenceIdentifiers() {
+        SEQUENCE_IDENTIFIER.set(0);
+    }
+
+
     private static final String PROXY_LABEL_MARKER = "proxy_for";
     private VertexDictionary initialState;
     private Map<VertexLabel, VertexLabel> transitionMapping = Collections.emptyMap();
@@ -198,7 +217,7 @@ public class SequenceBuilder<T> {
         }
 
         public Sequence build() throws SequenceConstructionException {
-            int uniqueSequenceIdentifier = this.factories.hashCode();
+            int uniqueSequenceIdentifier = nextSequenceIdentifier();
             Sequence sequence = new Sequence(this.size, uniqueSequenceIdentifier, sequenceName);
             Iterator<T> iter = data.getIterator();
             VertexDictionary previousVertices = initialState;
@@ -284,7 +303,7 @@ public class SequenceBuilder<T> {
 
 
         public Sequence build() throws SequenceConstructionException {
-            int uniqueSequenceIdentifier = this.factories.hashCode();
+            int uniqueSequenceIdentifier = nextSequenceIdentifier();
             Sequence sequence = new Sequence(count.getCount(), uniqueSequenceIdentifier, sequenceName);
             VertexDictionary previousItem = initialState;
             for (int i = 0; i < count.getCount(); i++) {

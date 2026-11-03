@@ -59,6 +59,7 @@ final class ModelCases {
         models.put("linearRegression", ModelCases::linearRegression);
         models.put("betaBinomial", ModelCases::betaBinomial);
         models.put("gammaPoisson", ModelCases::gammaPoisson);
+        models.put("randomWalkSequence", ModelCases::randomWalkSequence);
 
         List<Map<String, Object>> cases = new ArrayList<>();
         for (Map.Entry<String, Supplier<BayesianNetwork>> entry : models.entrySet()) {
@@ -68,8 +69,9 @@ final class ModelCases {
     }
 
     private static Map<String, Object> export(String name, Supplier<BayesianNetwork> builder, Path modelsDir) throws IOException {
-        // fresh, deterministic vertex ids for every model
+        // fresh, deterministic vertex ids and sequence labels for every model
         VertexId.resetIdGenerator();
+        io.improbable.keanu.templating.SequenceBuilder.resetSequenceIdentifiers();
         BayesianNetwork network = builder.get();
 
         Map<String, String> metadata = Collections.singletonMap("name", name);
@@ -111,11 +113,11 @@ final class ModelCases {
         KeanuProbabilisticModelWithGradient gradientModel = new KeanuProbabilisticModelWithGradient(network);
 
         List<Vertex> latents = new ArrayList<>(network.getLatentVertices());
-        latents.sort(Comparator.comparing(v -> v.getLabel().toString()));
+        latents.sort(Comparator.comparing(ModelCases::name));
 
         Map<String, Object> latentValues = new LinkedHashMap<>();
         for (Vertex latent : latents) {
-            latentValues.put(latent.getLabel().toString(), Cases.encode(latent.getValue()));
+            latentValues.put(name(latent), Cases.encode(latent.getValue()));
         }
 
         Map<VariableReference, DoubleTensor> logProbGradients = gradientModel.logProbGradients();
@@ -124,7 +126,7 @@ final class ModelCases {
         Map<String, Object> dLogProb = new LinkedHashMap<>();
         Map<String, Object> dLogLikelihood = new LinkedHashMap<>();
         for (Vertex latent : latents) {
-            String label = latent.getLabel().toString();
+            String label = name(latent);
             if (logProbGradients.containsKey(latent.getId())) {
                 dLogProb.put(label, Cases.encode(logProbGradients.get(latent.getId())));
             }
@@ -140,6 +142,44 @@ final class ModelCases {
         result.put("dLogProb", dLogProb);
         result.put("dLogLikelihood", dLogLikelihood);
         return result;
+    }
+
+    /**
+     * The vertex label, which for vertices created by a Sequence includes the sequence and item prefix.
+     */
+    private static String name(Vertex vertex) {
+        if (vertex.getLabel() == null) {
+            throw new IllegalStateException("Every latent in a golden model needs a label: " + vertex);
+        }
+        return vertex.getLabel().toString();
+    }
+
+    /**
+     * A Gaussian random walk built with a Sequence (plate): x[t] ~ N(x[t-1], 0.5), y[t] ~ N(x[t], 1) observed.
+     */
+    private static BayesianNetwork randomWalkSequence() {
+        io.improbable.keanu.vertices.VertexLabel xLabel = new io.improbable.keanu.vertices.VertexLabel("x");
+        io.improbable.keanu.vertices.VertexLabel yLabel = new io.improbable.keanu.vertices.VertexLabel("y");
+        double[] observations = {0.3, 0.9, 0.4, 1.6};
+        double[] latentValues = {0.2, 0.7, 0.6, 1.4};
+        int[] step = {0};
+
+        io.improbable.keanu.templating.Sequence sequence = new io.improbable.keanu.templating.SequenceBuilder<Integer>()
+            .withInitialState(xLabel, ConstantVertex.of(0.0))
+            .count(observations.length)
+            .withFactory(item -> {
+                DoubleVertex xPrevious = item.addDoubleProxyFor(xLabel);
+                GaussianVertex x = new GaussianVertex(xPrevious, 0.5);
+                x.setValue(latentValues[step[0]]);
+                GaussianVertex y = new GaussianVertex(x, 1.0);
+                y.observe(observations[step[0]]);
+                item.add(xLabel, x);
+                item.add(yLabel, y);
+                step[0]++;
+            })
+            .build();
+
+        return sequence.toBayesianNetwork();
     }
 
     private static BayesianNetwork thermometers() {

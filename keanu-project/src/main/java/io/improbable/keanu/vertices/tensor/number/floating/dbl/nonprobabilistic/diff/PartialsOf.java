@@ -20,8 +20,21 @@ public class PartialsOf {
         return withRespectTo(vertex.getId());
     }
 
+    /**
+     * @param id the vertex to get the partial with respect to
+     * @return the partial derivative of the "of" vertex with respect to the given vertex
+     * @throws IllegalArgumentException if there is no partial, i.e. the "of" vertex does not depend on the given
+     *                                  vertex through differentiable vertices (e.g. it depends on it via floor or round)
+     */
     public DoubleTensor withRespectTo(VertexId id) {
-        return partials.get(id).get();
+        final ReverseModePartialDerivative partial = partials.get(id);
+        if (partial == null || !partial.isPresent()) {
+            throw new IllegalArgumentException(
+                "No partial derivative of " + of.getId() + " with respect to " + id
+                    + ". It does not depend on that vertex through differentiable vertices."
+            );
+        }
+        return partial.get();
     }
 
     public Map<VertexId, ReverseModePartialDerivative> asMap() {

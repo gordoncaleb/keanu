@@ -115,12 +115,12 @@
         },
         "forwardPartials": [
           {
-            "error": "NullPointerException"
+            "error": "IllegalArgumentException"
           }
         ],
         "reversePartials": [
           {
-            "error": "NullPointerException"
+            "error": "IllegalArgumentException"
           }
         ]
       }
@@ -815,12 +815,12 @@
         },
         "forwardPartials": [
           {
-            "error": "NullPointerException"
+            "error": "IllegalArgumentException"
           }
         ],
         "reversePartials": [
           {
-            "error": "NullPointerException"
+            "error": "IllegalArgumentException"
           }
         ]
       }
@@ -843,12 +843,12 @@
         },
         "forwardPartials": [
           {
-            "error": "NullPointerException"
+            "error": "IllegalArgumentException"
           }
         ],
         "reversePartials": [
           {
-            "error": "NullPointerException"
+            "error": "IllegalArgumentException"
           }
         ]
       }
@@ -871,14 +871,12 @@
         },
         "forwardPartials": [
           {
-            "dtype": "f64",
-            "shape": [2, 3, 2, 3],
-            "data": [1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0]
+            "error": "IllegalArgumentException"
           }
         ],
         "reversePartials": [
           {
-            "error": "NullPointerException"
+            "error": "IllegalArgumentException"
           }
         ]
       }
@@ -2171,8 +2169,34 @@
       ],
       "result": {
         "value": {
-          "error": "IllegalArgumentException"
-        }
+          "dtype": "f64",
+          "shape": [2, 3],
+          "data": [0.75, 1.0, 1.25, 1.2714285714285714, 1.5142857142857142, 1.7571428571428571]
+        },
+        "forwardPartials": [
+          {
+            "dtype": "f64",
+            "shape": [2, 3, 2, 3],
+            "data": [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0]
+          },
+          {
+            "dtype": "f64",
+            "shape": [2, 3, 3],
+            "data": [1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+          }
+        ],
+        "reversePartials": [
+          {
+            "dtype": "f64",
+            "shape": [2, 3, 2, 3],
+            "data": [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0]
+          },
+          {
+            "dtype": "f64",
+            "shape": [2, 3, 3],
+            "data": [1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+          }
+        ]
       }
     },
     {
@@ -2192,8 +2216,32 @@
       ],
       "result": {
         "value": {
-          "error": "IllegalArgumentException"
-        }
+          "dtype": "f64",
+          "shape": [2, 2],
+          "data": [1.3, 1.3, 1.3, 1.3]
+        },
+        "forwardPartials": [
+          {
+            "dtype": "f64",
+            "shape": [2, 2],
+            "data": [1.0, 1.0, 1.0, 1.0]
+          },
+          {
+            "error": "IllegalArgumentException"
+          }
+        ],
+        "reversePartials": [
+          {
+            "dtype": "f64",
+            "shape": [2, 2],
+            "data": [1.0, 1.0, 1.0, 1.0]
+          },
+          {
+            "dtype": "f64",
+            "shape": [2, 2, 2, 2],
+            "data": [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+          }
+        ]
       }
     },
     {
@@ -2260,8 +2308,34 @@
       ],
       "result": {
         "value": {
-          "error": "IllegalArgumentException"
-        }
+          "dtype": "f64",
+          "shape": [2, 3],
+          "data": [0.5428571428571428, 0.7857142857142857, 1.0285714285714285, 0.75, 1.0, 1.25]
+        },
+        "forwardPartials": [
+          {
+            "dtype": "f64",
+            "shape": [2, 3, 2, 3],
+            "data": [1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+          },
+          {
+            "dtype": "f64",
+            "shape": [2, 3, 3],
+            "data": [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0]
+          }
+        ],
+        "reversePartials": [
+          {
+            "dtype": "f64",
+            "shape": [2, 3, 2, 3],
+            "data": [1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+          },
+          {
+            "dtype": "f64",
+            "shape": [2, 3, 3],
+            "data": [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0]
+          }
+        ]
       }
     },
     {
@@ -2281,8 +2355,34 @@
       ],
       "result": {
         "value": {
-          "error": "IllegalArgumentException"
-        }
+          "dtype": "f64",
+          "shape": [2, 2],
+          "data": [0.7, 0.9, 1.1, 1.3]
+        },
+        "forwardPartials": [
+          {
+            "dtype": "f64",
+            "shape": [2, 2],
+            "data": [0.0, 0.0, 0.0, 1.0]
+          },
+          {
+            "dtype": "f64",
+            "shape": [2, 2, 2, 2],
+            "data": [1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+          }
+        ],
+        "reversePartials": [
+          {
+            "dtype": "f64",
+            "shape": [2, 2],
+            "data": [0.0, 0.0, 0.0, 1.0]
+          },
+          {
+            "dtype": "f64",
+            "shape": [2, 2, 2, 2],
+            "data": [1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+          }
+        ]
       }
     },
     {
@@ -2495,12 +2595,16 @@
         },
         "forwardPartials": [
           {
-            "error": "NullPointerException"
+            "dtype": "f64",
+            "shape": [2, 3, 4],
+            "data": [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0]
           }
         ],
         "reversePartials": [
           {
-            "error": "NullPointerException"
+            "dtype": "f64",
+            "shape": [2, 3, 4],
+            "data": [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0]
           }
         ]
       }
@@ -2523,12 +2627,16 @@
         },
         "forwardPartials": [
           {
-            "error": "NullPointerException"
+            "dtype": "f64",
+            "shape": [2, 3, 4],
+            "data": [1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
           }
         ],
         "reversePartials": [
           {
-            "error": "NullPointerException"
+            "dtype": "f64",
+            "shape": [2, 3, 4],
+            "data": [1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
           }
         ]
       }
@@ -3349,14 +3457,14 @@
           {
             "dtype": "f64",
             "shape": [4],
-            "data": [0.05207858730987664, 0.11590302755619888, 0.25794693156251086, 0.5740714535714136]
+            "data": [0.05207858730987664, 0.11590302755619888, 0.25794693156251086, -0.42592854642858635]
           }
         ],
         "reversePartials": [
           {
             "dtype": "f64",
             "shape": [4],
-            "data": [0.05207858730987664, 0.11590302755619888, 0.25794693156251086, 0.5740714535714136]
+            "data": [0.05207858730987664, 0.11590302755619888, 0.25794693156251086, -0.42592854642858635]
           }
         ]
       }
@@ -3438,6 +3546,353 @@
             "data": [0.24582214978195366, -0.4212231160741312, 0.3810557463378952, -0.18735546691422122]
           }
         ]
+      }
+    },
+    {
+      "name": "control/if",
+      "op": "if",
+      "args": [
+        {
+          "dtype": "f64",
+          "shape": [2, 2],
+          "data": [-0.6, -0.19999999999999996, 0.19999999999999996, 0.6000000000000001]
+        },
+        {
+          "dtype": "f64",
+          "shape": [2, 2],
+          "data": [0.8, 1.1, 1.4, 1.7]
+        }
+      ],
+      "result": {
+        "value": {
+          "dtype": "f64",
+          "shape": [2, 2],
+          "data": [2.225540928492468, 3.0041660239464334, 0.2799999999999999, 1.02]
+        },
+        "forwardPartials": [
+          {
+            "dtype": "f64",
+            "shape": [2, 2, 2, 2],
+            "data": [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.4, 0.0, 0.0, 0.0, 0.0, 1.7]
+          },
+          {
+            "dtype": "f64",
+            "shape": [2, 2, 2, 2],
+            "data": [2.225540928492468, 0.0, 0.0, 0.0, 0.0, 3.0041660239464334, 0.0, 0.0, 0.0, 0.0, 0.19999999999999996, 0.0, 0.0, 0.0, 0.0, 0.6000000000000001]
+          }
+        ],
+        "reversePartials": [
+          {
+            "dtype": "f64",
+            "shape": [2, 2, 2, 2],
+            "data": [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.4, 0.0, 0.0, 0.0, 0.0, 1.7]
+          },
+          {
+            "dtype": "f64",
+            "shape": [2, 2, 2, 2],
+            "data": [2.225540928492468, 0.0, 0.0, 0.0, 0.0, 3.0041660239464334, 0.0, 0.0, 0.0, 0.0, 0.19999999999999996, 0.0, 0.0, 0.0, 0.0, 0.6000000000000001]
+          }
+        ]
+      }
+    },
+    {
+      "name": "bool/greaterThan",
+      "op": "greaterThan",
+      "args": [],
+      "result": {
+        "value": {
+          "dtype": "bool",
+          "shape": [2, 2],
+          "data": [false, false, false, true]
+        }
+      }
+    },
+    {
+      "name": "bool/greaterThanOrEqual",
+      "op": "greaterThanOrEqual",
+      "args": [],
+      "result": {
+        "value": {
+          "dtype": "bool",
+          "shape": [2, 2],
+          "data": [false, true, true, true]
+        }
+      }
+    },
+    {
+      "name": "bool/lessThan",
+      "op": "lessThan",
+      "args": [],
+      "result": {
+        "value": {
+          "dtype": "bool",
+          "shape": [2, 2],
+          "data": [true, false, false, false]
+        }
+      }
+    },
+    {
+      "name": "bool/lessThanOrEqual",
+      "op": "lessThanOrEqual",
+      "args": [],
+      "result": {
+        "value": {
+          "dtype": "bool",
+          "shape": [2, 2],
+          "data": [true, true, true, false]
+        }
+      }
+    },
+    {
+      "name": "bool/elementwiseEquals",
+      "op": "elementwiseEquals",
+      "args": [],
+      "result": {
+        "value": {
+          "dtype": "bool",
+          "shape": [2, 2],
+          "data": [false, true, true, false]
+        }
+      }
+    },
+    {
+      "name": "bool/and",
+      "op": "and",
+      "args": [],
+      "result": {
+        "value": {
+          "dtype": "bool",
+          "shape": [2, 2],
+          "data": [false, false, false, false]
+        }
+      }
+    },
+    {
+      "name": "bool/or",
+      "op": "or",
+      "args": [],
+      "result": {
+        "value": {
+          "dtype": "bool",
+          "shape": [2, 2],
+          "data": [true, false, false, true]
+        }
+      }
+    },
+    {
+      "name": "bool/not",
+      "op": "not",
+      "args": [],
+      "result": {
+        "value": {
+          "dtype": "bool",
+          "shape": [2, 2],
+          "data": [true, true, true, false]
+        }
+      }
+    },
+    {
+      "name": "bool/allTrue",
+      "op": "allTrue",
+      "args": [],
+      "result": {
+        "value": {
+          "dtype": "bool",
+          "shape": [],
+          "data": [true]
+        }
+      }
+    },
+    {
+      "name": "bool/anyFalse",
+      "op": "anyFalse",
+      "args": [],
+      "result": {
+        "value": {
+          "dtype": "bool",
+          "shape": [],
+          "data": [false]
+        }
+      }
+    },
+    {
+      "name": "bool/toDoubleMask",
+      "op": "toDoubleMask",
+      "args": [],
+      "result": {
+        "value": {
+          "dtype": "f64",
+          "shape": [2, 2],
+          "data": [0.0, 0.0, 0.0, 1.0]
+        }
+      }
+    },
+    {
+      "name": "integer/plus",
+      "op": "plus",
+      "args": [],
+      "result": {
+        "value": {
+          "dtype": "i32",
+          "shape": [2, 3],
+          "data": [-5, -5, 3, 7, 7, 5]
+        }
+      }
+    },
+    {
+      "name": "integer/times",
+      "op": "times",
+      "args": [],
+      "result": {
+        "value": {
+          "dtype": "i32",
+          "shape": [2, 3],
+          "data": [-14, 6, 0, 10, -18, 6]
+        }
+      }
+    },
+    {
+      "name": "integer/div",
+      "op": "div",
+      "args": [],
+      "result": {
+        "value": {
+          "dtype": "i32",
+          "shape": [2, 3],
+          "data": [-3, 1, 0, 2, -4, 0]
+        }
+      }
+    },
+    {
+      "name": "integer/mod",
+      "op": "mod",
+      "args": [],
+      "result": {
+        "value": {
+          "dtype": "i32",
+          "shape": [2, 3],
+          "data": [-1, -1, 0, 1, 1, 2]
+        }
+      }
+    },
+    {
+      "name": "integer/abs",
+      "op": "abs",
+      "args": [],
+      "result": {
+        "value": {
+          "dtype": "i32",
+          "shape": [2, 3],
+          "data": [7, 3, 0, 5, 9, 2]
+        }
+      }
+    },
+    {
+      "name": "integer/sum",
+      "op": "sum",
+      "args": [],
+      "result": {
+        "value": {
+          "dtype": "i32",
+          "shape": [],
+          "data": [6]
+        }
+      }
+    },
+    {
+      "name": "integer/sumDim",
+      "op": "sumDim",
+      "args": [],
+      "result": {
+        "value": {
+          "dtype": "i32",
+          "shape": [2],
+          "data": [-10, 16]
+        }
+      }
+    },
+    {
+      "name": "integer/max",
+      "op": "max",
+      "args": [],
+      "result": {
+        "value": {
+          "dtype": "i32",
+          "shape": [2, 3],
+          "data": [2, -2, 3, 5, 9, 3]
+        }
+      }
+    },
+    {
+      "name": "integer/argMax",
+      "op": "argMax",
+      "args": [],
+      "result": {
+        "value": {
+          "dtype": "i32",
+          "shape": [2],
+          "data": [2, 1]
+        }
+      }
+    },
+    {
+      "name": "integer/toDouble",
+      "op": "toDouble",
+      "args": [],
+      "result": {
+        "value": {
+          "dtype": "f64",
+          "shape": [2, 3],
+          "data": [-7.0, -3.0, 0.0, 5.0, 9.0, 2.0]
+        }
+      }
+    },
+    {
+      "name": "double/toInteger",
+      "op": "toInteger",
+      "args": [],
+      "result": {
+        "value": {
+          "dtype": "i32",
+          "shape": [2, 2],
+          "data": [-1, 0, 2, 3]
+        }
+      }
+    },
+    {
+      "name": "generic/take",
+      "op": "take",
+      "args": [],
+      "result": {
+        "value": {
+          "dtype": "f64",
+          "shape": [],
+          "data": [2.0]
+        }
+      }
+    },
+    {
+      "name": "generic/where",
+      "op": "where",
+      "args": [],
+      "result": {
+        "value": {
+          "dtype": "i32",
+          "shape": [2, 2],
+          "data": [-1, -2, -3, 4]
+        }
+      }
+    },
+    {
+      "name": "generic/concat",
+      "op": "concat",
+      "args": [],
+      "result": {
+        "value": {
+          "dtype": "f64",
+          "shape": [4, 2],
+          "data": [-1.5, 0.0, 2.0, 3.5, 0.5, 0.0, 2.0, -1.0]
+        }
       }
     }
   ]

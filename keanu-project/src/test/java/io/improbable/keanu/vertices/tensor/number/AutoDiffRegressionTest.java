@@ -143,4 +143,68 @@ public class AutoDiffRegressionTest {
             ImmutableList.of(a, c), a.tensorMultiply(c, new int[]{1}, new int[]{0}), INCREMENT, DELTA
         );
     }
+
+    /**
+     * floor, ceil, round and sign are deliberately not differentiable: a log prob through them is piecewise
+     * constant, so DifferentiableChecker must steer such models away from gradient based algorithms. Asking for a
+     * gradient through them is an error with a clear message rather than a NullPointerException (or, previously for
+     * round, a silently wrong identity gradient).
+     */
+    @Test
+    public void piecewiseConstantOpsAreNotDifferentiable() {
+        UniformVertex a = input(DoubleTensor.create(-1.7, 0.3, 2.2));
+
+        for (DoubleVertex op : new DoubleVertex[]{a.floor(), a.ceil(), a.round(), a.sign()}) {
+            org.junit.Assert.assertFalse(op.isDifferentiable());
+            assertThrows(() -> io.improbable.keanu.vertices.tensor.number.floating.dbl.Differentiator.reverseModeAutoDiff(op, a).withRespectTo(a));
+            assertThrows(() -> io.improbable.keanu.vertices.tensor.number.floating.dbl.Differentiator.forwardModeAutoDiff(a, op).of(op));
+        }
+    }
+
+    private static void assertThrows(Runnable runnable) {
+        try {
+            runnable.run();
+        } catch (IllegalArgumentException expected) {
+            return;
+        }
+        org.junit.Assert.fail("Expected IllegalArgumentException");
+    }
+
+    @Test
+    public void maxAndMinReductionsPassTheGradientToTheSelectedElement() {
+        UniformVertex a = input(DoubleTensor.create(new double[]{-1.7, 4.2, 0.3, 1.6, -2.2, 3.9}, 2, 3));
+        check(a, a.max());
+        check(a, a.min());
+
+        // a full reduction is a scalar vertex, not shaped like its input
+        org.junit.Assert.assertArrayEquals(new long[0], a.max().getShape());
+        org.junit.Assert.assertArrayEquals(new long[0], a.min().getShape());
+    }
+
+    @Test
+    public void maxReductionSplitsTheGradientBetweenTies() {
+        UniformVertex a = input(DoubleTensor.create(1.0, 3.0, 3.0, 2.0));
+        DoubleVertex max = a.max();
+        DoubleTensor reverse = io.improbable.keanu.vertices.tensor.number.floating.dbl.Differentiator
+            .reverseModeAutoDiff(max, a).withRespectTo(a);
+        DoubleTensor forward = io.improbable.keanu.vertices.tensor.number.floating.dbl.Differentiator
+            .forwardModeAutoDiff(a, max).of(max);
+        org.junit.Assert.assertArrayEquals(new double[]{0, 0.5, 0.5, 0}, reverse.asFlatDoubleArray(), 0.0);
+        org.junit.Assert.assertArrayEquals(new double[]{0, 0.5, 0.5, 0}, forward.asFlatDoubleArray(), 0.0);
+    }
+
+    @Test
+    public void binaryMaxAndMinBroadcastLikeTheTensorOperations() {
+        UniformVertex a = input(DoubleTensor.create(new double[]{-1.7, 4.2, 0.3, 1.6, -2.2, 3.9}, 2, 3));
+        UniformVertex b = input(DoubleTensor.create(0.5, 1.0, 2.5));
+        UniformVertex scalar = input(DoubleTensor.scalar(1.1));
+
+        assertEquals(a.getValue().max(b.getValue()), a.max(b).eval());
+        assertEquals(a.getValue().min(b.getValue()), a.min(b).eval());
+        assertEquals(scalar.getValue().max(a.getValue()), scalar.max(a).eval());
+
+        finiteDifferenceMatchesForwardAndReverseModeGradient(ImmutableList.of(a, b), a.max(b), INCREMENT, DELTA);
+        finiteDifferenceMatchesForwardAndReverseModeGradient(ImmutableList.of(a, b), a.min(b), INCREMENT, DELTA);
+        finiteDifferenceMatchesForwardAndReverseModeGradient(ImmutableList.of(scalar, a), scalar.min(a), INCREMENT, DELTA);
+    }
 }

@@ -23,6 +23,13 @@ public class MaxVertex<T extends Number, TENSOR extends NumberTensor<T, TENSOR>,
      */
     public MaxVertex(@LoadVertexParam(LEFT_NAME) Vertex<TENSOR, VERTEX> left,
                      @LoadVertexParam(RIGHT_NAME) Vertex<TENSOR, VERTEX> right) {
-        super(new GreaterThanOrEqualVertex<>(left, right), left, right);
+        this(BroadcastOperands.broadcast(left, right));
+    }
+
+    /**
+     * @param operands left and right, broadcast to their common shape
+     */
+    private MaxVertex(Vertex<TENSOR, VERTEX>[] operands) {
+        super(new GreaterThanOrEqualVertex<>(operands[0], operands[1]), operands[0], operands[1]);
     }
 }

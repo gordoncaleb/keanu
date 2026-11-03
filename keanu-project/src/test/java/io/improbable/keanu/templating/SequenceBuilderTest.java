@@ -671,4 +671,29 @@ public class SequenceBuilderTest {
         }
 
     }
+
+    @Test
+    public void sequenceLabelsAreTheSameEveryTimeTheProgramRuns() {
+        SequenceBuilder.resetSequenceIdentifiers();
+        String first = buildAndGetFirstLabel();
+        SequenceBuilder.resetSequenceIdentifiers();
+        String second = buildAndGetFirstLabel();
+
+        assertThat(second, org.hamcrest.Matchers.equalTo(first));
+        assertThat(first, org.hamcrest.Matchers.equalTo("Sequence_Item_0.1.x"));
+    }
+
+    @Test
+    public void differentSequencesGetDifferentLabels() {
+        assertThat(buildAndGetFirstLabel(), org.hamcrest.Matchers.not(org.hamcrest.Matchers.equalTo(buildAndGetFirstLabel())));
+    }
+
+    private static String buildAndGetFirstLabel() {
+        VertexLabel xLabel = new VertexLabel("x");
+        Sequence sequence = new SequenceBuilder<Integer>()
+            .count(2)
+            .withFactory(item -> item.add(xLabel, new io.improbable.keanu.vertices.tensor.number.floating.dbl.probabilistic.GaussianVertex(0, 1)))
+            .build();
+        return sequence.asList().get(0).get(xLabel).getLabel().toString();
+    }
 }
