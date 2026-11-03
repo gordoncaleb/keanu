@@ -6,7 +6,8 @@
     "distributions.json": 61,
     "vertices.json": 121,
     "models.json": 7,
-    "algorithms.json": 24
+    "algorithms.json": 24,
+    "samplers.json": 12
   },
   "verticesWithoutAVertexMethod": [],
   "knownIssues": []

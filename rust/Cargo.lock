@@ -672,6 +672,7 @@ dependencies = [
  "keanu-io",
  "keanu-parity",
  "keanu-tensor",
+ "rayon",
  "serde_json",
 ]
 

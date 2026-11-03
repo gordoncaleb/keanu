@@ -61,6 +61,12 @@ impl From<GraphError> for AlgorithmError {
     }
 }
 
+impl From<keanu_distributions::DistributionError> for AlgorithmError {
+    fn from(e: keanu_distributions::DistributionError) -> Self {
+        Self::Graph(GraphError::Distribution(e))
+    }
+}
+
 impl From<TensorError> for AlgorithmError {
     fn from(e: TensorError) -> Self {
         Self::Graph(GraphError::Tensor(e))

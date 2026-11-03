@@ -1,0 +1,609 @@
+{
+  "formatVersion": 1,
+  "cases": [
+    {
+      "name": "thermometers/NUTS",
+      "model": "thermometers",
+      "sampler": {
+        "name": "NUTS",
+        "adaptCount": 500,
+        "samples": 3000,
+        "drop": 500
+      },
+      "result": {
+        "posterior": {
+          "temperature": {
+            "mean": {
+              "dtype": "f64",
+              "shape": [],
+              "data": [25.927792485869382]
+            },
+            "sd": {
+              "dtype": "f64",
+              "shape": [],
+              "data": [1.9728493082355598]
+            },
+            "ess": {
+              "dtype": "f64",
+              "shape": [],
+              "data": [1027.9530385960984]
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "thermometers/MetropolisHastings",
+      "model": "thermometers",
+      "sampler": {
+        "name": "MetropolisHastings",
+        "samples": 20000,
+        "drop": 2000
+      },
+      "result": {
+        "posterior": {
+          "temperature": {
+            "mean": {
+              "dtype": "f64",
+              "shape": [],
+              "data": [25.82240801319036]
+            },
+            "sd": {
+              "dtype": "f64",
+              "shape": [],
+              "data": [2.0061636815848827]
+            },
+            "ess": {
+              "dtype": "f64",
+              "shape": [],
+              "data": [10807.519132325871]
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "hierarchicalGaussian/NUTS",
+      "model": "hierarchicalGaussian",
+      "sampler": {
+        "name": "NUTS",
+        "adaptCount": 500,
+        "samples": 3000,
+        "drop": 500
+      },
+      "result": {
+        "posterior": {
+          "groupMeans": {
+            "mean": {
+              "dtype": "f64",
+              "shape": [3],
+              "data": [0.8780528495018504, 1.4903260249918031, 2.0408527719353353]
+            },
+            "sd": {
+              "dtype": "f64",
+              "shape": [3],
+              "data": [0.6741025898346884, 0.5771001578490138, 0.6545910496340898]
+            },
+            "ess": {
+              "dtype": "f64",
+              "shape": [3],
+              "data": [522.8750496450557, 976.0313081099365, 693.5463558612628]
+            }
+          },
+          "mu": {
+            "mean": {
+              "dtype": "f64",
+              "shape": [],
+              "data": [1.463832768494674]
+            },
+            "sd": {
+              "dtype": "f64",
+              "shape": [],
+              "data": [0.9375115785815553]
+            },
+            "ess": {
+              "dtype": "f64",
+              "shape": [],
+              "data": [833.169232054466]
+            }
+          },
+          "sigma": {
+            "mean": {
+              "dtype": "f64",
+              "shape": [],
+              "data": [1.2140453510952085]
+            },
+            "sd": {
+              "dtype": "f64",
+              "shape": [],
+              "data": [0.8409058971071124]
+            },
+            "ess": {
+              "dtype": "f64",
+              "shape": [],
+              "data": [295.6743538326511]
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "hierarchicalGaussian/MetropolisHastings",
+      "model": "hierarchicalGaussian",
+      "sampler": {
+        "name": "MetropolisHastings",
+        "samples": 20000,
+        "drop": 2000
+      },
+      "result": {
+        "posterior": {
+          "groupMeans": {
+            "mean": {
+              "dtype": "f64",
+              "shape": [3],
+              "data": [1.0079948909990362, 1.524521789133534, 2.00627889669067]
+            },
+            "sd": {
+              "dtype": "f64",
+              "shape": [3],
+              "data": [0.6843305313675893, 0.5758327228154805, 0.6311538010649038]
+            },
+            "ess": {
+              "dtype": "f64",
+              "shape": [3],
+              "data": [164.20285675977462, 213.65976354795114, 178.08617220329432]
+            }
+          },
+          "mu": {
+            "mean": {
+              "dtype": "f64",
+              "shape": [],
+              "data": [1.5095282548888485]
+            },
+            "sd": {
+              "dtype": "f64",
+              "shape": [],
+              "data": [0.8894938621682055]
+            },
+            "ess": {
+              "dtype": "f64",
+              "shape": [],
+              "data": [314.2054357299747]
+            }
+          },
+          "sigma": {
+            "mean": {
+              "dtype": "f64",
+              "shape": [],
+              "data": [1.080378564612411]
+            },
+            "sd": {
+              "dtype": "f64",
+              "shape": [],
+              "data": [0.8503321307572773]
+            },
+            "ess": {
+              "dtype": "f64",
+              "shape": [],
+              "data": [180.62024843139307]
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "linearRegression/NUTS",
+      "model": "linearRegression",
+      "sampler": {
+        "name": "NUTS",
+        "adaptCount": 500,
+        "samples": 3000,
+        "drop": 500
+      },
+      "result": {
+        "posterior": {
+          "intercept": {
+            "mean": {
+              "dtype": "f64",
+              "shape": [],
+              "data": [0.8743064119295656]
+            },
+            "sd": {
+              "dtype": "f64",
+              "shape": [],
+              "data": [0.6811399238963828]
+            },
+            "ess": {
+              "dtype": "f64",
+              "shape": [],
+              "data": [336.68404056934946]
+            }
+          },
+          "noise": {
+            "mean": {
+              "dtype": "f64",
+              "shape": [],
+              "data": [0.6750590322532879]
+            },
+            "sd": {
+              "dtype": "f64",
+              "shape": [],
+              "data": [0.36084121649712747]
+            },
+            "ess": {
+              "dtype": "f64",
+              "shape": [],
+              "data": [415.21097103906936]
+            }
+          },
+          "weights": {
+            "mean": {
+              "dtype": "f64",
+              "shape": [2, 1],
+              "data": [0.3199165972374724, -1.2118558225304574]
+            },
+            "sd": {
+              "dtype": "f64",
+              "shape": [2, 1],
+              "data": [0.3499682690586263, 0.4928093494008802]
+            },
+            "ess": {
+              "dtype": "f64",
+              "shape": [2, 1],
+              "data": [456.320637952073, 426.1036452791818]
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "linearRegression/MetropolisHastings",
+      "model": "linearRegression",
+      "sampler": {
+        "name": "MetropolisHastings",
+        "samples": 20000,
+        "drop": 2000
+      },
+      "result": {
+        "posterior": {
+          "intercept": {
+            "mean": {
+              "dtype": "f64",
+              "shape": [],
+              "data": [0.8846572120172245]
+            },
+            "sd": {
+              "dtype": "f64",
+              "shape": [],
+              "data": [0.636729695371725]
+            },
+            "ess": {
+              "dtype": "f64",
+              "shape": [],
+              "data": [80.55969014934578]
+            }
+          },
+          "noise": {
+            "mean": {
+              "dtype": "f64",
+              "shape": [],
+              "data": [0.6601373236259994]
+            },
+            "sd": {
+              "dtype": "f64",
+              "shape": [],
+              "data": [0.33099155753889065]
+            },
+            "ess": {
+              "dtype": "f64",
+              "shape": [],
+              "data": [125.11347420371276]
+            }
+          },
+          "weights": {
+            "mean": {
+              "dtype": "f64",
+              "shape": [2, 1],
+              "data": [0.3147840064697086, -1.2166440672983816]
+            },
+            "sd": {
+              "dtype": "f64",
+              "shape": [2, 1],
+              "data": [0.3200283360133183, 0.4966716618457328]
+            },
+            "ess": {
+              "dtype": "f64",
+              "shape": [2, 1],
+              "data": [80.79585346306486, 78.40727702907154]
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "betaBinomial/NUTS",
+      "model": "betaBinomial",
+      "sampler": {
+        "name": "NUTS",
+        "adaptCount": 500,
+        "samples": 3000,
+        "drop": 500
+      },
+      "result": {
+        "posterior": {
+          "p": {
+            "mean": {
+              "dtype": "f64",
+              "shape": [],
+              "data": [0.35748519574615284]
+            },
+            "sd": {
+              "dtype": "f64",
+              "shape": [],
+              "data": [0.07002070039328523]
+            },
+            "ess": {
+              "dtype": "f64",
+              "shape": [],
+              "data": [1035.040319955589]
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "betaBinomial/MetropolisHastings",
+      "model": "betaBinomial",
+      "sampler": {
+        "name": "MetropolisHastings",
+        "samples": 20000,
+        "drop": 2000
+      },
+      "result": {
+        "posterior": {
+          "p": {
+            "mean": {
+              "dtype": "f64",
+              "shape": [],
+              "data": [0.35444649676077694]
+            },
+            "sd": {
+              "dtype": "f64",
+              "shape": [],
+              "data": [0.07048883740011103]
+            },
+            "ess": {
+              "dtype": "f64",
+              "shape": [],
+              "data": [5916.939895365121]
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "gammaPoisson/NUTS",
+      "model": "gammaPoisson",
+      "sampler": {
+        "name": "NUTS",
+        "adaptCount": 500,
+        "samples": 3000,
+        "drop": 500
+      },
+      "result": {
+        "posterior": {
+          "rate": {
+            "mean": {
+              "dtype": "f64",
+              "shape": [],
+              "data": [2.1030147717957894]
+            },
+            "sd": {
+              "dtype": "f64",
+              "shape": [],
+              "data": [0.6157158842828387]
+            },
+            "ess": {
+              "dtype": "f64",
+              "shape": [],
+              "data": [787.5769306545607]
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "gammaPoisson/MetropolisHastings",
+      "model": "gammaPoisson",
+      "sampler": {
+        "name": "MetropolisHastings",
+        "samples": 20000,
+        "drop": 2000
+      },
+      "result": {
+        "posterior": {
+          "rate": {
+            "mean": {
+              "dtype": "f64",
+              "shape": [],
+              "data": [2.086604820485289]
+            },
+            "sd": {
+              "dtype": "f64",
+              "shape": [],
+              "data": [0.6148655412398814]
+            },
+            "ess": {
+              "dtype": "f64",
+              "shape": [],
+              "data": [5494.403587413062]
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "randomWalkSequence/NUTS",
+      "model": "randomWalkSequence",
+      "sampler": {
+        "name": "NUTS",
+        "adaptCount": 500,
+        "samples": 3000,
+        "drop": 500
+      },
+      "result": {
+        "posterior": {
+          "Sequence_Item_0.1.x": {
+            "mean": {
+              "dtype": "f64",
+              "shape": [],
+              "data": [0.2553114987580779]
+            },
+            "sd": {
+              "dtype": "f64",
+              "shape": [],
+              "data": [0.4005482647432486]
+            },
+            "ess": {
+              "dtype": "f64",
+              "shape": [],
+              "data": [1329.4649983182742]
+            }
+          },
+          "Sequence_Item_1.1.x": {
+            "mean": {
+              "dtype": "f64",
+              "shape": [],
+              "data": [0.5062517511160214]
+            },
+            "sd": {
+              "dtype": "f64",
+              "shape": [],
+              "data": [0.4838389126209548]
+            },
+            "ess": {
+              "dtype": "f64",
+              "shape": [],
+              "data": [1210.5146648911254]
+            }
+          },
+          "Sequence_Item_2.1.x": {
+            "mean": {
+              "dtype": "f64",
+              "shape": [],
+              "data": [0.6490591176040048]
+            },
+            "sd": {
+              "dtype": "f64",
+              "shape": [],
+              "data": [0.5330492108134774]
+            },
+            "ess": {
+              "dtype": "f64",
+              "shape": [],
+              "data": [1181.939233409765]
+            }
+          },
+          "Sequence_Item_3.1.x": {
+            "mean": {
+              "dtype": "f64",
+              "shape": [],
+              "data": [0.8381766562950452]
+            },
+            "sd": {
+              "dtype": "f64",
+              "shape": [],
+              "data": [0.610906058722146]
+            },
+            "ess": {
+              "dtype": "f64",
+              "shape": [],
+              "data": [1177.6402584420803]
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "randomWalkSequence/MetropolisHastings",
+      "model": "randomWalkSequence",
+      "sampler": {
+        "name": "MetropolisHastings",
+        "samples": 20000,
+        "drop": 2000
+      },
+      "result": {
+        "posterior": {
+          "Sequence_Item_0.1.x": {
+            "mean": {
+              "dtype": "f64",
+              "shape": [],
+              "data": [0.2529171048704053]
+            },
+            "sd": {
+              "dtype": "f64",
+              "shape": [],
+              "data": [0.4021240409417772]
+            },
+            "ess": {
+              "dtype": "f64",
+              "shape": [],
+              "data": [915.0050658110542]
+            }
+          },
+          "Sequence_Item_1.1.x": {
+            "mean": {
+              "dtype": "f64",
+              "shape": [],
+              "data": [0.5060916458789717]
+            },
+            "sd": {
+              "dtype": "f64",
+              "shape": [],
+              "data": [0.4882820958448989]
+            },
+            "ess": {
+              "dtype": "f64",
+              "shape": [],
+              "data": [549.539738023043]
+            }
+          },
+          "Sequence_Item_2.1.x": {
+            "mean": {
+              "dtype": "f64",
+              "shape": [],
+              "data": [0.6289050522734184]
+            },
+            "sd": {
+              "dtype": "f64",
+              "shape": [],
+              "data": [0.524021663348083]
+            },
+            "ess": {
+              "dtype": "f64",
+              "shape": [],
+              "data": [558.3177950046734]
+            }
+          },
+          "Sequence_Item_3.1.x": {
+            "mean": {
+              "dtype": "f64",
+              "shape": [],
+              "data": [0.8196267235528015]
+            },
+            "sd": {
+              "dtype": "f64",
+              "shape": [],
+              "data": [0.6021484107144082]
+            },
+            "ess": {
+              "dtype": "f64",
+              "shape": [],
+              "data": [718.5177503635641]
+            }
+          }
+        }
+      }
+    }
+  ]
+}

@@ -36,6 +36,7 @@ The verify task regenerates everything from scratch, so it also fails if the exp
 | `distributions.json` | For each distribution and several parameter settings: element-wise `logProb` over a grid of x values, inside and outside the support, and the element-wise derivatives of the log prob with respect to x and each parameter |
 | `vertices.json` | Small vertex graphs: the output value, plus forward-mode and reverse-mode partial derivatives of the output with respect to each input |
 | `models.json`, `models/` | Whole models saved in Keanu's protobuf (`.pb`) and JSON formats, with the expected log prob, log likelihood, their gradients with respect to each latent, and the value of every labelled vertex. `catalog` contains one labelled instance of every saveable vertex type, recording each type's Java class name and parameter names |
+| `samplers.json` | Posterior summaries from fixed-seed Java runs of NUTS (adapt 500, drop 500 of 3000) and Metropolis–Hastings (Keanu's defaults, drop 2000 of 20,000) on each golden model: per latent element, the posterior mean, standard deviation and effective sample size (Geyer's initial monotone sequence). Random streams differ between implementations, so compare within the combined Monte Carlo error sd · sqrt(1 / ess_java + 1 / ess_rust) |
 | `algorithms.json` | MAP and maximum likelihood results for each golden model, with Adam (Keanu's defaults, at most 200,000 iterations) and conjugate gradient (Keanu's defaults): the optimized value of each latent (by label), the fitness, and whether Adam converged. Optimizers reach the optimum by different paths, so compare with optimization tolerances. The hierarchical model's MAP is unbounded (sigma → 0), so it has no meaningful optimum |
 
 ## Format
@@ -129,10 +130,11 @@ defect. When the Java side is fixed, its entry is removed and the vectors are re
 
 ## Not covered
 
-- **Random sampling.** Java and Rust random streams can't be compared value for value. Samplers are checked
-  statistically instead (moments, Kolmogorov–Smirnov, and posterior comparisons). See the plan's testing strategy.
-- **Inference algorithms** (MCMC, NUTS, optimizers, particle filter). These are compared statistically, or by
-  converged results on the models in `models/` (Phase 5).
+- **Individual random draws.** Java and Rust random streams can't be compared value for value. Samplers are
+  checked statistically instead: distribution moments and Kolmogorov–Smirnov tests in Rust, and posterior summaries
+  against `samplers.json`.
+- **The particle filter.** It's a search heuristic whose output depends on the random stream, so it's checked by
+  properties in Rust rather than against Java.
 
 ## Scope decisions
 

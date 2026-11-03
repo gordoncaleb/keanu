@@ -27,6 +27,12 @@ fn kind(graph: &Graph, id: NodeId) -> Result<&DistributionKind> {
 /// The log probability of a probabilistic node at its current value, given its parameters' current values
 /// (summed over the elements of the node).
 pub fn node_log_prob(graph: &Graph, state: &State, id: NodeId) -> Result<f64> {
+    node_log_prob_at(graph, state, id, value(state, id)?)
+}
+
+/// The log probability that a probabilistic node takes the value `v`, given its parameters' current values
+/// (summed over the elements of the node). The node's own current value is ignored.
+pub fn node_log_prob_at(graph: &Graph, state: &State, id: NodeId, v: &Value) -> Result<f64> {
     use DistributionKind::*;
     let kind = kind(graph, id)?;
     let parents = graph.parents(id);
@@ -34,7 +40,6 @@ pub fn node_log_prob(graph: &Graph, state: &State, id: NodeId) -> Result<f64> {
     let q = |i: usize| -> Result<keanu_tensor::IntTensor> {
         Ok(value(state, parents[i])?.i64()?.clone())
     };
-    let v = value(state, id)?;
     let total = |t: DoubleTensor| t.sum();
     Ok(match kind {
         Gaussian => total(d::Gaussian::new(p(0)?, p(1)?).log_prob(v.f64()?)?),

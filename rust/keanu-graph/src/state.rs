@@ -208,6 +208,27 @@ impl State {
         Ok(())
     }
 
+    /// Draws a value for a probabilistic node from its prior given its parents' current values, without changing
+    /// the state. The parents must have values.
+    pub fn sample_prior(&self, graph: &Graph, id: NodeId, rng: &mut KeanuRng) -> Result<Value> {
+        let node = graph.node(id);
+        let Op::Distribution(distribution) = &node.op else {
+            return Err(GraphError::InvalidValue(format!(
+                "node {id:?} is not probabilistic, so it has no prior to sample from"
+            )));
+        };
+        let parents: Vec<&Value> = node
+            .parents
+            .iter()
+            .map(|&p| {
+                self.values[p.0]
+                    .as_ref()
+                    .ok_or(GraphError::MissingValue(p.0))
+            })
+            .collect::<Result<_>>()?;
+        distribution.sample(&parents, rng)
+    }
+
     /// Java's `updateVertexValue`: sample a probabilistic node with no value, or recompute a deterministic one
     /// that isn't observed.
     fn update(&mut self, graph: &Graph, id: NodeId, rng: Option<&mut KeanuRng>) -> Result<()> {

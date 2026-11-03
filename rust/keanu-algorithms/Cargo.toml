@@ -11,6 +11,12 @@ publish.workspace = true
 keanu-tensor = { path = "../keanu-tensor" }
 keanu-distributions = { path = "../keanu-distributions" }
 keanu-graph = { path = "../keanu-graph" }
+rayon = { version = "1", optional = true }
+
+[features]
+default = []
+# run independent chains on rayon's thread pool
+parallel = ["dep:rayon"]
 
 [dev-dependencies]
 keanu-io = { path = "../keanu-io" }

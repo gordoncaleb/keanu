@@ -311,7 +311,7 @@ Differences from Java that are intentional:
 
 ### Phase 5: `keanu-algorithms`
 
-**Status: step a done; the rest in progress.** `rust/keanu-algorithms` has:
+**Status: done, except BOBYQA, which is pending a licensing decision.** `rust/keanu-algorithms` has:
 
 - **Samples:** `NetworkSamples`, `NetworkSample` and `Samples`, with drop, down-sampling (keeping ceil(n / k)
   samples), mean, variance, mode, probability, autocorrelation, effective sample size, stacking and the most
@@ -321,21 +321,51 @@ Differences from Java that are intentional:
 - **Forward sampling.**
 - **Gradient optimizers:** Adam (an exact port of Java's update rule and defaults) and nonlinear conjugate gradient
   (Polak–Ribière or Fletcher–Reeves, with its own line search).
+- **Metropolis–Hastings (`mcmc::metropolis`, `mcmc::proposal`):**
+  - prior and Gaussian proposals (per-node sigmas), with the prior proposal's q(x' | x) recorded when it is created
+  - single and full variable selectors
+  - rollback-to-cached-values and rollback-and-cascade rejection
+  - temperature, proposal listeners and an acceptance rate tracker
+  - drop and down-sampling through `mcmc::generate`
+- **Simulated annealing (`mcmc::annealing`):** exponential schedule, honouring the variable selector.
+- **NUTS (`mcmc::nuts`):**
+  - Java's tree building, U-turn criterion and leapfrog integrator
+  - dual-averaging step size, switching to the averaged size on the final adaptation step
+  - the adaptive diagonal quadratic potential
+  - max tree height, max energy change and divergence tracking
+  - optional statistics
+  - all adaptation state belongs to the run, so one `Nuts` configuration can be reused and shared
+- **Particle filter (`particle_filter`):** latent increments, each particle sampling given its own parents in
+  topological order, and log-sum-exp normalised resampling weights.
+- **Sampler selection (`mcmc::select`):** `is_differentiable_wrt_latents` (Java's `DifferentiableChecker`), and
+  `Sampler::for_model`, which picks NUTS or Metropolis–Hastings.
+- **Parallel chains (`mcmc::chains::run_chains`):** independent seeded chains over one shared model, on rayon
+  with the `parallel` feature, otherwise one after another, with the same results either way.
 
-`golden-vectors/algorithms.json` records Java's MAP and maximum likelihood results for each golden model with Adam
-and with conjugate gradient. Rust agrees on every case except the hierarchical model's MAP, which is skipped because
-its posterior is unbounded.
+Reference results:
+- `golden-vectors/algorithms.json` records Java's MAP and maximum likelihood results for each golden model with
+  Adam and with conjugate gradient. Rust agrees on every case except the hierarchical model's MAP, which is skipped
+  because its posterior is unbounded.
+- `golden-vectors/samplers.json` records Java's NUTS and Metropolis–Hastings posterior summaries for each golden
+  model. Rust agrees on all 32 latent elements within 5 combined Monte Carlo standard errors.
+
+Rust also checks against analytic posteriors: Gaussian–Gaussian, Beta–Binomial, Gamma–Poisson, a correlated 2D
+Gaussian, and an exact discrete posterior.
 
 **BOBYQA is pending a licensing decision.** It must not be translated from Apache Commons Math source into the MIT
 crate. The options are a clean-room implementation from Powell's paper, or dropping it.
 
-Intentional differences in this step:
+Intentional differences:
 - **Licensing:** the conjugate gradient and its line search are our own implementations, not ports of Apache Commons
   Math, so their paths differ from Java's while reaching the same optima.
-- **Discrete latents:** a gradient optimizer given discrete latents returns an error, where Java threw a
-  `ClassCastException`.
+- **Discrete latents:** a gradient optimizer, or NUTS, given discrete latents returns an error. Java's optimizer
+  threw a `ClassCastException`, and Java's NUTS silently left them fixed.
 - **Evaluation limit:** running out of evaluations returns the current point with `converged: false`, where Java
   threw `TooManyEvaluationsException`.
+- **NUTS leaves the state at the chosen sample;** Java left the network at the trajectory's last leapfrog position.
+- **Samplers evaluate every node at start-up,** so deterministic nodes between latents always have values.
+- **Particle filter tie-breaking:** among observations with equally few new latents, the lowest node id goes first,
+  so the order is deterministic (Java used hash order). Only probabilistic observations count as increments.
 
 - Port the optimizers:
   - Adam
