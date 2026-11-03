@@ -3,14 +3,34 @@
 Status: proposal. Written once the Java code base had been reduced to a pure JVM implementation (ND4J, OpenBLAS and
 the Python bindings removed) and the known correctness bugs fixed (see `release_notes.md`, "Unreleased").
 
+## End state
+
+**This repository contains only Rust.** All Java, Kotlin and Gradle code is deleted (Phase 8), and Keanu is
+published to crates.io as a library that other Rust projects use with:
+
+```toml
+[dependencies]
+keanu = "1"
+```
+
+The Java implementation is a temporary reference used to prove parity. It is not a product the Rust version has
+to interoperate with or stay compatible with.
+
 ## Goals
 
 - A pure Rust implementation of Keanu with the same modelling capability and numerically equivalent results.
-- No native (C/Fortran) dependencies in the core, the same constraint the Java version now has.
-- Migrate incrementally, with the Java implementation as the reference until the Rust version reaches parity.
+- **Library first.** Keanu should be a well-behaved dependency:
+  - no global mutable state (Java's static vertex ID counter goes away)
+  - graphs that are `Send + Sync`, with per-chain state, so callers can run models on their own threads
+  - a semver-stable public API, documented on docs.rs
+  - a small default dependency tree, with optional features for heavier parts (serialisation, parallelism)
+  - a declared minimum supported Rust version (MSRV)
+- No native (C/Fortran) dependencies, the same constraint the Java version now has.
+- Migrate incrementally, with the Java implementation as the reference until the Rust version reaches parity,
+  then delete Java.
 
-Non-goals for the first release: a source-compatible Java API, a Python API, GPU support, or bit-for-bit
-reproduction of Java random number streams. Samplers can only be compared statistically.
+Non-goals: Java or Python bindings, a source-compatible Java API, GPU support, or bit-for-bit reproduction of Java
+random number streams. Samplers can only be compared statistically.
 
 ## What is being migrated
 
@@ -52,9 +72,13 @@ This keeps every comparison deterministic until the algorithm layer, where only 
 protobuf (`BayesNet.proto`) and JSON. The Rust version should load exactly those files. Any model built in Java can
 then be run in Rust and the results compared, with no FFI bridge.
 
-**No JNI bridge by default.** Calling Rust from Java through JNI or the Panama FFM API would reintroduce a native
-dependency into the Java build. If a staged rollout to Java users is needed later, it can be added as an optional
-phase (Phase 7) with the Rust crate shipped as a separate artifact.
+**No Java interop.** Because the end state is Rust only, there is no JNI or FFM bridge. Java and Rust only
+meet through files: the golden vectors and saved models. That keeps the Java side untouched and makes it simple to
+delete.
+
+**The golden vectors outlive Java.** While Java exists, it regenerates and verifies them. In Phase 8 they are frozen
+and become ordinary checked-in test fixtures of the Rust test suite, so parity stays enforced after the Java code is
+gone.
 
 ## Rust design decisions
 
@@ -99,14 +123,26 @@ phase (Phase 7) with the Rust crate shipped as a separate artifact.
    - **Bugs only:** panic only on invariant violations.
    - **Supersedes:** this replaces Java's mix of `IllegalArgumentException`, `IllegalStateException` and NaN returns.
 
-8. **Crate layout (workspace).**
-   - `keanu-tensor`
-   - `keanu-distributions`
-   - `keanu-graph` (ops and autodiff)
-   - `keanu-algorithms`
-   - `keanu-io`
-   - `keanu`, the facade crate
-   - `keanu-parity`, the test-only crate that consumes the golden vectors
+8. **Crate layout (Cargo workspace).**
+
+   | Crate | Published | Contents |
+   |---|---|---|
+   | `keanu` | yes | Facade that re-exports the public API. This is what users depend on |
+   | `keanu-tensor` | yes | Tensors and linear algebra. Usable on its own |
+   | `keanu-distributions` | yes | Distributions and special functions |
+   | `keanu-graph` | yes | Graph, ops and autodiff |
+   | `keanu-algorithms` | yes | Optimizers, samplers, statistics |
+   | `keanu-io` | yes | Save / load. Behind features so users who don't need it don't pay for `prost` / `serde` |
+   | `keanu-parity` | no (`publish = false`) | Test-only crate that checks the golden vectors |
+
+   - **Features on the `keanu` facade:**
+     - `serde`: JSON save / load
+     - `protobuf`: `.pb` save / load
+     - `parallel`: `rayon`, for running chains in parallel
+     - `dot`: graph export
+   - **Defaults:** `serde` is on by default and the rest are opt-in.
+   - **Releases:** the internal crates are versioned in lockstep with `keanu`, and users should depend only on
+     `keanu`. Publishing the lower-level crates lets advanced users take, say, just `keanu-tensor`.
 
 ## Phases
 
@@ -193,15 +229,50 @@ Each phase ends with its exit criteria passing in CI.
 
 **Exit:** the examples run in CI, and the docs build from doctests.
 
-### Phase 7 (optional): Java interop
-- Only if existing Java users need a transition path. Options:
-  - a thin JNI or Panama FFM wrapper
-  - a separate process talking protobuf over stdio or gRPC
-- Shipped as a separate artifact so the pure-Java Keanu stays dependency-free.
+### Phase 7: Library hardening and first crates.io release
+- Review the public API:
+  - minimal surface, with crate internals marked `pub(crate)`
+  - consistent naming
+  - `#[non_exhaustive]` on public enums and error types
+  - every public item documented, with `#![deny(missing_docs)]`
+- Errors: one error type per crate, implementing `std::error::Error`. No panics on bad user input.
+- Check the feature flags build in every combination (`cargo hack --feature-powerset`). Set and test the MSRV.
+- Run `cargo semver-checks` in CI, and `cargo deny` for licences and advisories.
+- Publish `0.x` releases to crates.io and get early users. Release `1.0` once the API has settled.
 
-### Phase 8: Switch over
-- Mark the Java implementation as maintenance-only, then archive it once the Rust version has had a release with
-  parity on every golden test.
+**Exit:**
+- `keanu` is on crates.io with docs on docs.rs.
+- A fresh Rust project can depend on it, build and run the ported examples with no extra setup.
+
+### Phase 8: Delete Java
+Precondition: the Rust version passes every golden vector, excluding the known issues, and has had at least one
+release used in practice.
+
+1. **Freeze the vectors.** Make a final run of `generateGoldenVectors`, then move `golden-vectors/` into the Rust
+   workspace as `keanu-parity` fixtures. From here on they are never regenerated. A deliberate behaviour change in
+   Rust updates the affected fixture by hand, with a note in the changelog.
+2. **Tag the last Java state** (e.g. `java-final`) so the reference implementation can always be checked out and
+   rerun, and say in the README how to get it.
+3. **Delete** `keanu-project`, `keanu-golden`, `keanu-examples` (already ported), `benchmarks` (already ported),
+   the Java/Kotlin docs snippets, `build.gradle`, `settings.gradle`, `gradle.properties`, `gradle/`, `gradlew*`,
+   the Gradle and Java CI configuration, and `release_notes.md`. The latter is replaced by `CHANGELOG.md`.
+4. **Replace CI** with Cargo:
+   - `cargo fmt --check`
+   - `cargo clippy -D warnings`
+   - `cargo test --workspace --all-features`
+   - feature powerset
+   - MSRV
+   - `semver-checks`
+   - `deny`
+   - doc build
+5. **Move the Rust workspace to the repository root** and rewrite `README.md` and the docs site for Rust.
+6. **Remove the protobuf schema's Java options** (`java_package` and the like), but keep the `.proto` files so saved
+   models stay loadable.
+
+**Exit:**
+- `git ls-files` contains no `.java`, `.kt` or Gradle files.
+- CI is Cargo only.
+- `cargo test` checks the frozen golden vectors.
 
 ## Rough sizing
 
@@ -216,6 +287,8 @@ Assuming one engineer familiar with both languages. Treat these as relative weig
 | 4 Model and IO | M |
 | 5 Algorithms | L (BOBYQA port and NUTS are the riskiest parts) |
 | 6 Examples / docs / benchmarks | S |
+| 7 Library hardening and release | M |
+| 8 Delete Java | S |
 
 Phases 1 and 2 can overlap once the tensor API is stable. Within Phase 3, op families can be split across people
 (arithmetic, trig/special, matrix, shape/slicing, boolean/generic), because the golden vectors make each family
@@ -245,10 +318,17 @@ independently verifiable.
 | The partial-derivative tensor layout is subtle (`[wrt..., of...]` vs `[of..., wrt...]`) | Keep the Java layout and port the autodiff tests unchanged |
 | Behaviour changes made during this cleanup (Exponential rate, NaN equality, slicing) | Golden vectors are generated after the fixes, so Rust targets the corrected behaviour |
 | Scope creep into a redesign | Defer API redesign until parity; make the first Rust release semantically equivalent |
+| Losing the reference once Java is deleted | Frozen golden vectors become Rust test fixtures, and the `java-final` tag keeps the Java implementation runnable |
+| Defects in Java being copied into Rust | Known issues are listed in the vectors manifest and either fixed in Java before freezing or marked as intended Rust behaviour |
+| A heavy or unstable dependency tree for downstream users | Optional features for IO and parallelism, `cargo deny`, and pure-Rust dependencies only (`faer`, `prost`, `serde`) |
 
-## Suggested first steps
+## Suggested next steps
 
-1. Merge the Java cleanup, then tag it as the reference version for the migration.
-2. Implement the golden vector exporter (Phase 0) for tensors and distributions only.
-3. Spike `keanu-tensor` on `ndarray` + `faer` against those vectors (2–3 weeks). Use the spike to choose between
-   `ndarray` and an in-house tensor before committing to Phase 1.
+1. Finish Phase 0:
+   - sign off the scope decisions in `golden-vectors/README.md`
+   - fix or accept the known issues
+   - add coverage for generic/boolean ops and `Sequence`
+2. Create the Cargo workspace (initially in a `rust/` directory) with `keanu-parity` reading `golden-vectors/`, and
+   run it in CI alongside the Gradle build.
+3. Spike `keanu-tensor` on `ndarray` + `faer` against the tensor vectors (2–3 weeks). Use the spike to choose
+   between `ndarray` and an in-house tensor before committing to Phase 1.
