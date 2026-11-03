@@ -1,0 +1,18 @@
+[package]
+name = "tensor-bench"
+version = "0.1.0"
+edition = "2024"
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+tensor-inhouse = { version = "0.1.0", path = "../tensor-inhouse" }
+tensor-ndarray = { version = "0.1.0", path = "../tensor-ndarray" }
+
+[dev-dependencies]
+criterion = "0.8.2"
+
+[[bench]]
+name = "tensors"
+harness = false

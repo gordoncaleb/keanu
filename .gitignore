@@ -10,3 +10,6 @@ out/
 /docs/python/.buildinfo
 codegen/out
 Pipfile.lock
+
+# Rust build output
+/rust/target/

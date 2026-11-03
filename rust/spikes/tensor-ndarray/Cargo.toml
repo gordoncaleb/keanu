@@ -1,0 +1,16 @@
+[package]
+name = "tensor-ndarray"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[lib]
+name = "keanu_tensor_ndarray_spike"
+
+[dependencies]
+keanu_tensor_inhouse = { package = "tensor-inhouse", path = "../tensor-inhouse" }
+faer = "0.24.4"
+ndarray = "0.17.2"
+
+[dev-dependencies]
+keanu-parity = { path = "../../keanu-parity" }
