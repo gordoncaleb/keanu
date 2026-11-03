@@ -13,6 +13,7 @@ use std::collections::HashMap;
 
 /// BOBYQA settings (Java's `BOBYQA` builder).
 #[derive(Debug, Clone, PartialEq)]
+#[non_exhaustive]
 pub struct Bobyqa {
     /// The maximum number of fitness evaluations (default: unlimited).
     pub max_evaluations: usize,
@@ -25,6 +26,44 @@ pub struct Bobyqa {
     /// The number of interpolation points, between n + 2 and (n + 1)(n + 2) / 2 for n latent dimensions
     /// (default 2n + 1).
     pub interpolation_points: Option<usize>,
+}
+
+/// Setters for each setting, for use as `Bobyqa::default().with_...(...)`.
+impl Bobyqa {
+    /// Sets [`max_evaluations`](Self::max_evaluations).
+    #[must_use]
+    pub fn with_max_evaluations(mut self, max_evaluations: usize) -> Self {
+        self.max_evaluations = max_evaluations;
+        self
+    }
+
+    /// Sets [`bounds_range`](Self::bounds_range).
+    #[must_use]
+    pub fn with_bounds_range(mut self, bounds_range: f64) -> Self {
+        self.bounds_range = bounds_range;
+        self
+    }
+
+    /// Sets [`initial_trust_region_radius`](Self::initial_trust_region_radius).
+    #[must_use]
+    pub fn with_initial_trust_region_radius(mut self, initial_trust_region_radius: f64) -> Self {
+        self.initial_trust_region_radius = initial_trust_region_radius;
+        self
+    }
+
+    /// Sets [`stopping_trust_region_radius`](Self::stopping_trust_region_radius).
+    #[must_use]
+    pub fn with_stopping_trust_region_radius(mut self, stopping_trust_region_radius: f64) -> Self {
+        self.stopping_trust_region_radius = stopping_trust_region_radius;
+        self
+    }
+
+    /// Sets [`interpolation_points`](Self::interpolation_points) to `Some(interpolation_points)`.
+    #[must_use]
+    pub fn with_interpolation_points(mut self, interpolation_points: usize) -> Self {
+        self.interpolation_points = Some(interpolation_points);
+        self
+    }
 }
 
 impl Default for Bobyqa {

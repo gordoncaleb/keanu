@@ -2,7 +2,13 @@
 name = "keanu-io"
 version = "0.1.0"
 description = "Saving and loading Keanu models (protobuf and JSON) and exporting them as DOT graphs"
+readme = "README.md"
+documentation = "https://docs.rs/keanu-io"
+keywords = ["protobuf", "serialization", "graphviz", "bayesian", "keanu"]
+categories = ["science", "encoding"]
+include = ["src/**/*.rs", "Cargo.toml", "README.md", "LICENSE", "proto/**/*.proto"]
 edition.workspace = true
+rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 publish.workspace = true
@@ -17,16 +23,16 @@ json = ["dep:pbjson", "dep:serde", "dep:serde_json"]
 dot = []
 
 [dependencies]
-keanu-distributions = { path = "../keanu-distributions" }
-keanu-graph = { path = "../keanu-graph" }
-keanu-tensor = { path = "../keanu-tensor" }
+keanu-distributions = { workspace = true }
+keanu-graph = { workspace = true }
+keanu-tensor = { workspace = true }
 prost = "0.14"
 pbjson = { version = "0.9", optional = true }
 serde = { version = "1", optional = true }
 serde_json = { version = "1", features = ["float_roundtrip"], optional = true }
 
 [dev-dependencies]
-keanu-parity = { path = "../keanu-parity" }
+keanu-parity = { workspace = true }
 pbjson-build = "0.9"
 prost-build = "0.14"
 protox = "0.10"
@@ -42,3 +48,7 @@ required-features = ["protobuf", "json"]
 
 [lints]
 workspace = true
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]

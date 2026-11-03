@@ -515,11 +515,11 @@ fn sampling_can_be_used_instead_of_optimization() {
         .proposal(GaussianProposal::new(0.25))
         .selector(VariableSelector::Single)
         .rejection(RejectionStrategy::RollbackAndCascade);
-    let sampling =
-        SamplingFitting::new(Sampler::MetropolisHastings(mh), count, 9).options(SamplingOptions {
-            drop: count / 10,
-            down_sample_interval: 2,
-        });
+    let sampling = SamplingFitting::new(Sampler::MetropolisHastings(mh), count, 9).with_options(
+        SamplingOptions::default()
+            .with_drop(count / 10)
+            .with_down_sample_interval(2),
+    );
     for reg in [
         Regularization::None,
         Regularization::Ridge,

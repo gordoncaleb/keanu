@@ -25,7 +25,8 @@
 //! - Integer arithmetic wraps on overflow; integer division truncates towards zero and division by zero is an error.
 //! - Integer `pow` with a negative exponent truncates 1 / base^|exponent| towards zero.
 
-#![warn(missing_docs)]
+#![deny(missing_docs)]
+#![cfg_attr(docsrs, feature(doc_cfg))]
 
 mod error;
 /// The tensor operations, grouped by kind. They are all methods on [`Tensor`].

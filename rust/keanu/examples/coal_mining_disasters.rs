@@ -46,10 +46,9 @@ pub fn run(seed: u64, sample_count: usize) -> keanu::Result<i64> {
         &mut state,
         model.latents(),
         sample_count,
-        SamplingOptions {
-            drop: sample_count / 5,
-            down_sample_interval: 3,
-        },
+        SamplingOptions::default()
+            .with_drop(sample_count / 5)
+            .with_down_sample_interval(3),
         &mut rng,
     )?;
     let mode = samples.i64(switch_point).unwrap().mode().unwrap();

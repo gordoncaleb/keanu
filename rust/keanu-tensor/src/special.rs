@@ -2,6 +2,11 @@
 
 use std::f64::consts::PI;
 
+/// The Euler–Mascheroni constant. Defined here rather than taken from `std::f64::consts::EULER_GAMMA`, which needs
+/// Rust 1.94, to keep the minimum supported Rust version lower.
+#[allow(clippy::approx_constant)]
+const EULER_GAMMA: f64 = 0.577_215_664_901_532_9;
+
 /// Lanczos approximation coefficients (g = 607/128, 15 terms; Godfrey).
 const LANCZOS_G: f64 = 607.0 / 128.0;
 const LANCZOS: [f64; 15] = [
@@ -53,7 +58,7 @@ pub fn digamma(x: f64) -> f64 {
     let mut z = x;
     let base = loop {
         if z > 0.0 && z <= 1e-5 {
-            break -std::f64::consts::EULER_GAMMA - 1.0 / z;
+            break -EULER_GAMMA - 1.0 / z;
         }
         if z >= 49.0 {
             let inv = 1.0 / (z * z);

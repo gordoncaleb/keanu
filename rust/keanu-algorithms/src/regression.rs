@@ -48,6 +48,7 @@ pub trait PredictiveModel {
 
 /// How to fit a model's latents to its observations (Java's `ModelFitter` implementations).
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub enum Fitter {
     /// Maximize the log likelihood of the observations (Java's `MaximumLikelihoodModelFitter`).
     MaxLikelihood(Algorithm),
@@ -59,6 +60,7 @@ pub enum Fitter {
 
 /// Settings for fitting by posterior sampling.
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct SamplingFitting {
     /// The sampler, e.g. Metropolis–Hastings or NUTS.
     pub sampler: Sampler,
@@ -82,7 +84,8 @@ impl SamplingFitting {
     }
 
     /// Sets how many steps to drop and how often to record.
-    pub fn options(mut self, options: SamplingOptions) -> Self {
+    #[must_use]
+    pub fn with_options(mut self, options: SamplingOptions) -> Self {
         self.options = options;
         self
     }
@@ -132,6 +135,7 @@ impl Fitter {
 /// The prior on the regression weights and intercept, and which fitter is used by default (Java's
 /// `RegressionRegularization`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[non_exhaustive]
 pub enum Regularization {
     /// Gaussian priors, fitted by maximum likelihood (so the priors have no effect).
     #[default]

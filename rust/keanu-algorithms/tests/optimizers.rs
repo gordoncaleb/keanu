@@ -32,17 +32,11 @@ fn both_algorithms_find_the_conjugate_gaussian_posterior_mode() {
     let observations = [0.3, 1.2, 0.9, 1.7];
     let expected = posterior_mode(&observations);
     let algorithms: Vec<keanu_algorithms::optimizer::Algorithm> = vec![
-        Adam {
-            max_evaluations: 100_000,
-            ..Adam::default()
-        }
-        .into(),
+        Adam::default().with_max_evaluations(100_000).into(),
         ConjugateGradient::default().into(),
-        ConjugateGradient {
-            formula: UpdateFormula::FletcherReeves,
-            ..ConjugateGradient::default()
-        }
-        .into(),
+        ConjugateGradient::default()
+            .with_formula(UpdateFormula::FletcherReeves)
+            .into(),
     ];
     for algorithm in algorithms {
         let (model, mut state, mu) = conjugate_gaussian(&observations);
@@ -113,10 +107,7 @@ fn adam_converges_when_the_optimum_is_zero() {
     let (graph, mut state) = b.build().unwrap();
     let model = Model::new(graph, &state).unwrap();
     let result = GradientOptimizer::new(&model)
-        .algorithm(Adam {
-            max_evaluations: 100_000,
-            ..Adam::default()
-        })
+        .algorithm(Adam::default().with_max_evaluations(100_000))
         .max_a_posteriori(&mut state)
         .unwrap();
     assert!(result.converged);
@@ -218,10 +209,7 @@ fn discrete_latents_and_no_latents_are_errors() {
 fn invalid_settings_are_errors() {
     let (model, mut state, _) = conjugate_gaussian(&[1.0]);
     let error = GradientOptimizer::new(&model)
-        .algorithm(Adam {
-            alpha: 0.0,
-            ..Adam::default()
-        })
+        .algorithm(Adam::default().with_alpha(0.0))
         .max_a_posteriori(&mut state);
     assert!(matches!(error, Err(AlgorithmError::InvalidSetting(_))));
 }
@@ -230,10 +218,7 @@ fn invalid_settings_are_errors() {
 fn max_evaluations_stops_early_without_converging() {
     let (model, mut state, _) = conjugate_gaussian(&[0.3, 1.2]);
     let result = GradientOptimizer::new(&model)
-        .algorithm(Adam {
-            max_evaluations: 3,
-            ..Adam::default()
-        })
+        .algorithm(Adam::default().with_max_evaluations(3))
         .max_a_posteriori(&mut state)
         .unwrap();
     assert!(!result.converged);

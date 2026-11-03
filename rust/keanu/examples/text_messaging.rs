@@ -59,10 +59,9 @@ pub fn run(seed: u64, sample_count: usize) -> keanu::Result<Results> {
         &mut state,
         model.latents(),
         sample_count,
-        SamplingOptions {
-            drop: sample_count / 2,
-            down_sample_interval: model.latents().len(),
-        },
+        SamplingOptions::default()
+            .with_drop(sample_count / 2)
+            .with_down_sample_interval(model.latents().len()),
         &mut rng,
     )?;
 

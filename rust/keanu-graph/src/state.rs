@@ -226,11 +226,7 @@ impl State {
         let parents: smallvec::SmallVec<[&Value; 4]> = node
             .parents
             .iter()
-            .map(|&p| {
-                self.values[p.0]
-                    .as_ref()
-                    .ok_or(GraphError::MissingValue(p.0))
-            })
+            .map(|&p| self.values[p.0].as_ref().ok_or(GraphError::MissingValue(p)))
             .collect::<Result<_>>()?;
         distribution.sample(&parents, rng)
     }

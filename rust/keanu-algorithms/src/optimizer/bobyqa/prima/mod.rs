@@ -54,6 +54,7 @@ use common::{BOUNDMAX, EPS, MAXFUN_DIM_DFT, RHOBEG_DFT, RHOEND_DFT, moderatex};
 
 /// Settings for [`minimize`]. `None` means PRIMA's default.
 #[derive(Debug, Clone, Default, PartialEq)]
+#[non_exhaustive]
 pub struct Settings {
     /// Initial trust region radius (default 1, reduced to a quarter of the smallest bound range if needed).
     pub rhobeg: Option<f64>,
@@ -69,8 +70,54 @@ pub struct Settings {
     pub honour_x0: Option<bool>,
 }
 
+/// Setters for each setting, for use as `Settings::default().with_...(...)`.
+impl Settings {
+    /// Sets [`rhobeg`](Self::rhobeg) to `Some(rhobeg)`.
+    #[must_use]
+    pub fn with_rhobeg(mut self, rhobeg: f64) -> Self {
+        self.rhobeg = Some(rhobeg);
+        self
+    }
+
+    /// Sets [`rhoend`](Self::rhoend) to `Some(rhoend)`.
+    #[must_use]
+    pub fn with_rhoend(mut self, rhoend: f64) -> Self {
+        self.rhoend = Some(rhoend);
+        self
+    }
+
+    /// Sets [`maxfun`](Self::maxfun) to `Some(maxfun)`.
+    #[must_use]
+    pub fn with_maxfun(mut self, maxfun: usize) -> Self {
+        self.maxfun = Some(maxfun);
+        self
+    }
+
+    /// Sets [`npt`](Self::npt) to `Some(npt)`.
+    #[must_use]
+    pub fn with_npt(mut self, npt: usize) -> Self {
+        self.npt = Some(npt);
+        self
+    }
+
+    /// Sets [`ftarget`](Self::ftarget) to `Some(ftarget)`.
+    #[must_use]
+    pub fn with_ftarget(mut self, ftarget: f64) -> Self {
+        self.ftarget = Some(ftarget);
+        self
+    }
+
+    /// Sets [`honour_x0`](Self::honour_x0) to `Some(honour_x0)`.
+    #[must_use]
+    pub fn with_honour_x0(mut self, honour_x0: bool) -> Self {
+        self.honour_x0 = Some(honour_x0);
+        self
+    }
+}
+
 /// The result of [`minimize`].
 #[derive(Debug, Clone, PartialEq)]
+#[non_exhaustive]
 pub struct Outcome {
     /// The best point found.
     pub x: Vec<f64>,

@@ -25,10 +25,7 @@ fn nuts(c: &mut Criterion) {
     // as in Java, each run continues from the state the previous run left
     c.bench_function("NUTSBenchmark/takeSamples", |bench| {
         bench.iter(|| {
-            let nuts = Nuts {
-                adapt_count: 1000,
-                ..Nuts::default()
-            };
+            let nuts = Nuts::default().with_adapt_count(1000);
             black_box(
                 nuts.sample(&model, &mut state, &latents, 1000, &mut rng)
                     .unwrap(),
@@ -49,17 +46,11 @@ fn optimizers(c: &mut Criterion) {
     let (graph, state) = b.build().unwrap();
     let model = Model::new(graph, &state).unwrap();
     let mut group = c.benchmark_group("OptimizerBenchmark");
-    let adam = Adam {
-        convergence: ConvergenceChecker::Absolute {
-            norm: Norm::Max,
-            threshold: 1e-5,
-        },
-        ..Adam::default()
-    };
-    let cg = ConjugateGradient {
-        absolute_threshold: 1e-5,
-        ..ConjugateGradient::default()
-    };
+    let adam = Adam::default().with_convergence(ConvergenceChecker::Absolute {
+        norm: Norm::Max,
+        threshold: 1e-5,
+    });
+    let cg = ConjugateGradient::default().with_absolute_threshold(1e-5);
     for (name, algorithm) in [
         (
             "ADAM_OPTIMIZER",

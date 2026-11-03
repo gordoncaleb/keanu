@@ -454,11 +454,35 @@ Intentional differences:
 
 ### Phase 7: Library hardening and first crates.io release
 
-**Status: step a (performance) done.** Rust is now at least as fast as Java on the model-level benchmarks: log prob
-and its gradient on every golden model, NUTS (1.2×), graph evaluation, the optimizers (conjugate gradient 1.9×,
-BOBYQA 1.1×, Adam 5×) and Metropolis–Hastings. The one exception is thermometers, which is level. Results are
-unchanged. The remaining gaps are tiny-tensor and tiny-matrix call overheads; see `rust/docs/benchmarks.md`. Still
-to do: the API review, docs, feature checks, MSRV and release checks.
+**Status: done, except the first crates.io release.** The release waits for the user's approval after Java is
+deleted (Phase 8).
+
+- **Step a, performance:** Rust is at least as fast as Java on the model-level benchmarks:
+  - log prob and its gradient on every golden model
+  - NUTS (1.2×) and graph evaluation
+  - the optimizers (conjugate gradient 1.9×, BOBYQA 1.1×, Adam 5×) and Metropolis–Hastings
+
+  The one exception is Metropolis–Hastings on thermometers, which is level, and results are unchanged. The
+  remaining gaps are tiny-tensor and tiny-matrix call overheads; see `rust/docs/benchmarks.md`.
+- **Step b, hardening:** recorded in `rust/docs/api-review.md`, with every check command in `rust/CONTRIBUTING.md`.
+  - `#[non_exhaustive]` on the growable enums, settings structs and result structs; the settings structs have
+    `with_*` setters.
+  - The prost-generated types are no longer public.
+  - Every crate's error is transparent, with source chaining.
+  - The panic audit is done, plus a property-based fuzz test showing random graphs never panic. It found the
+    0 × 0 matrix panic, which is fixed.
+  - `#![deny(missing_docs)]` is set on every published crate.
+  - The feature powerset is clean under `cargo hack` (check and clippy, all targets).
+  - The MSRV is 1.85, verified for every feature combination.
+  - `cargo deny` passes (`rust/deny.toml`).
+  - `faer` now uses only the features Keanu needs, cutting 26 dependencies.
+  - Package metadata, licence files and `include` lists are in place, and each crate packages and verifies
+    locally (20–73 KiB).
+  - Docs build with `-D warnings`, both locally and the way docs.rs builds them.
+- **Remaining:**
+  - `cargo semver-checks` needs a published baseline, so it starts with the second release.
+  - CI is deferred at the user's request.
+  - Publishing waits for explicit approval.
 
 - Review the public API:
   - minimal surface, with crate internals marked `pub(crate)`
@@ -467,8 +491,9 @@ to do: the API review, docs, feature checks, MSRV and release checks.
   - every public item documented, with `#![deny(missing_docs)]`
 - Errors: one error type per crate, implementing `std::error::Error`. No panics on bad user input.
 - Check the feature flags build in every combination (`cargo hack --feature-powerset`). Set and test the MSRV.
-- Run `cargo semver-checks` in CI, and `cargo deny` for licences and advisories.
-- Publish `0.x` releases to crates.io and get early users. Release `1.0` once the API has settled.
+- Run `cargo semver-checks` (from the second release) and `cargo deny` for licences and advisories.
+- Publish `0.x` releases to crates.io and get early users, **only with the user's explicit approval** after Java is
+  deleted. Release `1.0` once the API has settled.
 
 **Exit:**
 - `keanu` is on crates.io with docs on docs.rs.

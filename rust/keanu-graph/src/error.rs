@@ -1,3 +1,4 @@
+use crate::graph::NodeId;
 use keanu_distributions::DistributionError;
 use keanu_tensor::TensorError;
 use std::fmt;
@@ -37,12 +38,12 @@ pub enum GraphError {
     /// differentiable nodes (e.g. it depends on it only via floor, a comparison or a probabilistic node).
     NoPartial {
         /// The index of the "of" node.
-        of: usize,
+        of: NodeId,
         /// The index of the "with respect to" node.
-        wrt: usize,
+        wrt: NodeId,
     },
     /// Auto diff needs a value that hasn't been computed; evaluate the graph first.
-    MissingValue(usize),
+    MissingValue(NodeId),
     /// Auto diff was asked for on a node that isn't f64 or isn't differentiable.
     NotDifferentiable(String),
     /// A custom distribution failed.
@@ -65,11 +66,14 @@ impl fmt::Display for GraphError {
             Self::Lambda(m) => write!(f, "lambda failed: {m}"),
             Self::NoPartial { of, wrt } => write!(
                 f,
-                "no partial derivative of node #{of} with respect to node #{wrt}: it does not depend on it through differentiable nodes"
+                "no partial derivative of node #{} with respect to node #{}: it does not depend on it through differentiable nodes",
+                of.index(),
+                wrt.index()
             ),
             Self::MissingValue(id) => write!(
                 f,
-                "node #{id} has no value; evaluate the graph before differentiating"
+                "node #{} has no value; evaluate the graph first",
+                id.index()
             ),
             Self::NotDifferentiable(m) => write!(f, "{m}"),
             Self::Custom(m) => write!(f, "custom distribution: {m}"),
@@ -77,7 +81,17 @@ impl fmt::Display for GraphError {
     }
 }
 
-impl std::error::Error for GraphError {}
+/// Wrapped errors are transparent: `Display` shows the wrapped error's message and `source` is the wrapped
+/// error's source, so error reports don't repeat a message.
+impl std::error::Error for GraphError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Tensor(e) => e.source(),
+            Self::Distribution(e) => e.source(),
+            _ => None,
+        }
+    }
+}
 
 impl From<TensorError> for GraphError {
     fn from(e: TensorError) -> Self {

@@ -18,10 +18,7 @@ fn finds_the_most_probable_state() {
     let (graph, mut state) = b.build().unwrap();
     let model = Model::new(graph, &state).unwrap();
 
-    let filter = ParticleFilter {
-        particles: 500,
-        ..ParticleFilter::default()
-    };
+    let filter = ParticleFilter::default().with_particles(500);
     let particles = filter
         .run(&model, &mut state, &mut KeanuRng::seed_from_u64(1))
         .unwrap();
@@ -57,11 +54,9 @@ fn particles_sample_new_latents_given_their_own_parents() {
     assert_eq!(increments[0].1, vec![a]);
     assert_eq!(increments[1].1, vec![c]);
 
-    let filter = ParticleFilter {
-        particles: 200,
-        resampling_cycles: 1,
-        ..ParticleFilter::default()
-    };
+    let filter = ParticleFilter::default()
+        .with_particles(200)
+        .with_resampling_cycles(1);
     let particles = filter
         .run(&model, &mut state, &mut KeanuRng::seed_from_u64(2))
         .unwrap();
@@ -81,12 +76,10 @@ fn weights_do_not_underflow() {
     b.observe(y, DoubleTensor::full(&[400], 3.0));
     let (graph, mut state) = b.build().unwrap();
     let model = Model::new(graph, &state).unwrap();
-    let particles = ParticleFilter {
-        particles: 50,
-        ..ParticleFilter::default()
-    }
-    .run(&model, &mut state, &mut KeanuRng::seed_from_u64(3))
-    .unwrap();
+    let particles = ParticleFilter::default()
+        .with_particles(50)
+        .run(&model, &mut state, &mut KeanuRng::seed_from_u64(3))
+        .unwrap();
     // every log probability is hugely negative, yet the weights are well defined
     assert!(particles.iter().all(|p| p.log_prob() < -1000.0));
     let weights = normalised_weights(&particles);
@@ -102,10 +95,7 @@ fn rejects_invalid_settings() {
     b.observe(y, DoubleTensor::scalar(0.0));
     let (graph, mut state) = b.build().unwrap();
     let model = Model::new(graph, &state).unwrap();
-    let filter = ParticleFilter {
-        resampling_proportion: 1.0,
-        ..ParticleFilter::default()
-    };
+    let filter = ParticleFilter::default().with_resampling_proportion(1.0);
     assert!(
         filter
             .run(&model, &mut state, &mut KeanuRng::seed_from_u64(1))

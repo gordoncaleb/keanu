@@ -9,19 +9,31 @@
 //! Not supported: `PrintVertex`, `GetBooleanIndexVertex`, lambda / CPT / categorical nodes (which Java can't save
 //! either), and files written by older Java versions.
 
-#![warn(missing_docs)]
+#![deny(missing_docs)]
+#![cfg_attr(docsrs, feature(doc_cfg))]
 
+#[cfg(any(feature = "protobuf", feature = "json"))]
 mod classes;
 mod error;
+#[cfg(any(feature = "protobuf", feature = "json"))]
 mod load;
+#[cfg(any(feature = "protobuf", feature = "json"))]
 mod save;
 
 #[cfg(feature = "dot")]
 mod dot;
 
-/// The protobuf types of the saved model schema.
-#[allow(clippy::all, missing_debug_implementations, missing_docs)]
-pub mod proto {
+/// The protobuf types of the saved model schema. Internal: the public API is the format level `load_*` / `save_*`
+/// functions, so the generated types (and the prost version) can change without breaking users.
+#[cfg(any(feature = "protobuf", feature = "json"))]
+#[allow(
+    clippy::all,
+    missing_debug_implementations,
+    missing_docs,
+    dead_code,
+    unreachable_pub
+)]
+pub(crate) mod proto {
     include!("generated/mir.rs");
     #[cfg(feature = "json")]
     include!("generated/mir.serde.rs");
@@ -30,9 +42,12 @@ pub mod proto {
 #[cfg(feature = "dot")]
 pub use dot::to_dot;
 pub use error::{IoError, Result};
-pub use load::{Loaded, load_model};
-pub use proto::ProtoModel;
-pub use save::save_model;
+#[cfg(any(feature = "protobuf", feature = "json"))]
+pub use load::Loaded;
+#[cfg(any(feature = "protobuf", feature = "json"))]
+use load::load_model;
+#[cfg(any(feature = "protobuf", feature = "json"))]
+use save::save_model;
 
 use std::collections::BTreeMap;
 

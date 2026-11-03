@@ -120,6 +120,7 @@ pub enum BinaryOp {
 
 /// Element-wise comparisons with broadcasting.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
 pub enum CompareOp {
     /// A > b.
     Gt,
@@ -137,6 +138,7 @@ pub enum CompareOp {
 
 /// Element-wise boolean logic with broadcasting.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
 pub enum LogicOp {
     /// Logical and.
     And,
@@ -148,6 +150,7 @@ pub enum LogicOp {
 
 /// Element-wise tests of f64 values.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
 pub enum Predicate {
     /// Whether NaN.
     IsNan,
@@ -165,6 +168,7 @@ pub enum Predicate {
 
 /// Reductions. `Mean` and `StdDev` apply to f64 only. `Max`, `Min` and `StdDev` reduce over every dimension.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
 pub enum ReduceOp {
     /// Sum.
     Sum,
@@ -182,6 +186,7 @@ pub enum ReduceOp {
 
 /// Running accumulations along an axis.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
 pub enum ScanOp {
     /// Cumulative sum.
     CumSum,
@@ -191,6 +196,7 @@ pub enum ScanOp {
 
 /// Index of the largest or smallest element. The NaN-ignoring variants apply to f64 over every dimension only.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
 pub enum ArgOp {
     /// Index of the largest element (the first NaN wins).
     ArgMax,

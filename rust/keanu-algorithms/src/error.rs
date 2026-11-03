@@ -52,7 +52,8 @@ impl fmt::Display for AlgorithmError {
 impl std::error::Error for AlgorithmError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
-            Self::Graph(e) => Some(e),
+            // transparent: Display already shows the wrapped error's message
+            Self::Graph(e) => e.source(),
             _ => None,
         }
     }

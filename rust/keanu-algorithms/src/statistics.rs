@@ -108,6 +108,7 @@ pub fn effective_sample_size(series: &[f64]) -> f64 {
 
 /// Summary statistics of a series.
 #[derive(Debug, Clone, Copy, PartialEq)]
+#[non_exhaustive]
 pub struct Summary {
     /// The number of values.
     pub count: usize,

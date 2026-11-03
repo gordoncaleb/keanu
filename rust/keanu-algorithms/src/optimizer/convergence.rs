@@ -27,6 +27,7 @@ impl Norm {
 
 /// When an iterative optimizer has converged, from the change in its position between iterations.
 #[derive(Debug, Clone, Copy, PartialEq)]
+#[non_exhaustive]
 pub enum ConvergenceChecker {
     /// The norm of |a - b| / (|a| + epsilon) is below the threshold.
     Relative {

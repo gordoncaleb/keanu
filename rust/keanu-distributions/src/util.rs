@@ -5,10 +5,10 @@ use keanu_tensor::{DoubleTensor, Element, Shape, Tensor, broadcast_shape};
 
 pub(crate) fn broadcast_all(shapes: &[&[usize]]) -> Result<Shape> {
     // common case: every shape is the same as the largest one, or a scalar (rank 0)
-    if let Some(largest) = shapes.iter().copied().max_by_key(|s| s.len())
-        && shapes.iter().all(|s| s.is_empty() || *s == largest)
-    {
-        return Ok(Shape::from_slice(largest));
+    if let Some(largest) = shapes.iter().copied().max_by_key(|s| s.len()) {
+        if shapes.iter().all(|s| s.is_empty() || *s == largest) {
+            return Ok(Shape::from_slice(largest));
+        }
     }
     let mut out = Shape::new();
     for s in shapes {

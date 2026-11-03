@@ -29,7 +29,8 @@
 //! # Ok::<(), keanu_graph::GraphError>(())
 //! ```
 
-#![warn(missing_docs)]
+#![deny(missing_docs)]
+#![cfg_attr(docsrs, feature(doc_cfg))]
 
 pub mod autodiff;
 mod builder;

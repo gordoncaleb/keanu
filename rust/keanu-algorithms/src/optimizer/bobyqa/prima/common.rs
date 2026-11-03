@@ -41,6 +41,7 @@ pub(crate) const MAXFUN_DIM_DFT: usize = 500;
 
 /// Why the solver stopped (PRIMA's `infos_mod`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum ExitStatus {
     /// The trust region radius reached its final value: the normal, converged exit.
     SmallTrustRegionRadius,

@@ -60,7 +60,8 @@
 //! A [`Graph`](graph::Graph) is immutable and `Send + Sync`; all mutable values live in a
 //! [`State`](graph::State), so many chains can share one graph, each with its own state.
 
-#![warn(missing_docs)]
+#![deny(missing_docs)]
+#![cfg_attr(docsrs, feature(doc_cfg))]
 
 pub use keanu_algorithms as algorithms;
 pub use keanu_distributions as distributions;

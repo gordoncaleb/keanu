@@ -62,16 +62,13 @@ fn sampler_posteriors_match_java() {
         let settings = &case["sampler"];
         let total = settings["samples"].as_u64().unwrap() as usize;
         let drop = settings["drop"].as_u64().unwrap() as usize;
-        let options = SamplingOptions {
-            drop,
-            down_sample_interval: 1,
-        };
+        let options = SamplingOptions::default()
+            .with_drop(drop)
+            .with_down_sample_interval(1);
         let samples = match settings["name"].as_str().unwrap() {
             "NUTS" => {
-                let nuts = Nuts {
-                    adapt_count: settings["adaptCount"].as_u64().unwrap() as usize,
-                    ..Nuts::default()
-                };
+                let nuts = Nuts::default()
+                    .with_adapt_count(settings["adaptCount"].as_u64().unwrap() as usize);
                 let mut sampler = nuts.sampler(&model, &mut state, &nodes, &mut rng).unwrap();
                 generate(&mut sampler, &mut state, total, options, &mut rng).unwrap()
             }

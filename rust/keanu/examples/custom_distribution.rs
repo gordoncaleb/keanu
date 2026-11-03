@@ -78,28 +78,23 @@ pub fn run(seed: u64, mh_samples: usize, nuts_samples: usize) -> keanu::Result<R
         &mut state,
         &[hyper_priors, true_rates],
         mh_samples,
-        SamplingOptions {
-            drop: mh_samples / 2,
-            down_sample_interval: 1,
-        },
+        SamplingOptions::default()
+            .with_drop(mh_samples / 2)
+            .with_down_sample_interval(1),
         &mut rng,
     )?;
 
     // NUTS, which uses the custom distribution's gradient
     let mut state = initial;
-    let nuts = Nuts {
-        max_tree_height: 5,
-        ..Nuts::default()
-    };
+    let nuts = Nuts::default().with_max_tree_height(5);
     let (nuts_samples, _statistics) = nuts.sample_with_statistics(
         &model,
         &mut state,
         &[true_rates],
         nuts_samples,
-        SamplingOptions {
-            drop: 1000,
-            down_sample_interval: 1,
-        },
+        SamplingOptions::default()
+            .with_drop(1000)
+            .with_down_sample_interval(1),
         &mut rng,
     )?;
 

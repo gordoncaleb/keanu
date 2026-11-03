@@ -21,7 +21,8 @@
 //! # Ok::<(), keanu_distributions::DistributionError>(())
 //! ```
 
-#![warn(missing_docs)]
+#![deny(missing_docs)]
+#![cfg_attr(docsrs, feature(doc_cfg))]
 
 pub mod continuous;
 pub mod discrete;

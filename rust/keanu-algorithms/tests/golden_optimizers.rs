@@ -60,10 +60,7 @@ fn optimizers_match_java() {
         let (value_tolerance, fitness_tolerance) = match algorithm {
             "Adam" => {
                 let max = case["algorithm"]["maxEvaluations"].as_u64().unwrap() as usize;
-                optimizer = optimizer.algorithm(Adam {
-                    max_evaluations: max,
-                    ..Adam::default()
-                });
+                optimizer = optimizer.algorithm(Adam::default().with_max_evaluations(max));
                 (1e-6, 1e-9)
             }
             "ConjugateGradient" => {

@@ -70,7 +70,7 @@ fn current(state: &State, id: NodeId) -> Result<Value> {
     state
         .value(id)
         .cloned()
-        .ok_or_else(|| keanu_graph::GraphError::MissingValue(id.index()).into())
+        .ok_or_else(|| keanu_graph::GraphError::MissingValue(id).into())
 }
 
 /// Proposes each chosen node's new value from its prior given its parents' current values (Java's

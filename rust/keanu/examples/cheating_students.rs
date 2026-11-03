@@ -37,10 +37,9 @@ pub fn run_with_bernoulli(
         &mut state,
         &[probability_of_cheating],
         sample_count,
-        SamplingOptions {
-            drop: sample_count / 2,
-            down_sample_interval: model.latents().len(),
-        },
+        SamplingOptions::default()
+            .with_drop(sample_count / 2)
+            .with_down_sample_interval(model.latents().len()),
         &mut rng,
     )?;
     Ok(samples
@@ -75,10 +74,9 @@ pub fn run_with_binomial(
         &mut state,
         &[probability_of_cheating],
         sample_count,
-        SamplingOptions {
-            drop: sample_count / 10,
-            down_sample_interval: model.latents().len(),
-        },
+        SamplingOptions::default()
+            .with_drop(sample_count / 10)
+            .with_down_sample_interval(model.latents().len()),
         &mut rng,
     )?;
     Ok(samples

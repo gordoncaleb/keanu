@@ -27,6 +27,7 @@ pub enum Fitness {
 
 /// The optimization algorithm.
 #[derive(Debug, Clone, PartialEq)]
+#[non_exhaustive]
 pub enum Algorithm {
     /// Adam.
     Adam(Adam),
@@ -55,6 +56,7 @@ impl From<ConjugateGradient> for Algorithm {
 
 /// The result of an optimization. The state the optimizer was given is left at the optimum.
 #[derive(Debug, Clone, PartialEq)]
+#[non_exhaustive]
 pub struct OptimizedResult {
     /// The optimized value of each continuous latent.
     pub values: Vec<(NodeId, DoubleTensor)>,
@@ -208,7 +210,7 @@ impl<'m> Objective<'m> {
             .iter()
             .map(|&id| {
                 state.f64(id).cloned().ok_or(AlgorithmError::Graph(
-                    keanu_graph::GraphError::MissingValue(id.index()),
+                    keanu_graph::GraphError::MissingValue(id),
                 ))
             })
             .collect()

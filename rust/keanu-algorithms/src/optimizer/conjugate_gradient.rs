@@ -5,6 +5,7 @@ use keanu_tensor::DoubleTensor;
 
 /// How the next search direction is combined with the previous one.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum UpdateFormula {
     /// β = g'(g - g_prev) / g_prev'g_prev, restarting when β < 0 (default).
     PolakRibiere,
@@ -17,6 +18,7 @@ pub enum UpdateFormula {
 /// It stops when the fitness changes by no more than `relative_threshold` times its magnitude, or by no more than
 /// `absolute_threshold`, between iterations, or when `max_evaluations` fitness and gradient evaluations are used.
 #[derive(Debug, Clone, Copy, PartialEq)]
+#[non_exhaustive]
 pub struct ConjugateGradient {
     /// The maximum number of fitness and gradient evaluations (default unlimited).
     pub max_evaluations: usize,
@@ -26,6 +28,37 @@ pub struct ConjugateGradient {
     pub absolute_threshold: f64,
     /// Default Polak–Ribière.
     pub formula: UpdateFormula,
+}
+
+/// Setters for each setting, for use as `ConjugateGradient::default().with_...(...)`.
+impl ConjugateGradient {
+    /// Sets [`max_evaluations`](Self::max_evaluations).
+    #[must_use]
+    pub fn with_max_evaluations(mut self, max_evaluations: usize) -> Self {
+        self.max_evaluations = max_evaluations;
+        self
+    }
+
+    /// Sets [`relative_threshold`](Self::relative_threshold).
+    #[must_use]
+    pub fn with_relative_threshold(mut self, relative_threshold: f64) -> Self {
+        self.relative_threshold = relative_threshold;
+        self
+    }
+
+    /// Sets [`absolute_threshold`](Self::absolute_threshold).
+    #[must_use]
+    pub fn with_absolute_threshold(mut self, absolute_threshold: f64) -> Self {
+        self.absolute_threshold = absolute_threshold;
+        self
+    }
+
+    /// Sets [`formula`](Self::formula).
+    #[must_use]
+    pub fn with_formula(mut self, formula: UpdateFormula) -> Self {
+        self.formula = formula;
+        self
+    }
 }
 
 impl Default for ConjugateGradient {
@@ -148,7 +181,7 @@ impl ConjugateGradient {
                 }
             };
             // restart with steepest ascent every n iterations, when β < 0, or when the direction stops ascending
-            let restart = iteration.is_multiple_of(n.max(1)) || (beta.is_nan() || beta <= 0.0);
+            let restart = iteration % n.max(1) == 0 || (beta.is_nan() || beta <= 0.0);
             d = if restart {
                 g_next.clone()
             } else {
@@ -167,7 +200,9 @@ impl ConjugateGradient {
     }
 }
 
-const GOLDEN: f64 = std::f64::consts::GOLDEN_RATIO;
+/// The golden ratio, (1 + √5) / 2. Spelled out rather than `std::f64::consts::GOLDEN_RATIO`, which needs Rust 1.94,
+/// to keep the minimum supported Rust version lower.
+const GOLDEN: f64 = 1.618_033_988_749_895;
 /// Relative precision of the step found by the line search (that of a typical line search for nonlinear CG:
 /// finer precision costs evaluations without improving the optimum the outer iteration converges to).
 const LINE_SEARCH_TOLERANCE: f64 = 1e-8;

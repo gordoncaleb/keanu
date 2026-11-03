@@ -43,7 +43,15 @@ impl fmt::Display for IoError {
     }
 }
 
-impl std::error::Error for IoError {}
+/// The wrapped graph error is transparent: `Display` shows its message and `source` is its source.
+impl std::error::Error for IoError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Graph(e) => e.source(),
+            _ => None,
+        }
+    }
+}
 
 impl From<GraphError> for IoError {
     fn from(e: GraphError) -> Self {

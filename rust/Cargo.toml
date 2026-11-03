@@ -12,12 +12,25 @@ members = [
 
 [workspace.package]
 edition = "2024"
+# the minimum supported Rust version for users of the published crates (edition 2024 itself needs 1.85)
+rust-version = "1.85"
 license = "MIT"
 repository = "https://github.com/gordoncaleb/keanu"
 publish = false
 
+# The workspace crates depend on each other through these, so the versions are set in one place for publishing.
+[workspace.dependencies]
+keanu-tensor = { path = "keanu-tensor", version = "0.1.0" }
+keanu-distributions = { path = "keanu-distributions", version = "0.1.0" }
+keanu-graph = { path = "keanu-graph", version = "0.1.0" }
+keanu-algorithms = { path = "keanu-algorithms", version = "0.1.0" }
+keanu-io = { path = "keanu-io", version = "0.1.0", default-features = false }
+keanu-parity = { path = "keanu-parity" }
+
 [workspace.lints.rust]
 missing_debug_implementations = "warn"
+# docs.rs builds with --cfg docsrs to label feature gated items
+unexpected_cfgs = { level = "warn", check-cfg = ["cfg(docsrs)"] }
 
 [workspace.lints.clippy]
 all = { level = "warn", priority = -1 }

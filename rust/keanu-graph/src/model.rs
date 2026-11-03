@@ -90,7 +90,7 @@ fn contradicts_observation(graph: &Graph, state: &State, id: NodeId) -> Result<b
     let parents: Vec<&Value> = node
         .parents()
         .iter()
-        .map(|&p| state.value(p).ok_or(GraphError::MissingValue(p.0)))
+        .map(|&p| state.value(p).ok_or(GraphError::MissingValue(p)))
         .collect::<Result<_>>()?;
     let computed = eval(node.op(), &parents)?;
     Ok(&computed != observed)

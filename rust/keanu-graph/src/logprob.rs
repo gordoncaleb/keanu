@@ -11,7 +11,7 @@ use keanu_tensor::DoubleTensor;
 use std::collections::HashMap;
 
 fn value(state: &State, id: NodeId) -> Result<&Value> {
-    state.value(id).ok_or(GraphError::MissingValue(id.0))
+    state.value(id).ok_or(GraphError::MissingValue(id))
 }
 
 fn kind(graph: &Graph, id: NodeId) -> Result<&DistributionKind> {
@@ -120,6 +120,7 @@ pub fn log_prior(graph: &Graph, state: &State) -> Result<f64> {
 /// derivative). Element-wise (shaped like the node's value) except where the distribution reduces itself
 /// (multivariate Gaussian, Dirichlet).
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct NodeLogProbGradient {
     /// With respect to `value`.
     pub value: Option<DoubleTensor>,
@@ -419,9 +420,7 @@ pub fn log_prob_gradient(
     let mut seeds: smallvec::SmallVec<[(NodeId, DoubleTensor); 8]> = smallvec::SmallVec::new();
     for &node in of {
         let (value_gradient, parameters) = node_gradient_parts(graph, state, node)?;
-        if is_latent_double(graph, state, node)
-            && let Some(dx) = value_gradient
-        {
+        if let (true, Some(dx)) = (is_latent_double(graph, state, node), value_gradient) {
             result.add(node, dx)?;
         }
         if !any_target {

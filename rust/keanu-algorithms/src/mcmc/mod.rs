@@ -30,11 +30,29 @@ pub trait SamplingAlgorithm {
 
 /// How many steps to throw away and how often to record (Java's `NetworkSamplesGenerator` settings).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct SamplingOptions {
     /// Steps taken (and discarded) before the first recorded sample, e.g. for burn-in.
     pub drop: usize,
     /// Record every n-th step after the drop (1 records every step).
     pub down_sample_interval: usize,
+}
+
+/// Setters for each setting, for use as `SamplingOptions::default().with_...(...)`.
+impl SamplingOptions {
+    /// Sets [`drop`](Self::drop).
+    #[must_use]
+    pub fn with_drop(mut self, drop: usize) -> Self {
+        self.drop = drop;
+        self
+    }
+
+    /// Sets [`down_sample_interval`](Self::down_sample_interval).
+    #[must_use]
+    pub fn with_down_sample_interval(mut self, down_sample_interval: usize) -> Self {
+        self.down_sample_interval = down_sample_interval;
+        self
+    }
 }
 
 impl Default for SamplingOptions {

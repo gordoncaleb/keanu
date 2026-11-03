@@ -81,6 +81,7 @@ fn is_constant(graph: &Graph, state: &State, id: NodeId, cache: &mut HashSet<Nod
 /// A sampler chosen to suit a model: NUTS when the log probability is differentiable with respect to every latent,
 /// otherwise Metropolis–Hastings, each with its default settings.
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub enum Sampler {
     /// The No-U-Turn sampler.
     Nuts(Nuts),

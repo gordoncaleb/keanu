@@ -17,6 +17,7 @@ use std::sync::Arc;
 /// A loaded model: its graph, the saved values (observations are observed), the saved metadata, and the node each
 /// saved vertex id became.
 #[derive(Debug)]
+#[non_exhaustive]
 pub struct Loaded {
     /// The graph.
     pub graph: Graph,
@@ -55,7 +56,7 @@ pub(crate) fn bool_tensor(t: &proto::BooleanTensor) -> Result<BoolTensor> {
 }
 
 /// Builds a graph from a decoded model.
-pub fn load_model(model: &proto::ProtoModel) -> Result<Loaded> {
+pub(crate) fn load_model(model: &proto::ProtoModel) -> Result<Loaded> {
     let graph = model
         .graph
         .as_ref()

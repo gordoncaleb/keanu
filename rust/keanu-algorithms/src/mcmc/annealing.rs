@@ -8,6 +8,7 @@ use keanu_graph::{Model, NodeId, State, Value};
 
 /// The temperature at each iteration.
 #[derive(Debug, Clone, Copy, PartialEq)]
+#[non_exhaustive]
 pub enum AnnealingSchedule {
     /// T(n) = start · (end / start)^(n / iterations), falling from `start` to `end` (Java's `exponentialSchedule`).
     Exponential {
@@ -47,6 +48,7 @@ impl AnnealingSchedule {
 
 /// The most probable state found.
 #[derive(Debug, Clone, PartialEq)]
+#[non_exhaustive]
 pub struct MapEstimate {
     /// The latent values at the most probable state found.
     pub values: Vec<(NodeId, Value)>,
@@ -57,9 +59,20 @@ pub struct MapEstimate {
 /// Simulated annealing (Java's `SimulatedAnnealing`), using a Metropolis–Hastings configuration for its proposals,
 /// variable selection and rejection.
 #[derive(Debug, Clone, Default)]
+#[non_exhaustive]
 pub struct SimulatedAnnealing {
     /// The Metropolis–Hastings settings each step uses.
     pub metropolis_hastings: MetropolisHastings,
+}
+
+/// Setters for each setting, for use as `SimulatedAnnealing::default().with_...(...)`.
+impl SimulatedAnnealing {
+    /// Sets [`metropolis_hastings`](Self::metropolis_hastings).
+    #[must_use]
+    pub fn with_metropolis_hastings(mut self, metropolis_hastings: MetropolisHastings) -> Self {
+        self.metropolis_hastings = metropolis_hastings;
+        self
+    }
 }
 
 impl SimulatedAnnealing {
@@ -104,14 +117,22 @@ impl SimulatedAnnealing {
         if is_impossible(log_prob) {
             return Err(AlgorithmError::ImpossibleStart);
         }
-        let take = |state: &State| -> Vec<(NodeId, Value)> {
+        let take = |state: &State| -> Result<Vec<(NodeId, Value)>> {
             latents
                 .iter()
-                .map(|&id| (id, state.value(id).cloned().expect("latents have values")))
+                .map(|&id| {
+                    state
+                        .value(id)
+                        .cloned()
+                        .map(|v| (id, v))
+                        .ok_or(AlgorithmError::Graph(
+                            keanu_graph::GraphError::MissingValue(id),
+                        ))
+                })
                 .collect()
         };
         let mut best = MapEstimate {
-            values: take(state),
+            values: take(state)?,
             log_prob,
         };
 
@@ -125,7 +146,7 @@ impl SimulatedAnnealing {
                 .log_prob;
             if log_prob > best.log_prob {
                 best = MapEstimate {
-                    values: take(state),
+                    values: take(state)?,
                     log_prob,
                 };
             }

@@ -183,6 +183,7 @@ impl DistributionKind {
 
 /// A probabilistic node's distribution and the shape of its value.
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct DistributionOp {
     /// The distribution.
     pub kind: DistributionKind,

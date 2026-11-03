@@ -10,6 +10,7 @@ use std::sync::Arc;
 
 /// Which latent nodes each Metropolis–Hastings step proposes new values for (Java's `MHStepVariableSelector`).
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum VariableSelector {
     /// One latent per step, cycling through them in order.
     #[default]
@@ -30,6 +31,7 @@ impl VariableSelector {
 
 /// How a rejected proposal is undone (Java's `ProposalRejectionStrategy`).
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum RejectionStrategy {
     /// Snapshot every value the proposal can change and restore them (Java's `RollBackToCachedValuesOnRejection`).
     #[default]
@@ -41,6 +43,7 @@ pub enum RejectionStrategy {
 
 /// The result of one Metropolis–Hastings step.
 #[derive(Debug, Clone, Copy, PartialEq)]
+#[non_exhaustive]
 pub struct StepResult {
     /// Whether the proposal was accepted.
     pub accepted: bool,
@@ -148,6 +151,7 @@ fn snapshot(graph: &Graph, state: &State, proposal: &Proposal) -> Vec<(NodeId, O
 /// Metropolis–Hastings configuration (Java's `MetropolisHastings`). Defaults: prior proposals, one latent per
 /// step and rollback to cached values. A configuration can be shared by many chains.
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct MetropolisHastings {
     /// How new values are proposed.
     pub proposal: Arc<dyn ProposalDistribution>,
@@ -155,6 +159,37 @@ pub struct MetropolisHastings {
     pub selector: VariableSelector,
     /// What happens when a proposal is rejected.
     pub rejection: RejectionStrategy,
+}
+
+/// Setters for each setting, for use as `MetropolisHastings::default().with_...(...)`.
+impl MetropolisHastings {
+    /// Sets [`proposal`](Self::proposal).
+    #[must_use]
+    pub fn with_proposal(mut self, proposal: impl ProposalDistribution + 'static) -> Self {
+        self.proposal = Arc::new(proposal);
+        self
+    }
+
+    /// Sets [`proposal`](Self::proposal) to a proposal distribution shared with the caller.
+    #[must_use]
+    pub fn with_shared_proposal(mut self, proposal: Arc<dyn ProposalDistribution>) -> Self {
+        self.proposal = proposal;
+        self
+    }
+
+    /// Sets [`selector`](Self::selector).
+    #[must_use]
+    pub fn with_selector(mut self, selector: VariableSelector) -> Self {
+        self.selector = selector;
+        self
+    }
+
+    /// Sets [`rejection`](Self::rejection).
+    #[must_use]
+    pub fn with_rejection(mut self, rejection: RejectionStrategy) -> Self {
+        self.rejection = rejection;
+        self
+    }
 }
 
 impl Default for MetropolisHastings {

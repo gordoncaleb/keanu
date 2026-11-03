@@ -54,6 +54,7 @@ fn flatten(value: &Value) -> (Vec<usize>, Vec<f64>) {
                 .map(|&x| f64::from(u8::from(x)))
                 .collect(),
         ),
+        other => panic!("unexpected value {other:?}"),
     }
 }
 

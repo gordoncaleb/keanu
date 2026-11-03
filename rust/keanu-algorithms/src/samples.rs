@@ -19,6 +19,8 @@ impl Column {
             DType::F64 => Self::F64(Vec::new()),
             DType::I64 => Self::I64(Vec::new()),
             DType::Bool => Self::Bool(Vec::new()),
+            // a dtype added later: an empty column that rejects every value, so `record` reports an error
+            _ => Self::F64(Vec::new()),
         }
     }
 
@@ -81,7 +83,7 @@ impl NetworkSamples {
             .map(|&id| {
                 state
                     .value(id)
-                    .ok_or(AlgorithmError::Graph(GraphError::MissingValue(id.index())))
+                    .ok_or(AlgorithmError::Graph(GraphError::MissingValue(id)))
             })
             .collect::<Result<_>>()?;
         for (column, value) in self.columns.iter_mut().zip(values) {

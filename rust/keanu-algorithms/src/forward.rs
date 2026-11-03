@@ -13,9 +13,20 @@ use keanu_graph::{
 /// Observations are kept as they are, so forward sampling only makes sense when no observation depends on a
 /// latent; that case is an error.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct ForwardSampler {
     /// Record the joint log probability of each sample (otherwise 0 is recorded).
     pub calculate_log_prob: bool,
+}
+
+/// Setters for each setting, for use as `ForwardSampler::default().with_...(...)`.
+impl ForwardSampler {
+    /// Sets [`calculate_log_prob`](Self::calculate_log_prob).
+    #[must_use]
+    pub fn with_calculate_log_prob(mut self, calculate_log_prob: bool) -> Self {
+        self.calculate_log_prob = calculate_log_prob;
+        self
+    }
 }
 
 impl ForwardSampler {

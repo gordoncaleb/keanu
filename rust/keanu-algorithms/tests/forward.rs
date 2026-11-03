@@ -52,11 +52,10 @@ fn samples_the_prior_and_deterministic_descendants() {
     }
     // log probs are only recorded on request
     assert!(samples.log_probs().iter().all(|&lp| lp == 0.0));
-    let with_lp = ForwardSampler {
-        calculate_log_prob: true,
-    }
-    .sample(&model, &mut state, &[a], 3, &mut rng)
-    .unwrap();
+    let with_lp = ForwardSampler::default()
+        .with_calculate_log_prob(true)
+        .sample(&model, &mut state, &[a], 3, &mut rng)
+        .unwrap();
     assert!(with_lp.log_probs().iter().all(|&lp| lp < 0.0));
 }
 

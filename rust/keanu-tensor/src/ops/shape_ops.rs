@@ -32,7 +32,7 @@ impl<T: Element> Tensor<T> {
             .map(|&d| d as usize)
             .product();
         let resolved: Shape = if wildcards == 1 {
-            if known == 0 || !self.len().is_multiple_of(known) {
+            if known == 0 || self.len() % known != 0 {
                 return Err(invalid());
             }
             new_shape

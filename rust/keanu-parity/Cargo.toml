@@ -2,6 +2,9 @@
 name = "keanu-parity"
 version = "0.1.0"
 edition = "2024"
+license = "MIT"
+description = "Test-only: loads the golden vectors recorded from the Java implementation"
+publish = false
 
 [dependencies]
 serde = { version = "1.0.229", features = ["derive"] }

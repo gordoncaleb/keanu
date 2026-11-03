@@ -5,6 +5,7 @@ use keanu_tensor::DoubleTensor;
 
 /// The Adam optimizer (Kingma & Ba, 2014), with Keanu's defaults.
 #[derive(Debug, Clone, Copy, PartialEq)]
+#[non_exhaustive]
 pub struct Adam {
     /// Step size (default 0.001).
     pub alpha: f64,
@@ -18,6 +19,51 @@ pub struct Adam {
     pub max_evaluations: usize,
     /// When to stop (default: relative change, L2 norm, below 1e-6).
     pub convergence: ConvergenceChecker,
+}
+
+/// Setters for each setting, for use as `Adam::default().with_...(...)`.
+impl Adam {
+    /// Sets [`alpha`](Self::alpha).
+    #[must_use]
+    pub fn with_alpha(mut self, alpha: f64) -> Self {
+        self.alpha = alpha;
+        self
+    }
+
+    /// Sets [`beta1`](Self::beta1).
+    #[must_use]
+    pub fn with_beta1(mut self, beta1: f64) -> Self {
+        self.beta1 = beta1;
+        self
+    }
+
+    /// Sets [`beta2`](Self::beta2).
+    #[must_use]
+    pub fn with_beta2(mut self, beta2: f64) -> Self {
+        self.beta2 = beta2;
+        self
+    }
+
+    /// Sets [`epsilon`](Self::epsilon).
+    #[must_use]
+    pub fn with_epsilon(mut self, epsilon: f64) -> Self {
+        self.epsilon = epsilon;
+        self
+    }
+
+    /// Sets [`max_evaluations`](Self::max_evaluations).
+    #[must_use]
+    pub fn with_max_evaluations(mut self, max_evaluations: usize) -> Self {
+        self.max_evaluations = max_evaluations;
+        self
+    }
+
+    /// Sets [`convergence`](Self::convergence).
+    #[must_use]
+    pub fn with_convergence(mut self, convergence: ConvergenceChecker) -> Self {
+        self.convergence = convergence;
+        self
+    }
 }
 
 impl Default for Adam {

@@ -90,7 +90,11 @@ impl DoubleTensor {
     pub fn cholesky(&self) -> Result<Self> {
         let n = self.square_dims("cholesky")?;
         let mut data: Storage<f64> = smallvec::smallvec![0.0; self.len()];
-        for (input, out) in self.data.chunks(n * n).zip(data.chunks_mut(n * n)) {
+        for (input, out) in self
+            .data
+            .chunks((n * n).max(1))
+            .zip(data.chunks_mut((n * n).max(1)))
+        {
             if n <= SMALL_CHOLESKY {
                 cholesky_lower_into(input, n, out)?;
                 continue;
@@ -113,7 +117,11 @@ impl DoubleTensor {
     pub fn cholesky_inverse(&self) -> Result<Self> {
         let n = self.square_dims("cholesky_inverse")?;
         let mut data: Storage<f64> = smallvec::smallvec![0.0; self.len()];
-        for (l, out) in self.data.chunks(n * n).zip(data.chunks_mut(n * n)) {
+        for (l, out) in self
+            .data
+            .chunks((n * n).max(1))
+            .zip(data.chunks_mut((n * n).max(1)))
+        {
             // inverse of L by forward substitution
             let mut l_inv: Scratch = smallvec::smallvec![0.0; n * n];
             for j in 0..n {
@@ -143,7 +151,11 @@ impl DoubleTensor {
     pub fn inverse(&self) -> Result<Self> {
         let n = self.square_dims("inverse")?;
         let mut data: Storage<f64> = smallvec::smallvec![0.0; self.len()];
-        for (input, out) in self.data.chunks(n * n).zip(data.chunks_mut(n * n)) {
+        for (input, out) in self
+            .data
+            .chunks((n * n).max(1))
+            .zip(data.chunks_mut((n * n).max(1)))
+        {
             let lu = Lu::factor(input, n);
             if lu.singular {
                 return Err(TensorError::SingularMatrix);
@@ -157,12 +169,16 @@ impl DoubleTensor {
     pub fn determinant(&self) -> Result<Self> {
         let n = self.square_dims("determinant")?;
         let batch: Shape = self.batch_shape().into();
-        let data: Storage<f64> = self
-            .data
-            .chunks(n * n)
-            .take(shape::length(&batch))
-            .map(|input| lu_determinant(input, n))
-            .collect();
+        let data: Storage<f64> = if n == 0 {
+            // the determinant of a 0 × 0 matrix is 1 (the empty product), as in numpy
+            smallvec::smallvec![1.0; shape::length(&batch)]
+        } else {
+            self.data
+                .chunks(n * n)
+                .take(shape::length(&batch))
+                .map(|input| lu_determinant(input, n))
+                .collect()
+        };
         Ok(Tensor::from_parts(batch, data))
     }
 

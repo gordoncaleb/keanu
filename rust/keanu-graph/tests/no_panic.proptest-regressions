@@ -1,0 +1,8 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc 9257f978af8d986157de8502bdd0be2e2e5e18c843f777bb01a2b96496a12d41 # shrinks to inputs = [[0, 0]], steps = [Add(2), Cholesky]
+cc f79e517f76b2f1d89fe37991b024c160b845f1f62b4370f6fa87e26cb92c7af0 # shrinks to inputs = [[0]], steps = [Standardize, Reshape([]), Maximum(4)]

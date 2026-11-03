@@ -28,7 +28,8 @@
 //! from [PRIMA](https://github.com/libprima/prima), which remains under PRIMA's BSD 3-Clause licence. See
 //! `THIRD-PARTY-NOTICES.md` in the crate.
 
-#![warn(missing_docs)]
+#![deny(missing_docs)]
+#![cfg_attr(docsrs, feature(doc_cfg))]
 
 mod error;
 pub mod forward;

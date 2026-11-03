@@ -13,6 +13,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 /// Particle filter settings. Defaults follow Java's `ParticleFilterBuilder`.
 #[derive(Debug, Clone, Copy, PartialEq)]
+#[non_exhaustive]
 pub struct ParticleFilter {
     /// The number of particles.
     pub particles: usize,
@@ -20,6 +21,30 @@ pub struct ParticleFilter {
     pub resampling_cycles: usize,
     /// The fraction of particles culled in each round.
     pub resampling_proportion: f64,
+}
+
+/// Setters for each setting, for use as `ParticleFilter::default().with_...(...)`.
+impl ParticleFilter {
+    /// Sets [`particles`](Self::particles).
+    #[must_use]
+    pub fn with_particles(mut self, particles: usize) -> Self {
+        self.particles = particles;
+        self
+    }
+
+    /// Sets [`resampling_cycles`](Self::resampling_cycles).
+    #[must_use]
+    pub fn with_resampling_cycles(mut self, resampling_cycles: usize) -> Self {
+        self.resampling_cycles = resampling_cycles;
+        self
+    }
+
+    /// Sets [`resampling_proportion`](Self::resampling_proportion).
+    #[must_use]
+    pub fn with_resampling_proportion(mut self, resampling_proportion: f64) -> Self {
+        self.resampling_proportion = resampling_proportion;
+        self
+    }
 }
 
 impl Default for ParticleFilter {

@@ -40,13 +40,13 @@ impl Partials {
     pub fn get(&self, node: NodeId) -> Result<&DoubleTensor> {
         self.partials.get(&node).ok_or(if self.forward {
             GraphError::NoPartial {
-                of: node.0,
-                wrt: self.fixed.0,
+                of: node,
+                wrt: self.fixed,
             }
         } else {
             GraphError::NoPartial {
-                of: self.fixed.0,
-                wrt: node.0,
+                of: self.fixed,
+                wrt: node,
             }
         })
     }
@@ -100,7 +100,7 @@ pub fn is_differentiable(graph: &Graph, id: NodeId) -> bool {
 }
 
 fn value(state: &State, id: NodeId) -> Result<&Value> {
-    state.value(id).ok_or(GraphError::MissingValue(id.0))
+    state.value(id).ok_or(GraphError::MissingValue(id))
 }
 
 /// Forward mode: ∂of/∂wrt for each node in `of`, shaped `[of shape..., wrt shape...]`.
@@ -522,6 +522,10 @@ fn gather_forward(
         let Some((p, idx)) = *source else { continue };
         let Some(t) = tangents[p] else { continue };
         let t = t.as_slice();
+        if b == 0 {
+            // an empty "with respect to": every partial is empty
+            break;
+        }
         let n_p = t.len() / b;
         for k in 0..b {
             data[k * n_out + o] = t[k * n_p + idx];
@@ -548,9 +552,11 @@ fn gather_reverse(
         .iter()
         .map(|v| vec![0.0; b * v.shape().iter().product::<usize>()])
         .collect();
+    // parent lengths come from their shapes: dividing the buffer length by `b` fails when `b` is 0 (an empty "of")
+    let parent_lens: Vec<usize> = parents.iter().map(|v| v.shape().iter().product()).collect();
     for (o, source) in map.iter().enumerate() {
         let Some((p, idx)) = *source else { continue };
-        let n_p = results[p].len() / b;
+        let n_p = parent_lens[p];
         for k in 0..b {
             results[p][k * n_p + idx] += g[k * n_out + o];
         }

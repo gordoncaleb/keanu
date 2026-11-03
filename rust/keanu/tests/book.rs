@@ -158,20 +158,15 @@ fn maximum_a_posteriori() -> keanu::Result<()> {
     // ANCHOR_END: map
 
     // ANCHOR: map_settings
-    let adam = Adam {
-        alpha: 0.05,
-        max_evaluations: 50_000,
-        ..Adam::default()
-    };
+    let adam = Adam::default()
+        .with_alpha(0.05)
+        .with_max_evaluations(50_000);
     let result = GradientOptimizer::new(&model)
         .algorithm(adam)
         .max_a_posteriori(&mut state)?;
     assert!(result.converged);
 
-    let conjugate_gradient = ConjugateGradient {
-        max_evaluations: 10_000,
-        ..ConjugateGradient::default()
-    };
+    let conjugate_gradient = ConjugateGradient::default().with_max_evaluations(10_000);
     let result = GradientOptimizer::new(&model)
         .algorithm(conjugate_gradient)
         .max_likelihood(&mut state)?;
@@ -182,10 +177,7 @@ fn maximum_a_posteriori() -> keanu::Result<()> {
     // ANCHOR: bobyqa
     let bounds = OptimizerBounds::new().add_scalar(temperature, 20.0, 30.0);
     let result = NonGradientOptimizer::new(&model)
-        .algorithm(Bobyqa {
-            initial_trust_region_radius: 1.0,
-            ..Bobyqa::default()
-        })
+        .algorithm(Bobyqa::default().with_initial_trust_region_radius(1.0))
         .bounds(bounds)
         .max_a_posteriori(&mut state)?;
     let most_probable = result.get(temperature).unwrap().to_scalar().unwrap();
@@ -218,10 +210,9 @@ fn posterior_sampling() -> keanu::Result<()> {
         &mut state,
         &[a, b_var],
         100_000,
-        SamplingOptions {
-            drop: 10_000,
-            down_sample_interval: 2,
-        },
+        SamplingOptions::default()
+            .with_drop(10_000)
+            .with_down_sample_interval(2),
         &mut rng,
     )?;
     let mean_a = samples.f64(a).unwrap().mean()?.to_scalar().unwrap();
@@ -230,10 +221,7 @@ fn posterior_sampling() -> keanu::Result<()> {
     // ANCHOR_END: metropolis_hastings
 
     // ANCHOR: nuts
-    let nuts = Nuts {
-        adapt_count: 500,
-        ..Nuts::default()
-    };
+    let nuts = Nuts::default().with_adapt_count(500);
     let samples = nuts.sample(&model, &mut state, &[a, b_var], 2000, &mut rng)?;
     let mean_a = samples.f64(a).unwrap().mean()?.to_scalar().unwrap();
     assert!((mean_a - 21.0).abs() < 0.2);
@@ -332,10 +320,7 @@ fn particle_filter() -> keanu::Result<()> {
     let (graph, mut state) = b.build()?;
     let model = Model::new(graph, &state)?;
 
-    let filter = ParticleFilter {
-        particles: 500,
-        ..ParticleFilter::default()
-    };
+    let filter = ParticleFilter::default().with_particles(500);
     let particles = filter.run(&model, &mut state, &mut KeanuRng::seed_from_u64(1))?;
     // the particles are sorted, most probable first, and the state is left at the best one
     let best = particles[0]

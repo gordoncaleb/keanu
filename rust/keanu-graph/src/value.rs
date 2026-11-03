@@ -3,6 +3,7 @@ use keanu_tensor::{BoolTensor, DoubleTensor, IntTensor};
 
 /// The element type of a node's value.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
 pub enum DType {
     /// `f64`
     F64,
@@ -14,6 +15,7 @@ pub enum DType {
 
 /// The value of a node: a tensor of one of the supported element types.
 #[derive(Debug, Clone, PartialEq)]
+#[non_exhaustive]
 pub enum Value {
     /// An f64 tensor.
     F64(DoubleTensor),
@@ -63,6 +65,15 @@ impl Value {
         match self {
             Self::Bool(t) => Some(t),
             _ => None,
+        }
+    }
+
+    /// The value converted to an f64 tensor of the same shape (integers as `f64`, booleans as 0.0 / 1.0).
+    pub fn to_double_tensor(&self) -> DoubleTensor {
+        match self {
+            Self::F64(t) => t.clone(),
+            Self::I64(t) => t.to_double(),
+            Self::Bool(t) => t.to_double_mask(),
         }
     }
 

@@ -22,13 +22,7 @@ fn assert_close(actual: &[f64], expected: &[f64], tol: f64) {
 fn prima_example_one_bound_active() {
     // PRIMA's bobyqa_example_1: (x1 - 5)^2 + (x2 - 4)^2 on [-1, 4.5]^2
     let f = |x: &[f64]| (x[0] - 5.0).powi(2) + (x[1] - 4.0).powi(2);
-    for settings in [
-        Settings::default(),
-        Settings {
-            rhobeg: Some(1.0),
-            ..Settings::default()
-        },
-    ] {
+    for settings in [Settings::default(), Settings::default().with_rhobeg(1.0)] {
         let out = minimize(f, &[0.0, 0.0], &[-1.0, -1.0], &[4.5, 4.5], &settings);
         assert_eq!(out.status, ExitStatus::SmallTrustRegionRadius);
         assert_eq!(out.x[0], 4.5, "the active bound is hit exactly");
@@ -47,10 +41,7 @@ fn unconstrained_rosenbrock() {
             &x0,
             &[],
             &[],
-            &Settings {
-                rhoend: Some(1e-8),
-                ..Settings::default()
-            },
+            &Settings::default().with_rhoend(1e-8),
         );
         assert_eq!(out.status, ExitStatus::SmallTrustRegionRadius, "n = {n}");
         assert_close(&out.x, &vec![1.0; n], 1e-5);
@@ -66,10 +57,7 @@ fn chained_rosenbrock_local_minimum_is_stationary() {
         &[-1.0; 6],
         &[],
         &[],
-        &Settings {
-            rhoend: Some(1e-8),
-            ..Settings::default()
-        },
+        &Settings::default().with_rhoend(1e-8),
     );
     let h = 1e-6;
     for i in 0..6 {
@@ -90,12 +78,10 @@ fn rosenbrock_with_every_valid_number_of_interpolation_points() {
             &[-1.2, 1.0, -0.5],
             &[],
             &[],
-            &Settings {
-                npt: Some(npt),
-                rhoend: Some(1e-8),
-                maxfun: Some(20_000),
-                ..Settings::default()
-            },
+            &Settings::default()
+                .with_npt(npt)
+                .with_rhoend(1e-8)
+                .with_maxfun(20_000),
         );
         assert_close(&out.x, &[1.0, 1.0, 1.0], 1e-4);
         assert!(out.f < 1e-8, "npt = {npt}: f = {}", out.f);
@@ -110,10 +96,7 @@ fn bound_constrained_rosenbrock() {
         &[-1.2, 1.0],
         &[-2.0, -2.0],
         &[0.5, 2.0],
-        &Settings {
-            rhoend: Some(1e-9),
-            ..Settings::default()
-        },
+        &Settings::default().with_rhoend(1e-9),
     );
     assert_eq!(out.x[0], 0.5);
     assert_close(&out.x, &[0.5, 0.25], 1e-6);
@@ -154,11 +137,9 @@ fn chebyquad_reaches_zero() {
             &x0,
             &vec![0.0; n],
             &vec![1.0; n],
-            &Settings {
-                rhobeg: Some(0.2 / (n as f64)),
-                rhoend: Some(1e-8),
-                ..Settings::default()
-            },
+            &Settings::default()
+                .with_rhobeg(0.2 / (n as f64))
+                .with_rhoend(1e-8),
         );
         assert!(out.f < 1e-10, "n = {n}: f = {}", out.f);
         assert!(out.x.iter().all(|&v| (0.0..=1.0).contains(&v)));
@@ -197,10 +178,7 @@ fn prima_example_two_points_in_a_square() {
         &x0,
         &vec![-1.0; n],
         &vec![1.0; n],
-        &Settings {
-            rhobeg: Some(0.1),
-            ..Settings::default()
-        },
+        &Settings::default().with_rhobeg(0.1),
     );
     assert!(
         out.f < f0 - 1.0,
@@ -250,10 +228,7 @@ fn nan_values_are_treated_as_large() {
         &[0.9, 0.9],
         &[],
         &[],
-        &Settings {
-            rhobeg: Some(0.3),
-            ..Settings::default()
-        },
+        &Settings::default().with_rhobeg(0.3),
     );
     assert_close(&out.x, &[0.5, 0.5], 1e-5);
 }
@@ -266,10 +241,7 @@ fn exit_conditions() {
         &[3.0, -2.0],
         &[],
         &[],
-        &Settings {
-            maxfun: Some(10),
-            ..Settings::default()
-        },
+        &Settings::default().with_maxfun(10),
     );
     assert_eq!(out.status, ExitStatus::MaxEvaluationsReached);
     assert_eq!(out.evaluations, 10);
@@ -279,10 +251,7 @@ fn exit_conditions() {
         &[3.0, -2.0],
         &[],
         &[],
-        &Settings {
-            ftarget: Some(1.0),
-            ..Settings::default()
-        },
+        &Settings::default().with_ftarget(1.0),
     );
     assert_eq!(out.status, ExitStatus::TargetReached);
     assert!(out.f <= 1.0);

@@ -33,13 +33,14 @@ impl fmt::Display for Error {
 
 impl std::error::Error for Error {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        Some(match self {
-            Self::Tensor(e) => e,
-            Self::Distribution(e) => e,
-            Self::Graph(e) => e,
-            Self::Algorithm(e) => e,
-            Self::Io(e) => e,
-        })
+        // transparent: Display already shows the wrapped error's message
+        match self {
+            Self::Tensor(e) => e.source(),
+            Self::Distribution(e) => e.source(),
+            Self::Graph(e) => e.source(),
+            Self::Algorithm(e) => e.source(),
+            Self::Io(e) => e.source(),
+        }
     }
 }
 

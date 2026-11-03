@@ -7,7 +7,7 @@ Add Keanu to your `Cargo.toml`:
 keanu = "0.1"
 ```
 
-Keanu is pure Rust (no native libraries), so there's nothing else to install.
+Keanu is pure Rust (no native libraries), so there's nothing else to install. It needs Rust 1.85 or later.
 
 ## Features
 

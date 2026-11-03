@@ -23,7 +23,7 @@ use keanu_graph::State;
 /// let mu = mu.id();
 /// let (graph, state) = b.build()?;
 /// let model = Model::new(graph, &state)?;
-/// let nuts = Nuts { adapt_count: 50, ..Nuts::default() };
+/// let nuts = Nuts::default().with_adapt_count(50);
 /// let means = run_chains(4, 7, &state, |state, rng| {
 ///     let samples = nuts.sample(&model, state, &[mu], 200, rng)?;
 ///     Ok(samples.f64(mu).unwrap().mean()?.to_scalar().unwrap())

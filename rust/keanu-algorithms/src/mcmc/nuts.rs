@@ -12,9 +12,10 @@ use std::rc::Rc;
 /// The adaptive diagonal quadratic potential (mass matrix) settings (Java's `AdaptiveQuadraticPotential`).
 ///
 /// During adaptation the potential's variance tracks the running variance of the samples, using two windows of
-/// `adaption_window` samples: the variance in use comes from the previous window, so it isn't biased by the
+/// `adaptation_window` samples: the variance in use comes from the previous window, so it isn't biased by the
 /// current position.
 #[derive(Debug, Clone, Copy, PartialEq)]
+#[non_exhaustive]
 pub struct QuadraticPotential {
     /// The starting estimate of each latent's mean.
     pub initial_mean: f64,
@@ -23,7 +24,38 @@ pub struct QuadraticPotential {
     /// How many pseudo-samples the initial mean and variance count as.
     pub initial_weight: f64,
     /// Samples per adaptation window.
-    pub adaption_window: usize,
+    pub adaptation_window: usize,
+}
+
+/// Setters for each setting, for use as `QuadraticPotential::default().with_...(...)`.
+impl QuadraticPotential {
+    /// Sets [`initial_mean`](Self::initial_mean).
+    #[must_use]
+    pub fn with_initial_mean(mut self, initial_mean: f64) -> Self {
+        self.initial_mean = initial_mean;
+        self
+    }
+
+    /// Sets [`initial_variance`](Self::initial_variance).
+    #[must_use]
+    pub fn with_initial_variance(mut self, initial_variance: f64) -> Self {
+        self.initial_variance = initial_variance;
+        self
+    }
+
+    /// Sets [`initial_weight`](Self::initial_weight).
+    #[must_use]
+    pub fn with_initial_weight(mut self, initial_weight: f64) -> Self {
+        self.initial_weight = initial_weight;
+        self
+    }
+
+    /// Sets [`adaptation_window`](Self::adaptation_window).
+    #[must_use]
+    pub fn with_adaptation_window(mut self, adaptation_window: usize) -> Self {
+        self.adaptation_window = adaptation_window;
+        self
+    }
 }
 
 impl Default for QuadraticPotential {
@@ -32,7 +64,7 @@ impl Default for QuadraticPotential {
             initial_mean: 0.0,
             initial_variance: 1.0,
             initial_weight: 10.0,
-            adaption_window: 100,
+            adaptation_window: 100,
         }
     }
 }
@@ -40,6 +72,7 @@ impl Default for QuadraticPotential {
 /// NUTS configuration. Defaults follow Java's `NUTS.builder()`. The configuration holds no state, so it can be
 /// reused for any number of runs and shared by parallel chains; each run adapts its own step size and potential.
 #[derive(Debug, Clone, Copy, PartialEq)]
+#[non_exhaustive]
 pub struct Nuts {
     /// Samples during which the step size and potential are adapted.
     pub adapt_count: usize,
@@ -61,6 +94,72 @@ pub struct Nuts {
     pub save_statistics: bool,
 }
 
+/// Setters for each setting, for use as `Nuts::default().with_...(...)`.
+impl Nuts {
+    /// Sets [`adapt_count`](Self::adapt_count).
+    #[must_use]
+    pub fn with_adapt_count(mut self, adapt_count: usize) -> Self {
+        self.adapt_count = adapt_count;
+        self
+    }
+
+    /// Sets [`adapt_step_size`](Self::adapt_step_size).
+    #[must_use]
+    pub fn with_adapt_step_size(mut self, adapt_step_size: bool) -> Self {
+        self.adapt_step_size = adapt_step_size;
+        self
+    }
+
+    /// Sets [`initial_step_size`](Self::initial_step_size) to `Some(initial_step_size)`.
+    #[must_use]
+    pub fn with_initial_step_size(mut self, initial_step_size: f64) -> Self {
+        self.initial_step_size = Some(initial_step_size);
+        self
+    }
+
+    /// Sets [`potential`](Self::potential).
+    #[must_use]
+    pub fn with_potential(mut self, potential: QuadraticPotential) -> Self {
+        self.potential = potential;
+        self
+    }
+
+    /// Sets [`adapt_potential`](Self::adapt_potential).
+    #[must_use]
+    pub fn with_adapt_potential(mut self, adapt_potential: bool) -> Self {
+        self.adapt_potential = adapt_potential;
+        self
+    }
+
+    /// Sets [`target_acceptance_prob`](Self::target_acceptance_prob).
+    #[must_use]
+    pub fn with_target_acceptance_prob(mut self, target_acceptance_prob: f64) -> Self {
+        self.target_acceptance_prob = target_acceptance_prob;
+        self
+    }
+
+    /// Sets [`max_energy_change`](Self::max_energy_change).
+    #[must_use]
+    pub fn with_max_energy_change(mut self, max_energy_change: f64) -> Self {
+        self.max_energy_change = max_energy_change;
+        self
+    }
+
+    /// Sets [`max_tree_height`](Self::max_tree_height).
+    #[must_use]
+    pub fn with_max_tree_height(mut self, max_tree_height: usize) -> Self {
+        self.max_tree_height = max_tree_height;
+        self
+    }
+
+    /// Sets [`save_statistics`](Self::save_statistics).
+    #[must_use]
+    pub fn with_save_statistics(mut self, save_statistics: bool) -> Self {
+        self.save_statistics = save_statistics;
+        self
+    }
+}
+
 impl Default for Nuts {
     fn default() -> Self {
         Self {
@@ -79,6 +178,7 @@ impl Default for Nuts {
 
 /// What NUTS recorded while sampling (Java's NUTS `Statistics`).
 #[derive(Debug, Clone, Default, PartialEq)]
+#[non_exhaustive]
 pub struct NutsStatistics {
     /// The step size used at each step (when saving statistics).
     pub step_size: Vec<f64>,
@@ -112,8 +212,8 @@ impl Nuts {
         if self.max_tree_height == 0 {
             return invalid("the max tree height must be greater than 0");
         }
-        if self.potential.adaption_window <= 1 {
-            return invalid("the potential's adaption window must be greater than 1");
+        if self.potential.adaptation_window <= 1 {
+            return invalid("the potential's adaptation window must be greater than 1");
         }
         if self.potential.initial_weight < 0.0 {
             return invalid("the potential's initial weight must be at least 0");
@@ -225,7 +325,7 @@ fn describe(graph: &Graph, id: NodeId) -> String {
 }
 
 fn missing(id: NodeId) -> AlgorithmError {
-    keanu_graph::GraphError::MissingValue(id.index()).into()
+    keanu_graph::GraphError::MissingValue(id).into()
 }
 
 /// The gradient of the joint log probability with respect to each latent, in latent order. Where the log
@@ -357,7 +457,7 @@ impl PotentialState {
         };
         let variance = full(settings.initial_variance);
         Self {
-            window: settings.adaption_window,
+            window: settings.adaptation_window,
             standard_deviation: variance.iter().map(DoubleTensor::sqrt).collect(),
             forward: VarianceCalculator::new(
                 full(settings.initial_mean),
@@ -371,7 +471,7 @@ impl PotentialState {
     }
 
     fn update(&mut self, position: &[DoubleTensor]) -> Result<()> {
-        if self.samples > 0 && self.samples.is_multiple_of(self.window) {
+        if self.samples > 0 && self.samples % self.window == 0 {
             let zeros: Vec<DoubleTensor> = self
                 .variance
                 .iter()

@@ -144,10 +144,10 @@ impl GraphBuilder {
         }
         let mut labels = HashMap::new();
         for (i, node) in inner.nodes.iter().enumerate() {
-            if let Some(label) = &node.label
-                && labels.insert(label.clone(), NodeId(i)).is_some()
-            {
-                return Err(GraphError::DuplicateLabel(label.clone()));
+            if let Some(label) = &node.label {
+                if labels.insert(label.clone(), NodeId(i)).is_some() {
+                    return Err(GraphError::DuplicateLabel(label.clone()));
+                }
             }
         }
         let graph = Graph::new(inner.nodes, labels);
@@ -194,10 +194,10 @@ impl GraphBuilder {
 
     fn take_error_since(&self, before: Option<GraphError>) -> Result<()> {
         let mut inner = self.inner.borrow_mut();
-        if before.is_none()
-            && let Some(e) = inner.error.take()
-        {
-            return Err(e);
+        if before.is_none() {
+            if let Some(e) = inner.error.take() {
+                return Err(e);
+            }
         }
         Ok(())
     }

@@ -26,7 +26,8 @@ impl fmt::Display for DistributionError {
 impl std::error::Error for DistributionError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
-            Self::Tensor(e) => Some(e),
+            // transparent: Display already shows the wrapped error's message
+            Self::Tensor(e) => e.source(),
             _ => None,
         }
     }

@@ -32,19 +32,11 @@ fn finds_the_conjugate_gaussian_posterior_mode() {
     let observations = [0.3, 1.2, 0.9, 1.7];
     for bobyqa in [
         Bobyqa::default(),
-        Bobyqa {
-            initial_trust_region_radius: 0.5,
-            bounds_range: 5.0,
-            ..Bobyqa::default()
-        },
-        Bobyqa {
-            interpolation_points: Some(4),
-            ..Bobyqa::default()
-        },
-        Bobyqa {
-            interpolation_points: Some(6),
-            ..Bobyqa::default()
-        },
+        Bobyqa::default()
+            .with_initial_trust_region_radius(0.5)
+            .with_bounds_range(5.0),
+        Bobyqa::default().with_interpolation_points(4),
+        Bobyqa::default().with_interpolation_points(6),
     ] {
         let (model, mut state, mu, other) = conjugate_gaussian(&observations);
         let result = NonGradientOptimizer::new(&model)
@@ -114,11 +106,11 @@ fn bounds_range_limits_every_unbounded_latent() {
     let (model, mut state, mu, _) = conjugate_gaussian(&[5.0, 5.0]);
     // the start is -1, so the range [-1.5, -0.5] excludes the optimum near 5
     let result = NonGradientOptimizer::new(&model)
-        .algorithm(Bobyqa {
-            bounds_range: 0.5,
-            initial_trust_region_radius: 0.1,
-            ..Bobyqa::default()
-        })
+        .algorithm(
+            Bobyqa::default()
+                .with_bounds_range(0.5)
+                .with_initial_trust_region_radius(0.1),
+        )
         .max_a_posteriori(&mut state)
         .unwrap();
     assert!((result.get(mu).unwrap().to_scalar().unwrap() - -0.5).abs() < 1e-12);
@@ -186,10 +178,7 @@ fn impossible_start_discrete_latents_and_no_latents_are_errors() {
         .unwrap();
     let result = NonGradientOptimizer::new(&model)
         .check_initial_conditions(false)
-        .algorithm(Bobyqa {
-            initial_trust_region_radius: 1.0,
-            ..Bobyqa::default()
-        })
+        .algorithm(Bobyqa::default().with_initial_trust_region_radius(1.0))
         .max_a_posteriori(&mut state)
         .unwrap();
     assert!(result.fitness.is_finite());
@@ -234,22 +223,10 @@ fn impossible_start_discrete_latents_and_no_latents_are_errors() {
 fn invalid_settings_are_errors() {
     let (model, mut state, _, _) = conjugate_gaussian(&[1.0]);
     for bad in [
-        Bobyqa {
-            max_evaluations: 0,
-            ..Bobyqa::default()
-        },
-        Bobyqa {
-            bounds_range: 0.0,
-            ..Bobyqa::default()
-        },
-        Bobyqa {
-            initial_trust_region_radius: -1.0,
-            ..Bobyqa::default()
-        },
-        Bobyqa {
-            stopping_trust_region_radius: 100.0,
-            ..Bobyqa::default()
-        },
+        Bobyqa::default().with_max_evaluations(0),
+        Bobyqa::default().with_bounds_range(0.0),
+        Bobyqa::default().with_initial_trust_region_radius(-1.0),
+        Bobyqa::default().with_stopping_trust_region_radius(100.0),
     ] {
         let error = NonGradientOptimizer::new(&model)
             .algorithm(bad)
@@ -262,10 +239,7 @@ fn invalid_settings_are_errors() {
 fn max_evaluations_stops_early_without_converging() {
     let (model, mut state, _, _) = conjugate_gaussian(&[0.3, 1.2]);
     let result = NonGradientOptimizer::new(&model)
-        .algorithm(Bobyqa {
-            max_evaluations: 8,
-            ..Bobyqa::default()
-        })
+        .algorithm(Bobyqa::default().with_max_evaluations(8))
         .max_a_posteriori(&mut state)
         .unwrap();
     assert!(!result.converged);

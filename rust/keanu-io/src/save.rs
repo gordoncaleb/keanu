@@ -52,16 +52,21 @@ fn proto_value(value: &Value) -> Result<proto::VertexValue> {
             Value::F64(t) => ValueType::DoubleVal(proto_double(t)),
             Value::I64(t) => ValueType::IntVal(proto_int(t)?),
             Value::Bool(t) => ValueType::BoolVal(proto_bool(t)),
+            _ => {
+                return Err(IoError::NotSaveable(
+                    "a value of an unsupported type".into(),
+                ));
+            }
         }),
     })
 }
 
-fn java_class(simple: &str) -> &'static str {
+fn java_class(simple: &str) -> Result<&'static str> {
     JAVA_CLASSES
         .iter()
         .find(|(s, _)| *s == simple)
         .map(|(_, fq)| *fq)
-        .unwrap_or_else(|| panic!("no Java class name recorded for {simple}"))
+        .ok_or_else(|| IoError::NotSaveable(format!("no saved type is recorded for {simple}")))
 }
 
 /// One parameter of a saved vertex.
@@ -153,7 +158,7 @@ impl Saver<'_> {
         self.vertices.push(proto::Vertex {
             id: Some(proto::VertexId { id: id.clone() }),
             label: label.to_owned(),
-            vertex_type: java_class(class).to_owned(),
+            vertex_type: java_class(class)?.to_owned(),
             parameters,
             shape: shape.iter().map(|&d| d as i64).collect(),
             data_type: 0,
@@ -184,6 +189,9 @@ impl Saver<'_> {
                 &shape,
                 vec![("constant", P::BoolTensor(t))],
             ),
+            _ => Err(IoError::NotSaveable(
+                "a constant of an unsupported type".into(),
+            )),
         }
     }
 
@@ -221,6 +229,7 @@ impl Saver<'_> {
                     "ConstantBooleanVertex",
                     vec![("constant", P::BoolTensor(t.clone()))],
                 ),
+                _ => return unsupported("a constant of an unsupported type"),
             },
             Op::Unary(op) => match op {
                 UnaryOp::Neg => {
@@ -261,7 +270,10 @@ impl Saver<'_> {
                     left_right(),
                 ),
             },
-            Op::Compare(op) => (compare_class(*op), left_right()),
+            Op::Compare(op) => match compare_class(*op) {
+                Some(class) => (class, left_right()),
+                None => return unsupported("an unsupported comparison"),
+            },
             Op::Mask(op) => (
                 match op {
                     CompareOp::Gt => "GreaterThanMaskVertex",
@@ -269,6 +281,7 @@ impl Saver<'_> {
                     CompareOp::Lt => "LessThanMaskVertex",
                     CompareOp::Le => "LessThanOrEqualToMaskVertex",
                     CompareOp::Eq | CompareOp::Ne => return unsupported("an equality mask"),
+                    _ => return unsupported("a mask of an unsupported comparison"),
                 },
                 left_right(),
             ),
@@ -281,6 +294,7 @@ impl Saver<'_> {
                     LogicOp::And => "AndBinaryVertex",
                     LogicOp::Or => "OrBinaryVertex",
                     LogicOp::Xor => "XorBinaryVertex",
+                    _ => return unsupported("an unsupported logical operation"),
                 },
                 left_right(),
             ),
@@ -295,6 +309,7 @@ impl Saver<'_> {
                     Predicate::IsInfinite => "IsInfiniteVertex",
                     Predicate::IsPositiveInfinity => "IsPositiveInfinityVertex",
                     Predicate::IsNegativeInfinity => "IsNegativeInfinityVertex",
+                    _ => return unsupported("an unsupported predicate"),
                 },
                 input(),
             ),
@@ -322,6 +337,7 @@ impl Saver<'_> {
                 match kind {
                     ScanOp::CumSum => "CumSumVertex",
                     ScanOp::CumProd => "CumProdVertex",
+                    _ => return unsupported("an unsupported scan"),
                 },
                 vec![
                     ("inputVertex", p(0)),
@@ -334,6 +350,7 @@ impl Saver<'_> {
                     ArgOp::ArgMin => "ArgMinVertex",
                     ArgOp::NanArgMax => "NaNArgMaxVertex",
                     ArgOp::NanArgMin => "NaNArgMinVertex",
+                    _ => return unsupported("an unsupported arg reduction"),
                 };
                 let mut params = input();
                 if let Some(axis) = axis {
@@ -403,6 +420,7 @@ impl Saver<'_> {
                     DType::F64 => "ConcatenationVertex",
                     DType::I64 => "IntegerConcatenationVertex",
                     DType::Bool => "BooleanConcatenationVertex",
+                    _ => return unsupported("a concatenation of an unsupported type"),
                 },
                 vec![
                     ("dimension", P::Int(*axis as i64)),
@@ -522,6 +540,7 @@ impl Saver<'_> {
                 (DType::I64, _) => ("CastNumberToIntegerVertex", input()),
                 (DType::Bool, Some(DType::Bool)) => ("CastToBooleanVertex", input()),
                 (DType::Bool, _) => ("CastNumberToBooleanVertex", input()),
+                _ => return unsupported("a cast to an unsupported type"),
             },
             Op::Where => (
                 "WhereVertex",
@@ -557,6 +576,7 @@ impl Saver<'_> {
                     DType::F64 => "DoubleProxyVertex",
                     DType::I64 => "IntegerProxyVertex",
                     DType::Bool => "BooleanProxyVertex",
+                    _ => return unsupported("a proxy of an unsupported type"),
                 };
                 let proxy_label = if label.is_empty() {
                     format!("proxy_{}", id.index())
@@ -692,15 +712,16 @@ fn binary_class(op: BinaryOp) -> Option<&'static str> {
     })
 }
 
-fn compare_class(op: CompareOp) -> &'static str {
-    match op {
+fn compare_class(op: CompareOp) -> Option<&'static str> {
+    Some(match op {
         CompareOp::Gt => "GreaterThanVertex",
         CompareOp::Ge => "GreaterThanOrEqualVertex",
         CompareOp::Lt => "LessThanVertex",
         CompareOp::Le => "LessThanOrEqualVertex",
         CompareOp::Eq => "EqualsVertex",
         CompareOp::Ne => "NotEqualsVertex",
-    }
+        _ => return None,
+    })
 }
 
 struct StridedSlice {
@@ -767,7 +788,11 @@ fn strided_slice(spec: &str) -> std::result::Result<StridedSlice, String> {
 }
 
 /// The saved form of a graph and the values in a state.
-pub fn save_model(graph: &Graph, state: &State, metadata: &Metadata) -> Result<proto::ProtoModel> {
+pub(crate) fn save_model(
+    graph: &Graph,
+    state: &State,
+    metadata: &Metadata,
+) -> Result<proto::ProtoModel> {
     let mut saver = Saver {
         graph,
         vertices: Vec::new(),

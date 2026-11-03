@@ -76,10 +76,9 @@ fn metropolis_hastings_with_prior_proposals_finds_the_gaussian_posterior() {
             &mut state,
             &[mu],
             30_000,
-            SamplingOptions {
-                drop: 1000,
-                down_sample_interval: 1,
-            },
+            SamplingOptions::default()
+                .with_drop(1000)
+                .with_down_sample_interval(1),
             &mut rng(1),
         )
         .unwrap();
@@ -103,10 +102,9 @@ fn metropolis_hastings_with_gaussian_proposals_finds_the_gaussian_posterior() {
                 &mut state.clone(),
                 &[mu],
                 30_000,
-                SamplingOptions {
-                    drop: 1000,
-                    down_sample_interval: 1,
-                },
+                SamplingOptions::default()
+                    .with_drop(1000)
+                    .with_down_sample_interval(1),
                 &mut rng(2),
             )
             .unwrap();
@@ -134,20 +132,16 @@ fn rejection_strategies_give_identical_chains() {
 #[test]
 fn nuts_finds_the_gaussian_posterior() {
     let (model, mut state, mu, m, v) = gaussian_model();
-    let nuts = Nuts {
-        adapt_count: 500,
-        ..Nuts::default()
-    };
+    let nuts = Nuts::default().with_adapt_count(500);
     let samples = nuts
         .sample_with_statistics(
             &model,
             &mut state,
             &[mu],
             5000,
-            SamplingOptions {
-                drop: 500,
-                down_sample_interval: 1,
-            },
+            SamplingOptions::default()
+                .with_drop(500)
+                .with_down_sample_interval(1),
             &mut rng(4),
         )
         .unwrap()
@@ -176,10 +170,9 @@ fn beta_binomial_model() -> (Model, State, NodeId, f64, f64) {
 #[test]
 fn samplers_find_the_beta_binomial_posterior() {
     let (model, state, p, m, v) = beta_binomial_model();
-    let options = SamplingOptions {
-        drop: 1000,
-        down_sample_interval: 1,
-    };
+    let options = SamplingOptions::default()
+        .with_drop(1000)
+        .with_down_sample_interval(1);
     let mh = MetropolisHastings::default()
         .sample_with(
             &model,
@@ -191,13 +184,11 @@ fn samplers_find_the_beta_binomial_posterior() {
         )
         .unwrap();
     assert_moments(&series(&mh, p), m, v, "Beta-Binomial MH");
-    let nuts = Nuts {
-        adapt_count: 500,
-        ..Nuts::default()
-    }
-    .sample_with_statistics(&model, &mut state.clone(), &[p], 5000, options, &mut rng(6))
-    .unwrap()
-    .0;
+    let nuts = Nuts::default()
+        .with_adapt_count(500)
+        .sample_with_statistics(&model, &mut state.clone(), &[p], 5000, options, &mut rng(6))
+        .unwrap()
+        .0;
     assert_moments(&series(&nuts, p), m, v, "Beta-Binomial NUTS");
 }
 
@@ -218,10 +209,9 @@ fn samplers_find_the_gamma_poisson_posterior() {
     let theta = 1.5 / (1.0 + counts.len() as f64 * 1.5);
     let (m, v) = (k * theta, k * theta * theta);
 
-    let options = SamplingOptions {
-        drop: 1000,
-        down_sample_interval: 1,
-    };
+    let options = SamplingOptions::default()
+        .with_drop(1000)
+        .with_down_sample_interval(1);
     let mh = MetropolisHastings::default()
         .sample_with(
             &model,
@@ -233,20 +223,18 @@ fn samplers_find_the_gamma_poisson_posterior() {
         )
         .unwrap();
     assert_moments(&series(&mh, rate), m, v, "Gamma-Poisson MH");
-    let nuts = Nuts {
-        adapt_count: 500,
-        ..Nuts::default()
-    }
-    .sample_with_statistics(
-        &model,
-        &mut state.clone(),
-        &[rate],
-        5000,
-        options,
-        &mut rng(8),
-    )
-    .unwrap()
-    .0;
+    let nuts = Nuts::default()
+        .with_adapt_count(500)
+        .sample_with_statistics(
+            &model,
+            &mut state.clone(),
+            &[rate],
+            5000,
+            options,
+            &mut rng(8),
+        )
+        .unwrap()
+        .0;
     assert_moments(&series(&nuts, rate), m, v, "Gamma-Poisson NUTS");
 }
 
@@ -280,10 +268,9 @@ fn samplers_find_a_correlated_two_dimensional_gaussian() {
             "{label}: covariance {cov} (ess {ess})"
         );
     };
-    let options = SamplingOptions {
-        drop: 1000,
-        down_sample_interval: 1,
-    };
+    let options = SamplingOptions::default()
+        .with_drop(1000)
+        .with_down_sample_interval(1);
     let mh = MetropolisHastings::default()
         .proposal(GaussianProposal::new(0.7))
         .selector(VariableSelector::Full)
@@ -297,20 +284,18 @@ fn samplers_find_a_correlated_two_dimensional_gaussian() {
         )
         .unwrap();
     check(&mh, "2D MH");
-    let nuts = Nuts {
-        adapt_count: 500,
-        ..Nuts::default()
-    }
-    .sample_with_statistics(
-        &model,
-        &mut state.clone(),
-        &[x, y],
-        6000,
-        options,
-        &mut rng(10),
-    )
-    .unwrap()
-    .0;
+    let nuts = Nuts::default()
+        .with_adapt_count(500)
+        .sample_with_statistics(
+            &model,
+            &mut state.clone(),
+            &[x, y],
+            6000,
+            options,
+            &mut rng(10),
+        )
+        .unwrap()
+        .0;
     check(&nuts, "2D NUTS");
 }
 
@@ -451,10 +436,7 @@ fn acceptance_rates_are_tracked() {
 #[test]
 fn nuts_can_be_reused() {
     let (model, state, mu, ..) = gaussian_model();
-    let nuts = Nuts {
-        adapt_count: 100,
-        ..Nuts::default()
-    };
+    let nuts = Nuts::default().with_adapt_count(100);
     let mut r = rng(14);
     nuts.sample(&model, &mut state.clone(), &[mu], 200, &mut r)
         .unwrap();
@@ -478,11 +460,9 @@ fn nuts_can_be_reused() {
 fn nuts_switches_to_the_averaged_step_size_when_adaptation_ends() {
     let (model, mut state, mu, ..) = gaussian_model();
     let adapt_count = 50;
-    let nuts = Nuts {
-        adapt_count,
-        save_statistics: true,
-        ..Nuts::default()
-    };
+    let nuts = Nuts::default()
+        .with_adapt_count(adapt_count)
+        .with_save_statistics(true);
     let (_, statistics) = nuts
         .sample_with_statistics(
             &model,
@@ -512,13 +492,11 @@ fn nuts_switches_to_the_averaged_step_size_when_adaptation_ends() {
 #[test]
 fn nuts_records_divergent_steps_after_adaptation() {
     let (model, mut state, mu, ..) = gaussian_model();
-    let nuts = Nuts {
-        adapt_count: 0,
-        adapt_step_size: false,
-        initial_step_size: Some(5.0),
-        max_energy_change: 1e-3,
-        ..Nuts::default()
-    };
+    let nuts = Nuts::default()
+        .with_adapt_count(0)
+        .with_adapt_step_size(false)
+        .with_initial_step_size(5.0)
+        .with_max_energy_change(1e-3);
     let (_, statistics) = nuts
         .sample_with_statistics(
             &model,
@@ -535,10 +513,7 @@ fn nuts_records_divergent_steps_after_adaptation() {
 #[test]
 fn nuts_rejects_invalid_settings_and_discrete_latents() {
     let (model, mut state, mu, ..) = gaussian_model();
-    let bad = Nuts {
-        max_tree_height: 0,
-        ..Nuts::default()
-    };
+    let bad = Nuts::default().with_max_tree_height(0);
     assert!(matches!(
         bad.sampler(&model, &mut state, &[mu], &mut rng(1)),
         Err(AlgorithmError::InvalidSetting(_))
@@ -560,10 +535,7 @@ fn nuts_rejects_invalid_settings_and_discrete_latents() {
 #[test]
 fn chains_are_reproducible_and_independent() {
     let (model, state, mu, ..) = gaussian_model();
-    let nuts = Nuts {
-        adapt_count: 50,
-        ..Nuts::default()
-    };
+    let nuts = Nuts::default().with_adapt_count(50);
     let run = || {
         run_chains(4, 99, &state, |state, rng| {
             Ok(series(&nuts.sample(&model, state, &[mu], 100, rng)?, mu))
@@ -662,11 +634,9 @@ fn simulated_annealing_honours_the_variable_selector() {
     let model = Model::new(graph, &state).unwrap();
 
     let proposal = Arc::new(CountingProposal::default());
-    let mh = MetropolisHastings {
-        proposal: proposal.clone(),
-        selector: VariableSelector::Full,
-        ..MetropolisHastings::default()
-    };
+    let mh = MetropolisHastings::default()
+        .with_shared_proposal(proposal.clone())
+        .with_selector(VariableSelector::Full);
     SimulatedAnnealing::new(mh)
         .max_a_posteriori(&model, &mut state, 20, &mut rng(18))
         .unwrap();
@@ -683,10 +653,9 @@ fn drop_and_down_sampling() {
         &mut sampler,
         &mut state,
         100,
-        SamplingOptions {
-            drop: 10,
-            down_sample_interval: 3,
-        },
+        SamplingOptions::default()
+            .with_drop(10)
+            .with_down_sample_interval(3),
         &mut r,
     )
     .unwrap();
@@ -697,10 +666,9 @@ fn drop_and_down_sampling() {
             &mut sampler,
             &mut state,
             10,
-            SamplingOptions {
-                drop: 10,
-                down_sample_interval: 1
-            },
+            SamplingOptions::default()
+                .with_drop(10)
+                .with_down_sample_interval(1),
             &mut r
         )
         .is_err()
