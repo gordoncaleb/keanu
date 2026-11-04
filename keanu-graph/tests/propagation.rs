@@ -12,6 +12,67 @@ fn scalar(state: &State, id: keanu_graph::NodeId) -> f64 {
     state.f64(id).unwrap().as_slice()[0]
 }
 
+/// A node reached both eagerly (through a deterministic child) and lazily (as the parent of a probabilistic node
+/// being sampled) is recomputed by eval, and only computed if missing by lazy eval.
+#[test]
+fn eval_recomputes_a_node_requested_both_eagerly_and_lazily() {
+    let b = GraphBuilder::new();
+    let a = b.gaussian(0.0, 1.0);
+    let d = a * 2.0;
+    let p = b.gaussian(d, 1.0);
+    let t = d + p;
+    let (a, d, p, t) = (a.id(), d.id(), p.id(), t.id());
+    let (graph, mut state) = b.build().unwrap();
+    state.lazy_eval(&graph, &[t], &mut rng()).unwrap();
+
+    // make d stale and p missing
+    state.set(&graph, a, DoubleTensor::scalar(1.5)).unwrap();
+    state.clear(p).unwrap();
+    state.clear(t).unwrap();
+    state.lazy_eval(&graph, &[t], &mut rng()).unwrap();
+    assert_ne!(scalar(&state, d), 3.0, "lazy eval keeps the stale value");
+
+    state.clear(p).unwrap();
+    state.eval(&graph, &[t], &mut rng()).unwrap();
+    assert_eq!(scalar(&state, d), 3.0, "eval recomputes it");
+    assert_eq!(scalar(&state, t), 3.0 + scalar(&state, p));
+}
+
+/// Each node of a cascade is recomputed once, after all its parents, even when reached along many paths.
+#[test]
+fn cascade_recomputes_shared_descendants_once_in_order() {
+    let b = GraphBuilder::new();
+    let x = b.gaussian(0.0, 1.0);
+    let y = b.gaussian(0.0, 1.0);
+    let mut level = vec![x * 1.0, x + y, y * 1.0];
+    for _ in 0..40 {
+        level = vec![
+            level[0] + level[1],
+            level[0] + level[2],
+            level[1] + level[2],
+        ];
+    }
+    let total = level[0] + level[1] + level[2];
+    let (x, y, total) = (x.id(), y.id(), total.id());
+    let (graph, mut state) = b.build().unwrap();
+    state.set(&graph, x, DoubleTensor::scalar(0.0)).unwrap();
+    state.set(&graph, y, DoubleTensor::scalar(0.0)).unwrap();
+    state.lazy_eval(&graph, &[total], &mut rng()).unwrap();
+    assert_eq!(scalar(&state, total), 0.0);
+
+    state
+        .set(&graph, x, DoubleTensor::scalar(f64::MIN_POSITIVE))
+        .unwrap();
+    state
+        .set(&graph, y, DoubleTensor::scalar(f64::MIN_POSITIVE))
+        .unwrap();
+    state.cascade(&graph, &[y, x, y]).unwrap();
+    let mut expected = state.clone();
+    expected.eval(&graph, &[total], &mut rng()).unwrap();
+    assert!(scalar(&state, total) > 0.0);
+    assert_eq!(state, expected);
+}
+
 #[test]
 fn lazy_eval_samples_missing_probabilistic_nodes_and_keeps_existing_values() {
     let b = GraphBuilder::new();

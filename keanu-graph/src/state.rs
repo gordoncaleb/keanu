@@ -6,6 +6,8 @@ use crate::op::{Op, eval};
 use crate::value::{DType, Value};
 use keanu_distributions::KeanuRng;
 use keanu_tensor::{BoolTensor, DoubleTensor, IntTensor};
+use std::cmp::Reverse;
+use std::collections::BinaryHeap;
 
 /// The values of a graph's nodes and which of them are observed.
 ///
@@ -15,13 +17,6 @@ use keanu_tensor::{BoolTensor, DoubleTensor, IntTensor};
 pub struct State {
     pub(crate) values: Vec<Option<Value>>,
     pub(crate) observed: Vec<bool>,
-}
-
-#[derive(Clone, Copy, PartialEq)]
-enum Plan {
-    None,
-    /// recompute a deterministic node, or sample a probabilistic one that has no value
-    Update,
 }
 
 impl State {
@@ -174,77 +169,76 @@ impl State {
 
     /// Recomputes the deterministic descendants of `from` (and `from` itself if deterministic), in topological
     /// order, stopping at probabilistic nodes.
+    ///
+    /// The cost is proportional to the descendants recomputed, not to the size of the graph: nodes are visited
+    /// in increasing id order from a heap, and as a node's children have larger ids, every path to a node has been
+    /// followed (and its duplicate heap entries are adjacent) by the time it is popped.
     pub fn cascade(&mut self, graph: &Graph, from: &[NodeId]) -> Result<()> {
         self.check_ids(graph, from)?;
-        let mut plan: smallvec::SmallVec<[Plan; 64]> = smallvec::smallvec![Plan::None; graph.len()];
-        let mut stack: smallvec::SmallVec<[NodeId; 16]> = from.iter().copied().collect();
-        for &id in from {
-            plan[id.0] = Plan::Update;
-        }
-        while let Some(id) = stack.pop() {
-            for &child in graph.children(id) {
-                if !graph.node(child).is_probabilistic() && plan[child.0] == Plan::None {
-                    plan[child.0] = Plan::Update;
-                    stack.push(child);
-                }
+        let mut pending: BinaryHeap<Reverse<NodeId>> = from.iter().map(|&id| Reverse(id)).collect();
+        let mut last = None;
+        while let Some(Reverse(id)) = pending.pop() {
+            if last.replace(id) == Some(id) {
+                continue;
             }
-        }
-        for id in graph.ids() {
-            if plan[id.0] == Plan::Update {
-                let node = graph.node(id);
-                if node.is_probabilistic() {
-                    if !self.has_value(id) {
-                        return Err(GraphError::InvalidValue(format!(
-                            "probabilistic node {id:?} has no value to cascade from"
-                        )));
-                    }
-                } else {
-                    self.update(graph, id, None)?;
+            if graph.node(id).is_probabilistic() {
+                if !self.has_value(id) {
+                    return Err(GraphError::InvalidValue(format!(
+                        "probabilistic node {id:?} has no value to cascade from"
+                    )));
                 }
+            } else {
+                self.update(graph, id, None)?;
             }
+            pending.extend(
+                graph
+                    .children(id)
+                    .iter()
+                    .filter(|&&child| !graph.node(child).is_probabilistic())
+                    .map(|&child| Reverse(child)),
+            );
         }
         Ok(())
     }
 
-    /// Marks which nodes an eval or lazy eval of the targets updates.
-    fn plan(&self, graph: &Graph, targets: &[NodeId], lazy: bool) -> Vec<Plan> {
-        let mut plan = vec![Plan::None; graph.len()];
-        // a node may be visited lazily and later eagerly (which does more), but not the other way round
-        let mut visited_eagerly = vec![false; graph.len()];
-        let mut visited_lazily = vec![false; graph.len()];
-        let mut stack: Vec<(NodeId, bool)> = targets.iter().map(|&t| (t, lazy)).collect();
-        while let Some((id, lazy)) = stack.pop() {
-            if visited_eagerly[id.0] || (lazy && visited_lazily[id.0]) {
+    /// The nodes an eval (or lazy eval) of the targets updates, in topological order: deterministic nodes to
+    /// recompute and probabilistic nodes without a value to sample.
+    ///
+    /// Nodes are visited in decreasing id order from a heap, so (as parents have smaller ids) every request for a
+    /// node has been made by the time it is popped, and the cost is proportional to the nodes visited rather than
+    /// to the size of the graph. A node may be requested lazily and eagerly (which does more): eager requests sort
+    /// first, and the node's other entries are skipped.
+    fn plan(&self, graph: &Graph, targets: &[NodeId], lazy: bool) -> Vec<NodeId> {
+        // (node, eager)
+        let mut pending: BinaryHeap<(NodeId, bool)> = targets.iter().map(|&t| (t, !lazy)).collect();
+        let mut plan = Vec::new();
+        let mut last = None;
+        while let Some((id, eager)) = pending.pop() {
+            if last.replace(id) == Some(id) {
                 continue;
             }
-            if lazy {
-                visited_lazily[id.0] = true;
-            } else {
-                visited_eagerly[id.0] = true;
+            let has_value = self.has_value(id);
+            if !eager && has_value {
+                continue;
             }
             let node = graph.node(id);
-            let has_value = self.has_value(id);
-            if lazy && has_value {
-                continue;
-            }
             if node.is_probabilistic() {
                 if !has_value {
-                    plan[id.0] = Plan::Update;
-                    stack.extend(node.parents.iter().map(|&p| (p, true)));
+                    plan.push(id);
+                    pending.extend(node.parents.iter().map(|&p| (p, false)));
                 }
             } else {
-                plan[id.0] = Plan::Update;
-                stack.extend(node.parents.iter().map(|&p| (p, lazy)));
+                plan.push(id);
+                pending.extend(node.parents.iter().map(|&p| (p, eager)));
             }
         }
+        plan.reverse();
         plan
     }
 
-    fn execute(&mut self, graph: &Graph, plan: &[Plan], rng: &mut KeanuRng) -> Result<()> {
-        for id in graph.ids() {
-            if plan[id.0] == Plan::Update {
-                self.update(graph, id, Some(rng))?;
-            }
+    fn execute(&mut self, graph: &Graph, plan: &[NodeId], rng: &mut KeanuRng) -> Result<()> {
+        for &id in plan {
+            self.update(graph, id, Some(rng))?;
         }
         Ok(())
     }
