@@ -7,6 +7,7 @@
 //! higher probability ones.
 
 use crate::error::{AlgorithmError, Result};
+use crate::support::evaluate_all;
 use keanu_distributions::KeanuRng;
 use keanu_graph::{Graph, Model, NodeId, State, Value, node_log_prob};
 use std::collections::{BTreeMap, BTreeSet};
@@ -61,7 +62,6 @@ impl Default for ParticleFilter {
 #[derive(Debug, Clone, PartialEq)]
 pub struct Particle {
     latents: BTreeMap<NodeId, Value>,
-    observed: Vec<NodeId>,
     log_prob: f64,
 }
 
@@ -69,7 +69,6 @@ impl Particle {
     fn empty() -> Self {
         Self {
             latents: BTreeMap::new(),
-            observed: Vec::new(),
             log_prob: 0.0,
         }
     }
@@ -102,16 +101,23 @@ impl Particle {
         Ok(())
     }
 
-    /// Applies the particle and recomputes its log probability.
-    fn update_log_prob(&mut self, model: &Model, state: &mut State) -> Result<()> {
-        self.apply(model, state)?;
-        let graph = model.graph();
-        let mut sum = 0.0;
-        for &id in self.latents.keys().chain(&self.observed) {
-            sum += node_log_prob(graph, state, id)?;
+    /// Adds the log probabilities of an increment's newly sampled latents and its observation, with the particle's
+    /// values applied to `state`. The log probabilities of the latents and observations considered before don't
+    /// change (they depend only on those latents' values and their ancestors', which are already sampled), so they
+    /// aren't recomputed.
+    fn add_log_prob(
+        &mut self,
+        graph: &Graph,
+        state: &State,
+        latents: &[NodeId],
+        observed: NodeId,
+    ) -> Result<()> {
+        let mut increment = 0.0;
+        for &id in latents.iter().chain([&observed]) {
+            increment += node_log_prob(graph, state, id)?;
         }
         // a NaN log probability means the particle is unusable; treat it as impossible
-        self.log_prob = finite_or_neg_inf(sum);
+        self.log_prob = finite_or_neg_inf(self.log_prob + increment);
         Ok(())
     }
 }
@@ -119,37 +125,120 @@ impl Particle {
 /// For each observed node, the latents it depends on that no earlier observation depends on, in the order the
 /// filter considers them: repeatedly the observation with the fewest remaining latent dependencies (ties broken
 /// by node id). Java's `LatentIncrementSort`.
+///
+/// Only a count of remaining dependencies is kept per observation, so memory is linear in the size of the graph.
+/// An observation's remaining latents are found when it is chosen, by walking up from it and stopping at latents
+/// already taken (whose own latent ancestors were all taken with them); when a latent is taken, the observations
+/// that depend on it are found by walking down from it.
 pub fn latent_increments(graph: &Graph, state: &State) -> Vec<(NodeId, Vec<NodeId>)> {
-    // the latent ancestors of every node, in id (topological) order
-    let mut latent_ancestors: Vec<BTreeSet<NodeId>> = vec![BTreeSet::new(); graph.len()];
-    for id in graph.ids() {
-        let mut ancestors = BTreeSet::new();
-        for &parent in graph.parents(id) {
-            ancestors.extend(latent_ancestors[parent.index()].iter().copied());
-            if graph.node(parent).is_probabilistic() && !state.is_observed(parent) {
-                ancestors.insert(parent);
-            }
-        }
-        latent_ancestors[id.index()] = ancestors;
-    }
-
-    let mut remaining: BTreeMap<NodeId, BTreeSet<NodeId>> = graph
+    let is_latent = |id: NodeId| graph.node(id).is_probabilistic() && !state.is_observed(id);
+    let mut observation_index: Vec<Option<usize>> = vec![None; graph.len()];
+    let observations: Vec<NodeId> = graph
         .ids()
         .filter(|&id| state.is_observed(id) && graph.node(id).is_probabilistic())
-        .map(|id| (id, latent_ancestors[id.index()].clone()))
         .collect();
+    for (i, &id) in observations.iter().enumerate() {
+        observation_index[id.index()] = Some(i);
+    }
 
-    let mut order = Vec::new();
-    while let Some((&next, _)) = remaining.iter().min_by_key(|(id, deps)| (deps.len(), **id)) {
-        let deps = remaining.remove(&next).expect("present");
-        for other in remaining.values_mut() {
-            for d in &deps {
-                other.remove(d);
-            }
+    let mut walker = Walker::new(graph.len());
+    // the latent ancestors of an observation that aren't taken (an observation also depends on the latents its
+    // observed ancestors depend on, so the walk goes through every kind of node)
+    let untaken_latents = |walker: &mut Walker, from: NodeId, taken: &[bool]| {
+        let mut found = Vec::new();
+        walker.walk(
+            from,
+            |id| graph.parents(id),
+            |id| {
+                if !is_latent(id) {
+                    return true;
+                }
+                if taken[id.index()] {
+                    return false;
+                }
+                found.push(id);
+                true
+            },
+        );
+        found
+    };
+
+    let mut taken = vec![false; graph.len()];
+    let mut remaining = vec![0usize; observations.len()];
+    let mut queue: BTreeSet<(usize, NodeId)> = BTreeSet::new();
+    for (i, &observation) in observations.iter().enumerate() {
+        remaining[i] = untaken_latents(&mut walker, observation, &taken).len();
+        queue.insert((remaining[i], observation));
+    }
+
+    let mut order = Vec::with_capacity(observations.len());
+    while let Some((_, next)) = queue.pop_first() {
+        let mut latents = untaken_latents(&mut walker, next, &taken);
+        latents.sort();
+        for &latent in &latents {
+            taken[latent.index()] = true;
         }
-        order.push((next, deps.into_iter().collect()));
+        // each waiting observation downstream of a newly taken latent depends on one fewer
+        for &latent in &latents {
+            walker.walk(
+                latent,
+                |id| graph.children(id),
+                |id| {
+                    if let Some(i) = observation_index[id.index()]
+                        && queue.remove(&(remaining[i], id))
+                    {
+                        remaining[i] -= 1;
+                        queue.insert((remaining[i], id));
+                    }
+                    true
+                },
+            );
+        }
+        order.push((next, latents));
     }
     order
+}
+
+/// Depth-first walks over a graph that reuse their visited marks.
+struct Walker {
+    visited: Vec<u32>,
+    walk: u32,
+    stack: Vec<NodeId>,
+}
+
+impl Walker {
+    fn new(nodes: usize) -> Self {
+        Self {
+            visited: vec![0; nodes],
+            walk: 0,
+            stack: Vec::new(),
+        }
+    }
+
+    /// Visits each node reachable from `from` (excluding `from`) through `next` once; `visit` returns whether to
+    /// carry on past the node.
+    fn walk<'g>(
+        &mut self,
+        from: NodeId,
+        next: impl Fn(NodeId) -> &'g [NodeId],
+        mut visit: impl FnMut(NodeId) -> bool,
+    ) {
+        self.walk = self.walk.checked_add(1).unwrap_or_else(|| {
+            self.visited.fill(0);
+            1
+        });
+        self.stack.clear();
+        self.stack.extend_from_slice(next(from));
+        while let Some(id) = self.stack.pop() {
+            if self.visited[id.index()] == self.walk {
+                continue;
+            }
+            self.visited[id.index()] = self.walk;
+            if visit(id) {
+                self.stack.extend_from_slice(next(id));
+            }
+        }
+    }
 }
 
 impl ParticleFilter {
@@ -178,8 +267,7 @@ impl ParticleFilter {
         self.validate()?;
         let graph = model.graph();
         // every node needs a value so particles can sample given their parents
-        let all: Vec<NodeId> = graph.ids().collect();
-        state.lazy_eval(graph, &all, rng)?;
+        evaluate_all(graph, state, rng)?;
 
         let mut particles = vec![Particle::empty(); self.particles];
         for (observed, dependencies) in latent_increments(graph, state) {
@@ -231,13 +319,12 @@ fn add_observation(
     for particle in particles.iter_mut() {
         // the state holds whichever particle was evaluated last, so restore this one first
         particle.apply(model, state)?;
-        particle.observed.push(observed);
         for &latent in &ordered {
             let value = state.sample_prior(model.graph(), latent, rng)?;
             model.set_and_cascade(state, [(latent, value.clone())])?;
             particle.latents.insert(latent, value);
         }
-        particle.update_log_prob(model, state)?;
+        particle.add_log_prob(model.graph(), state, &ordered, observed)?;
     }
     Ok(())
 }

@@ -147,6 +147,12 @@ vector was edited by hand and the entry says so.
   Rollback snapshots reuse the changeable nodes worked out for each proposed node set, and `GaussianProposal`
   (symmetric) returns 0 for both proposal densities instead of building two Gaussians per step (same random
   numbers and acceptances). A 20-latent chain with full proposals runs 1.6–1.9× faster.
+- `keanu-algorithms`: the particle filter adds each increment's new latents' and observation's log probabilities to
+  a particle's total instead of re-cascading the particle and recomputing every log probability so far (quadratic
+  in the length of a time series; a 200-step random walk with 100 particles drops from 2.8 s to 0.7 s), and
+  `latent_increments` keeps a count per observation instead of every node's set of latent ancestors (quadratic
+  memory on a chain). Same random numbers and ordering; particle log probabilities may differ in the last bits
+  (summation order).
 - keanu-tensor: `digamma`'s asymptotic series had the wrong sign on its 1/(12x²) term (inherited from Apache Commons), so results were off by up to ~3e-9 (ψ(1) = -0.5772156677920679). Golden vectors edited by hand to mpmath values: `unary/digamma` and `unary/digamma/scalar` (tensors.json), `unary/digamma` and the `unary/logGamma` partials (vertices.json), the catalog model's `digamma` node (models.json), and the ψ-dependent gradients of `Beta/alpha=0.5,beta=0.5`, `Dirichlet/concentration=[0.5, 2.0, 3.0]` (both cases), the three `Gamma` cases and the two `InverseGamma` cases (distributions.json). The Rust-written `keanu-io` fixtures were regenerated, and the custom distribution example test uses seed 9, as its NUTS chain changed with the Beta gradient.
 - keanu-tensor: `trigamma`'s asymptotic series subtracted its 1/(42z⁷) term instead of adding it.
 - keanu-tensor: `digamma` and `trigamma` of negative arguments use the reflection formulas, so they no longer loop |x| times (or for ever from about -1e16). Non-positive integers are still poles (-∞ and +∞).
