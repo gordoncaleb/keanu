@@ -145,6 +145,33 @@ pub(crate) fn map5<A: Element, B: Element, C: Element, D: Element, E: Element>(
     }))
 }
 
+/// The shape of a sample: the broadcast of the requested `shape` and the parameters' shapes. Samplers draw one
+/// value per element of this shape so no draw is reused across broadcast elements.
+pub(crate) fn sample_shape(shape: &[usize], params: &[&[usize]]) -> Result<Shape> {
+    let mut shapes: Vec<&[usize]> = vec![shape];
+    shapes.extend_from_slice(params);
+    broadcast_all(&shapes)
+}
+
+/// `ln(1 + e^m)`, without overflow for large m or loss of precision for very negative m.
+pub(crate) fn softplus(m: f64) -> f64 {
+    if m > 0.0 {
+        m + (-m).exp().ln_1p()
+    } else {
+        m.exp().ln_1p()
+    }
+}
+
+/// `1 / (1 + e^-m)`, without overflow for any m.
+pub(crate) fn sigmoid(m: f64) -> f64 {
+    if m >= 0.0 {
+        1.0 / (1.0 + (-m).exp())
+    } else {
+        let e = m.exp();
+        e / (1.0 + e)
+    }
+}
+
 /// Draws one value per element of the broadcast of `shape` and the parameters' shapes.
 pub(crate) fn sample_each<T: Element>(
     shape: &[usize],

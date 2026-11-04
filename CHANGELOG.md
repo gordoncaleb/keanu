@@ -34,6 +34,17 @@ vector was edited by hand and the entry says so.
 - keanu-graph: `add_node` checks each op's number of parents and returns an error instead of panicking (e.g.
   `Op::Proxy` or `Op::Not` with no parents) or silently accepting extra parents.
 - keanu-graph: building a graph's child lists is linear in fan-out (it was quadratic).
+- `Multinomial::log_prob` validates x: a count vector with a negative count or counts not summing to n has log probability -infinity, and an x whose last dimension is not the number of categories is an error.
+- `Logistic` log probability and gradients use a stable softplus and sigmoid, so they no longer overflow to -infinity / NaN far in the tails.
+- `MultivariateGaussian::d_log_prob` reduces each gradient to its parameter's own shape, summing size-1 broadcast dimensions as well as extra leading ones.
+- Samplers whose requested shape is smaller than the parameters' broadcast shape (Gaussian, HalfGaussian, LogNormal, Cauchy, HalfCauchy, Beta, Exponential, Logistic, Pareto, StudentT, Triangular, Uniform, Bernoulli, Geometric, UniformInt, Categorical) draw one value per broadcast element instead of reusing draws. Sampling at the full broadcast shape uses the same random stream as before.
+- `Kde` log probability and gradient use log-sum-exp, so they stay finite far from the samples. `Kde::new` rejects a bandwidth that is not positive and finite, and `Kde::with_scotts_bandwidth` returns an error for samples with no spread.
+- `Dirichlet::log_prob` takes (c - 1) ln x as 0 where c = 1 (no NaN at x = 0) and is -infinity for negative x.
+- `Poisson::log_prob` at mu = 0, k = 0 is 0 rather than NaN.
+- The `Binomial` gradient takes 0 / p as 0, so it is finite at p = 0, k = 0 and p = 1, k = n. Golden vector `Binomial/p=0.0,n=4` dLogProb/P at k = 0 edited by hand from NaN to -4.
+- `Pareto` and `Geometric` log probabilities treat invalid parameters per element (and return the broadcast shape) instead of making every element -infinity.
+- `Pareto` support includes x = location. Golden vectors `Pareto/location=1.0,scale=2.0` (x = 1) and `Pareto/location=0.5,scale=1.0` (x = 0.5) logProb edited by hand from -infinity to ln 2.
+- Multinomial and Categorical sampling never return a category with zero probability when rounding leaves the cumulative probability below the uniform draw; they return the last category with non-zero probability.
 
 ## Unreleased: Java
 

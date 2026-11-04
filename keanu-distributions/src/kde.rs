@@ -25,19 +25,34 @@ fn kernel(d: f64) -> f64 {
 }
 
 impl Kde {
-    /// Creates the distribution from its parameters.
+    /// Creates the distribution from its parameters. The bandwidth must be positive and finite.
     pub fn new(samples: Vec<f64>, bandwidth: f64) -> Result<Self> {
         if samples.is_empty() {
             return invalid_parameter("a KDE needs at least one sample");
         }
+        if !(bandwidth > 0.0 && bandwidth.is_finite()) {
+            return invalid_parameter(format!(
+                "the KDE bandwidth must be positive and finite, got {bandwidth}"
+            ));
+        }
         Ok(Self { samples, bandwidth })
     }
 
-    /// Uses Scott's rule: 1.06 σ n^(-1/5).
+    /// Uses Scott's rule: 1.06 σ n^(-1/5). An error if the samples have no spread (e.g. are all the same), as
+    /// the bandwidth would then be zero.
     pub fn with_scotts_bandwidth(samples: Vec<f64>) -> Result<Self> {
+        if samples.is_empty() {
+            return invalid_parameter("a KDE needs at least one sample");
+        }
         let n = samples.len();
         let sd = DoubleTensor::vector(samples.clone()).std_dev();
-        Self::new(samples, 1.06 * sd * (n as f64).powf(-1.0 / 5.0))
+        let bandwidth = 1.06 * sd * (n as f64).powf(-1.0 / 5.0);
+        if !(bandwidth > 0.0 && bandwidth.is_finite()) {
+            return invalid_parameter(format!(
+                "Scott's rule gives bandwidth {bandwidth}: the samples need a positive, finite standard deviation"
+            ));
+        }
+        Self::new(samples, bandwidth)
     }
 
     /// The probability density at x.
@@ -53,26 +68,54 @@ impl Kde {
     }
 
     /// The element-wise log probability of x, broadcasting x with the parameters (-infinity outside the support).
+    ///
+    /// Computed with log-sum-exp over the kernels, so it stays finite far from the samples.
     pub fn log_prob(&self, x: &DoubleTensor) -> DoubleTensor {
-        self.pdf(x).ln()
+        let (n, h) = (self.samples.len() as f64, self.bandwidth);
+        let normaliser = (n * h).ln() + 0.5 * (2.0 * std::f64::consts::PI).ln();
+        x.map(|x| {
+            let max = self.max_exponent(x);
+            if !max.is_finite() {
+                // x is infinite or NaN
+                return max - normaliser;
+            }
+            let sum: f64 = self
+                .samples
+                .iter()
+                .map(|&s| (-0.5 * ((x - s) / h).powi(2) - max).exp())
+                .sum();
+            max + sum.ln() - normaliser
+        })
+    }
+
+    /// The largest kernel exponent -((x - s) / h)^2 / 2 over the samples (that of the nearest sample).
+    fn max_exponent(&self, x: f64) -> f64 {
+        let h = self.bandwidth;
+        self.samples
+            .iter()
+            .map(|&s| -0.5 * ((x - s) / h).powi(2))
+            .fold(f64::NEG_INFINITY, f64::max)
     }
 
     /// The element-wise derivatives of [`Self::log_prob`] with respect to x and each parameter.
+    ///
+    /// d/dx ln p = -sum_i w_i (x - s_i) / h^2 with w_i the kernels' softmax weights, so it is stable far from
+    /// the samples.
     pub fn d_log_prob(&self, x: &DoubleTensor) -> Result<KdeGradient> {
-        let (n, h) = (self.samples.len() as f64, self.bandwidth);
-        let d_pdf = x.map(|x| {
-            -self
-                .samples
-                .iter()
-                .map(|&s| {
-                    let d = (x - s) / h;
-                    kernel(d) * d
-                })
-                .sum::<f64>()
-                / (h * h * n)
-        });
+        let h = self.bandwidth;
         Ok(KdeGradient {
-            x: d_pdf.div(&self.pdf(x))?,
+            x: x.map(|x| {
+                let max = self.max_exponent(x);
+                let (weighted, total) =
+                    self.samples
+                        .iter()
+                        .fold((0.0, 0.0), |(weighted, total), &s| {
+                            let d = (x - s) / h;
+                            let w = (-0.5 * d * d - max).exp();
+                            (weighted + w * d, total + w)
+                        });
+                -weighted / (total * h)
+            }),
         })
     }
 

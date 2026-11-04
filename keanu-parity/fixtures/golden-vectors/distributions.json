@@ -1493,7 +1493,7 @@
         "logProb": {
           "dtype": "f64",
           "shape": [7],
-          "data": ["-Infinity", "-Infinity", "-Infinity", "-Infinity", "-Infinity", -1.3862943611198904, -3.8190850097688767]
+          "data": ["-Infinity", "-Infinity", "-Infinity", "-Infinity", 0.6931471805599453, -1.3862943611198904, -3.8190850097688767]
         },
         "dLogProb": {
           "S": {
@@ -1540,7 +1540,7 @@
         "logProb": {
           "dtype": "f64",
           "shape": [7],
-          "data": ["-Infinity", "-Infinity", "-Infinity", "-Infinity", -0.6931471805599453, -2.0794415416798357, -3.7013019741124937]
+          "data": ["-Infinity", "-Infinity", "-Infinity", 0.6931471805599453, -0.6931471805599453, -2.0794415416798357, -3.7013019741124937]
         },
         "dLogProb": {
           "S": {
@@ -2120,7 +2120,7 @@
           "P": {
             "dtype": "f64",
             "shape": [7],
-            "data": ["-Infinity", "NaN", "Infinity", "Infinity", "Infinity", "Infinity", "Infinity"]
+            "data": ["-Infinity", -4.0, "Infinity", "Infinity", "Infinity", "Infinity", "Infinity"]
           }
         }
       }

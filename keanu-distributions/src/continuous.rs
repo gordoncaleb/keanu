@@ -6,7 +6,8 @@
 use crate::error::{Result, invalid_parameter};
 use crate::rng::KeanuRng;
 use crate::util::{
-    digamma, ln_gamma, map2, map3, map3_pair, map4, safe_ln_times, sample_each, scalar,
+    digamma, ln_gamma, map2, map3, map3_pair, map4, safe_ln_times, sample_each, sample_shape,
+    scalar, sigmoid, softplus,
 };
 use keanu_tensor::{DoubleTensor, IntTensor};
 use std::f64::consts::{LN_2, PI};
@@ -71,7 +72,8 @@ impl Gaussian {
 
     /// Draws a sample of the given shape (broadcast with the parameters' shapes).
     pub fn sample(&self, shape: &[usize], rng: &mut KeanuRng) -> Result<DoubleTensor> {
-        Ok(rng.gaussian(shape).mul(&self.sigma)?.add(&self.mu)?)
+        let shape = sample_shape(shape, &[self.mu.shape(), self.sigma.shape()])?;
+        Ok(rng.gaussian(&shape).mul(&self.sigma)?.add(&self.mu)?)
     }
 }
 
@@ -179,7 +181,8 @@ impl Cauchy {
     /// Draws a sample of the given shape (broadcast with the parameters' shapes).
     pub fn sample(&self, shape: &[usize], rng: &mut KeanuRng) -> Result<DoubleTensor> {
         require_positive("scale", &self.scale)?;
-        let unit = rng.uniform(shape).map(|u| ((u - 0.5) * PI).tan());
+        let shape = sample_shape(shape, &[self.location.shape(), self.scale.shape()])?;
+        let unit = rng.uniform(&shape).map(|u| ((u - 0.5) * PI).tan());
         Ok(unit.mul(&self.scale)?.add(&self.location)?)
     }
 }
@@ -326,8 +329,17 @@ impl Beta {
     pub fn sample(&self, shape: &[usize], rng: &mut KeanuRng) -> Result<DoubleTensor> {
         require_positive("alpha", &self.alpha)?;
         require_positive("beta", &self.beta)?;
-        let y1 = Gamma::new(scalar(1.0), self.alpha.clone()).sample(shape, rng)?;
-        let y2 = Gamma::new(scalar(1.0), self.beta.clone()).sample(shape, rng)?;
+        let shape = sample_shape(
+            shape,
+            &[
+                self.alpha.shape(),
+                self.beta.shape(),
+                self.x_min.shape(),
+                self.x_max.shape(),
+            ],
+        )?;
+        let y1 = Gamma::new(scalar(1.0), self.alpha.clone()).sample(&shape, rng)?;
+        let y2 = Gamma::new(scalar(1.0), self.beta.clone()).sample(&shape, rng)?;
         let ratio1 = map2(&y1, &y2, |y1, y2| y1 / (y1 + y2))?;
         let ratio2 = map2(&y1, &y2, |y1, y2| y2 / (y1 + y2))?;
         // same arithmetic as Java: from the upper bound when alpha < beta, from the lower bound otherwise
@@ -431,7 +443,8 @@ impl Exponential {
 
     /// Draws a sample of the given shape (broadcast with the parameters' shapes).
     pub fn sample(&self, shape: &[usize], rng: &mut KeanuRng) -> Result<DoubleTensor> {
-        Ok(rng.uniform(shape).map(|u| -u.ln()).div(&self.rate)?)
+        let shape = sample_shape(shape, &[self.rate.shape()])?;
+        Ok(rng.uniform(&shape).map(|u| -u.ln()).div(&self.rate)?)
     }
 }
 
@@ -676,13 +689,13 @@ impl Logistic {
     pub fn log_prob(&self, x: &DoubleTensor) -> Result<DoubleTensor> {
         map3(x, &self.mu, &self.s, |x, mu, s| {
             let m = (mu - x) / s;
-            m - s.ln() - (m.exp() + 1.0).ln() * 2.0
+            m - s.ln() - softplus(m) * 2.0
         })
     }
 
     /// The element-wise derivatives of [`Self::log_prob`] with respect to x and each parameter.
     pub fn d_log_prob(&self, x: &DoubleTensor) -> Result<LogisticGradient> {
-        let a_term = |m: f64| 2.0 * m.exp() / (m.exp() + 1.0);
+        let a_term = |m: f64| 2.0 * sigmoid(m);
         let d_x = map3(x, &self.mu, &self.s, |x, mu, s| {
             (a_term((mu - x) / s) - 1.0) / s
         })?;
@@ -699,7 +712,8 @@ impl Logistic {
 
     /// Draws a sample of the given shape (broadcast with the parameters' shapes).
     pub fn sample(&self, shape: &[usize], rng: &mut KeanuRng) -> Result<DoubleTensor> {
-        let unit = rng.uniform(shape).map(|u| (1.0 / u - 1.0).ln());
+        let shape = sample_shape(shape, &[self.mu.shape(), self.s.shape()])?;
+        let unit = rng.uniform(&shape).map(|u| (1.0 / u - 1.0).ln());
         Ok(unit.mul(&self.s)?.add(&self.mu)?)
     }
 }
@@ -788,13 +802,9 @@ impl Pareto {
 
     /// The element-wise log probability of x, broadcasting x with the parameters (-infinity outside the support).
     pub fn log_prob(&self, x: &DoubleTensor) -> Result<DoubleTensor> {
-        let valid = self.location.as_slice().iter().all(|&l| l > 0.0)
-            && self.scale.as_slice().iter().all(|&s| s > 0.0);
-        if !valid {
-            return Ok(DoubleTensor::full(x.shape(), f64::NEG_INFINITY));
-        }
         map3(x, &self.location, &self.scale, |x, l, s| {
-            if x <= l {
+            // `!(.. > 0)` also rejects NaN parameters
+            if !(l > 0.0 && s > 0.0) || x < l {
                 f64::NEG_INFINITY
             } else {
                 s.ln() + l.ln() * s - (s + 1.0) * x.ln()
@@ -814,7 +824,8 @@ impl Pareto {
 
     /// Draws a sample of the given shape (broadcast with the parameters' shapes).
     pub fn sample(&self, shape: &[usize], rng: &mut KeanuRng) -> Result<DoubleTensor> {
-        let u = rng.uniform(shape);
+        let shape = sample_shape(shape, &[self.location.shape(), self.scale.shape()])?;
+        let u = rng.uniform(&shape);
         map3(&u, &self.location, &self.scale, |u, l, s| {
             l / (1.0 - u).powf(1.0 / s)
         })
@@ -866,8 +877,9 @@ impl StudentT {
 
     /// Draws a sample of the given shape (broadcast with the parameters' shapes).
     pub fn sample(&self, shape: &[usize], rng: &mut KeanuRng) -> Result<DoubleTensor> {
-        let chi2 = ChiSquared::new(self.v.clone()).sample(shape, rng)?;
-        let normal = rng.gaussian(shape);
+        let shape = sample_shape(shape, &[self.v.shape()])?;
+        let chi2 = ChiSquared::new(self.v.clone()).sample(&shape, rng)?;
+        let normal = rng.gaussian(&shape);
         let denominator = map2(&chi2, &self.v, |c, v| (c / v as f64).sqrt())?;
         Ok(normal.div(&denominator)?)
     }
@@ -964,7 +976,11 @@ impl Triangular {
         if !valid {
             return invalid_parameter("the mode c must be between x_min and x_max");
         }
-        let p = rng.uniform(shape);
+        let shape = sample_shape(
+            shape,
+            &[self.x_min.shape(), self.x_max.shape(), self.c.shape()],
+        )?;
+        let p = rng.uniform(&shape);
         map4(&p, &self.x_min, &self.x_max, &self.c, |p, a, b, c| {
             let range = b - a;
             if p <= (c - a) / range {
@@ -1004,8 +1020,9 @@ impl Uniform {
 
     /// Draws a sample of the given shape (broadcast with the parameters' shapes).
     pub fn sample(&self, shape: &[usize], rng: &mut KeanuRng) -> Result<DoubleTensor> {
+        let shape = sample_shape(shape, &[self.x_min.shape(), self.x_max.shape()])?;
         Ok(rng
-            .uniform(shape)
+            .uniform(&shape)
             .mul(&self.x_max.sub(&self.x_min)?)?
             .add(&self.x_min)?)
     }

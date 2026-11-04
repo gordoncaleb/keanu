@@ -3,7 +3,7 @@
 use crate::continuous::sample_gamma;
 use crate::error::{DistributionError, Result, invalid_parameter};
 use crate::rng::KeanuRng;
-use crate::util::{digamma, ln_gamma};
+use crate::util::{digamma, ln_gamma, map4, safe_ln_times};
 use keanu_tensor::{DoubleTensor, IntTensor, TensorError, broadcast_shape};
 use std::f64::consts::PI;
 
@@ -36,11 +36,18 @@ fn with_suffix(prefix: &[usize], suffix: &[usize]) -> Vec<isize> {
     prefix.iter().chain(suffix).map(|&d| d as isize).collect()
 }
 
-/// Sums the leading (batch) dimensions of `batched` until it has the rank of `target_shape`.
+/// Reduces a gradient computed at the broadcast shape to `target_shape` (which broadcasts to it): sums the
+/// extra leading dimensions and every dimension that the target has as size 1.
 fn sum_over_batch(batched: &DoubleTensor, target_shape: &[usize]) -> Result<DoubleTensor> {
     let extra = batched.rank() - target_shape.len();
-    let axes: Vec<isize> = (0..extra as isize).collect();
-    Ok(batched.sum_axes(&axes)?)
+    let axes: Vec<isize> = (0..batched.rank())
+        .filter(|&axis| {
+            axis < extra || (target_shape[axis - extra] == 1 && batched.shape()[axis] != 1)
+        })
+        .map(|axis| axis as isize)
+        .collect();
+    let target: Vec<isize> = target_shape.iter().map(|&d| d as isize).collect();
+    Ok(batched.sum_axes(&axes)?.reshape(&target)?)
 }
 
 impl MultivariateGaussian {
@@ -163,15 +170,19 @@ impl Dirichlet {
         Self { concentration }
     }
 
-    /// Log density of x. x must sum to 1 (within 1e-5).
+    /// Log density of x. x must sum to 1 (within 1e-5); -infinity if any element of x is negative.
     pub fn log_prob(&self, x: &DoubleTensor) -> Result<f64> {
         if (x.sum() - 1.0).abs() > DIRICHLET_EPSILON {
             return Err(DistributionError::InvalidValue(
                 "a Dirichlet value must sum to 1".into(),
             ));
         }
+        if x.as_slice().iter().any(|&x| x < 0.0) {
+            return Ok(f64::NEG_INFINITY);
+        }
         let c = &self.concentration;
-        let sum_concentration_logged = (c - 1.0).mul(&x.ln())?.sum();
+        // (c - 1) ln x, taken as 0 where c is 1 (even at x = 0)
+        let sum_concentration_logged = x.zip_with(c, |x, c| safe_ln_times(x, c - 1.0))?.sum();
         let sum_ln_gamma_concentration = c.ln_gamma().sum();
         Ok(sum_concentration_logged - sum_ln_gamma_concentration + ln_gamma(c.sum()))
     }
@@ -232,14 +243,42 @@ impl Multinomial {
         Ok(self.p.div(&totals.reshape(&shape)?)?)
     }
 
-    /// Log probability of each count vector in x (the last dimension of x is the categories).
+    /// Log probability of each count vector in x (the last dimension of x is the categories). -infinity for a
+    /// count vector with a negative count or whose counts do not sum to n. An error if the last dimension of x is
+    /// not the number of categories.
     pub fn log_prob(&self, x: &IntTensor) -> Result<DoubleTensor> {
+        let k = self.p.shape()[self.p.rank() - 1];
+        if x.shape().last() != Some(&k) {
+            return Err(DistributionError::InvalidValue(format!(
+                "the last dimension of x must be the number of categories {k}, got shape {:?}",
+                x.shape()
+            )));
+        }
         let p = self.normalised_p()?;
         let x_double = x.to_double();
         let x_ln_p = p.safe_ln_times(&x_double)?.sum_axes(&[-1])?;
-        let ln_gamma_n = self.n.to_double().map(|n| ln_gamma(n + 1.0));
+        let n = self.n.to_double();
+        let ln_gamma_n = n.map(|n| ln_gamma(n + 1.0));
         let ln_gamma_x = x_double.map(|x| ln_gamma(x + 1.0)).sum_axes(&[-1])?;
-        Ok(x_ln_p.add(&ln_gamma_n)?.sub(&ln_gamma_x)?)
+        let log_prob = x_ln_p.add(&ln_gamma_n)?.sub(&ln_gamma_x)?;
+        // outside the support: a negative count, or counts not summing to n (which also covers a count above n)
+        let x_sum = x_double.sum_axes(&[-1])?;
+        let negative_counts = x_double
+            .map(|x| if x < 0.0 { 1.0 } else { 0.0 })
+            .sum_axes(&[-1])?;
+        map4(
+            &log_prob,
+            &x_sum,
+            &negative_counts,
+            &n,
+            |lp, sum, negatives, n| {
+                if negatives > 0.0 || sum != n {
+                    f64::NEG_INFINITY
+                } else {
+                    lp
+                }
+            },
+        )
     }
 
     /// With S = sum(p): d/dp_j = x_j / p_j - sum(x) / S (0 / p_j taken as 0).
@@ -282,21 +321,39 @@ impl Multinomial {
     }
 }
 
-/// Index drawn in proportion to (normalised) probabilities, skipping zero probability categories.
+/// Index drawn in proportion to (normalised) probabilities, skipping zero probability categories. If rounding
+/// leaves the cumulative sum below the draw, the last category with non-zero probability is returned.
 fn draw_category(probabilities: &[f64], rng: &mut KeanuRng) -> usize {
     let value = rng.next_f64();
     let mut cumulative = 0.0;
-    let mut index = 0;
-    while index < probabilities.len() {
-        let p = probabilities[index];
-        index += 1;
+    let mut last_possible = None;
+    for (index, &p) in probabilities.iter().enumerate() {
         if p == 0.0 {
             continue;
         }
+        last_possible = Some(index);
         cumulative += p;
         if cumulative >= value {
-            break;
+            return index;
         }
     }
-    index - 1
+    // all-zero probabilities (a NaN normalisation) fall back to the last category, as before
+    last_possible.unwrap_or(probabilities.len() - 1)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::draw_category;
+    use crate::rng::KeanuRng;
+
+    #[test]
+    fn rounding_shortfall_never_draws_a_zero_probability_category() {
+        // probabilities summing to less than 1 (as rounding can leave them): draws above the sum must fall back
+        // to the last category with non-zero probability, never a trailing zero probability one
+        let mut rng = KeanuRng::seed_from_u64(7);
+        for _ in 0..1000 {
+            assert_eq!(draw_category(&[0.5, 0.0], &mut rng), 0);
+            assert!(draw_category(&[0.3, 0.4, 0.0, 0.0], &mut rng) < 2);
+        }
+    }
 }

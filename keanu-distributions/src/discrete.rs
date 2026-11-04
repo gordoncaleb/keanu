@@ -2,7 +2,7 @@
 
 use crate::error::{Result, invalid_parameter};
 use crate::rng::KeanuRng;
-use crate::util::{ln_gamma, map2, map3, safe_ln_times, sample_each};
+use crate::util::{ln_gamma, map2, map3, safe_ln_times, sample_each, sample_shape};
 use keanu_tensor::{BoolTensor, DoubleTensor, IntTensor};
 
 /// Bernoulli distribution: true with probability `prob_true`.
@@ -51,7 +51,8 @@ impl Bernoulli {
 
     /// Draws a sample of the given shape (broadcast with the parameters' shapes).
     pub fn sample(&self, shape: &[usize], rng: &mut KeanuRng) -> Result<BoolTensor> {
-        Ok(rng.uniform(shape).lt(&self.prob_true)?)
+        let shape = sample_shape(shape, &[self.prob_true.shape()])?;
+        Ok(rng.uniform(&shape).lt(&self.prob_true)?)
     }
 }
 
@@ -94,7 +95,9 @@ impl Binomial {
     pub fn d_log_prob(&self, k: &IntTensor) -> Result<BinomialGradient> {
         Ok(BinomialGradient {
             p: map3(k, &self.p, &self.n, |k, p, n| {
-                k as f64 / p - (n - k) as f64 / (1.0 - p)
+                // 0 / p taken as 0, as for the multinomial, so p = 0 with k = 0 (or p = 1 with k = n) is finite
+                let ratio = |count: i64, q: f64| if count == 0 { 0.0 } else { count as f64 / q };
+                ratio(k, p) - ratio(n - k, 1.0 - p)
             })?,
         })
     }
@@ -131,12 +134,9 @@ impl Geometric {
 
     /// The element-wise log probability of x, broadcasting x with the parameters (-infinity outside the support).
     pub fn log_prob(&self, k: &IntTensor) -> Result<DoubleTensor> {
-        let valid = self.p.as_slice().iter().all(|&p| p > 0.0 && p < 1.0);
-        if !valid {
-            return Ok(DoubleTensor::full(k.shape(), f64::NEG_INFINITY));
-        }
         map2(k, &self.p, |k, p| {
-            if k < 1 {
+            // `!(..)` also rejects a NaN p
+            if !(p > 0.0 && p < 1.0) || k < 1 {
                 f64::NEG_INFINITY
             } else {
                 safe_ln_times(1.0 - p, k as f64 - 1.0) + p.ln()
@@ -159,7 +159,8 @@ impl Geometric {
 
     /// Draws a sample of the given shape (broadcast with the parameters' shapes).
     pub fn sample(&self, shape: &[usize], rng: &mut KeanuRng) -> Result<IntTensor> {
-        let u = rng.uniform(shape);
+        let shape = sample_shape(shape, &[self.p.shape()])?;
+        let u = rng.uniform(&shape);
         let samples = map2(&u, &self.p, |u, p| (u.ln() / (1.0 - p).ln()).floor())?;
         Ok(&samples.to_int() + 1)
     }
@@ -191,7 +192,7 @@ impl Poisson {
             if k < 0 {
                 f64::NEG_INFINITY
             } else {
-                k as f64 * mu.ln() - mu - ln_gamma(k as f64 + 1.0)
+                safe_ln_times(mu, k as f64) - mu - ln_gamma(k as f64 + 1.0)
             }
         })
     }
@@ -264,7 +265,8 @@ impl UniformInt {
 
     /// Draws a sample of the given shape (broadcast with the parameters' shapes).
     pub fn sample(&self, shape: &[usize], rng: &mut KeanuRng) -> Result<IntTensor> {
-        let u = rng.uniform(shape);
+        let shape = sample_shape(shape, &[self.x_min.shape(), self.x_max.shape()])?;
+        let u = rng.uniform(&shape);
         let (min, max) = (self.x_min.to_double(), self.x_max.to_double());
         // floor rather than truncate so negative ranges are sampled uniformly
         Ok(map3(&u, &min, &max, |u, min, max| {
@@ -317,27 +319,59 @@ impl Categorical {
     }
 
     /// Draws a sample of the given shape (broadcast with the parameters' shapes).
+    ///
+    /// Each element is the first category whose cumulative normalised probability exceeds a uniform draw. If
+    /// rounding leaves the cumulative sum at or below the draw, it is the last category with non-zero probability.
     pub fn sample(&self, shape: &[usize], rng: &mut KeanuRng) -> Result<IntTensor> {
-        let total = self.total(shape)?;
-        let u = rng.uniform(shape);
-        let last = (self.probabilities.len() - 1) as f64;
-        let mut cumulative = DoubleTensor::zeros(shape);
-        let mut sample = DoubleTensor::full(shape, last);
-        let mut assigned = BoolTensor::full(shape, false);
-        for (category, p) in self.probabilities.iter().enumerate() {
-            cumulative = cumulative.add(&p.div(&total)?)?;
-            let newly = assigned.xor(&cumulative.gt(&u)?)?;
-            sample = map3(
-                &newly,
-                &sample,
-                &DoubleTensor::scalar(category as f64),
-                |n, s, c| if n { c } else { s },
-            )?;
-            assigned = assigned.or(&newly)?;
-            if assigned.all() {
-                break;
-            }
+        let shapes: Vec<&[usize]> = self.probabilities.iter().map(|p| p.shape()).collect();
+        let shape = sample_shape(shape, &shapes)?;
+        let total = self.total(&shape)?;
+        let u = rng.uniform(&shape);
+        let normalised = self
+            .probabilities
+            .iter()
+            .map(|p| Ok(p.div(&total)?.broadcast_to(&shape)?))
+            .collect::<Result<Vec<_>>>()?;
+        let samples = u
+            .as_slice()
+            .iter()
+            .enumerate()
+            .map(|(i, &u)| select_category(u, normalised.iter().map(|p| p.as_slice()[i])) as i64)
+            .collect();
+        Ok(IntTensor::new(&shape, samples)?)
+    }
+}
+
+/// The first category whose cumulative probability exceeds `u`; if rounding leaves the cumulative sum at or
+/// below `u`, the last category with non-zero probability (the last category if none is positive).
+fn select_category(u: f64, probabilities: impl Iterator<Item = f64>) -> usize {
+    let mut cumulative = 0.0;
+    let mut last_possible = None;
+    let mut count = 0;
+    for (category, p) in probabilities.enumerate() {
+        count = category + 1;
+        cumulative += p;
+        if cumulative > u {
+            return category;
         }
-        Ok(sample.to_int())
+        if p > 0.0 {
+            last_possible = Some(category);
+        }
+    }
+    last_possible.unwrap_or(count.saturating_sub(1))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::select_category;
+
+    #[test]
+    fn rounding_shortfall_selects_the_last_possible_category() {
+        // cumulative probabilities that fall short of u (as rounding can leave them) must not select a
+        // category with zero probability
+        assert_eq!(select_category(0.75, [0.5, 0.0].into_iter()), 0);
+        assert_eq!(select_category(0.99, [0.2, 0.7, 0.0, 0.0].into_iter()), 1);
+        assert_eq!(select_category(0.3, [0.2, 0.7, 0.0].into_iter()), 1);
+        assert_eq!(select_category(0.1, [0.0, 0.2, 0.7].into_iter()), 1);
     }
 }
