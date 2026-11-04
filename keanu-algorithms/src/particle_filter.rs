@@ -110,7 +110,8 @@ impl Particle {
         for &id in self.latents.keys().chain(&self.observed) {
             sum += node_log_prob(graph, state, id)?;
         }
-        self.log_prob = sum;
+        // a NaN log probability means the particle is unusable; treat it as impossible
+        self.log_prob = finite_or_neg_inf(sum);
         Ok(())
     }
 }
@@ -185,7 +186,7 @@ impl ParticleFilter {
             particles =
                 self.update_particles(model, state, observed, &dependencies, &particles, rng)?;
         }
-        particles.sort_by(|a, b| b.log_prob.total_cmp(&a.log_prob));
+        particles.sort_by(|a, b| rank(b).total_cmp(&rank(a)));
         if let Some(best) = particles.first() {
             best.apply(model, state)?;
         }
@@ -204,7 +205,7 @@ impl ParticleFilter {
         let mut updated = sample_and_copy(previous, self.particles, rng);
         add_observation(model, state, &mut updated, observed, dependencies, rng)?;
         for _ in 0..self.resampling_cycles {
-            updated.sort_by(|a, b| b.log_prob.total_cmp(&a.log_prob));
+            updated.sort_by(|a, b| rank(b).total_cmp(&rank(a)));
             let keep = (updated.len() as f64 * (1.0 - self.resampling_proportion)) as usize;
             updated.truncate(keep);
             let mut fresh = sample_and_copy(previous, self.particles - updated.len(), rng);
@@ -241,17 +242,29 @@ fn add_observation(
     Ok(())
 }
 
+/// A log probability with NaN replaced by -infinity, so NaN particles are treated as impossible.
+fn finite_or_neg_inf(log_prob: f64) -> f64 {
+    if log_prob.is_nan() {
+        f64::NEG_INFINITY
+    } else {
+        log_prob
+    }
+}
+
+/// The key particles are ranked by: their log probability, with NaN as -infinity.
+fn rank(particle: &Particle) -> f64 {
+    finite_or_neg_inf(particle.log_prob)
+}
+
 /// exp(log prob - max log prob) for each particle, so that very negative log probabilities don't all underflow to
-/// zero. If no particle is possible they are weighted equally.
+/// zero. A NaN log probability counts as -infinity (weight 0). If no particle is possible they are weighted
+/// equally.
 pub fn normalised_weights(particles: &[Particle]) -> Vec<f64> {
-    let max = particles
-        .iter()
-        .map(|p| p.log_prob)
-        .fold(f64::NEG_INFINITY, f64::max);
-    if max == f64::NEG_INFINITY || max.is_nan() {
+    let max = particles.iter().map(rank).fold(f64::NEG_INFINITY, f64::max);
+    if max == f64::NEG_INFINITY {
         return vec![1.0; particles.len()];
     }
-    particles.iter().map(|p| (p.log_prob - max).exp()).collect()
+    particles.iter().map(|p| (rank(p) - max).exp()).collect()
 }
 
 /// Draws `count` particles with replacement, in proportion to their weights.
@@ -273,4 +286,54 @@ fn sample_and_copy(particles: &[Particle], count: usize, rng: &mut KeanuRng) -> 
             particles[chosen].clone()
         })
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn particle(log_prob: f64) -> Particle {
+        Particle {
+            log_prob,
+            ..Particle::empty()
+        }
+    }
+
+    #[test]
+    fn nan_log_probs_get_zero_weight() {
+        let particles = [particle(f64::NAN), particle(-1.0), particle(-2.0)];
+        let weights = normalised_weights(&particles);
+        assert_eq!(weights[0], 0.0);
+        assert_eq!(weights[1], 1.0);
+        assert!((weights[2] - (-1.0f64).exp()).abs() < 1e-15);
+    }
+
+    #[test]
+    fn all_nan_or_impossible_log_probs_are_weighted_equally() {
+        let particles = [particle(f64::NAN), particle(f64::NEG_INFINITY)];
+        assert_eq!(normalised_weights(&particles), vec![1.0, 1.0]);
+    }
+
+    #[test]
+    fn a_nan_particle_does_not_collapse_resampling() {
+        // the possible particles must each be drawn; a NaN total would pick the last particle every time
+        let particles = [particle(-1.0), particle(-1.0), particle(f64::NAN)];
+        let mut rng = KeanuRng::seed_from_u64(1);
+        let drawn = sample_and_copy(&particles, 100, &mut rng);
+        assert!(drawn.iter().all(|p| !p.log_prob.is_nan()));
+    }
+
+    #[test]
+    fn nan_particles_sort_last() {
+        // total_cmp alone ranks NaN by its sign bit: +NaN above every number, -NaN below
+        let mut particles = [
+            particle(-f64::NAN),
+            particle(-5.0),
+            particle(f64::NAN),
+            particle(-1.0),
+        ];
+        particles.sort_by(|a, b| rank(b).total_cmp(&rank(a)));
+        assert_eq!(particles[0].log_prob, -1.0);
+        assert_eq!(particles[1].log_prob, -5.0);
+    }
 }

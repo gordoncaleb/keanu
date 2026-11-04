@@ -153,16 +153,22 @@ pub fn minimize(
     settings: &Settings,
 ) -> Outcome {
     let n = x0.len();
-    let bound = |b: &[f64], i: usize, default: f64| -> f64 {
+    // as PRIMA: only a NaN or very low lower bound (or NaN or very high upper bound) means "no bound"; a lower
+    // bound of +infinity (or an upper bound of -infinity) is kept, so it leaves no space between the bounds
+    let bound = |b: &[f64], i: usize, default: f64, unbounded: fn(f64) -> bool| -> f64 {
         let v = if b.is_empty() { default } else { b[i] };
-        if v.is_nan() || v.abs() >= BOUNDMAX {
+        if v.is_nan() || unbounded(v) {
             default
         } else {
             v
         }
     };
-    let xl: Vec<f64> = (0..n).map(|i| bound(xl, i, -BOUNDMAX)).collect();
-    let xu: Vec<f64> = (0..n).map(|i| bound(xu, i, BOUNDMAX)).collect();
+    let xl: Vec<f64> = (0..n)
+        .map(|i| bound(xl, i, -BOUNDMAX, |v| v < -BOUNDMAX))
+        .collect();
+    let xu: Vec<f64> = (0..n)
+        .map(|i| bound(xu, i, BOUNDMAX, |v| v > BOUNDMAX))
+        .collect();
     if (0..n).any(|i| xu[i] - xl[i] < 2.0 * EPS) {
         return Outcome {
             x: x0.to_vec(),
@@ -213,7 +219,8 @@ pub fn minimize(
     if ftarget.is_nan() {
         ftarget = -f64::MAX;
     }
-    if npt < n + 2 || npt >= maxfun || 2 * npt > (n + 2) * (n + 1) {
+    // (n + 2)(n + 1) is even, so this is PRIMA's 2·npt > (n + 2)(n + 1) without overflowing for a huge npt
+    if npt < n + 2 || npt >= maxfun || npt > (n + 2) * (n + 1) / 2 {
         npt = (maxfun - 1).min(2 * n + 1);
     }
     let min_range = (0..n).map(|i| xu[i] - xl[i]).fold(f64::INFINITY, f64::min);

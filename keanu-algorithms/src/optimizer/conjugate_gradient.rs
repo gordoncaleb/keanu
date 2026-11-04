@@ -16,7 +16,9 @@ pub enum UpdateFormula {
 /// Nonlinear conjugate gradient ascent with an exact (bracketing + golden section) line search.
 ///
 /// It stops when the fitness changes by no more than `relative_threshold` times its magnitude, or by no more than
-/// `absolute_threshold`, between iterations, or when `max_evaluations` fitness and gradient evaluations are used.
+/// `absolute_threshold`, between iterations, or when `max_evaluations` fitness and gradient evaluations are used
+/// (counting any made by the initial-condition check). It also stops, without converging, at the best point found
+/// so far if the fitness becomes impossible or the gradient NaN or infinite.
 #[derive(Debug, Clone, Copy, PartialEq)]
 #[non_exhaustive]
 pub struct ConjugateGradient {
@@ -142,20 +144,32 @@ impl ConjugateGradient {
             ))
         };
 
+        let exhausted = || objective.evaluations() >= self.max_evaluations;
+        let finite = |v: &[f64]| v.iter().all(|x| x.is_finite());
+
         let mut f = fitness(&x, state)?;
         let mut g = gradient(&x, state)?;
+        // there is nowhere to go from an impossible point or along a NaN or infinite gradient
+        if !f.is_finite() || !finite(&g) {
+            return Ok((start, false));
+        }
         let mut d = g.clone();
         let mut iteration = 0usize;
         loop {
-            if objective.evaluations() >= self.max_evaluations {
+            if exhausted() {
                 return Ok((unflatten(&x, &start), false));
             }
             if dot(&g, &g) == 0.0 {
                 return Ok((unflatten(&x, &start), true));
             }
 
-            let step = line_search(
+            // once the evaluation budget is used up the line search sees every further step as impossible
+            // (without evaluating it), so it settles on the best step it has already evaluated
+            let (step, f_step) = line_search(
                 |alpha, s: &mut State| {
+                    if exhausted() {
+                        return Ok(f64::NEG_INFINITY);
+                    }
                     let point: Vec<f64> =
                         x.iter().zip(&d).map(|(xi, di)| xi + alpha * di).collect();
                     fitness(&point, s)
@@ -163,8 +177,25 @@ impl ConjugateGradient {
                 state,
             )?;
             let next: Vec<f64> = x.iter().zip(&d).map(|(xi, di)| xi + step * di).collect();
+            // the best point found so far, for stopping early: the line search's step if it improved on x
+            let best = |x: Vec<f64>, next: Vec<f64>, f_next: f64| {
+                if f_next.is_finite() && f_next > f {
+                    unflatten(&next, &start)
+                } else {
+                    unflatten(&x, &start)
+                }
+            };
+            if exhausted() {
+                return Ok((best(x, next, f_step), false));
+            }
             let f_next = fitness(&next, state)?;
+            if exhausted() || !f_next.is_finite() {
+                return Ok((best(x, next, f_next), false));
+            }
             let g_next = gradient(&next, state)?;
+            if !finite(&g_next) {
+                return Ok((best(x, next, f_next), false));
+            }
             x = next;
             iteration += 1;
 
@@ -210,10 +241,11 @@ const LINE_SEARCH_TOLERANCE: f64 = 1e-8;
 /// Finds the step α >= 0 that maximizes φ(α): grows a bracket from a small initial step (with parabolic
 /// extrapolation) until φ falls, then narrows it with Brent's method (parabolic interpolation, falling back to
 /// golden section steps).
+/// Returns the step and φ at it.
 fn line_search(
     mut phi: impl FnMut(f64, &mut State) -> Result<f64>,
     state: &mut State,
-) -> Result<f64> {
+) -> Result<(f64, f64)> {
     // work with h(α) = -φ(α), minimised
     let mut h = |alpha: f64, s: &mut State| -> Result<f64> { Ok(-phi(alpha, s)?) };
     let h0 = h(0.0, state)?;
@@ -232,7 +264,7 @@ fn line_search(
             }
         }
         if hb > ha {
-            return Ok(0.0);
+            return Ok((0.0, -ha));
         }
     }
     let mut c = b + GOLDEN * (b - a);
@@ -295,7 +327,11 @@ fn line_search(
     let (lo, hi) = if a < c { (a, c) } else { (c, a) };
     let (best, h_best) = brent_minimize(&mut h, state, lo, hi, b, hb)?;
     // never return a step worse than the bracket's middle point
-    Ok(if h_best <= hb { best } else { b })
+    Ok(if h_best <= hb {
+        (best, -h_best)
+    } else {
+        (b, -hb)
+    })
 }
 
 /// Brent's method: minimises h on [lo, hi] given an interior point `x` with value `hx`, to a relative precision

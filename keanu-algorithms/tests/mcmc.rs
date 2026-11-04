@@ -4,7 +4,7 @@
 use keanu_algorithms::mcmc::annealing::{AnnealingSchedule, SimulatedAnnealing};
 use keanu_algorithms::mcmc::chains::run_chains;
 use keanu_algorithms::mcmc::metropolis::{MetropolisHastings, RejectionStrategy, VariableSelector};
-use keanu_algorithms::mcmc::nuts::Nuts;
+use keanu_algorithms::mcmc::nuts::{Nuts, QuadraticPotential};
 use keanu_algorithms::mcmc::proposal::{
     AcceptanceRateTracker, GaussianProposal, PriorProposal, Proposal, ProposalDistribution,
 };
@@ -672,5 +672,58 @@ fn drop_and_down_sampling() {
             &mut r
         )
         .is_err()
+    );
+}
+
+/// Regression: a zero initial weight or a non-positive initial variance gave a zero mass matrix entry, so
+/// momentum / mass was NaN and the chain never moved.
+#[test]
+fn nuts_rejects_a_degenerate_initial_potential() {
+    let (model, mut state, mu, ..) = gaussian_model();
+    for potential in [
+        QuadraticPotential::default().with_initial_weight(0.0),
+        QuadraticPotential::default().with_initial_weight(f64::NAN),
+        QuadraticPotential::default().with_initial_weight(f64::INFINITY),
+        QuadraticPotential::default().with_initial_variance(0.0),
+        QuadraticPotential::default().with_initial_variance(-1.0),
+        QuadraticPotential::default().with_initial_variance(f64::NAN),
+    ] {
+        let nuts = Nuts::default().with_potential(potential);
+        assert!(
+            matches!(
+                nuts.sampler(&model, &mut state, &[mu], &mut rng(1)),
+                Err(AlgorithmError::InvalidSetting(_))
+            ),
+            "{potential:?}"
+        );
+    }
+}
+
+/// Regression: a schedule over zero iterations gave NaN temperatures, and non-positive temperatures weren't
+/// rejected.
+#[test]
+fn simulated_annealing_rejects_invalid_schedules() {
+    let (model, mut state, ..) = gaussian_model();
+    let annealing = SimulatedAnnealing::default();
+    for schedule in [
+        AnnealingSchedule::exponential(0, 2.0, 0.01),
+        AnnealingSchedule::exponential(10, 0.0, 0.01),
+        AnnealingSchedule::exponential(10, 2.0, -1.0),
+        AnnealingSchedule::exponential(10, f64::NAN, 0.01),
+        AnnealingSchedule::exponential(10, 2.0, f64::INFINITY),
+    ] {
+        assert!(
+            matches!(
+                annealing.max_a_posteriori_with(&model, &mut state, 5, schedule, &mut rng(1)),
+                Err(AlgorithmError::InvalidSetting(_))
+            ),
+            "{schedule:?}"
+        );
+    }
+    // no iterations with the default schedule just returns the start
+    assert!(
+        annealing
+            .max_a_posteriori(&model, &mut state, 0, &mut rng(1))
+            .is_ok()
     );
 }

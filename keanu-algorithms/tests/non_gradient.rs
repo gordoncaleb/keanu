@@ -246,3 +246,61 @@ fn max_evaluations_stops_early_without_converging() {
     // the initial-condition check, 8 solver evaluations and the final fitness
     assert_eq!(result.evaluations, 10);
 }
+
+/// Regression: an upper bound of -infinity was treated as no bound (rather than an error like any other upper
+/// bound below its lower bound), and NaN bounds were accepted.
+#[test]
+fn infinite_bounds_on_the_wrong_side_and_nan_bounds_are_errors() {
+    let (model, state, mu, _) = conjugate_gaussian(&[1.0]);
+    for (min, max) in [
+        (5.0, 4.0),
+        (5.0, f64::NEG_INFINITY),
+        (f64::INFINITY, 6.0),
+        (f64::NAN, 1.0),
+        (0.0, f64::NAN),
+    ] {
+        let error = NonGradientOptimizer::new(&model)
+            .bounds(OptimizerBounds::new().add_scalar(mu, min, max))
+            .max_a_posteriori(&mut state.clone());
+        assert!(
+            matches!(error, Err(AlgorithmError::InvalidArgument(_))),
+            "({min}, {max}): {error:?}"
+        );
+    }
+    // infinite bounds on the right side are no bound
+    let result = NonGradientOptimizer::new(&model)
+        .bounds(OptimizerBounds::new().add_scalar(mu, f64::NEG_INFINITY, f64::INFINITY))
+        .max_a_posteriori(&mut state.clone())
+        .unwrap();
+    assert!(result.converged);
+}
+
+/// Regression: with the initial-condition check off, an optimum with zero probability was reported as converged.
+#[test]
+fn an_impossible_optimum_is_not_converged() {
+    let b = GraphBuilder::new();
+    let a = b.uniform(0.0, 1.0);
+    b.set_value(a, DoubleTensor::scalar(5.0));
+    let a = a.id();
+    let (graph, mut state) = b.build().unwrap();
+    let model = Model::new(graph, &state).unwrap();
+    // every point within the bounds is impossible
+    let result = NonGradientOptimizer::new(&model)
+        .check_initial_conditions(false)
+        .bounds(OptimizerBounds::new().add_scalar(a, 4.0, 6.0))
+        .max_a_posteriori(&mut state)
+        .unwrap();
+    assert_eq!(result.fitness, f64::NEG_INFINITY);
+    assert!(!result.converged);
+}
+
+/// Regression: a huge number of interpolation points overflowed (2 · npt) instead of falling back to the default.
+#[test]
+fn a_huge_number_of_interpolation_points_does_not_overflow() {
+    let (model, mut state, _, _) = conjugate_gaussian(&[0.3, 1.2]);
+    let result = NonGradientOptimizer::new(&model)
+        .algorithm(Bobyqa::default().with_interpolation_points(usize::MAX - 2))
+        .max_a_posteriori(&mut state)
+        .unwrap();
+    assert!(result.converged);
+}

@@ -97,3 +97,46 @@ fn modes_probabilities_and_states() {
     assert!(s.f64(n).is_none());
     assert!(s.sample(0).unwrap().bool(x).is_none());
 }
+
+#[test]
+fn variance_is_accurate_for_a_large_mean() {
+    let b = GraphBuilder::new();
+    let x = b.gaussian(0.0, 1.0).id();
+    let (graph, mut state): (Graph, State) = b.build().unwrap();
+    let mut samples = NetworkSamples::new(&graph, &[x]);
+    // spread 1 around 1e9: E[x^2] - E[x]^2 cancels catastrophically here
+    for offset in [-1.0, 0.0, 1.0, 0.0] {
+        state
+            .set(&graph, x, DoubleTensor::scalar(1e9 + offset))
+            .unwrap();
+        samples.record(&state, 0.0).unwrap();
+    }
+    let variance = samples.f64(x).unwrap().variance().unwrap().as_slice()[0];
+    assert!((variance - 2.0 / 3.0).abs() < 1e-9, "{variance}");
+}
+
+#[test]
+fn a_type_mismatch_leaves_the_samples_unchanged() {
+    let a = GraphBuilder::new();
+    let (x, y) = (a.gaussian(0.0, 1.0).id(), a.gaussian(0.0, 1.0).id());
+    let (graph_a, _): (Graph, State) = a.build().unwrap();
+    // the same ids, but the second node is an int node
+    let b = GraphBuilder::new();
+    let (x_b, y_b) = (b.gaussian(0.0, 1.0).id(), b.uniform_int(0, 4).id());
+    let (graph_b, mut state_b): (Graph, State) = b.build().unwrap();
+    state_b
+        .set(&graph_b, x_b, DoubleTensor::scalar(0.5))
+        .unwrap();
+    state_b
+        .set(&graph_b, y_b, keanu_tensor::IntTensor::scalar(1))
+        .unwrap();
+    assert_eq!((x_b, y_b), (x, y));
+
+    let mut samples = NetworkSamples::new(&graph_a, &[x, y]);
+    assert!(matches!(
+        samples.record(&state_b, 0.0),
+        Err(AlgorithmError::InvalidArgument(_))
+    ));
+    assert_eq!(samples.len(), 0);
+    assert_eq!(samples.f64(x).unwrap().len(), 0);
+}

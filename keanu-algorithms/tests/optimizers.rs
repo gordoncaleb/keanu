@@ -233,3 +233,82 @@ fn convergence_checkers() {
     assert!(!ConvergenceChecker::absolute(Norm::Max, 1e-8).has_converged(&a, &b));
     assert!(ConvergenceChecker::absolute(Norm::L2, 1e-6).has_converged(&a, &b));
 }
+
+/// x ~ N(0, sigma) observed at 1, starting from sigma = 0: an impossible start whose gradient is not finite.
+fn zero_sigma() -> (Model, State, keanu_graph::NodeId) {
+    let b = GraphBuilder::new();
+    let sigma = b.uniform(0.0, 2.0);
+    b.set_value(sigma, DoubleTensor::scalar(0.0));
+    let x = b.gaussian(0.0, sigma);
+    b.observe(x, DoubleTensor::scalar(1.0));
+    let id = sigma.id();
+    let (graph, state) = b.build().unwrap();
+    (Model::new(graph, &state).unwrap(), state, id)
+}
+
+/// Regression: conjugate gradient never stopped from an impossible start or along a NaN gradient (the
+/// convergence test compared NaN), and left the latents at NaN. This would hang before the fix.
+#[test]
+fn conjugate_gradient_stops_at_an_impossible_start() {
+    let (model, mut state, sigma) = zero_sigma();
+    assert_eq!(
+        GradientOptimizer::new(&model)
+            .max_a_posteriori(&mut state.clone())
+            .unwrap_err(),
+        AlgorithmError::ImpossibleStart
+    );
+    let result = GradientOptimizer::new(&model)
+        .check_initial_conditions(false)
+        .max_a_posteriori(&mut state)
+        .unwrap();
+    assert!(!result.converged);
+    assert_eq!(result.get(sigma).unwrap().to_scalar(), Some(0.0));
+    assert_eq!(state.f64(sigma).unwrap().to_scalar(), Some(0.0));
+}
+
+/// a ~ N(0, 1) at 0 and z ~ N(sqrt(a), 1) observed at 0: a finite fitness whose gradient is 0 · ∞ = NaN.
+fn nan_gradient() -> (Model, State, keanu_graph::NodeId) {
+    let b = GraphBuilder::new();
+    let a = b.gaussian(0.0, 1.0);
+    b.set_value(a, DoubleTensor::scalar(0.0));
+    let z = b.gaussian(a.sqrt(), 1.0);
+    b.observe(z, DoubleTensor::scalar(0.0));
+    let id = a.id();
+    let (graph, state) = b.build().unwrap();
+    (Model::new(graph, &state).unwrap(), state, id)
+}
+
+/// Regression: the initial-condition check took the largest gradient element with f64::max, which skips NaN, so a
+/// NaN gradient passed; and conjugate gradient then moved the latents to NaN.
+#[test]
+fn a_nan_starting_gradient_is_detected() {
+    let (model, mut state, a) = nan_gradient();
+    assert_eq!(
+        GradientOptimizer::new(&model)
+            .max_a_posteriori(&mut state.clone())
+            .unwrap_err(),
+        AlgorithmError::NonFiniteGradient
+    );
+    let result = GradientOptimizer::new(&model)
+        .check_initial_conditions(false)
+        .max_a_posteriori(&mut state)
+        .unwrap();
+    assert!(!result.converged);
+    assert_eq!(result.get(a).unwrap().to_scalar(), Some(0.0));
+    assert!(result.fitness.is_finite());
+}
+
+/// Regression: conjugate gradient only checked its evaluation budget between iterations, so the line search
+/// could use many more (`with_max_evaluations(5)` used 19).
+#[test]
+fn conjugate_gradient_keeps_to_its_evaluation_budget() {
+    let (model, mut state, _) = conjugate_gaussian(&[0.3, 1.2]);
+    let result = GradientOptimizer::new(&model)
+        .algorithm(ConjugateGradient::default().with_max_evaluations(5))
+        .max_a_posteriori(&mut state)
+        .unwrap();
+    assert!(!result.converged);
+    // the budget, plus the final fitness evaluation
+    assert!(result.evaluations <= 6, "{}", result.evaluations);
+    assert!(result.fitness.is_finite());
+}

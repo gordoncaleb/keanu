@@ -25,6 +25,9 @@ Two gradient algorithms are available:
 ```
 
 If an algorithm runs out of evaluations, it returns its current point with `converged: false` rather than an error.
+Conjugate gradient also stops with `converged: false`, at the best point found, if the log probability becomes
+impossible or the gradient NaN or infinite. Unless the initial-condition check is turned off, an impossible start
+or a NaN or infinite starting gradient is an error.
 
 ## Without gradients: BOBYQA
 
@@ -42,5 +45,9 @@ unavailable or unreliable. Its settings are Java Keanu's:
 ```rust,ignore
 {{#include ../../keanu/tests/book.rs:bobyqa}}
 ```
+
+A lower bound of −∞ or an upper bound of +∞ means no bound on that side. A NaN bound, or a lower bound that is
+not below its upper bound (including a lower bound of +∞ or an upper bound of −∞), is an error. An optimum with
+zero probability (possible only with the initial-condition check off) is never reported as converged.
 
 Unlike Java's, it also works when there is only one latent dimension.

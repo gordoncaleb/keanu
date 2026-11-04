@@ -19,6 +19,8 @@ pub enum AlgorithmError {
         /// The largest absolute element of the gradient.
         largest: f64,
     },
+    /// The gradient at the starting point has a NaN or infinite element.
+    NonFiniteGradient,
     /// An algorithm setting is out of range.
     InvalidSetting(String),
     /// An argument is invalid for this operation.
@@ -43,6 +45,9 @@ impl fmt::Display for AlgorithmError {
                     f,
                     "the initial gradient is very flat; its largest element is {largest}"
                 )
+            }
+            Self::NonFiniteGradient => {
+                f.write_str("the initial gradient has a NaN or infinite element")
             }
             Self::InvalidSetting(message) | Self::InvalidArgument(message) => f.write_str(message),
         }

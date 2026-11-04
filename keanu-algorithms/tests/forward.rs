@@ -144,3 +144,42 @@ fn no_latents_is_an_error() {
         .unwrap_err();
     assert_eq!(error, AlgorithmError::NoLatents);
 }
+
+/// Regression: with log probabilities on, only the nodes the requested ones depend on were resampled, but the
+/// log probability covers the whole model, so deterministic nodes downstream of a resampled latent were stale.
+#[test]
+fn log_probs_use_up_to_date_downstream_nodes() {
+    let b = GraphBuilder::new();
+    let a = b.gaussian(0.0, 1.0);
+    let doubled = a * 2.0;
+    let c = b.gaussian(doubled, 1.0);
+    let (a, doubled, _c) = (a.id(), doubled.id(), c.id());
+    let (graph, mut state) = b.build().unwrap();
+    let mut rng = KeanuRng::seed_from_u64(3);
+    let all: Vec<_> = graph.ids().collect();
+    state.lazy_eval(&graph, &all, &mut rng).unwrap();
+    let model = Model::new(graph, &state).unwrap();
+
+    let samples = ForwardSampler::default()
+        .with_calculate_log_prob(true)
+        .sample(&model, &mut state, &[a], 20, &mut rng)
+        .unwrap();
+    for sample in samples.iter() {
+        // the joint log probability with this value of a and everything downstream recomputed from it
+        let mut expected = state.clone();
+        model
+            .set_and_cascade(&mut expected, &[(a, sample.get(a).unwrap())])
+            .unwrap();
+        let expected = model.log_prob(&expected).unwrap();
+        assert!(
+            (sample.log_prob() - expected).abs() < 1e-12,
+            "{} vs {expected}",
+            sample.log_prob()
+        );
+    }
+    let a_value = state.f64(a).unwrap().to_scalar().unwrap();
+    assert_eq!(
+        state.f64(doubled).unwrap().to_scalar().unwrap(),
+        2.0 * a_value
+    );
+}

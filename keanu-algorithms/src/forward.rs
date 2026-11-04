@@ -30,7 +30,8 @@ impl ForwardSampler {
 }
 
 impl ForwardSampler {
-    /// A forward sampler that also records each sample's log probability.
+    /// A forward sampler with the default settings, which record 0 rather than each sample's log probability
+    /// (use [`with_calculate_log_prob`](Self::with_calculate_log_prob) to record it).
     pub fn new() -> Self {
         Self::default()
     }
@@ -79,6 +80,9 @@ impl ForwardSampler {
                 state.lazy_eval(graph, &[id], rng)?;
             }
             let log_prob = if self.calculate_log_prob {
+                // only nodes the requested ones depend on were resampled, but the log probability covers the
+                // whole model: recompute the deterministic nodes downstream of them so none is stale
+                state.cascade(graph, &order)?;
                 model.log_prob(state)?
             } else {
                 0.0

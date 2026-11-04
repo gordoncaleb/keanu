@@ -24,6 +24,15 @@ impl Column {
         }
     }
 
+    fn accepts(&self, value: &Value) -> bool {
+        matches!(
+            (self, value),
+            (Self::F64(_), Value::F64(_))
+                | (Self::I64(_), Value::I64(_))
+                | (Self::Bool(_), Value::Bool(_))
+        )
+    }
+
     fn push(&mut self, value: &Value) -> bool {
         match (self, value) {
             (Self::F64(v), Value::F64(t)) => v.push(t.clone()),
@@ -86,12 +95,15 @@ impl NetworkSamples {
                     .ok_or(AlgorithmError::Graph(GraphError::MissingValue(id)))
             })
             .collect::<Result<_>>()?;
+        // check every value before pushing any, so a mismatch leaves the samples unchanged
+        if !self.columns.iter().zip(&values).all(|(c, v)| c.accepts(v)) {
+            return Err(AlgorithmError::InvalidArgument(
+                "a value's type doesn't match its node".into(),
+            ));
+        }
         for (column, value) in self.columns.iter_mut().zip(values) {
-            if !column.push(value) {
-                return Err(AlgorithmError::InvalidArgument(
-                    "a value's type doesn't match its node".into(),
-                ));
-            }
+            let pushed = column.push(value);
+            debug_assert!(pushed, "checked by accepts");
         }
         self.log_probs.push(log_prob);
         Ok(())
@@ -329,14 +341,14 @@ impl Samples<'_, f64> {
     /// The element-wise sample variance (n - 1 denominator).
     pub fn variance(&self) -> Result<DoubleTensor> {
         let n = self.values.len() as f64;
+        let mean = self.mean()?;
+        // two passes: sum (x - mean)^2 / (n - 1). Java's E[x^2] - E[x]^2 loses all precision when the mean is
+        // large relative to the spread (and can even go negative).
         let mut sum_sq = DoubleTensor::zeros(self.shape());
         for v in self.values {
-            sum_sq = sum_sq.add(&v.map(|x| x * x))?;
+            sum_sq = sum_sq.add(&v.sub(&mean)?.map(|x| x * x))?;
         }
-        let mean = self.mean()?;
-        // (E[x^2] - E[x]^2) * n / (n - 1), as Java's DoubleVertexSamples
-        let variance = (sum_sq / n).sub(&mean.map(|x| x * x))? * n;
-        Ok(variance / (n - 1.0))
+        Ok(sum_sq / (n - 1.0))
     }
 
     /// The values of one element of the samples, in sample order. A scalar node's element is `&[]`.

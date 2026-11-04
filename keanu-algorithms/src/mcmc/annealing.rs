@@ -31,7 +31,31 @@ impl AnnealingSchedule {
         }
     }
 
-    /// The temperature at the given iteration.
+    /// Checks the schedule gives finite, positive temperatures: at least one iteration, and finite, positive
+    /// start and end temperatures.
+    pub fn validate(&self) -> Result<()> {
+        match *self {
+            Self::Exponential {
+                iterations,
+                start,
+                end,
+            } => {
+                if iterations == 0 {
+                    return Err(AlgorithmError::InvalidSetting(
+                        "an annealing schedule needs at least one iteration".into(),
+                    ));
+                }
+                if !(start.is_finite() && start > 0.0 && end.is_finite() && end > 0.0) {
+                    return Err(AlgorithmError::InvalidSetting(
+                        "annealing temperatures must be finite and greater than 0".into(),
+                    ));
+                }
+                Ok(())
+            }
+        }
+    }
+
+    /// The temperature at the given iteration. Only meaningful for a [valid](Self::validate) schedule.
     pub fn temperature(&self, iteration: usize) -> f64 {
         match *self {
             Self::Exponential {
@@ -91,12 +115,13 @@ impl SimulatedAnnealing {
         iterations: usize,
         rng: &mut KeanuRng,
     ) -> Result<MapEstimate> {
-        let schedule = AnnealingSchedule::exponential(iterations, 2.0, 0.01);
+        // the schedule is never consulted when there are no iterations, but it must still be valid
+        let schedule = AnnealingSchedule::exponential(iterations.max(1), 2.0, 0.01);
         self.max_a_posteriori_with(model, state, iterations, schedule, rng)
     }
 
     /// Anneals for `iterations` steps with the given schedule. `state` is left at the last step; the best state
-    /// found is returned.
+    /// found is returned. An invalid schedule (see [`AnnealingSchedule::validate`]) is an error.
     pub fn max_a_posteriori_with(
         &self,
         model: &Model,
@@ -105,6 +130,7 @@ impl SimulatedAnnealing {
         schedule: AnnealingSchedule,
         rng: &mut KeanuRng,
     ) -> Result<MapEstimate> {
+        schedule.validate()?;
         let latents = model.latents();
         if latents.is_empty() {
             return Err(AlgorithmError::NoLatents);

@@ -278,3 +278,45 @@ fn starting_point_outside_the_bounds_is_projected() {
     );
     assert_close(&out.x, &[1.0, 1.0], 1e-5);
 }
+
+/// Regression: bound cleaning replaced any bound with |v| >= BOUNDMAX by "no bound", so a lower bound of +infinity
+/// (or an upper bound of -infinity) was silently dropped. As PRIMA, only a very low lower bound or a very high
+/// upper bound means no bound.
+#[test]
+fn an_infinite_bound_on_the_wrong_side_leaves_no_space() {
+    let quad = |x: &[f64]| x.iter().map(|v| v * v).sum::<f64>();
+    for (xl, xu) in [
+        ([f64::INFINITY, 0.0], [f64::INFINITY, 1.0]),
+        ([0.0, 0.0], [f64::NEG_INFINITY, 1.0]),
+    ] {
+        let out = minimize(quad, &[0.5, 0.5], &xl, &xu, &Settings::default());
+        assert_eq!(out.status, ExitStatus::NoSpaceBetweenBounds);
+    }
+    // infinite bounds on the right side, and NaN bounds, are still no bound
+    let out = minimize(
+        quad,
+        &[3.0, -2.0],
+        &[f64::NEG_INFINITY, f64::NAN],
+        &[f64::INFINITY, f64::NAN],
+        &Settings::default(),
+    );
+    assert_eq!(out.status, ExitStatus::SmallTrustRegionRadius);
+    assert_close(&out.x, &[0.0, 0.0], 1e-6);
+}
+
+/// Regression: checking the number of interpolation points computed 2 · npt, which overflowed for a huge npt.
+#[test]
+fn a_huge_number_of_interpolation_points_falls_back_to_the_default() {
+    let quad = |x: &[f64]| x.iter().map(|v| v * v).sum::<f64>();
+    let out = minimize(
+        quad,
+        &[3.0, -2.0],
+        &[],
+        &[],
+        &Settings::default()
+            .with_maxfun(usize::MAX)
+            .with_npt(usize::MAX - 2),
+    );
+    assert_eq!(out.status, ExitStatus::SmallTrustRegionRadius);
+    assert_close(&out.x, &[0.0, 0.0], 1e-6);
+}

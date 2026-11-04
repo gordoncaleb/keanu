@@ -103,7 +103,7 @@ impl<'m> GradientOptimizer<'m> {
         self
     }
 
-    /// Whether to fail if the starting point is impossible or its gradient is flat (default true).
+    /// Whether to fail if the starting point is impossible or its gradient is flat or not finite (default true).
     pub fn check_initial_conditions(mut self, check: bool) -> Self {
         self.check_initial_conditions = check;
         self
@@ -132,10 +132,12 @@ impl<'m> GradientOptimizer<'m> {
                 return Err(AlgorithmError::ImpossibleStart);
             }
             let gradient = objective.gradient(state, &start)?;
-            let largest = gradient
-                .iter()
-                .flat_map(|g| g.as_slice().iter().map(|x| x.abs()))
-                .fold(0.0, f64::max);
+            let elements = || gradient.iter().flat_map(|g| g.as_slice().iter().copied());
+            // checked separately: f64::max skips NaN, so a NaN gradient would pass the flatness check
+            if !elements().all(f64::is_finite) {
+                return Err(AlgorithmError::NonFiniteGradient);
+            }
+            let largest = elements().map(f64::abs).fold(0.0, f64::max);
             if largest <= FLAT_GRADIENT {
                 return Err(AlgorithmError::FlatGradient { largest });
             }

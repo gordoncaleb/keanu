@@ -115,7 +115,9 @@ impl OptimizerBounds {
         Self::default()
     }
 
-    /// Bounds a latent between `min` and `max`.
+    /// Bounds a latent between `min` and `max`. A lower bound of -infinity or an upper bound of +infinity means
+    /// no bound on that side; a NaN bound, or a lower bound that is not below its upper bound, makes the
+    /// optimization fail.
     pub fn add(mut self, latent: NodeId, min: DoubleTensor, max: DoubleTensor) -> Self {
         self.bounds.insert(latent, (min, max));
         self
@@ -255,10 +257,12 @@ impl<'m> NonGradientOptimizer<'m> {
         Ok(OptimizedResult {
             values: objective.latents().iter().copied().zip(point).collect(),
             fitness,
-            converged: matches!(
-                outcome.status,
-                prima::ExitStatus::SmallTrustRegionRadius | prima::ExitStatus::TargetReached
-            ),
+            // an impossible optimum (only possible with the initial-condition check off) never counts as converged
+            converged: fitness.is_finite()
+                && matches!(
+                    outcome.status,
+                    prima::ExitStatus::SmallTrustRegionRadius | prima::ExitStatus::TargetReached
+                ),
             evaluations: objective.evaluations(),
         })
     }
@@ -275,6 +279,11 @@ impl<'m> NonGradientOptimizer<'m> {
             match self.bounds.get(id) {
                 Some((min, max)) => {
                     for (bound, out, name) in [(min, &mut xl, "lower"), (max, &mut xu, "upper")] {
+                        if bound.as_slice().iter().any(|b| b.is_nan()) {
+                            return Err(AlgorithmError::InvalidArgument(format!(
+                                "the {name} bound of a latent is NaN"
+                            )));
+                        }
                         if bound.shape() == value.shape() {
                             out.extend_from_slice(bound.as_slice());
                         } else if let Some(v) = bound.to_scalar() {

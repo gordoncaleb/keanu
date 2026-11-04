@@ -215,8 +215,13 @@ impl Nuts {
         if self.potential.adaptation_window <= 1 {
             return invalid("the potential's adaptation window must be greater than 1");
         }
-        if self.potential.initial_weight < 0.0 {
-            return invalid("the potential's initial weight must be at least 0");
+        // a zero weight or variance gives a zero mass matrix entry, so momentum / mass is NaN and the chain freezes
+        let positive = |x: f64| x.is_finite() && x > 0.0;
+        if !positive(self.potential.initial_weight) {
+            return invalid("the potential's initial weight must be finite and greater than 0");
+        }
+        if !positive(self.potential.initial_variance) {
+            return invalid("the potential's initial variance must be finite and greater than 0");
         }
         Ok(())
     }

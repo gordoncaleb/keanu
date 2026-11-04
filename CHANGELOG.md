@@ -61,6 +61,32 @@ vector was edited by hand and the entry says so.
 - keanu-io: values stored by label are matched with a label map built once, instead of a scan of every node each.
 - keanu-io: `prost` is only a dependency with the `protobuf` or `json` feature; keanu-parity drops its unused
   `serde` dependency and inherits the workspace package fields.
+- `keanu-algorithms`: the particle filter treats a NaN log probability as impossible (−∞) when weighting, ranking
+  and resampling; one NaN particle used to make every resampling draw pick the last particle.
+- `keanu-algorithms`: `Samples::variance` uses a two-pass computation (still with an n − 1 denominator) instead of
+  E[x²] − E[x]², which lost all precision for a large mean (samples of N(1e9, 1) had variance −896).
+- `keanu-algorithms`: NUTS rejects a potential whose `initial_weight` or `initial_variance` is not finite and
+  greater than 0 (`InvalidSetting`); a zero gave a zero mass matrix entry and a chain that never moved.
+- `keanu-algorithms`: with `calculate_log_prob`, `ForwardSampler` recomputes the deterministic nodes downstream of
+  the resampled latents before computing the log probability, which could otherwise use stale values. The docs of
+  `ForwardSampler::new` no longer claim it records log probabilities by default.
+- `keanu-algorithms`: `NetworkSamples::record` checks every value's type before recording any, so a mismatch no
+  longer leaves the columns with different lengths.
+- `keanu-algorithms`: simulated annealing rejects a schedule with zero iterations or a non-finite or non-positive
+  start or end temperature (`InvalidSetting`, from the new `AnnealingSchedule::validate`).
+- `keanu-algorithms`: conjugate gradient stops, without converging and at the best point found, when the fitness
+  is impossible or the gradient NaN or infinite; it used to loop forever (with unlimited evaluations) and leave the
+  latents at NaN. The initial-condition check now reports a NaN or infinite starting gradient as the new
+  `AlgorithmError::NonFiniteGradient` (it used to pass, as `f64::max` skips NaN).
+- `keanu-algorithms`: conjugate gradient keeps to `max_evaluations` inside its line search too
+  (`with_max_evaluations(5)` used 19 evaluations).
+- `keanu-algorithms`: BOBYQA no longer reports `converged: true` for an optimum with impossible (non-finite)
+  fitness.
+- `keanu-algorithms`: BOBYQA bound cleaning matches PRIMA: only a NaN or very low lower bound (or a NaN or very
+  high upper bound) means "no bound", so a lower bound of +∞ or an upper bound of −∞ is now an error like any other
+  lower bound above its upper bound. `NonGradientOptimizer` rejects NaN bounds (`InvalidArgument`).
+- `keanu-algorithms`: BOBYQA no longer overflows checking a huge `interpolation_points`; it falls back to the
+  default, as for any other out-of-range value.
 
 ## Unreleased: Java
 
