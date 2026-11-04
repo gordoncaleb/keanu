@@ -311,8 +311,11 @@ fn every_distribution_can_be_sampled_through_eval() {
         b.laplace(0.0, 1.0).id(),
         b.logistic(0.0, 1.0).id(),
         b.log_normal(0.0, 1.0).id(),
-        b.multivariate_gaussian(DoubleTensor::vector(vec![0.0, 1.0]), DoubleTensor::eye(2))
-            .id(),
+        b.multivariate_gaussian(
+            DoubleTensor::vector(vec![0.0, 1.0]),
+            DoubleTensor::eye(2).unwrap(),
+        )
+        .id(),
         b.pareto(1.0, 2.0).id(),
         b.student_t(3).id(),
         b.triangular(0.0, 1.0, 0.5).id(),

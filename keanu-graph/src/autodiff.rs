@@ -362,7 +362,7 @@ fn batched(b: usize, shape: &[usize]) -> Dims {
 
 /// The identity as a batched tangent: [n, shape...] with element [k, j...] = 1 where j is the k-th element.
 fn identity(n: usize, shape: &[usize]) -> Result<DoubleTensor> {
-    Ok(DoubleTensor::eye(n).reshape(&batched(n, shape))?)
+    Ok(DoubleTensor::eye(n)?.reshape(&batched(n, shape))?)
 }
 
 /// Reshapes a batched tensor [B, s...] to [B, 1..., s...] with `rank` non-batch dims, so it broadcasts against

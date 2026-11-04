@@ -6,8 +6,21 @@ use smallvec::SmallVec;
 /// Dimensions of a tensor. Stored inline for rank <= 4 so small tensors don't allocate for their shape.
 pub type Shape = SmallVec<[usize; 4]>;
 
+/// The number of elements in a shape, or None if it does not fit in a `usize`. A shape with a zero dimension
+/// has no elements whatever its other dimensions.
+pub(crate) fn checked_length(shape: &[usize]) -> Option<usize> {
+    if shape.contains(&0) {
+        return Some(0);
+    }
+    shape.iter().try_fold(1usize, |acc, &d| acc.checked_mul(d))
+}
+
+/// The number of elements in the shape of an existing tensor, or one about to be allocated.
+///
+/// # Panics
+/// If the length overflows `usize`, as `vec![x; n]` would for an impossible allocation.
 pub(crate) fn length(shape: &[usize]) -> usize {
-    shape.iter().product()
+    checked_length(shape).expect("tensor length overflows usize")
 }
 
 pub(crate) fn row_major_strides(shape: &[usize]) -> Shape {
@@ -15,13 +28,25 @@ pub(crate) fn row_major_strides(shape: &[usize]) -> Shape {
     let mut acc = 1;
     for i in (0..shape.len()).rev() {
         strides[i] = acc;
-        acc *= shape[i];
+        // saturating: with a zero dimension the partial products can exceed usize, but then nothing is read
+        acc = acc.saturating_mul(shape[i]);
     }
     strides
 }
 
-/// The numpy broadcast of two shapes.
+/// The numpy broadcast of two shapes. Fails if they are incompatible or the result's length overflows `usize`.
 pub fn broadcast_shape(left: &[usize], right: &[usize]) -> Result<Shape> {
+    let out = broadcast_dims(left, right)?;
+    if checked_length(&out).is_none() {
+        return Err(TensorError::IncompatibleShapes {
+            left: left.to_vec(),
+            right: right.to_vec(),
+        });
+    }
+    Ok(out)
+}
+
+fn broadcast_dims(left: &[usize], right: &[usize]) -> Result<Shape> {
     // the common cases: equal shapes, or one side a scalar
     if left == right || right.is_empty() {
         return Ok(Shape::from_slice(left));

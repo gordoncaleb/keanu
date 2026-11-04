@@ -26,11 +26,12 @@ impl<T: Element> Tensor<T> {
         if wildcards > 1 || new_shape.iter().any(|&d| d < -1) {
             return Err(invalid());
         }
-        let known: usize = new_shape
+        let known_dims: Shape = new_shape
             .iter()
             .filter(|&&d| d >= 0)
             .map(|&d| d as usize)
-            .product();
+            .collect();
+        let known = shape::checked_length(&known_dims).ok_or_else(invalid)?;
         let resolved: Shape = if wildcards == 1 {
             if known == 0 || self.len() % known != 0 {
                 return Err(invalid());
@@ -48,7 +49,7 @@ impl<T: Element> Tensor<T> {
         } else {
             new_shape.iter().map(|&d| d as usize).collect()
         };
-        if shape::length(&resolved) != self.len() {
+        if shape::checked_length(&resolved) != Some(self.len()) {
             return Err(invalid());
         }
         Ok(resolved)
@@ -397,21 +398,19 @@ pub(crate) mod slicing {
                     };
                     let first = start.map(clamp).unwrap_or(if step > 0 { 0 } else { n - 1 });
                     let end = stop.map(clamp).unwrap_or(if step > 0 { n } else { -1 });
-                    let len = if step > 0 {
-                        if end > first {
-                            (end - first + step - 1) / step
-                        } else {
-                            0
-                        }
-                    } else if first > end {
-                        (first - end - step - 1) / -step
+                    // first and end lie in [-1, n], so the span fits; dividing by |step| cannot overflow
+                    let span = if step > 0 { end - first } else { first - end };
+                    let len = if span > 0 {
+                        (span as usize - 1) / step.unsigned_abs() + 1
                     } else {
                         0
                     };
                     plan.push(DimSlice {
                         start: first,
-                        step,
-                        len: len as usize,
+                        // with at most one element the step is never taken; normalise it so a huge step can't
+                        // overflow when scaled by the dimension's stride
+                        step: if len <= 1 { 1 } else { step },
+                        len,
                         drop: false,
                     });
                     dim += 1;

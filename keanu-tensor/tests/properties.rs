@@ -51,7 +51,7 @@ proptest! {
 
     #[test]
     fn slicing_a_vector_matches_a_naive_implementation(len in 0usize..12, start in -15isize..15, stop in -15isize..15, step in prop::sample::select(vec![-3isize, -2, -1, 1, 2, 3]), use_start: bool, use_stop: bool) {
-        let v = DoubleTensor::arange(0.0, len as f64);
+        let v = DoubleTensor::arange(0.0, len as f64).unwrap();
         let spec = format!("{}:{}:{}", if use_start { start.to_string() } else { String::new() }, if use_stop { stop.to_string() } else { String::new() }, step);
         let sliced = v.slice(&spec).unwrap();
 

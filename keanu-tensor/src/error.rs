@@ -54,11 +54,16 @@ pub enum TensorError {
 impl fmt::Display for TensorError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::LengthMismatch { shape, len } => write!(
-                f,
-                "shape {shape:?} needs {} values but {len} were given",
-                shape.iter().product::<usize>()
-            ),
+            Self::LengthMismatch { shape, len } => match crate::shape::checked_length(shape) {
+                Some(needed) => write!(
+                    f,
+                    "shape {shape:?} needs {needed} values but {len} were given"
+                ),
+                None => write!(
+                    f,
+                    "shape {shape:?} has more elements than fit in a usize ({len} values were given)"
+                ),
+            },
             Self::IncompatibleShapes { left, right } => {
                 write!(f, "incompatible shapes {left:?} and {right:?}")
             }

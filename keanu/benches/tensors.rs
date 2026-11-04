@@ -46,9 +46,11 @@ fn elementwise(c: &mut Criterion) {
     // Java also runs 10240; a 10240² matrix multiply takes minutes per iteration, so it's left out of both runs
     for n in [1usize, 10, 100, 1000] {
         let left = DoubleTensor::arange(0.0, (n * n) as f64)
+            .unwrap()
             .reshape(&[n as isize, n as isize])
             .unwrap();
         let right = DoubleTensor::arange((n * n) as f64, (2 * n * n) as f64)
+            .unwrap()
             .reshape(&[n as isize, n as isize])
             .unwrap();
         group.bench_with_input(BenchmarkId::new("TIMES", n), &(), |b, _| {
@@ -72,7 +74,7 @@ fn unary(c: &mut Criterion) {
         let tensor = &a.matmul(&a.transpose().unwrap()).unwrap() * 0.5;
         // the Java benchmark's matrix is only positive semi-definite for some sizes; add to the diagonal so the
         // Cholesky decomposition always succeeds (the cost is the same)
-        let spd = tensor.add(&DoubleTensor::eye(n)).unwrap();
+        let spd = tensor.add(&DoubleTensor::eye(n).unwrap()).unwrap();
         let ops: [(&str, UnaryOp); 6] = [
             ("CHOLESKY", Box::new(|| spd.cholesky().unwrap())),
             ("DETERMINANT", Box::new(|| tensor.determinant().unwrap())),

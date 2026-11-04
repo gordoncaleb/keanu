@@ -1,6 +1,6 @@
 //! Reductions and scans.
 
-use crate::error::Result;
+use crate::error::{Result, TensorError};
 use crate::ops::elementwise::Numeric;
 use crate::shape;
 use crate::tensor::{DoubleTensor, IntTensor, Tensor, reduce, scan};
@@ -50,12 +50,12 @@ impl<T: Numeric> Tensor<T> {
         arg_best(&self.data, |v, best| v < best)
     }
 
-    /// Index of the largest element along an axis; the first NaN wins.
+    /// Index of the largest element along an axis; the first NaN wins. Fails if the axis is empty.
     pub fn argmax_axis(&self, axis: isize) -> Result<IntTensor> {
         self.arg_best_axis(axis, |v, best| v > best)
     }
 
-    /// Index of the smallest element along an axis; the first NaN wins.
+    /// Index of the smallest element along an axis; the first NaN wins. Fails if the axis is empty.
     pub fn argmin_axis(&self, axis: isize) -> Result<IntTensor> {
         self.arg_best_axis(axis, |v, best| v < best)
     }
@@ -63,6 +63,12 @@ impl<T: Numeric> Tensor<T> {
     fn arg_best_axis(&self, axis: isize, better: impl Fn(T, T) -> bool) -> Result<IntTensor> {
         let axis = shape::axis(axis, self.rank())?;
         let n = self.shape[axis];
+        if n == 0 {
+            return Err(TensorError::InvalidArgument(format!(
+                "cannot take the argmax or argmin along empty axis {axis} of shape {:?}",
+                self.shape()
+            )));
+        }
         let inner = shape::row_major_strides(&self.shape)[axis];
         let outer = shape::length(&self.shape[..axis]);
         let out_shape: shape::Shape = self
@@ -77,7 +83,9 @@ impl<T: Numeric> Tensor<T> {
             for i in 0..inner {
                 let base = o * n * inner + i;
                 let lane = (0..n).map(|k| self.data[base + k * inner]);
-                out.push(arg_best_iter(lane, &better).unwrap_or(0) as i64);
+                let best =
+                    arg_best_iter(lane, &better).expect("a non-empty lane has a best element");
+                out.push(best as i64);
             }
         }
         Ok(Tensor::from_parts(out_shape, out))

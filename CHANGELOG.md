@@ -87,6 +87,14 @@ vector was edited by hand and the entry says so.
   lower bound above its upper bound. `NonGradientOptimizer` rejects NaN bounds (`InvalidArgument`).
 - `keanu-algorithms`: BOBYQA no longer overflows checking a huge `interpolation_points`; it falls back to the
   default, as for any other out-of-range value.
+- keanu-tensor: `digamma`'s asymptotic series had the wrong sign on its 1/(12x²) term (inherited from Apache Commons), so results were off by up to ~3e-9 (ψ(1) = -0.5772156677920679). Golden vectors edited by hand to mpmath values: `unary/digamma` and `unary/digamma/scalar` (tensors.json), `unary/digamma` and the `unary/logGamma` partials (vertices.json), the catalog model's `digamma` node (models.json), and the ψ-dependent gradients of `Beta/alpha=0.5,beta=0.5`, `Dirichlet/concentration=[0.5, 2.0, 3.0]` (both cases), the three `Gamma` cases and the two `InverseGamma` cases (distributions.json). The Rust-written `keanu-io` fixtures were regenerated, and the custom distribution example test uses seed 9, as its NUTS chain changed with the Beta gradient.
+- keanu-tensor: `trigamma`'s asymptotic series subtracted its 1/(42z⁷) term instead of adding it.
+- keanu-tensor: `digamma` and `trigamma` of negative arguments use the reflection formulas, so they no longer loop |x| times (or for ever from about -1e16). Non-positive integers are still poles (-∞ and +∞).
+- keanu-tensor: shape lengths are computed with checked arithmetic. `Tensor::new` returns `LengthMismatch`, `reshape` returns `InvalidReshape`, and broadcasting and `matmul`/`tensor_multiply` return `IncompatibleShapes` when the length overflows `usize`, instead of panicking or wrapping. A shape with a zero dimension has length 0 whatever its other dimensions. `full`, `zeros`, `ones` and `from_fn` stay infallible and panic on overflow, as `vec!` does.
+- keanu-tensor: slicing with a huge step (e.g. `"0:10:9223372036854775807"`) no longer overflows; it takes one element.
+- keanu-tensor: `argmax_axis`/`argmin_axis` along an empty axis return an error instead of index 0.
+- keanu-tensor (breaking): `DoubleTensor::arange` and `DoubleTensor::eye` return `Result`. `arange` rejects non-finite bounds and ranges too long to allocate, and `eye` rejects n where n × n overflows, instead of panicking.
+- keanu-tensor: `tensor_multiply` over zero-length contracted axes returns zeros (e.g. [2, 0]·[0, 3] gives a [2, 3] zero tensor, as `matmul` does) instead of failing to reshape.
 
 ## Unreleased: Java
 

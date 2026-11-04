@@ -53,6 +53,16 @@ pub fn digamma(x: f64) -> f64 {
     if x.is_nan() || x.is_infinite() {
         return x;
     }
+    if x < 0.0 {
+        if x == x.floor() {
+            // a pole: the limit through the recurrence from the right, as for ψ(+0.0)
+            return f64::NEG_INFINITY;
+        }
+        // reflection: ψ(1 - x) - ψ(x) = π cot(πx). cot has period 1, so reduce x to (-0.5, 0.5] first to keep
+        // sin(πx) accurate for large |x|.
+        let r = x - x.round();
+        return digamma(1.0 - x) - PI * (PI * r).cos() / (PI * r).sin();
+    }
     // recurrence ψ(x) = ψ(x + 1) - 1/x until x is large enough for the asymptotic series
     let mut shifts = 0usize;
     let mut z = x;
@@ -62,7 +72,7 @@ pub fn digamma(x: f64) -> f64 {
         }
         if z >= 49.0 {
             let inv = 1.0 / (z * z);
-            break z.ln() - 0.5 / z - inv * ((1.0 / 12.0) + inv * (1.0 / 120.0 - inv / 252.0));
+            break z.ln() - 0.5 / z - inv * (1.0 / 12.0 - inv * (1.0 / 120.0 - inv / 252.0));
         }
         z += 1.0;
         shifts += 1;
@@ -81,6 +91,14 @@ pub fn trigamma(x: f64) -> f64 {
     if x.is_nan() || x.is_infinite() {
         return x;
     }
+    if x < 0.0 {
+        if x == x.floor() {
+            return f64::INFINITY;
+        }
+        // reflection: ψ₁(1 - x) + ψ₁(x) = π² / sin²(πx), with x reduced as in digamma
+        let sin = (PI * (x - x.round())).sin();
+        return PI * PI / (sin * sin) - trigamma(1.0 - x);
+    }
     let mut shifts = 0usize;
     let mut z = x;
     let base = loop {
@@ -89,7 +107,7 @@ pub fn trigamma(x: f64) -> f64 {
         }
         if z >= 49.0 {
             let inv = 1.0 / (z * z);
-            break 1.0 / z + inv / 2.0 + inv / z * (1.0 / 6.0 - inv * (1.0 / 30.0 + inv / 42.0));
+            break 1.0 / z + inv / 2.0 + inv / z * (1.0 / 6.0 - inv * (1.0 / 30.0 - inv / 42.0));
         }
         z += 1.0;
         shifts += 1;

@@ -118,12 +118,13 @@ fn range(low: f64, high: f64, shape: &[usize]) -> DoubleTensor {
 
 fn spd(n: usize) -> DoubleTensor {
     let a = DoubleTensor::arange(1.0, (n * n + 1) as f64)
+        .unwrap()
         .reshape(&[n as isize, n as isize])
         .unwrap()
         .sin();
     a.matmul_transposed(&a, false, true)
         .unwrap()
-        .add(&(DoubleTensor::eye(n) * n as f64))
+        .add(&(DoubleTensor::eye(n).unwrap() * n as f64))
         .unwrap()
 }
 
@@ -323,7 +324,7 @@ fn linear_algebra() {
     check(&[spd(3)], |_, v| v[0].determinant());
     check(
         &[range(-1.0, 1.5, &[2, 2, 2])
-            .add(&(DoubleTensor::eye(2) * 2.0))
+            .add(&(DoubleTensor::eye(2).unwrap() * 2.0))
             .unwrap()],
         |_, v| v[0].determinant(),
     );
@@ -331,7 +332,7 @@ fn linear_algebra() {
     check(&[spd(4)], |_, v| v[0].cholesky());
     check(&[range(-0.3, 0.4, &[3, 3])], |_, v| {
         let x = v[0];
-        (x.matmul_transposed(x, false, true) + DoubleTensor::eye(3) * 3.0).cholesky()
+        (x.matmul_transposed(x, false, true) + DoubleTensor::eye(3).unwrap() * 3.0).cholesky()
     });
     check(&[spd(3).cholesky().unwrap()], |_, v| {
         v[0].cholesky_inverse()

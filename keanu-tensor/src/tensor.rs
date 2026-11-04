@@ -43,7 +43,7 @@ impl<T: Element> fmt::Debug for Tensor<T> {
 impl<T: Element> Tensor<T> {
     /// Creates a tensor from row-major data.
     pub fn new(shape: &[usize], data: Vec<T>) -> Result<Self> {
-        if shape::length(shape) != data.len() {
+        if shape::checked_length(shape) != Some(data.len()) {
             return Err(TensorError::LengthMismatch {
                 shape: shape.to_vec(),
                 len: data.len(),
@@ -62,6 +62,9 @@ impl<T: Element> Tensor<T> {
     }
 
     /// A tensor whose element at flat (row-major) index `i` is `f(i)`. Small tensors don't allocate.
+    ///
+    /// # Panics
+    /// If the number of elements in `shape` overflows `usize` (as `vec!` does for an impossible allocation).
     pub fn from_fn(shape: &[usize], f: impl FnMut(usize) -> T) -> Self {
         let n = shape::length(shape);
         Self {
@@ -87,6 +90,9 @@ impl<T: Element> Tensor<T> {
     }
 
     /// A tensor with every element equal to `value`.
+    ///
+    /// # Panics
+    /// If the number of elements in `shape` overflows `usize` (as `vec!` does for an impossible allocation).
     pub fn full(shape: &[usize], value: T) -> Self {
         Self {
             shape: Shape::from_slice(shape),

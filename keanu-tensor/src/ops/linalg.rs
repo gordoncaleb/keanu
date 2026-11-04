@@ -59,12 +59,22 @@ impl DoubleTensor {
         }
         let batch = shape::broadcast_shape(self.batch_shape(), other.batch_shape())?;
         let batch_len = shape::length(&batch);
+        let out_len = shape::checked_length(&[batch_len, m, n]).ok_or_else(|| {
+            TensorError::IncompatibleShapes {
+                left: self.shape.to_vec(),
+                right: other.shape.to_vec(),
+            }
+        })?;
         let left_strides = shape::broadcast_strides(self.batch_shape(), &batch);
         let right_strides = shape::broadcast_strides(other.batch_shape(), &batch);
         let batch_strides = shape::row_major_strides(&batch);
 
-        let mut data: Storage<f64> = smallvec::smallvec![0.0; batch_len * m * n];
-        for (i, out) in data.chunks_mut((m * n).max(1)).enumerate().take(batch_len) {
+        let mut data: Storage<f64> = smallvec::smallvec![0.0; out_len];
+        for (i, out) in data
+            .chunks_mut(m.saturating_mul(n).max(1))
+            .enumerate()
+            .take(batch_len)
+        {
             let (mut l, mut r) = (0, 0);
             for d in 0..batch.len() {
                 let index = (i / batch_strides[d]) % batch[d];
@@ -213,22 +223,34 @@ impl DoubleTensor {
         }
         let kept_left: Vec<usize> = (0..self.rank()).filter(|d| !left.contains(d)).collect();
         let kept_right: Vec<usize> = (0..other.rank()).filter(|d| !right.contains(d)).collect();
-        let contracted: usize = left.iter().map(|&d| self.shape[d]).product();
-
+        let incompatible = || TensorError::IncompatibleShapes {
+            left: self.shape.to_vec(),
+            right: other.shape.to_vec(),
+        };
+        let out_dims: Shape = kept_left
+            .iter()
+            .map(|&d| self.shape[d])
+            .chain(kept_right.iter().map(|&d| other.shape[d]))
+            .collect();
+        shape::checked_length(&out_dims).ok_or_else(incompatible)?;
+        if self.is_empty() || other.is_empty() {
+            // nothing to multiply (and the sizes below may not fit when a dimension is zero): every sum is empty
+            return Ok(Tensor::zeros(&out_dims));
+        }
+        // explicit sizes rather than -1, which cannot be inferred when the contracted length is zero
+        let size = |t: &Self, dims: &[usize]| {
+            let dims: Shape = dims.iter().map(|&d| t.shape[d]).collect();
+            shape::length(&dims) as isize
+        };
+        let contracted = size(self, &left);
         let lhs = self
             .permute(&[kept_left.clone(), left.clone()].concat())?
-            .reshape(&[-1, contracted as isize])?;
+            .reshape(&[size(self, &kept_left), contracted])?;
         let rhs = other
             .permute(&[right.clone(), kept_right.clone()].concat())?
-            .reshape(&[contracted as isize, -1])?;
+            .reshape(&[contracted, size(other, &kept_right)])?;
         let product = lhs.matmul(&rhs)?;
-
-        let out_shape: Vec<isize> = kept_left
-            .iter()
-            .map(|&d| self.shape[d] as isize)
-            .chain(kept_right.iter().map(|&d| other.shape[d] as isize))
-            .collect();
-        product.reshape(&out_shape)
+        Ok(Tensor::from_parts(out_dims, product.data))
     }
 }
 
