@@ -235,6 +235,222 @@ fn reductions_and_scans() {
     check(&[range(-1.0, 3.0, &[2, 3])], |_, v| v[0].standardize());
 }
 
+/// A [2, 3, 4] cube with one zero in some lanes and two in others, along every axis.
+fn cube_with_zeros() -> DoubleTensor {
+    let mut data: Vec<f64> = range(-1.5, 2.5, &[2, 3, 4])
+        .as_slice()
+        .iter()
+        .map(|&x| x + 0.05)
+        .collect();
+    // [0, 0, 1] alone in its lane along each axis; [1, 2, 0] and [1, 2, 3] share a lane along the last axis,
+    // [1, 0, 2] and [1, 2, 2] share one along axis 1, [0, 1, 3] and [1, 1, 3] share one along axis 0
+    for (i, j, k) in [
+        (0, 0, 1),
+        (1, 2, 0),
+        (1, 2, 3),
+        (1, 0, 2),
+        (1, 2, 2),
+        (0, 1, 3),
+        (1, 1, 3),
+    ] {
+        data[i * 12 + j * 4 + k] = 0.0;
+    }
+    t(&[2, 3, 4], &data)
+}
+
+#[test]
+fn products_and_scans_are_exact_around_zeros() {
+    let zeros = cube_with_zeros();
+    let one_zero = t(&[5], &[1.5, -0.5, 0.0, 2.0, 1.25]);
+    let two_zeros = t(&[5], &[1.5, 0.0, -2.0, 0.0, 1.25]);
+    let adjacent = t(&[4], &[0.0, 0.0, 3.0, -1.0]);
+    for x in [&one_zero, &two_zeros, &adjacent] {
+        check(&[x.clone()], |_, v| v[0].product());
+        check(&[x.clone()], |_, v| v[0].product_axes(&[0]));
+        check(&[x.clone()], |_, v| v[0].cumprod(0));
+        check(&[x.clone()], |_, v| v[0].cumsum(-1));
+    }
+    check(&[zeros.clone()], |_, v| v[0].product());
+    for axes in [
+        &[0][..],
+        &[1],
+        &[2],
+        &[-1],
+        &[0, 2],
+        &[2, 0],
+        &[1, 2],
+        &[0, 1, 2],
+    ] {
+        check(&[zeros.clone()], |_, v| v[0].product_axes(axes));
+    }
+    for axis in [0, 1, 2, -1, -3] {
+        check(&[zeros.clone()], |_, v| v[0].cumprod(axis));
+        check(&[zeros.clone()], |_, v| v[0].cumsum(axis));
+    }
+    // with every element zero
+    check(&[DoubleTensor::zeros(&[2, 3])], |_, v| {
+        v[0].product_axes(&[1])
+    });
+    check(&[DoubleTensor::zeros(&[2, 3])], |_, v| v[0].cumprod(1));
+}
+
+#[test]
+fn products_and_scans_with_broadcasting_and_several_paths() {
+    let zeros = cube_with_zeros();
+    // the input reaches the op through a broadcast, so its partial sums over the broadcast copies
+    check(&[t(&[4], &[1.5, 0.0, -2.0, 0.0])], |_, v| {
+        v[0].broadcast_to(&[3, 4]).cumprod(1)
+    });
+    check(&[t(&[3, 1], &[1.5, 0.0, -2.0])], |_, v| {
+        v[0].broadcast_to(&[3, 4]).product_axes(&[0])
+    });
+    // the op's result broadcast against another input, and the input used on more than one path
+    check(&[zeros.clone(), range(0.5, 1.5, &[2, 3])], |_, v| {
+        v[0].product_axes(&[2]) * v[1]
+    });
+    check(&[zeros.clone(), range(0.5, 1.5, &[4])], |_, v| {
+        (v[0].cumprod(2) * v[1] + v[0].cumsum(0)).product_axes(&[1])
+    });
+    check(
+        &[range(0.5, 1.5, &[3, 4]), range(-1.0, 1.0, &[4])],
+        |_, v| (v[0] * v[1]).cumsum(0).cumprod(1).product(),
+    );
+}
+
+#[test]
+fn products_and_scans_of_scalars_and_empty_tensors() {
+    check(&[DoubleTensor::scalar(1.75)], |_, v| v[0].product());
+    check(&[DoubleTensor::scalar(0.0)], |_, v| v[0].product());
+    check(&[range(0.5, 1.5, &[2, 3])], |_, v| v[0].product_axes(&[]));
+    check(&[range(0.5, 1.5, &[1, 3])], |_, v| v[0].cumprod(0));
+    check(&[DoubleTensor::zeros(&[0])], |_, v| v[0].product());
+    check(&[DoubleTensor::zeros(&[2, 0])], |_, v| {
+        v[0].product_axes(&[1])
+    });
+    check(&[DoubleTensor::zeros(&[2, 0])], |_, v| {
+        v[0].product_axes(&[0])
+    });
+    check(&[DoubleTensor::zeros(&[0, 3])], |_, v| v[0].cumprod(0));
+    check(&[DoubleTensor::zeros(&[0, 3])], |_, v| v[0].cumsum(1));
+}
+
+#[test]
+fn tensor_multiply_contractions() {
+    let a = range(-1.5, 2.5, &[2, 3, 4]);
+    // contracting nothing (an outer product), everything (an inner product), and axes in a different order
+    check(&[range(-1.0, 1.0, &[2]), range(0.5, 2.0, &[3])], |_, v| {
+        v[0].tensor_multiply(v[1], &[], &[])
+    });
+    check(&[a.clone(), range(-1.0, 2.0, &[4, 3, 2])], |_, v| {
+        v[0].tensor_multiply(v[1], &[0, 1, 2], &[2, 1, 0])
+    });
+    check(&[a.clone(), range(-1.0, 2.0, &[3, 5, 2])], |_, v| {
+        v[0].tensor_multiply(v[1], &[0, 1], &[2, 0])
+    });
+    check(&[a.clone(), range(-1.0, 2.0, &[4, 2, 5])], |_, v| {
+        v[0].tensor_multiply(v[1], &[2, -3], &[0, 1])
+    });
+    // a scalar operand, and the same node as both operands
+    check(
+        &[DoubleTensor::scalar(1.5), range(-1.0, 2.0, &[2, 3])],
+        |_, v| v[0].tensor_multiply(v[1], &[], &[]),
+    );
+    check(&[range(-1.0, 2.0, &[3, 3])], |_, v| {
+        v[0].tensor_multiply(v[0], &[1], &[0])
+    });
+    // operands that are themselves broadcast
+    check(
+        &[range(-1.0, 2.0, &[3]), range(0.5, 1.5, &[3, 2])],
+        |_, v| v[0].broadcast_to(&[2, 3]).tensor_multiply(v[1], &[1], &[0]),
+    );
+    // an empty contracted dimension: every result is zero, as is every partial
+    check(
+        &[DoubleTensor::zeros(&[2, 0]), DoubleTensor::zeros(&[0, 3])],
+        |_, v| v[0].tensor_multiply(v[1], &[1], &[0]),
+    );
+}
+
+/// The exact Jacobian [n_out, n_in] of a function that is affine in each element of its input: column j is
+/// f(x with x_j = 1) - f(x with x_j = 0).
+fn affine_jacobian(x: &DoubleTensor, f: impl Fn(&DoubleTensor) -> DoubleTensor) -> Vec<f64> {
+    let n_in = x.len();
+    let columns: Vec<Vec<f64>> = (0..n_in)
+        .map(|j| {
+            let at = |v: f64| {
+                let mut data = x.as_slice().to_vec();
+                data[j] = v;
+                f(&DoubleTensor::new(x.shape(), data).unwrap()).into_vec()
+            };
+            at(1.0).iter().zip(at(0.0)).map(|(a, b)| a - b).collect()
+        })
+        .collect();
+    let n_out = columns.first().map_or(0, Vec::len);
+    (0..n_out * n_in)
+        .map(|k| columns[k % n_in][k / n_in])
+        .collect()
+}
+
+#[test]
+fn closed_form_partials_match_the_exact_jacobian() {
+    // products, scans and contractions are affine in each element, so differencing at 1 and 0 gives the exact
+    // Jacobian; the closed forms must agree to rounding, including around zeros
+    let zeros = cube_with_zeros();
+    let other = range(-1.0, 2.0, &[4, 3]);
+    type Case<'a> = (
+        Box<dyn Fn(&DoubleTensor) -> DoubleTensor + 'a>,
+        Box<dyn for<'b> Fn(&'b GraphBuilder, DoubleVar<'b>) -> DoubleVar<'b> + 'a>,
+    );
+    let cases: Vec<Case<'_>> = vec![
+        (
+            Box::new(|x| DoubleTensor::scalar(x.product())),
+            Box::new(|_, v| v.product()),
+        ),
+        (
+            Box::new(|x| x.product_axes(&[0, 2]).unwrap()),
+            Box::new(|_, v| v.product_axes(&[0, 2])),
+        ),
+        (
+            Box::new(|x| x.cumprod(1).unwrap()),
+            Box::new(|_, v| v.cumprod(1)),
+        ),
+        (
+            Box::new(|x| x.cumprod(2).unwrap()),
+            Box::new(|_, v| v.cumprod(2)),
+        ),
+        (
+            Box::new(|x| x.cumsum(0).unwrap()),
+            Box::new(|_, v| v.cumsum(0)),
+        ),
+        (
+            Box::new(|x| x.tensor_multiply(&other, &[2, 1], &[0, 1]).unwrap()),
+            Box::new(|g, v| {
+                let o = g.constant(other.clone());
+                v.tensor_multiply(o, &[2, 1], &[0, 1])
+            }),
+        ),
+    ];
+    for (k, (f, build)) in cases.iter().enumerate() {
+        let expected = affine_jacobian(&zeros, f);
+        let g = GraphBuilder::new();
+        let x = build_one(&g, zeros.clone());
+        let out = build(&g, x);
+        let (xid, oid) = (x.id(), out.id());
+        let (graph, state) = evaluated(g, &[oid]);
+        let forward = forward_partials(&graph, &state, xid, &[oid]).unwrap();
+        let reverse = reverse_partials(&graph, &state, oid, &[xid]).unwrap();
+        for (mode, partial) in [("forward", forward.get(oid)), ("reverse", reverse.get(xid))] {
+            let partial = partial.unwrap();
+            assert_eq!(partial.len(), expected.len(), "case {k} {mode}");
+            for (i, (&a, &e)) in partial.as_slice().iter().zip(&expected).enumerate() {
+                assert!(
+                    (a - e).abs() <= 1e-12 * e.abs().max(1.0),
+                    "case {k} {mode} element {i}: {a} != {e}"
+                );
+            }
+        }
+    }
+}
+
 #[test]
 fn shape_ops() {
     let cube = range(-1.5, 2.5, &[2, 3, 4]);

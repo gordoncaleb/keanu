@@ -190,6 +190,48 @@ fn golden_models(_: &mut Criterion) {
     eprintln!("ModelBenchmark needs `--features protobuf`");
 }
 
+fn autodiff(c: &mut Criterion) {
+    // reverse mode gradients of sum(op(x)) through ops with closed-form rules (no dense Jacobians)
+    let mut group = c.benchmark_group("Autodiff");
+    type Build = for<'b> fn(&'b GraphBuilder, &[DoubleVar<'b>]) -> DoubleVar<'b>;
+    let cases: [(&str, &[&[usize]], Build); 5] = [
+        ("tensorMultiply30x30", &[&[30, 30], &[30, 30]], |_, v| {
+            v[0].tensor_multiply(v[1], &[1], &[0])
+        }),
+        ("matmul30x30", &[&[30, 30], &[30, 30]], |_, v| {
+            v[0].matmul(v[1])
+        }),
+        ("cumsum10000", &[&[10_000]], |_, v| v[0].cumsum(0)),
+        ("product10000", &[&[10_000]], |_, v| v[0].product()),
+        ("cumprod10000", &[&[10_000]], |_, v| v[0].cumprod(0)),
+    ];
+    for (name, shapes, build) in cases {
+        let b = GraphBuilder::new();
+        let inputs: Vec<DoubleVar<'_>> = shapes
+            .iter()
+            .map(|&shape| {
+                let n: usize = shape.iter().product();
+                b.constant(
+                    DoubleTensor::new(shape, (0..n).map(|i| 1.0 + 1e-4 * (i % 7) as f64).collect())
+                        .unwrap(),
+                )
+            })
+            .collect();
+        let out = build(&b, &inputs).sum().id();
+        let wrt: Vec<NodeId> = inputs.iter().map(|v| v.id()).collect();
+        let (graph, mut state) = b.build().unwrap();
+        state
+            .lazy_eval(&graph, &[out], &mut KeanuRng::seed_from_u64(1))
+            .unwrap();
+        group.bench_with_input(BenchmarkId::new("reverse", name), &(), |bench, _| {
+            bench.iter(|| {
+                black_box(keanu::graph::reverse_partials(&graph, &state, out, &wrt).unwrap())
+            })
+        });
+    }
+    group.finish();
+}
+
 fn config() -> Criterion {
     Criterion::default()
         .warm_up_time(std::time::Duration::from_secs(1))
@@ -197,5 +239,5 @@ fn config() -> Criterion {
         .sample_size(10)
 }
 
-criterion_group!(name = benches; config = config(); targets = nuts, optimizers, graph_evaluation, golden_models);
+criterion_group!(name = benches; config = config(); targets = nuts, optimizers, graph_evaluation, golden_models, autodiff);
 criterion_main!(benches);

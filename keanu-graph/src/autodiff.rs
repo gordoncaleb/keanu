@@ -444,38 +444,209 @@ fn jacobian_reverse(
         .reshape(&batched(b, in_shape))?)
 }
 
-/// The exact Jacobian [n_out, n_in] of an op with respect to parent `p`, for ops that are affine in each element of
-/// that parent when everything else is fixed (sums, products, scans, tensor contractions). Column j is
-/// op(x with x_j = 1) - op(x with x_j = 0), which is exact and well defined where elements are zero.
-fn affine_jacobian(op: &Op, parents: &[&Value], p: usize) -> Result<DoubleTensor> {
-    let x = f64v(parents[p])?;
-    let n_in = x.len();
-    let mut columns = Vec::with_capacity(n_in);
-    for j in 0..n_in {
-        let mut one = x.as_slice().to_vec();
-        let mut zero = one.clone();
-        one[j] = 1.0;
-        zero[j] = 0.0;
-        let eval_with = |data: Vec<f64>| -> Result<DoubleTensor> {
-            let replaced = Value::F64(DoubleTensor::new(x.shape(), data)?);
-            let inputs: Vec<&Value> = parents
-                .iter()
-                .enumerate()
-                .map(|(i, v)| if i == p { &replaced } else { *v })
-                .collect();
-            Ok(f64v(&eval(op, &inputs)?)?.clone())
-        };
-        let column = eval_with(one)?.sub(&eval_with(zero)?)?;
-        columns.push(column.into_vec());
+// ---------------------------------------------------------------------------------------------------------------
+// products, scans and contractions: closed forms that never divide by an element (so are exact where elements are
+// zero) and never build a dense Jacobian
+
+/// Resolves a possibly negative axis of a tensor of the given rank.
+fn resolve_axis(axis: isize, rank: usize) -> Result<usize> {
+    let a = if axis < 0 { axis + rank as isize } else { axis };
+    if a < 0 || a as usize >= rank {
+        return Err(GraphError::InvalidValue(format!(
+            "axis {axis} out of range for rank {rank}"
+        )));
     }
-    let n_out = columns.first().map_or(0, Vec::len);
-    let mut data = vec![0.0; n_out * n_in];
-    for (j, column) in columns.iter().enumerate() {
-        for (i, &v) in column.iter().enumerate() {
-            data[i * n_in + j] = v;
+    Ok(a as usize)
+}
+
+/// The lanes of a tensor of `shape` along `axis`: (number of lanes before the axis, lane length, stride). Lane
+/// `(o, i)` holds the elements at `(o * n + k) * stride + i` for `k` in `0..n`.
+fn lanes(shape: &[usize], axis: usize) -> (usize, usize, usize) {
+    (
+        shape[..axis].iter().product(),
+        shape[axis],
+        shape[axis + 1..].iter().product(),
+    )
+}
+
+fn batched_tensor(b: usize, shape: &[usize], data: Vec<f64>) -> Result<DoubleTensor> {
+    let full: SmallVec<[usize; 6]> = std::iter::once(b).chain(shape.iter().copied()).collect();
+    Ok(DoubleTensor::new(&full, data)?)
+}
+
+/// Reverse mode of a cumulative sum along non-batch `axis` of a batched cotangent [B, shape...]: the reverse
+/// cumulative sum, x̄_i = Σ_{k ≥ i} ȳ_k.
+fn reverse_cumsum(g: &DoubleTensor, axis: usize) -> Result<DoubleTensor> {
+    let (outer, n, stride) = lanes(g.shape(), axis + 1);
+    let mut data = g.as_slice().to_vec();
+    for o in 0..outer {
+        for i in 0..stride {
+            let base = o * n * stride + i;
+            for k in (0..n.saturating_sub(1)).rev() {
+                data[base + k * stride] += data[base + (k + 1) * stride];
+            }
         }
     }
-    Ok(DoubleTensor::new(&[n_out, n_in], data)?)
+    Ok(DoubleTensor::new(g.shape(), data)?)
+}
+
+/// Forward mode of y = cumprod(x) along `axis` for a batched tangent [B, shape...], from the recurrence
+/// y_k = y_{k-1} x_k: ẏ_k = ẏ_{k-1} x_k + y_{k-1} ẋ_k (with y_{-1} = 1, ẏ_{-1} = 0).
+fn cumprod_forward(
+    t: &DoubleTensor,
+    x: &DoubleTensor,
+    y: &DoubleTensor,
+    axis: usize,
+) -> Result<DoubleTensor> {
+    let (outer, n, stride) = lanes(x.shape(), axis);
+    let b = t.shape()[0];
+    let (xs, ys, ts) = (x.as_slice(), y.as_slice(), t.as_slice());
+    let mut data = vec![0.0; ts.len()];
+    for ob in 0..b * outer {
+        let xo = (ob % outer) * n * stride;
+        let to = ob * n * stride;
+        for i in 0..stride {
+            let (mut dy, mut prev) = (0.0, 1.0);
+            for k in 0..n {
+                let (xi, ti) = (xo + k * stride + i, to + k * stride + i);
+                dy = dy * xs[xi] + prev * ts[ti];
+                data[ti] = dy;
+                prev = ys[xi];
+            }
+        }
+    }
+    batched_tensor(b, x.shape(), data)
+}
+
+/// Reverse mode of y = cumprod(x) along `axis` for a batched cotangent [B, shape...]:
+/// x̄_i = Σ_{k ≥ i} ȳ_k Π_{j ≤ k, j ≠ i} x_j = y_{i-1} a_i, where a_i = ȳ_i + x_{i+1} a_{i+1} is a reverse scan.
+fn cumprod_reverse(
+    g: &DoubleTensor,
+    x: &DoubleTensor,
+    y: &DoubleTensor,
+    axis: usize,
+) -> Result<DoubleTensor> {
+    let (outer, n, stride) = lanes(x.shape(), axis);
+    let b = g.shape()[0];
+    let (xs, ys, gs) = (x.as_slice(), y.as_slice(), g.as_slice());
+    let mut data = vec![0.0; gs.len()];
+    for ob in 0..b * outer {
+        let xo = (ob % outer) * n * stride;
+        let go = ob * n * stride;
+        for i in 0..stride {
+            let mut a = 0.0;
+            for k in (0..n).rev() {
+                let (xi, gi) = (xo + k * stride + i, go + k * stride + i);
+                if k + 1 < n {
+                    a *= xs[xi + stride];
+                }
+                a += gs[gi];
+                data[gi] = if k == 0 { a } else { ys[xi - stride] * a };
+            }
+        }
+    }
+    batched_tensor(b, x.shape(), data)
+}
+
+/// The distinct axes a product reduces, sorted.
+fn product_axes(axes: &Option<Vec<isize>>, x: &DoubleTensor) -> Result<Vec<usize>> {
+    let (mut axes, _) = reduced_axes(axes, x.rank(), x.shape())?;
+    axes.sort_unstable();
+    axes.dedup();
+    Ok(axes)
+}
+
+/// For a product over `axes` (distinct and in range) of x: each element's product of the other elements of its
+/// group, from exclusive prefix and suffix products, so exact where elements are zero.
+fn product_of_others(x: &DoubleTensor, axes: &[usize]) -> Result<DoubleTensor> {
+    let rank = x.rank();
+    let permutation: Vec<usize> = (0..rank)
+        .filter(|a| !axes.contains(a))
+        .chain(axes.iter().copied())
+        .collect();
+    let group: usize = axes.iter().map(|&a| x.shape()[a]).product();
+    let permuted = x.permute(&permutation)?;
+    let values = permuted.as_slice();
+    let mut others = vec![1.0; values.len()];
+    if group > 0 {
+        for (v, o) in values.chunks(group).zip(others.chunks_mut(group)) {
+            let mut running = 1.0;
+            for (o, &v) in o.iter_mut().zip(v) {
+                *o = running;
+                running *= v;
+            }
+            running = 1.0;
+            for (o, &v) in o.iter_mut().zip(v).rev() {
+                *o *= running;
+                running *= v;
+            }
+        }
+    }
+    let mut inverse = vec![0; rank];
+    for (i, &p) in permutation.iter().enumerate() {
+        inverse[p] = i;
+    }
+    Ok(DoubleTensor::new(permuted.shape(), others)?.permute(&inverse)?)
+}
+
+/// A tensor_multiply's contracted axes of each operand, resolved, and each operand's kept (uncontracted) axes.
+struct Contraction {
+    left: Vec<usize>,
+    right: Vec<usize>,
+    kept_left: Vec<usize>,
+    kept_right: Vec<usize>,
+}
+
+impl Contraction {
+    fn new(
+        left_axes: &[isize],
+        right_axes: &[isize],
+        l_rank: usize,
+        r_rank: usize,
+    ) -> Result<Self> {
+        let resolve = |axes: &[isize], rank: usize| -> Result<Vec<usize>> {
+            axes.iter().map(|&a| resolve_axis(a, rank)).collect()
+        };
+        let left = resolve(left_axes, l_rank)?;
+        let right = resolve(right_axes, r_rank)?;
+        let kept_left = (0..l_rank).filter(|d| !left.contains(d)).collect();
+        let kept_right = (0..r_rank).filter(|d| !right.contains(d)).collect();
+        Ok(Self {
+            left,
+            right,
+            kept_left,
+            kept_right,
+        })
+    }
+
+    /// The permutation taking a cotangent contracted with the other operand, laid out
+    /// [B, kept..., the other's contracted axes in increasing order], to [B, operand...]; `contracted[k]` of this
+    /// operand pairs with `other[k]` of the other.
+    fn to_operand(kept: &[usize], contracted: &[usize], other: &[usize]) -> Vec<usize> {
+        let mut sorted_other = other.to_vec();
+        sorted_other.sort_unstable();
+        let rank = kept.len() + contracted.len();
+        let mut permutation = vec![0; rank + 1];
+        for (d, slot) in permutation.iter_mut().enumerate().skip(1) {
+            let d = d - 1;
+            *slot = 1 + match kept.iter().position(|&k| k == d) {
+                Some(p) => p,
+                None => {
+                    let k = contracted.iter().position(|&c| c == d).unwrap_or(0);
+                    kept.len()
+                        + sorted_other
+                            .iter()
+                            .position(|&o| o == other[k])
+                            .unwrap_or(0)
+                }
+            };
+        }
+        permutation
+    }
+}
+
+fn signed(axes: &[usize], offset: usize) -> Vec<isize> {
+    axes.iter().map(|&a| (a + offset) as isize).collect()
 }
 
 /// For ops whose every output element is a copy of one input element or zero (reshape, slice, concat, ...): for each
@@ -791,16 +962,10 @@ fn scalar_vjp(
 // ---------------------------------------------------------------------------------------------------------------
 // Jacobians of reductions
 
-fn reduce_jacobian(
-    kind: ReduceOp,
-    axes: &Option<Vec<isize>>,
-    op: &Op,
-    parents: &[&Value],
-) -> Result<Option<DoubleTensor>> {
-    let x = f64v(parents[0])?;
+/// The Jacobian [1, n] of a reduction over every element (Max, Min and StdDev only reduce over every element).
+fn reduce_jacobian(kind: ReduceOp, x: &DoubleTensor) -> Result<Option<DoubleTensor>> {
     let n = x.len();
     Ok(match kind {
-        ReduceOp::Product => Some(affine_jacobian(op, parents, 0)?),
         ReduceOp::Max | ReduceOp::Min => {
             // gradient to the selected element, split equally between ties
             let best = if kind == ReduceOp::Max {
@@ -819,10 +984,7 @@ fn reduce_jacobian(
             let d = x.map(|v| (v - mean) / ((n as f64 - 1.0) * s));
             Some(d.reshape(&[1, n as isize])?)
         }
-        ReduceOp::Sum | ReduceOp::Mean => {
-            let _ = axes;
-            None
-        }
+        ReduceOp::Sum | ReduceOp::Mean | ReduceOp::Product => None,
     })
 }
 
@@ -927,8 +1089,20 @@ fn jvp(
                         summed
                     })
                 }
+                ReduceOp::Product => {
+                    // ẏ = Σ over each group of ẋ_i × (the product of the group's other elements)
+                    let x = f64v(parents[0])?;
+                    let axes = product_axes(axes, x)?;
+                    let products = t0.mul(&product_of_others(x, &axes)?)?;
+                    let summed = if axes.is_empty() {
+                        products
+                    } else {
+                        products.sum_axes(&signed(&axes, 1))?
+                    };
+                    Some(summed.reshape(&batched(b, &out_shape))?)
+                }
                 _ => {
-                    let j = reduce_jacobian(*kind, axes, op, parents)?.unwrap();
+                    let j = reduce_jacobian(*kind, f64v(parents[0])?)?.unwrap();
                     Some(jacobian_forward(t0, &j, &out_shape)?)
                 }
             }
@@ -941,13 +1115,14 @@ fn jvp(
                 &out_shape,
             )?)
         }
-        Op::Scan { .. } => {
+        Op::Scan { kind, axis } => {
             let Some(t0) = t[0] else { return Ok(None) };
-            Some(jacobian_forward(
-                t0,
-                &affine_jacobian(op, parents, 0)?,
-                &out_shape,
-            )?)
+            let x = f64v(parents[0])?;
+            let axis = resolve_axis(*axis, x.rank())?;
+            match kind {
+                ScanOp::CumSum => Some(t0.cumsum(axis as isize + 1)?),
+                ScanOp::CumProd => Some(cumprod_forward(t0, x, y, axis)?),
+            }
         }
         Op::Reshape(_)
         | Op::Permute(_)
@@ -962,15 +1137,30 @@ fn jvp(
         | Op::Triu(_)
         | Op::FillTriangular { .. }
         | Op::TrianglePart { .. } => gather_forward(&index_map(op, parents)?, t, b, &out_shape)?,
-        Op::TensorMultiply { .. } => {
-            let mut total = None;
-            for (p, tp) in t.iter().enumerate() {
-                let Some(tp) = tp else { continue };
-                let contribution =
-                    jacobian_forward(tp, &affine_jacobian(op, parents, p)?, &out_shape)?;
-                total = add_opt(total, Some(contribution))?;
-            }
-            total
+        Op::TensorMultiply {
+            left_axes,
+            right_axes,
+        } => {
+            // d(L·R) = dL·R + L·dR, contracting the same axes (shifted past the batch axis of the tangent)
+            let (l, r) = (f64v(parents[0])?, f64v(parents[1])?);
+            let c = Contraction::new(left_axes, right_axes, l.rank(), r.rank())?;
+            let from_left = t[0]
+                .map(|tl| tl.tensor_multiply(r, &signed(&c.left, 1), &signed(&c.right, 0)))
+                .transpose()?;
+            let from_right = t[1]
+                .map(|tr| -> Result<DoubleTensor> {
+                    // [kept left..., B, kept right...] -> [B, kept left..., kept right...]
+                    let product =
+                        l.tensor_multiply(tr, &signed(&c.left, 0), &signed(&c.right, 1))?;
+                    let kl = c.kept_left.len();
+                    let permutation: Vec<usize> = std::iter::once(kl)
+                        .chain(0..kl)
+                        .chain(kl + 1..product.rank())
+                        .collect();
+                    Ok(product.permute(&permutation)?)
+                })
+                .transpose()?;
+            add_opt(from_left, from_right)?
         }
         Op::MatMul {
             transpose_left,
@@ -1174,8 +1364,20 @@ fn vjp(
                         expanded
                     })]
                 }
+                ReduceOp::Product => {
+                    // x̄_i = ȳ of i's group × (the product of the group's other elements)
+                    let axes = product_axes(axes, x)?;
+                    let kept: Vec<usize> = x
+                        .shape()
+                        .iter()
+                        .enumerate()
+                        .map(|(i, &d)| if axes.contains(&i) { 1 } else { d })
+                        .collect();
+                    let others = product_of_others(x, &axes)?;
+                    vec![Some(g.reshape(&batched(b, &kept))?.mul(&others)?)]
+                }
                 _ => {
-                    let j = reduce_jacobian(*kind, axes, op, parents)?.unwrap();
+                    let j = reduce_jacobian(*kind, x)?.unwrap();
                     vec![Some(jacobian_reverse(g, &j, x.shape())?)]
                 }
             }
@@ -1188,16 +1390,13 @@ fn vjp(
                 x.shape(),
             )?)]
         }
-        Op::Scan {
-            kind: ScanOp::CumSum | ScanOp::CumProd,
-            ..
-        } => {
+        Op::Scan { kind, axis } => {
             let x = f64v(parents[0])?;
-            vec![Some(jacobian_reverse(
-                g,
-                &affine_jacobian(op, parents, 0)?,
-                x.shape(),
-            )?)]
+            let axis = resolve_axis(*axis, x.rank())?;
+            vec![Some(match kind {
+                ScanOp::CumSum => reverse_cumsum(g, axis)?,
+                ScanOp::CumProd => cumprod_reverse(g, x, y, axis)?,
+            })]
         }
         Op::Reshape(_)
         | Op::Permute(_)
@@ -1212,15 +1411,25 @@ fn vjp(
         | Op::Triu(_)
         | Op::FillTriangular { .. }
         | Op::TrianglePart { .. } => gather_reverse(&index_map(op, parents)?, g, parents, b)?,
-        Op::TensorMultiply { .. } => (0..parents.len())
-            .map(|p| {
-                Ok(Some(jacobian_reverse(
-                    g,
-                    &affine_jacobian(op, parents, p)?,
-                    parents[p].shape(),
-                )?))
-            })
-            .collect::<Result<_>>()?,
+        Op::TensorMultiply {
+            left_axes,
+            right_axes,
+        } => {
+            // G [B, kept left..., kept right...]: L̄ contracts G's kept right axes with R's, R̄ its kept left
+            // axes with L's; each is then permuted back to its operand's layout
+            let (l, r) = (f64v(parents[0])?, f64v(parents[1])?);
+            let c = Contraction::new(left_axes, right_axes, l.rank(), r.rank())?;
+            let (kl, kr) = (c.kept_left.len(), c.kept_right.len());
+            let g_kept_left: Vec<usize> = (1..1 + kl).collect();
+            let g_kept_right: Vec<usize> = (1 + kl..1 + kl + kr).collect();
+            let dl = g
+                .tensor_multiply(r, &signed(&g_kept_right, 0), &signed(&c.kept_right, 0))?
+                .permute(&Contraction::to_operand(&c.kept_left, &c.left, &c.right))?;
+            let dr = g
+                .tensor_multiply(l, &signed(&g_kept_left, 0), &signed(&c.kept_left, 0))?
+                .permute(&Contraction::to_operand(&c.kept_right, &c.right, &c.left))?;
+            vec![Some(dl), Some(dr)]
+        }
         Op::MatMul {
             transpose_left,
             transpose_right,

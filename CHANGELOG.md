@@ -34,6 +34,11 @@ vector was edited by hand and the entry says so.
 - keanu-graph: `add_node` checks each op's number of parents and returns an error instead of panicking (e.g.
   `Op::Proxy` or `Op::Not` with no parents) or silently accepting extra parents.
 - keanu-graph: building a graph's child lists is linear in fan-out (it was quadratic).
+- keanu-graph: auto diff of `product`/`product_axes`, `cumsum`, `cumprod` and `tensor_multiply` uses closed-form
+  forward and reverse rules (exclusive products, reverse scans, contraction with the other operand) instead of a
+  dense Jacobian built by evaluating the op twice per input element; still exact where elements are zero. Reverse
+  gradients of a 2000-element cumsum, product or cumprod drop from 12-40 ms to ~20-30 µs, and of a 30×30
+  `tensor_multiply` from 31 ms to 90 µs.
 - `Multinomial::log_prob` validates x: a count vector with a negative count or counts not summing to n has log probability -infinity, and an x whose last dimension is not the number of categories is an error.
 - `Logistic` log probability and gradients use a stable softplus and sigmoid, so they no longer overflow to -infinity / NaN far in the tails.
 - `MultivariateGaussian::d_log_prob` reduces each gradient to its parameter's own shape, summing size-1 broadcast dimensions as well as extra leading ones.
