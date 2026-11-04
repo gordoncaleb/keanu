@@ -25,7 +25,7 @@
 //! The main BOBYQA iteration (PRIMA's `bobyqb.f90`).
 
 use super::common::{
-    ExitStatus, REALMAX, calden, calvlag, checkexit, evaluate, hess_mul, quadinc, redrat, redrho,
+    Calfun, ExitStatus, Lagrange, REALMAX, checkexit, evaluate, hess_mul, quadinc, redrat, redrho,
     shiftbase, xinbd,
 };
 use super::geometry::{geostep, setdrop_tr};
@@ -42,7 +42,7 @@ fn model_finite(gopt: &[f64], hq: &Mat, pq: &[f64]) -> bool {
 
 /// PRIMA's `bobyqb`, with preprocessed arguments.
 pub(crate) fn bobyqb(
-    calfun: &mut dyn FnMut(&[f64]) -> f64,
+    calfun: &mut Calfun<'_>,
     opts: &Options,
     xl: &[f64],
     xu: &[f64],
@@ -133,7 +133,7 @@ pub(crate) fn bobyqb(
             f = evaluate(calfun, &x);
             nf += 1;
             rescued = false;
-            if let Some(exit) = checkexit(maxfun, nf, f, ftarget, &x) {
+            if let Some(exit) = checkexit(maxfun, nf, f, ftarget, &x, calfun.terminate) {
                 info = exit;
                 break 'iterations;
             }
@@ -147,14 +147,17 @@ pub(crate) fn bobyqb(
             }
             let mut ximproved = f < fval[kopt];
 
-            let vlag = calvlag(kopt, &bmat, &d, &xpt, &zmat);
-            let den = calden(kopt, &bmat, &d, &xpt, &zmat);
+            // the Lagrange values and denominators for D, shared by the rescue test, SETDROP_TR and UPDATEH (and
+            // recomputed if RESCUE changes the interpolation set)
+            let mut lagrange = Lagrange::new(kopt, &bmat, &d, &xpt, &zmat);
+            let mut den = lagrange.den(&zmat);
+            let vlag = &lagrange.vlag;
             let vmax = vlag[..npt]
                 .iter()
                 .map(|v| v * v)
                 .fold(f64::NEG_INFINITY, f64::max);
             let to_rescue =
-                ximproved && !(sum_abs(&vlag).is_finite() && den.iter().any(|&v| v > vmax));
+                ximproved && !(sum_abs(vlag).is_finite() && den.iter().any(|&v| v > vmax));
             if to_rescue {
                 if rescued {
                     info = ExitStatus::DamagingRounding;
@@ -194,13 +197,15 @@ pub(crate) fn bobyqb(
                     .collect();
                 moderr = f - fval[kopt] - quadinc(&d, &xpt, &gopt, &pq, &hq);
                 ximproved = f < fval[kopt];
+                lagrange = Lagrange::new(kopt, &bmat, &d, &xpt, &zmat);
+                den = lagrange.den(&zmat);
             }
 
-            knew_tr = setdrop_tr(kopt, ximproved, &bmat, &d, rho, &xpt, &zmat);
+            knew_tr = setdrop_tr(kopt, ximproved, &den, &d, rho, &xpt);
             if let Some(knew) = knew_tr {
                 let xdrop = xpt.col(knew).to_vec();
                 let xosav = xpt.col(kopt).to_vec();
-                updateh(knew, kopt, &d, &xpt, &mut bmat, &mut zmat);
+                updateh(knew, lagrange, &mut bmat, &mut zmat);
                 let xnew: Vector = (0..n)
                     .map(|i| fmax(sl[i], fmin(su[i], xosav[i] + d[i])))
                     .collect();
@@ -242,9 +247,10 @@ pub(crate) fn bobyqb(
             let dmax = distsq.iter().copied().fold(f64::NEG_INFINITY, f64::max);
             let delbar = fmax(fmin(0.1 * dmax.sqrt(), delta), rho);
             d = geostep(knew_geo, kopt, &bmat, delbar, &sl, &su, &xpt, &zmat);
-            let vlag = calvlag(kopt, &bmat, &d, &xpt, &zmat);
-            let den = calden(kopt, &bmat, &d, &xpt, &zmat);
-            let to_rescue = !(sum_abs(&vlag).is_finite()
+            let lagrange = Lagrange::new(kopt, &bmat, &d, &xpt, &zmat);
+            let den = lagrange.den(&zmat);
+            let vlag = &lagrange.vlag;
+            let to_rescue = !(sum_abs(vlag).is_finite()
                 && den[knew_geo] > 0.5 * vlag[knew_geo] * vlag[knew_geo]);
             if to_rescue {
                 if rescued {
@@ -286,7 +292,7 @@ pub(crate) fn bobyqb(
                 f = evaluate(calfun, &x);
                 nf += 1;
                 rescued = false;
-                if let Some(exit) = checkexit(maxfun, nf, f, ftarget, &x) {
+                if let Some(exit) = checkexit(maxfun, nf, f, ftarget, &x, calfun.terminate) {
                     info = exit;
                     break 'iterations;
                 }
@@ -297,7 +303,7 @@ pub(crate) fn bobyqb(
                 let ximproved = f < fval[kopt];
                 let xdrop = xpt.col(knew_geo).to_vec();
                 let xosav = xpt.col(kopt).to_vec();
-                updateh(knew_geo, kopt, &d, &xpt, &mut bmat, &mut zmat);
+                updateh(knew_geo, lagrange, &mut bmat, &mut zmat);
                 let xnew: Vector = (0..n)
                     .map(|i| fmax(sl[i], fmin(su[i], xosav[i] + d[i])))
                     .collect();

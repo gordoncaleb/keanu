@@ -24,7 +24,7 @@
 
 //! Recovery from damaging rounding errors by rebuilding the interpolation set around XOPT (PRIMA's `rescue.f90`).
 
-use super::common::{ExitStatus, checkexit, evaluate, hess_mul, setij, xinbd};
+use super::common::{Calfun, ExitStatus, checkexit, evaluate, hess_mul, setij, xinbd};
 use super::linalg::{Mat, dot, fmax, fmin, maxloc, sum_abs, sum_sq};
 use super::update::{r1update, r2update, rotate_zmat_row, update_bmat};
 
@@ -55,7 +55,7 @@ fn ptsid_coords(ptsid: f64, n: usize) -> (Option<usize>, Option<usize>) {
 /// PRIMA's `rescue`. Returns an exit status if the solver must stop.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn rescue(
-    calfun: &mut dyn FnMut(&[f64]) -> f64,
+    calfun: &mut Calfun<'_>,
     maxfun: usize,
     delta: f64,
     ftarget: f64,
@@ -289,7 +289,7 @@ pub(crate) fn rescue(
             if f < st.fval[*st.kopt] {
                 *st.kopt = kpt;
             }
-            if let Some(exit) = checkexit(maxfun, *st.nf, f, ftarget, &x) {
+            if let Some(exit) = checkexit(maxfun, *st.nf, f, ftarget, &x, calfun.terminate) {
                 info = Some(exit);
                 break;
             }

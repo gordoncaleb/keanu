@@ -44,3 +44,10 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
   BOBYQA and the derivation in PRIMA's own comments. The ported revision uses WMV(1:N).
 - Temporary vectors in the linear algebra helpers and the main loops are stored inline (on the stack) for small
   problems instead of being heap allocated. This is a performance change only; the arithmetic is unchanged.
+- The Lagrange function values (`calvlag`) and BETA (`calbeta`) for a step are computed once and shared by the
+  rescue test, `setdrop_tr` and `updateh`, which PRIMA computes separately from the same inputs; `trsbox` uses the
+  model without copying it unless it has to be scaled; `geostep` computes the line step's denominators only when
+  it compares them with a Cauchy step. The arithmetic is unchanged, so results are bit-identical.
+- PRIMA's callback termination is offered through the objective itself: `minimize_with_termination` takes an
+  objective returning `ControlFlow`, and `Break` ends the solve after that evaluation with
+  `ExitStatus::CallbackTerminate`.

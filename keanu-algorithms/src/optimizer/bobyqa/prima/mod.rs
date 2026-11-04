@@ -50,7 +50,8 @@ mod trustregion;
 mod update;
 
 pub use common::ExitStatus;
-use common::{BOUNDMAX, EPS, MAXFUN_DIM_DFT, RHOBEG_DFT, RHOEND_DFT, moderatex};
+use common::{BOUNDMAX, Calfun, EPS, MAXFUN_DIM_DFT, RHOBEG_DFT, RHOEND_DFT, moderatex};
+use std::ops::ControlFlow;
 
 /// Settings for [`minimize`]. `None` means PRIMA's default.
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -147,6 +148,19 @@ pub(crate) struct Options {
 /// for none). NaN values of the objective are treated as a very large value.
 pub fn minimize(
     mut calfun: impl FnMut(&[f64]) -> f64,
+    x0: &[f64],
+    xl: &[f64],
+    xu: &[f64],
+    settings: &Settings,
+) -> Outcome {
+    minimize_with_termination(|x| ControlFlow::Continue(calfun(x)), x0, xl, xu, settings)
+}
+
+/// Like [`minimize`], but the objective can stop the solver: returning `ControlFlow::Break(f)` records the value
+/// `f` and ends the solve with [`ExitStatus::CallbackTerminate`] (PRIMA's callback `terminate` flag), returning
+/// the best point evaluated so far. Use it to stop at once when the objective fails.
+pub fn minimize_with_termination(
+    mut calfun: impl FnMut(&[f64]) -> ControlFlow<f64, f64>,
     x0: &[f64],
     xl: &[f64],
     xu: &[f64],
@@ -291,15 +305,16 @@ pub fn minimize(
         gamma1,
         gamma2,
     };
-    bobyqb::bobyqb(&mut calfun, &opts, &xl, &xu, &x)
+    bobyqb::bobyqb(&mut Calfun::new(&mut calfun), &opts, &xl, &xu, &x)
 }
 
 #[cfg(test)]
 mod tests {
-    use super::common::{calvlag, quadinc};
+    use super::common::{Calfun, calvlag, quadinc};
     use super::initialize::{inith, initq, initxf};
     use super::linalg::Mat;
     use super::rescue::{RescueState, rescue};
+    use std::ops::ControlFlow;
 
     /// Lagrange functions are 1 at their own point and 0 at the others: calvlag at XPT(:, k) - XOPT is e_k.
     fn assert_lagrange_property(kopt: usize, xpt: &Mat, bmat: &Mat, zmat: &Mat) {
@@ -342,11 +357,14 @@ mod tests {
     #[test]
     fn initialisation_and_rescue_keep_the_interpolation_conditions() {
         // an arbitrary quadratic, so the model is exact on any interpolation set
-        let mut f = |x: &[f64]| {
-            3.0 * x[0] * x[0] + x[0] * x[1] + 2.0 * x[1] * x[1] - x[2]
-                + 0.5 * x[2] * x[2]
-                + x[0] * x[2]
+        let mut quadratic = |x: &[f64]| {
+            ControlFlow::Continue(
+                3.0 * x[0] * x[0] + x[0] * x[1] + 2.0 * x[1] * x[1] - x[2]
+                    + 0.5 * x[2] * x[2]
+                    + x[0] * x[2],
+            )
         };
+        let mut f = Calfun::new(&mut quadratic);
         let (n, npt) = (3usize, 8usize); // npt > 2n + 1 exercises the cross terms
         let (xl, xu) = (vec![-5.0; n], vec![5.0; n]);
         let init = initxf(

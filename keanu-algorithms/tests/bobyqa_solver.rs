@@ -1,6 +1,9 @@
 //! Tests of the BOBYQA solver (the PRIMA translation) on standard problems with known solutions.
 
-use keanu_algorithms::optimizer::bobyqa::prima::{ExitStatus, Settings, minimize};
+use keanu_algorithms::optimizer::bobyqa::prima::{
+    ExitStatus, Settings, minimize, minimize_with_termination,
+};
+use std::ops::ControlFlow;
 
 fn rosenbrock(x: &[f64]) -> f64 {
     // PRIMA's chained Rosenbrock (`chrosen` in its tests)
@@ -265,6 +268,41 @@ fn exit_conditions() {
     );
     assert_eq!(out.status, ExitStatus::NoSpaceBetweenBounds);
     assert_eq!(out.evaluations, 0);
+}
+
+/// The objective can stop the solver (PRIMA's callback termination): it stops straight after that evaluation and
+/// returns the best point evaluated so far, rather than iterating on to the final trust region radius.
+#[test]
+fn the_objective_can_stop_the_solver() {
+    for stop_at in [1, 3, 8, 20] {
+        let mut calls = 0;
+        let out = minimize_with_termination(
+            |x| {
+                calls += 1;
+                let f = rosenbrock(x);
+                if calls == stop_at {
+                    ControlFlow::Break(f64::NAN)
+                } else {
+                    ControlFlow::Continue(f)
+                }
+            },
+            &[-1.0, 1.0, -1.0],
+            &[],
+            &[],
+            &Settings::default(),
+        );
+        assert_eq!(
+            out.status,
+            ExitStatus::CallbackTerminate,
+            "stop at {stop_at}"
+        );
+        assert_eq!(calls, stop_at);
+        assert_eq!(out.evaluations, stop_at);
+        if stop_at > 1 {
+            // the failed evaluation's NaN is never the best point
+            assert!(out.f.is_finite() && out.f == rosenbrock(&out.x));
+        }
+    }
 }
 
 #[test]

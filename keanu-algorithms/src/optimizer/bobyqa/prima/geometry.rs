@@ -41,14 +41,14 @@ fn distsq_from(xpt: &Mat, centre: &[f64]) -> Vec<f64> {
 
 /// PRIMA's `setdrop_tr`: the interpolation point to replace after a trust region step, or None.
 #[allow(clippy::too_many_arguments)]
+/// `den` holds the denominators of the updating formula for D from XOPT (PRIMA's `calden`).
 pub(crate) fn setdrop_tr(
     kopt: usize,
     ximproved: bool,
-    bmat: &Mat,
+    den: &[f64],
     d: &[f64],
     rho: f64,
     xpt: &Mat,
-    zmat: &Mat,
 ) -> Option<usize> {
     let n = xpt.rows;
     let distsq = if ximproved {
@@ -57,10 +57,9 @@ pub(crate) fn setdrop_tr(
     } else {
         distsq_from(xpt, xpt.col(kopt))
     };
-    let den = calden(kopt, bmat, d, xpt, zmat);
     let mut score: Vec<f64> = distsq
         .iter()
-        .zip(&den)
+        .zip(den)
         .map(|(&ds, &dn)| fmax(1.0, ds / (rho * rho)).powi(4) * dn)
         .collect();
     if !ximproved {
@@ -219,10 +218,10 @@ pub(crate) fn geostep(
         xline[i] = su[i];
     }
     let mut d: Vec<f64> = (0..n).map(|i| xline[i] - xopt[i]).collect();
-    let den_line = calden(kopt, bmat, &d, xpt, zmat);
     if delbar > 1.0e-2 {
         return d;
     }
+    let den_line = calden(kopt, bmat, &d, xpt, zmat);
 
     // try a Cauchy step (both uphill and downhill)
     let bigstp = delbar + delbar;

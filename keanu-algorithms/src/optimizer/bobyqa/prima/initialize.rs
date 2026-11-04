@@ -25,7 +25,7 @@
 //! Initialisation of the interpolation set, the quadratic model and the inverse of the KKT matrix
 //! (PRIMA's `initialize.f90` for BOBYQA).
 
-use super::common::{ExitStatus, REALMAX, checkexit, evaluate, setij, xinbd};
+use super::common::{Calfun, ExitStatus, REALMAX, checkexit, evaluate, setij, xinbd};
 use super::linalg::{Mat, fmax, fmin};
 
 /// The interpolation set and the function values on it.
@@ -46,7 +46,7 @@ pub(crate) struct InitialPoints {
 /// PRIMA's `initxf`: sets up and evaluates the initial interpolation points.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn initxf(
-    calfun: &mut dyn FnMut(&[f64]) -> f64,
+    calfun: &mut Calfun<'_>,
     maxfun: usize,
     npt: usize,
     ftarget: f64,
@@ -103,7 +103,7 @@ pub(crate) fn initxf(
         let f = evaluate(calfun, &x);
         evaluated[k] = true;
         fval[k] = f;
-        if let Some(exit) = checkexit(maxfun, k + 1, f, ftarget, &x) {
+        if let Some(exit) = checkexit(maxfun, k + 1, f, ftarget, &x, calfun.terminate) {
             info = Some(exit);
             break;
         }
@@ -130,7 +130,7 @@ pub(crate) fn initxf(
             let f = evaluate(calfun, &x);
             evaluated[k] = true;
             fval[k] = f;
-            if let Some(exit) = checkexit(maxfun, k + 1, f, ftarget, &x) {
+            if let Some(exit) = checkexit(maxfun, k + 1, f, ftarget, &x, calfun.terminate) {
                 info = Some(exit);
                 break;
             }

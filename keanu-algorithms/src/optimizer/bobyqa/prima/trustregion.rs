@@ -27,6 +27,7 @@
 
 use super::common::{EPS, REALMAX, REALMIN, hess_mul, interval_max};
 use super::linalg::{Mat, Vector, fmax, fmin, minloc, sign};
+use std::borrow::Cow;
 
 fn free_dot(xbdi: &[i32], a: &[f64], b: &[f64]) -> f64 {
     xbdi.iter()
@@ -65,14 +66,21 @@ pub(crate) fn trsbox(
             }
         }
         (
-            gopt_in.iter().map(|g| g * modscal).collect::<Vec<_>>(),
-            pq_in.iter().map(|p| p * modscal).collect::<Vec<_>>(),
-            hq,
+            Cow::Owned(gopt_in.iter().map(|g| g * modscal).collect::<Vec<_>>()),
+            Cow::Owned(pq_in.iter().map(|p| p * modscal).collect::<Vec<_>>()),
+            Cow::Owned(hq),
             true,
             modscal,
         )
     } else {
-        (gopt_in.to_vec(), pq_in.to_vec(), hq_in.clone(), false, 1.0)
+        // no scaling needed: use the model as it is, without copying it
+        (
+            Cow::Borrowed(gopt_in),
+            Cow::Borrowed(pq_in),
+            Cow::Borrowed(hq_in),
+            false,
+            1.0,
+        )
     };
 
     let mut xbdi = vec![0i32; n];
@@ -87,7 +95,7 @@ pub(crate) fn trsbox(
     let mut nact = xbdi.iter().filter(|&&x| x != 0).count();
     let mut d = vec![0.0; n];
     let mut crvmin = -REALMAX;
-    let mut gnew = gopt.clone();
+    let mut gnew = gopt.to_vec();
     let mut gredsq = free_sumsq(&xbdi, &gnew);
     let mut delsq = delta * delta;
     let mut qred = 0.0;

@@ -25,7 +25,7 @@
 //! Updating the interpolation set, the inverse of the KKT matrix and the quadratic model
 //! (PRIMA's `update.f90` for BOBYQA).
 
-use super::common::{calbeta, calvlag, hess_mul, planerot, rotate_cols};
+use super::common::{Lagrange, hess_mul, planerot, rotate_cols};
 use super::linalg::{Mat, Vector, dot, fmax, fmin, sum_abs};
 
 /// HQ += ALPHA * X * Xᵀ, computed on the lower triangle and mirrored so HQ stays exactly symmetric
@@ -96,20 +96,13 @@ pub(crate) fn rotate_zmat_row(zmat: &mut Mat, knew: usize) {
     }
 }
 
-/// PRIMA's `updateh`: updates BMAT and ZMAT when XPT(:, KNEW) is replaced by XOPT + D. Returns false (leaving
-/// them unchanged) if the update would be damaged by rounding.
-pub(crate) fn updateh(
-    knew: usize,
-    kopt: usize,
-    d: &[f64],
-    xpt: &Mat,
-    bmat: &mut Mat,
-    zmat: &mut Mat,
-) -> bool {
-    let npt = xpt.cols;
+/// PRIMA's `updateh`: updates BMAT and ZMAT when XPT(:, KNEW) is replaced by XOPT + D, given the Lagrange values
+/// and BETA for D from XOPT computed with the current BMAT and ZMAT. Returns false (leaving them unchanged) if the
+/// update would be damaged by rounding.
+pub(crate) fn updateh(knew: usize, lagrange: Lagrange, bmat: &mut Mat, zmat: &mut Mat) -> bool {
+    let npt = zmat.rows;
     let h = hcol(knew, bmat, zmat);
-    let beta = calbeta(kopt, bmat, d, xpt, zmat);
-    let mut vlag = calvlag(kopt, bmat, d, xpt, zmat);
+    let Lagrange { mut vlag, beta } = lagrange;
     let alpha = h[knew];
     let tau = vlag[knew];
     let denom = alpha * beta + tau * tau;

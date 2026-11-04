@@ -27,6 +27,7 @@
 //! `shiftbase` routines for the quadratic model and the inverse of the KKT matrix).
 
 use super::linalg::{Mat, Vector, dot, fmax, fmin, maxloc, norm, sign, sum_sq};
+use std::ops::ControlFlow;
 
 pub(crate) const EPS: f64 = f64::EPSILON;
 pub(crate) const REALMAX: f64 = f64::MAX;
@@ -61,6 +62,8 @@ pub enum ExitStatus {
     DamagingRounding,
     /// A lower bound is not (sufficiently) below its upper bound.
     NoSpaceBetweenBounds,
+    /// The objective asked the solver to stop (PRIMA's callback termination).
+    CallbackTerminate,
 }
 
 /// PRIMA's `checkexit` for unconstrained problems: None means continue.
@@ -70,6 +73,7 @@ pub(crate) fn checkexit(
     f: f64,
     ftarget: f64,
     x: &[f64],
+    terminate: bool,
 ) -> Option<ExitStatus> {
     let mut info = None;
     if x.iter().any(|v| !v.is_finite()) {
@@ -83,6 +87,9 @@ pub(crate) fn checkexit(
     }
     if nf >= maxfun {
         info = Some(ExitStatus::MaxEvaluationsReached);
+    }
+    if terminate {
+        info = Some(ExitStatus::CallbackTerminate);
     }
     info
 }
@@ -105,13 +112,36 @@ fn moderatef(f: f64) -> f64 {
     f.clamp(-REALMAX, FUNCMAX)
 }
 
+/// The objective as the solver calls it. It returns `Continue(f)`, or `Break(f)` to have the solver stop after
+/// this evaluation (PRIMA's callback `terminate`), which is remembered in `terminate`.
+pub(crate) struct Calfun<'a> {
+    objective: &'a mut dyn FnMut(&[f64]) -> ControlFlow<f64, f64>,
+    pub(crate) terminate: bool,
+}
+
+impl<'a> Calfun<'a> {
+    pub(crate) fn new(objective: &'a mut dyn FnMut(&[f64]) -> ControlFlow<f64, f64>) -> Self {
+        Self {
+            objective,
+            terminate: false,
+        }
+    }
+}
+
 /// Evaluates the objective with PRIMA's safeguards: NaN coordinates give a NaN value without calling the
 /// objective, and the returned value is moderated (NaN becomes FUNCMAX, values are capped at FUNCMAX).
-pub(crate) fn evaluate(calfun: &mut dyn FnMut(&[f64]) -> f64, x: &[f64]) -> f64 {
+pub(crate) fn evaluate(calfun: &mut Calfun<'_>, x: &[f64]) -> f64 {
     if x.iter().any(|v| v.is_nan()) {
         x.iter().sum()
     } else {
-        moderatef(calfun(&moderatex(x)))
+        let f = match (calfun.objective)(&moderatex(x)) {
+            ControlFlow::Continue(f) => f,
+            ControlFlow::Break(f) => {
+                calfun.terminate = true;
+                f
+            }
+        };
+        moderatef(f)
     }
 }
 
@@ -321,36 +351,48 @@ fn vlag_raw(bmat: &Mat, d: &[f64], zmat: &Mat, w: &[f64]) -> Vector {
     vlag
 }
 
-/// The values of the Lagrange functions at XPT(:, KREF) + D (PRIMA's `calvlag`).
-pub(crate) fn calvlag(kref: usize, bmat: &Mat, d: &[f64], xpt: &Mat, zmat: &Mat) -> Vector {
-    let w = wcheck(kref, d, xpt);
-    let mut vlag = vlag_raw(bmat, d, zmat, &w);
-    vlag[kref] += 1.0;
-    vlag
+/// The values of the Lagrange functions at XPT(:, KREF) + D (PRIMA's `calvlag`) together with the BETA of the
+/// denominator of the updating formula (PRIMA's `calbeta`). PRIMA computes the two separately from the same
+/// product H * [WCHECK; D]; computing that product once gives bit-identical values.
+#[derive(Debug, Clone)]
+pub(crate) struct Lagrange {
+    pub(crate) vlag: Vector,
+    pub(crate) beta: f64,
 }
 
-/// The BETA of the denominator of the updating formula (PRIMA's `calbeta`).
-pub(crate) fn calbeta(kref: usize, bmat: &Mat, d: &[f64], xpt: &Mat, zmat: &Mat) -> f64 {
-    let npt = zmat.rows;
-    let w = wcheck(kref, d, xpt);
-    let vlag = vlag_raw(bmat, d, zmat, &w);
-    let xref = xpt.col(kref);
-    let dxref = dot(d, xref);
-    let dsq = dot(d, d);
-    let xrefsq = dot(xref, xref);
-    let dvlag = dot(d, &vlag[npt..]);
-    let wvlag = dot(&w, &vlag[..npt]);
-    dxref * dxref + dsq * (xrefsq + dxref + dxref + 0.5 * dsq) - dvlag - wvlag
+impl Lagrange {
+    pub(crate) fn new(kref: usize, bmat: &Mat, d: &[f64], xpt: &Mat, zmat: &Mat) -> Self {
+        let npt = zmat.rows;
+        let w = wcheck(kref, d, xpt);
+        let mut vlag = vlag_raw(bmat, d, zmat, &w);
+        let xref = xpt.col(kref);
+        let dxref = dot(d, xref);
+        let dsq = dot(d, d);
+        let xrefsq = dot(xref, xref);
+        let dvlag = dot(d, &vlag[npt..]);
+        let wvlag = dot(&w, &vlag[..npt]);
+        let beta = dxref * dxref + dsq * (xrefsq + dxref + dxref + 0.5 * dsq) - dvlag - wvlag;
+        vlag[kref] += 1.0;
+        Self { vlag, beta }
+    }
+
+    /// The denominators of the updating formula for replacing each interpolation point (PRIMA's `calden`).
+    pub(crate) fn den(&self, zmat: &Mat) -> Vec<f64> {
+        (0..zmat.rows)
+            .map(|k| sum_sq(&zmat.row(k)) * self.beta + self.vlag[k] * self.vlag[k])
+            .collect()
+    }
+}
+
+/// The values of the Lagrange functions at XPT(:, KREF) + D (PRIMA's `calvlag`).
+#[cfg(test)]
+pub(crate) fn calvlag(kref: usize, bmat: &Mat, d: &[f64], xpt: &Mat, zmat: &Mat) -> Vector {
+    Lagrange::new(kref, bmat, d, xpt, zmat).vlag
 }
 
 /// The denominators of the updating formula for replacing each interpolation point (PRIMA's `calden`).
 pub(crate) fn calden(kref: usize, bmat: &Mat, d: &[f64], xpt: &Mat, zmat: &Mat) -> Vec<f64> {
-    let npt = zmat.rows;
-    let vlag = calvlag(kref, bmat, d, xpt, zmat);
-    let beta = calbeta(kref, bmat, d, xpt, zmat);
-    (0..npt)
-        .map(|k| sum_sq(&zmat.row(k)) * beta + vlag[k] * vlag[k])
-        .collect()
+    Lagrange::new(kref, bmat, d, xpt, zmat).den(zmat)
 }
 
 /// The 0-based pairs (i, j) of variables used by the interpolation points beyond the first 2n + 1
