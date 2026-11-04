@@ -14,4 +14,5 @@ When a model needs a distribution Keanu doesn't have, implement `CustomDistribut
 {{#include ../../keanu/tests/book.rs:custom}}
 ```
 
-The [custom distribution example](examples.md) uses one as a hierarchical prior.
+The [custom distribution example](examples.md) uses two to sample a hierarchical model in reparameterised
+coordinates; one of them has a parameter, so its gradient includes the gradient with respect to it.

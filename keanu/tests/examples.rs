@@ -78,54 +78,74 @@ fn challenger_disaster_beta_is_small_and_positive() {
     challenger_disaster::run(1, challenger_disaster::DEFAULT_SAMPLES).unwrap();
 }
 
-/// The posterior means of the true rates, computed independently by integrating over a dense grid of (a, b)
-/// (see the test's comment): E[θⱼ | y] = ∫ (a + yⱼ) / (a + b + n) p(a, b | y) da db.
+/// The posterior means of the true rates, computed independently by integrating over a dense grid of
+/// φ = (logit(a / (a + b)), ln(a + b)): E[θⱼ | y] = ∫ (a + yⱼ) / (a + b + n) p(φ | y) dφ, with
+/// p(φ | y) ∝ a b (a + b)^-5/2 ∏ⱼ B(a + yⱼ, b + n - yⱼ) / B(a, b). They agree to 10⁻⁵ whether or not the hyperprior
+/// is truncated at ln(a + b) = 20, as the example's is.
 const EXACT_TRUE_RATE_MEANS: [f64; 10] = [
-    0.4472, 0.4673, 0.4824, 0.5177, 0.5631, 0.4774, 0.4673, 0.4925, 0.5379, 0.4976,
+    0.44791, 0.46776, 0.48264, 0.51737, 0.56201, 0.47768, 0.46776, 0.49256, 0.53721, 0.49752,
 ];
 
 #[test]
 fn custom_distribution_posterior_matches_numerical_integration() {
-    // The (a, b) posterior is heavy tailed (E[a + b] ≈ 343), so single chains vary between seeds; this seed's
-    // 10,000 NUTS samples are checked against the exact means (seed 2 stopped passing when the digamma fix changed
-    // the Beta gradient, and so the chain). The Metropolis–Hastings run with small Gaussian proposals (as in Java)
-    // under-explores large a + b and is only checked to complete.
-    let r = custom_distribution::run(9, 2000, 10_000).unwrap();
-    for (j, (&nuts, &exact)) in r.nuts.iter().zip(&EXACT_TRUE_RATE_MEANS).enumerate() {
-        assert_close(nuts, exact, 0.02, &format!("true rate {j}"));
+    // Sampled in the reparameterised coordinates, the chains mix well. Over seeds 1 to 40, a rate's mean was off by
+    // 0.0005 (root mean square) and at most 0.0022 with NUTS (10,000 samples), and by 0.003 and at most 0.0125 with
+    // Metropolis–Hastings (40,000 samples, the first half dropped). The tolerances are about twice the largest
+    // errors, and eight to ten times the typical ones.
+    let r = custom_distribution::run(1, 40_000, 10_000).unwrap();
+    for (j, (&exact, (&nuts, &mh))) in EXACT_TRUE_RATE_MEANS
+        .iter()
+        .zip(r.nuts.iter().zip(&r.metropolis_hastings))
+        .enumerate()
+    {
+        assert_close(nuts, exact, 0.005, &format!("NUTS true rate {j}"));
+        assert_close(
+            mh,
+            exact,
+            0.025,
+            &format!("Metropolis–Hastings true rate {j}"),
+        );
     }
-    assert_eq!(r.metropolis_hastings.len(), 10);
 }
 
 #[test]
 fn custom_distribution_gradient_matches_finite_differences() {
     use keanu::prelude::*;
+    // the hyperprior and the rate offsets, without the observations: the gradient with respect to φ includes the
+    // offsets' gradient with respect to their parameter
     let b = GraphBuilder::new();
-    let hyper: DoubleVar = b.custom(custom_distribution::HyperPrior, &[2], &[]);
-    b.set_value(hyper, DoubleTensor::vector(vec![0.7, 1.9]));
-    let hyper = hyper.id();
+    let phi: DoubleVar = b.custom(custom_distribution::HyperPrior, &[2], &[]);
+    let offsets: DoubleVar = b.custom(custom_distribution::RateOffsets, &[3], &[phi.id()]);
+    let at_phi = vec![0.3, 2.5];
+    let at_offsets = vec![-1.2, 0.4, 2.0];
+    b.set_value(phi, DoubleTensor::vector(at_phi.clone()));
+    b.set_value(offsets, DoubleTensor::vector(at_offsets.clone()));
+    let (phi, offsets) = (phi.id(), offsets.id());
     let (graph, state) = b.build().unwrap();
     let model = Model::new(graph, &state).unwrap();
 
     let gradient = model.log_prob_gradient(&state).unwrap();
-    let analytic = gradient.get(hyper).unwrap().as_slice().to_vec();
-    for i in 0..2 {
-        let h = 1e-6;
-        let at = |delta: f64| {
-            let mut s = state.clone();
-            let mut v = vec![0.7, 1.9];
-            v[i] += delta;
-            s.set_and_cascade(model.graph(), hyper, DoubleTensor::vector(v))
-                .unwrap();
-            model.log_prob(&s).unwrap()
-        };
-        let numeric = (at(h) - at(-h)) / (2.0 * h);
-        assert_close(analytic[i], numeric, 1e-6, "custom gradient");
+    for (node, at) in [(phi, &at_phi), (offsets, &at_offsets)] {
+        let analytic = gradient.get(node).unwrap().as_slice().to_vec();
+        for i in 0..at.len() {
+            let h = 1e-6;
+            let log_prob = |delta: f64| {
+                let mut s = state.clone();
+                let mut v = at.clone();
+                v[i] += delta;
+                s.set_and_cascade(model.graph(), node, DoubleTensor::vector(v))
+                    .unwrap();
+                model.log_prob(&s).unwrap()
+            };
+            let numeric = (log_prob(h) - log_prob(-h)) / (2.0 * h);
+            assert_close(analytic[i], numeric, 1e-6, "custom gradient");
+        }
     }
 
-    // outside the support the log prob is -infinity
+    // beyond the truncation the log prob is -infinity
     let mut s = state.clone();
-    s.set_and_cascade(model.graph(), hyper, DoubleTensor::vector(vec![-0.1, 1.0]))
+    let beyond = custom_distribution::MAX_LN_SIZE + 1.0;
+    s.set_and_cascade(model.graph(), phi, DoubleTensor::vector(vec![0.3, beyond]))
         .unwrap();
     assert_eq!(model.log_prob(&s).unwrap(), f64::NEG_INFINITY);
 }

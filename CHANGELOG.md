@@ -190,6 +190,14 @@ vector was edited by hand and the entry says so.
   ~1.33 ms.
 - keanu-algorithms: `ForwardSampler::sample` returns `GraphError::UnknownNode` (as `AlgorithmError::Graph`) for a
   node that isn't in the model's graph, instead of panicking.
+- keanu examples: the custom distribution example (hierarchical Beta–Binomial) samples in BDA-style unconstrained
+  coordinates with the same posterior: the hyperprior is a custom density over φ = (logit(a / (a + b)),
+  ln(a + b)) including its Jacobian, and the rates are non-centred logit-scale offsets with a second custom
+  distribution (whose gradient includes its parameter's). In (a, b, θ) the chains got stuck in the long
+  large-a + b tail: across seeds 1–12, NUTS (10,000 samples) was off by up to 0.07, and the test passed only on a
+  hand-picked seed. Now NUTS is within 0.0022 and Metropolis–Hastings (40,000 samples) within 0.0125 over seeds
+  1–40, and the test checks both, with seed 1. The exact posterior means it checks against were recomputed by
+  integration over a fine φ grid (the old 4-digit values were off by up to 0.0011).
 
 ## Unreleased: Java
 

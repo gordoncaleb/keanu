@@ -10,7 +10,7 @@ integration test (`keanu/tests/examples.rs`) that checks the same results the Ja
 | `ab_testing` | Is treatment A more likely to drive purchases than treatment B? |
 | `cheating_students` | What proportion of students cheated, from a privacy-preserving survey? |
 | `challenger_disaster` | Does temperature predict O-ring failure? |
-| `custom_distribution` | A hierarchical model with a user-defined hyperprior |
+| `custom_distribution` | A hierarchical model with user-defined distributions, reparameterised to sample well |
 
 Most come from *Bayesian Methods for Hackers* by Cameron Davidson-Pilon.
 
