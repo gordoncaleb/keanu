@@ -77,21 +77,32 @@ impl GraphBuilder {
         (node.dtype, node.shape.clone())
     }
 
-    /// The shape of a node created so far.
-    pub fn shape(&self, id: NodeId) -> Vec<usize> {
-        self.dtype_shape(id).1.to_vec()
+    /// The shape of a node created so far, or `None` if there is no such node.
+    pub fn shape(&self, id: NodeId) -> Option<Vec<usize>> {
+        Some(self.inner.borrow().nodes.get(id.0)?.shape.to_vec())
+    }
+
+    /// [`GraphError::UnknownNode`] for the first id that isn't a node created so far.
+    fn check_ids(&self, ids: &[NodeId]) -> Result<()> {
+        let count = self.node_count();
+        match ids.iter().find(|id| id.0 >= count) {
+            Some(&id) => Err(GraphError::UnknownNode(id)),
+            None => Ok(()),
+        }
     }
 
     /// The handle if it belongs to this builder. A handle from another builder would silently refer to whichever
     /// node of this builder has the same id, so instead this records [`GraphError::WrongBuilder`] (failing
     /// [`build`](Self::build)) and returns a placeholder node of this builder so that building can continue.
     pub(crate) fn own<'b, V: Var<'b>>(&'b self, var: V) -> V {
-        if std::ptr::eq(var.builder(), self) {
-            var
-        } else {
+        if !std::ptr::eq(var.builder(), self) {
             self.record(GraphError::WrongBuilder(var.id()));
-            V::wrap(self, self.placeholder(V::DTYPE))
+        } else if var.id().0 >= self.node_count() {
+            self.record(GraphError::UnknownNode(var.id()));
+        } else {
+            return var;
         }
+        V::wrap(self, self.placeholder(V::DTYPE))
     }
 
     /// An error if a parent isn't a node of this builder.
@@ -133,7 +144,7 @@ impl GraphBuilder {
         let name = op.name();
         match self.try_add(op, parents) {
             Ok(id) => {
-                let dtype = self.dtype(id);
+                let (dtype, _) = self.dtype_shape(id);
                 if dtype != expected {
                     self.record(GraphError::InvalidNode {
                         op: name,
@@ -202,9 +213,9 @@ impl GraphBuilder {
         self.inner.borrow().nodes.len()
     }
 
-    /// The type of a node created so far.
-    pub fn dtype(&self, id: NodeId) -> DType {
-        self.dtype_shape(id).0
+    /// The type of a node created so far, or `None` if there is no such node.
+    pub fn dtype(&self, id: NodeId) -> Option<DType> {
+        Some(self.inner.borrow().nodes.get(id.0)?.dtype)
     }
 
     /// The value of a node created so far if it is a constant.
@@ -217,7 +228,7 @@ impl GraphBuilder {
 
     /// The label of a node created so far.
     pub fn label_of(&self, id: NodeId) -> Option<String> {
-        self.inner.borrow().nodes[id.0].label.clone()
+        self.inner.borrow().nodes.get(id.0)?.label.clone()
     }
 
     // ----- untyped construction, for loaders and other generic code -----
@@ -264,8 +275,8 @@ impl GraphBuilder {
 
     /// Connects a proxy node to the (earlier) node it stands for.
     pub fn connect_ids(&self, proxy: NodeId, parent: NodeId) -> Result<()> {
-        self.check_parents("proxy", &[proxy, parent])?;
-        self.untyped(|| match self.dtype(proxy) {
+        self.check_ids(&[proxy, parent])?;
+        self.untyped(|| match self.dtype_shape(proxy).0 {
             DType::F64 => self.connect(self.double_var(proxy), self.double_var(parent)),
             DType::I64 => self.connect(IntVar::new(self, proxy), IntVar::new(self, parent)),
             DType::Bool => self.connect(BoolVar::new(self, proxy), BoolVar::new(self, parent)),
@@ -273,13 +284,15 @@ impl GraphBuilder {
     }
 
     /// Labels a node.
-    pub fn set_label_of(&self, id: NodeId, label: &str) {
+    pub fn set_label_of(&self, id: NodeId, label: &str) -> Result<()> {
+        self.check_ids(&[id])?;
         self.set_label(id, label);
+        Ok(())
     }
 
     /// Sets the initial value of a node, checking its type and shape.
     pub fn set_value_of(&self, id: NodeId, value: Value) -> Result<()> {
-        self.check_parents("set_value", &[id])?;
+        self.check_ids(&[id])?;
         self.untyped(|| {
             if self.check_value(id, &value) {
                 let mut inner = self.inner.borrow_mut();
@@ -292,8 +305,8 @@ impl GraphBuilder {
 
     /// Observes a node, checking its type and shape. Only probabilistic and boolean nodes can be observed.
     pub fn observe_of(&self, id: NodeId, value: Value) -> Result<()> {
-        self.check_parents("observe", &[id])?;
-        self.untyped(|| match self.dtype(id) {
+        self.check_ids(&[id])?;
+        self.untyped(|| match self.dtype_shape(id).0 {
             DType::F64 => self.observe(self.double_var(id), value),
             DType::I64 => self.observe(IntVar::new(self, id), value),
             DType::Bool => self.observe(BoolVar::new(self, id), value),
@@ -311,9 +324,12 @@ impl GraphBuilder {
     }
 
     /// A handle for an existing f64 node, e.g. one returned by [`lambda`](Self::lambda). Records an error if the
-    /// node is not f64.
+    /// node doesn't exist or is not f64.
     pub fn double_var(&self, id: NodeId) -> DoubleVar<'_> {
-        let (dtype, _) = self.dtype_shape(id);
+        let Some(dtype) = self.dtype(id) else {
+            self.record(GraphError::UnknownNode(id));
+            return DoubleVar::new(self, self.placeholder(DType::F64));
+        };
         if dtype != DType::F64 {
             self.record(GraphError::InvalidValue(format!(
                 "node {id:?} is {dtype:?}, not f64"

@@ -64,9 +64,12 @@ impl Partials {
     }
 }
 
-/// True if gradients can flow through this node (to its parents, or from it as a leaf).
+/// True if gradients can flow through this node (to its parents, or from it as a leaf). False if the id is not a
+/// node of the graph.
 pub fn is_differentiable(graph: &Graph, id: NodeId) -> bool {
-    let node = graph.node(id);
+    let Some(node) = graph.get(id) else {
+        return false;
+    };
     node.dtype == DType::F64
         && match &node.op {
             Op::Constant(_) | Op::Distribution(_) | Op::Proxy => true,
@@ -113,6 +116,7 @@ pub fn forward_partials(
     wrt: NodeId,
     of: &[NodeId],
 ) -> Result<Partials> {
+    graph.check_ids(std::iter::once(&wrt).chain(of))?;
     let wrt_node = graph.node(wrt);
     if wrt_node.dtype != DType::F64 {
         return Err(GraphError::NotDifferentiable(format!(
@@ -182,6 +186,7 @@ pub fn reverse_partials(
     of: NodeId,
     wrt: &[NodeId],
 ) -> Result<Partials> {
+    graph.check_ids(std::iter::once(&of).chain(wrt))?;
     let of_shape = graph.node(of).shape.to_vec();
     if state.is_observed(of) {
         return Ok(Partials {
@@ -211,6 +216,7 @@ pub fn reverse_partials_from(
     upstream: &DoubleTensor,
     wrt: &[NodeId],
 ) -> Result<Partials> {
+    graph.check_ids(std::iter::once(&of).chain(wrt))?;
     let of_shape = graph.node(of).shape.to_vec();
     let up_shape = upstream.shape();
     if up_shape.len() < of_shape.len()

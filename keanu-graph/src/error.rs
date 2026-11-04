@@ -50,6 +50,9 @@ pub enum GraphError {
     Custom(String),
     /// A handle from one [`GraphBuilder`](crate::GraphBuilder) was used with another. The node is the handle's.
     WrongBuilder(NodeId),
+    /// A node id that isn't a node of the graph, builder or state it was used with (out of range, e.g. from another
+    /// graph or made with [`NodeId::from_index`]).
+    UnknownNode(NodeId),
 }
 
 impl fmt::Display for GraphError {
@@ -84,6 +87,7 @@ impl fmt::Display for GraphError {
                 "node #{} belongs to a different GraphBuilder",
                 id.index()
             ),
+            Self::UnknownNode(id) => write!(f, "node #{} is not a node of this graph", id.index()),
         }
     }
 }

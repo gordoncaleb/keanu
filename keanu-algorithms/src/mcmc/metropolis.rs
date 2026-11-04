@@ -90,7 +90,7 @@ impl<'m> MetropolisHastingsStep<'m> {
             l.on_proposal_created(&proposal);
         }
         let snapshot = match self.rejection {
-            RejectionStrategy::RollbackToCachedValues => Some(snapshot(graph, state, &proposal)),
+            RejectionStrategy::RollbackToCachedValues => Some(snapshot(graph, state, &proposal)?),
             RejectionStrategy::RollbackAndCascade => None,
         };
 
@@ -123,7 +123,7 @@ impl<'m> MetropolisHastingsStep<'m> {
                 for (id, value) in values {
                     match value {
                         Some(v) => state.set(graph, id, v)?,
-                        None => state.clear(id),
+                        None => state.clear(id)?,
                     }
                 }
             }
@@ -138,14 +138,18 @@ impl<'m> MetropolisHastingsStep<'m> {
 
 /// The current values of every node a proposal can change: the proposed nodes and the deterministic nodes of
 /// their downstream lambda sections.
-fn snapshot(graph: &Graph, state: &State, proposal: &Proposal) -> Vec<(NodeId, Option<Value>)> {
+fn snapshot(
+    graph: &Graph,
+    state: &State,
+    proposal: &Proposal,
+) -> Result<Vec<(NodeId, Option<Value>)>> {
     let nodes: Vec<NodeId> = proposal.nodes().collect();
-    downstream_lambda_section(graph, state, &nodes)
+    Ok(downstream_lambda_section(graph, state, &nodes)?
         .nodes()
         .iter()
         .filter(|&&id| !state.is_observed(id))
         .map(|&id| (id, state.value(id).cloned()))
-        .collect()
+        .collect())
 }
 
 /// Metropolis–Hastings configuration (Java's `MetropolisHastings`). Defaults: prior proposals, one latent per

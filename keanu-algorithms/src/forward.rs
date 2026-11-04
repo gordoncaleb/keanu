@@ -51,7 +51,7 @@ impl ForwardSampler {
         }
 
         // an observation with a random variable upstream of it can't be respected by sampling the prior
-        let upstream_of_observed = upstream_lambda_section(graph, state, model.observed());
+        let upstream_of_observed = upstream_lambda_section(graph, state, model.observed())?;
         if upstream_of_observed
             .latent_and_observed()
             .iter()
@@ -63,7 +63,7 @@ impl ForwardSampler {
             ));
         }
 
-        let order = sampling_order(graph, state, model.latents(), nodes);
+        let order = sampling_order(graph, state, model.latents(), nodes)?;
 
         // make sure every recorded node has a value, even those outside the sampling order (e.g. constants)
         state.lazy_eval(graph, nodes, rng)?;
@@ -76,7 +76,7 @@ impl ForwardSampler {
                 }
                 // clearing and lazily evaluating samples a probabilistic node from its prior given its parents,
                 // and recomputes a deterministic node from its parents
-                state.clear(id);
+                state.clear(id)?;
                 state.lazy_eval(graph, &[id], rng)?;
             }
             let log_prob = if self.calculate_log_prob {
@@ -99,8 +99,8 @@ fn sampling_order(
     state: &State,
     latents: &[NodeId],
     nodes: &[NodeId],
-) -> Vec<NodeId> {
-    let downstream = downstream_lambda_section(graph, state, latents);
+) -> Result<Vec<NodeId>> {
+    let downstream = downstream_lambda_section(graph, state, latents)?;
 
     // everything the requested nodes depend on, including themselves
     let mut upstream = vec![false; graph.len()];
@@ -111,10 +111,10 @@ fn sampling_order(
         }
     }
 
-    downstream
+    Ok(downstream
         .nodes()
         .iter()
         .copied()
         .filter(|id| upstream[id.index()])
-        .collect()
+        .collect())
 }

@@ -84,12 +84,12 @@ fn lambda_sections_stop_at_probabilistic_and_observed_nodes() {
     let (a, doubled, c, d, e) = (a.id(), doubled.id(), c.id(), d.id(), e.id());
     let (graph, state) = b.build().unwrap();
 
-    let down = downstream_lambda_section(&graph, &state, &[a]);
+    let down = downstream_lambda_section(&graph, &state, &[a]).unwrap();
     assert_eq!(down.latent_and_observed(), &[a, c, e]);
     assert!(down.nodes().contains(&doubled));
     assert!(!down.nodes().contains(&d));
 
-    let up = upstream_lambda_section(&graph, &state, &[d]);
+    let up = upstream_lambda_section(&graph, &state, &[d]).unwrap();
     assert_eq!(up.latent_and_observed(), &[c, d]);
 }
 

@@ -93,7 +93,7 @@ fn observed_nodes_keep_their_values() {
         0.5,
         "set is ignored on observed nodes"
     );
-    state.clear(a_id);
+    state.clear(a_id).unwrap();
     state.eval(&graph, &[a_id], &mut rng()).unwrap();
     assert_eq!(
         scalar(&state, a_id),
@@ -101,7 +101,7 @@ fn observed_nodes_keep_their_values() {
         "observed nodes are never resampled"
     );
 
-    state.unobserve(a_id);
+    state.unobserve(a_id).unwrap();
     state.set(&graph, a_id, DoubleTensor::scalar(2.0)).unwrap();
     assert_eq!(scalar(&state, a_id), 2.0);
 }

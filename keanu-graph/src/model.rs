@@ -71,14 +71,25 @@ fn lambda_section(
 }
 
 /// The nodes whose log probability can change when the values of `from` change: walking towards children and
-/// stopping at probabilistic and observed nodes.
-pub fn downstream_lambda_section(graph: &Graph, state: &State, from: &[NodeId]) -> LambdaSection {
-    lambda_section(graph, state, from, true)
+/// stopping at probabilistic and observed nodes. Fails if an id is not a node of the graph.
+pub fn downstream_lambda_section(
+    graph: &Graph,
+    state: &State,
+    from: &[NodeId],
+) -> Result<LambdaSection> {
+    graph.check_ids(from)?;
+    Ok(lambda_section(graph, state, from, true))
 }
 
-/// The nodes `from` depends on, walking towards parents and stopping at probabilistic and observed nodes.
-pub fn upstream_lambda_section(graph: &Graph, state: &State, from: &[NodeId]) -> LambdaSection {
-    lambda_section(graph, state, from, false)
+/// The nodes `from` depends on, walking towards parents and stopping at probabilistic and observed nodes. Fails if
+/// an id is not a node of the graph.
+pub fn upstream_lambda_section(
+    graph: &Graph,
+    state: &State,
+    from: &[NodeId],
+) -> Result<LambdaSection> {
+    graph.check_ids(from)?;
+    Ok(lambda_section(graph, state, from, false))
 }
 
 /// True if a deterministic observed node's value differs from what its parents compute (a violated constraint).
@@ -134,11 +145,10 @@ impl Model {
         let sections = graph
             .ids()
             .map(|id| {
-                graph.node(id).is_probabilistic().then(|| {
-                    downstream_lambda_section(&graph, state, &[id])
-                        .latent_and_observed()
-                        .to_vec()
-                })
+                graph
+                    .node(id)
+                    .is_probabilistic()
+                    .then(|| lambda_section(&graph, state, &[id], true).latent_and_observed)
             })
             .collect();
         let joint: Vec<NodeId> = latents.iter().chain(&observed).copied().collect();
@@ -253,18 +263,19 @@ impl Model {
         state.cascade(&self.graph, &from)
     }
 
-    /// The probabilistic and observed nodes whose log probability depends on the values of `nodes`.
-    pub fn affected_by(&self, nodes: &[NodeId]) -> Vec<NodeId> {
+    /// The probabilistic and observed nodes whose log probability depends on the values of `nodes`. Fails if an
+    /// id is not a node of the model's graph.
+    pub fn affected_by(&self, nodes: &[NodeId]) -> Result<Vec<NodeId>> {
         let mut affected: Vec<NodeId> = Vec::new();
         for &id in nodes {
-            match &self.sections[id.0] {
+            match self.sections.get(id.0).ok_or(GraphError::UnknownNode(id))? {
                 Some(section) => affected.extend_from_slice(section),
                 None => affected.push(id),
             }
         }
         affected.sort();
         affected.dedup();
-        affected
+        Ok(affected)
     }
 
     /// Java's `probeForNonZeroProbability`: if the current state is impossible (log prob of -infinity or NaN),
@@ -310,7 +321,7 @@ impl Model {
         log_prob_before: f64,
     ) -> Result<f64> {
         let ids: Vec<NodeId> = proposal.iter().map(|(id, _)| *id).collect();
-        let affected = self.affected_by(&ids);
+        let affected = self.affected_by(&ids)?;
         let before = self.log_prob_of(state, &affected)?;
         self.set_and_cascade(state, proposal)?;
         let after = self.log_prob_of(state, &affected)?;

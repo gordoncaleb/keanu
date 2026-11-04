@@ -215,7 +215,7 @@ impl<'b> SequenceItem<'b> {
             return;
         }
         let scoped = self.scoped(label);
-        self.builder.set_label_of(id, &scoped);
+        self.builder.set_label(id, &scoped);
         self.contents.push((label.to_owned(), scoped, id));
     }
 

@@ -41,7 +41,7 @@ macro_rules! handle {
 
             /// The node's shape.
             pub fn shape(self) -> Vec<usize> {
-                self.builder.shape(self.id)
+                self.builder.dtype_shape(self.id).1.to_vec()
             }
 
             /// Labels the node. Labels must be unique within a graph.

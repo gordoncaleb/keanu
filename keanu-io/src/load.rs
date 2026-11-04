@@ -8,7 +8,7 @@ use crate::proto;
 use crate::proto::named_param::Param;
 use keanu_distributions::Kde;
 use keanu_graph::op::{ArgOp, BinaryOp, DistributionKind, Op, ReduceOp, ScanOp};
-use keanu_graph::{DType, Graph, GraphBuilder, NodeId, State, Value};
+use keanu_graph::{DType, Graph, GraphBuilder, GraphError, NodeId, State, Value};
 use keanu_tensor::{BoolTensor, DoubleTensor, IntTensor};
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
@@ -113,7 +113,7 @@ pub(crate) fn load_model(model: &proto::ProtoModel) -> Result<Loaded> {
             .load()?,
         };
         if !vertex.label.is_empty() {
-            builder.set_label_of(node, &vertex.label);
+            builder.set_label_of(node, &vertex.label)?;
         }
         ids.insert(id.to_owned(), node);
     }
@@ -644,7 +644,11 @@ impl Loader<'_> {
             }
             "SliceVertex" => {
                 let input = self.parent("inputVertex")?;
-                let rank = self.builder.shape(input).len();
+                let rank = self
+                    .builder
+                    .shape(input)
+                    .ok_or(GraphError::UnknownNode(input))?
+                    .len();
                 let dimension = usize::try_from(self.int("dimension")?)
                     .ok()
                     .filter(|&d| d < rank)
@@ -736,8 +740,12 @@ impl Loader<'_> {
             }
             "DoubleProxyVertex" | "IntegerProxyVertex" | "BooleanProxyVertex" => {
                 let parent = self.parent("parent")?;
-                let dtype = self.builder.dtype(parent);
-                let proxy = self.builder.add_proxy(dtype, &self.builder.shape(parent));
+                let (dtype, shape) = self
+                    .builder
+                    .dtype(parent)
+                    .zip(self.builder.shape(parent))
+                    .ok_or(GraphError::UnknownNode(parent))?;
+                let proxy = self.builder.add_proxy(dtype, &shape);
                 self.builder.connect_ids(proxy, parent)?;
                 // The proxy is labelled from the vertex label, which Java always wrote equal to this parameter.
                 // Earlier Rust versions wrote an invented `proxy_<n>` here for unlabelled proxies, so it isn't used.

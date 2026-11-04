@@ -46,7 +46,7 @@ fn recompute(loaded: &Loaded) -> State {
             && !matches!(node.op(), Op::Constant(_))
             && !state.is_observed(id)
         {
-            state.clear(id);
+            state.clear(id).unwrap();
         }
     }
     let all: Vec<_> = graph.ids().collect();

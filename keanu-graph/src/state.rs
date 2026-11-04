@@ -25,9 +25,9 @@ enum Plan {
 }
 
 impl State {
-    /// The value.
+    /// The value, or `None` if the node has no value (or is not a node of this state's graph).
     pub fn value(&self, id: NodeId) -> Option<&Value> {
-        self.values[id.0].as_ref()
+        self.values.get(id.0)?.as_ref()
     }
 
     /// The f64 value, if there is one.
@@ -45,17 +45,44 @@ impl State {
         self.value(id).and_then(Value::as_bool)
     }
 
-    /// Whether the node has a value.
+    /// Whether the node has a value (false if it is not a node of this state's graph).
     pub fn has_value(&self, id: NodeId) -> bool {
-        self.values[id.0].is_some()
+        self.value(id).is_some()
     }
 
-    /// Whether the node is observed.
+    /// Whether the node is observed (false if it is not a node of this state's graph).
     pub fn is_observed(&self, id: NodeId) -> bool {
-        self.observed[id.0]
+        self.observed.get(id.0).copied().unwrap_or(false)
     }
 
-    fn check(graph: &Graph, id: NodeId, value: &Value) -> Result<()> {
+    /// An error unless this state holds the values of `graph` and every id is a node of it, so that indexing by
+    /// those ids (and their ancestors and descendants) can't go out of range.
+    fn check_ids<'a>(
+        &self,
+        graph: &Graph,
+        ids: impl IntoIterator<Item = &'a NodeId>,
+    ) -> Result<()> {
+        if self.values.len() != graph.len() {
+            return Err(GraphError::InvalidValue(format!(
+                "the state holds {} nodes but the graph has {}",
+                self.values.len(),
+                graph.len()
+            )));
+        }
+        graph.check_ids(ids)
+    }
+
+    /// [`GraphError::UnknownNode`] unless the id is a node of this state.
+    fn check_own(&self, id: NodeId) -> Result<()> {
+        if id.0 < self.values.len() {
+            Ok(())
+        } else {
+            Err(GraphError::UnknownNode(id))
+        }
+    }
+
+    fn check(&self, graph: &Graph, id: NodeId, value: &Value) -> Result<()> {
+        self.check_ids(graph, [&id])?;
         let node = graph.node(id);
         if value.dtype() != node.dtype || value.shape() != node.shape() {
             return Err(GraphError::InvalidValue(format!(
@@ -72,7 +99,7 @@ impl State {
     /// Sets a node's value. Observed nodes keep their observed value (the call is ignored), as in Java.
     pub fn set(&mut self, graph: &Graph, id: NodeId, value: impl Into<Value>) -> Result<()> {
         let value = value.into();
-        Self::check(graph, id, &value)?;
+        self.check(graph, id, &value)?;
         if !self.observed[id.0] {
             self.values[id.0] = Some(value);
         }
@@ -93,6 +120,7 @@ impl State {
     /// Fixes a node's value. Probabilistic nodes and boolean deterministic nodes can be observed; numeric
     /// deterministic nodes cannot.
     pub fn observe(&mut self, graph: &Graph, id: NodeId, value: impl Into<Value>) -> Result<()> {
+        self.check_ids(graph, [&id])?;
         let node = graph.node(id);
         if !node.is_probabilistic() && node.dtype != DType::Bool {
             return Err(GraphError::NotObservable(format!(
@@ -101,28 +129,33 @@ impl State {
             )));
         }
         let value = value.into();
-        Self::check(graph, id, &value)?;
+        self.check(graph, id, &value)?;
         self.values[id.0] = Some(value);
         self.observed[id.0] = true;
         Ok(())
     }
 
     /// Stops observing a node, keeping its current value.
-    pub fn unobserve(&mut self, id: NodeId) {
+    pub fn unobserve(&mut self, id: NodeId) -> Result<()> {
+        self.check_own(id)?;
         self.observed[id.0] = false;
+        Ok(())
     }
 
     /// Removes a node's value (unless it is observed), so that the next evaluation recomputes or resamples it.
-    pub fn clear(&mut self, id: NodeId) {
+    pub fn clear(&mut self, id: NodeId) -> Result<()> {
+        self.check_own(id)?;
         if !self.observed[id.0] {
             self.values[id.0] = None;
         }
+        Ok(())
     }
 
     /// Computes the given nodes and their ancestors. Deterministic ancestors are recomputed, up to the nearest
     /// probabilistic ancestors; probabilistic nodes keep their values, or are sampled from their prior (given their
     /// lazily evaluated parents) if they have none.
     pub fn eval(&mut self, graph: &Graph, targets: &[NodeId], rng: &mut KeanuRng) -> Result<()> {
+        self.check_ids(graph, targets)?;
         let plan = self.plan(graph, targets, false);
         self.execute(graph, &plan, rng)
     }
@@ -134,6 +167,7 @@ impl State {
         targets: &[NodeId],
         rng: &mut KeanuRng,
     ) -> Result<()> {
+        self.check_ids(graph, targets)?;
         let plan = self.plan(graph, targets, true);
         self.execute(graph, &plan, rng)
     }
@@ -141,6 +175,7 @@ impl State {
     /// Recomputes the deterministic descendants of `from` (and `from` itself if deterministic), in topological
     /// order, stopping at probabilistic nodes.
     pub fn cascade(&mut self, graph: &Graph, from: &[NodeId]) -> Result<()> {
+        self.check_ids(graph, from)?;
         let mut plan: smallvec::SmallVec<[Plan; 64]> = smallvec::smallvec![Plan::None; graph.len()];
         let mut stack: smallvec::SmallVec<[NodeId; 16]> = from.iter().copied().collect();
         for &id in from {
@@ -217,6 +252,7 @@ impl State {
     /// Draws a value for a probabilistic node from its prior given its parents' current values, without changing
     /// the state. The parents must have values.
     pub fn sample_prior(&self, graph: &Graph, id: NodeId, rng: &mut KeanuRng) -> Result<Value> {
+        self.check_ids(graph, [&id])?;
         let node = graph.node(id);
         let Op::Distribution(distribution) = &node.op else {
             return Err(GraphError::InvalidValue(format!(

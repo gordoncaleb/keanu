@@ -1,5 +1,6 @@
 //! The immutable graph: an arena of nodes in creation (and therefore topological) order.
 
+use crate::error::{GraphError, Result};
 use crate::op::Op;
 use crate::value::DType;
 use keanu_tensor::Shape;
@@ -18,7 +19,11 @@ impl NodeId {
         self.0
     }
 
-    /// The id of the node at a position (creation index) in a graph or builder.
+    /// The id of the node at a position (creation index) in a graph or builder. Nothing checks that the node exists
+    /// until the id is used: methods taking ids return [`GraphError::UnknownNode`] (or `None` for lookups) for an
+    /// id out of range.
+    ///
+    /// [`GraphError::UnknownNode`]: crate::GraphError::UnknownNode
     pub fn from_index(index: usize) -> Self {
         Self(index)
     }
@@ -110,8 +115,30 @@ impl Graph {
     }
 
     /// The node with this id.
+    ///
+    /// # Panics
+    ///
+    /// If the id is not a node of this graph; [`get`](Self::get) is the checked lookup.
     pub fn node(&self, id: NodeId) -> &Node {
         &self.nodes[id.0]
+    }
+
+    /// The node with this id, or `None` if it is not a node of this graph.
+    pub fn get(&self, id: NodeId) -> Option<&Node> {
+        self.nodes.get(id.0)
+    }
+
+    /// Whether the id is a node of this graph.
+    pub fn contains(&self, id: NodeId) -> bool {
+        id.0 < self.nodes.len()
+    }
+
+    /// [`GraphError::UnknownNode`] for the first id that isn't a node of this graph.
+    pub(crate) fn check_ids<'a>(&self, ids: impl IntoIterator<Item = &'a NodeId>) -> Result<()> {
+        match ids.into_iter().find(|id| !self.contains(**id)) {
+            Some(&id) => Err(GraphError::UnknownNode(id)),
+            None => Ok(()),
+        }
     }
 
     /// Every node id in topological order.
@@ -120,11 +147,19 @@ impl Graph {
     }
 
     /// The node's parents, in order.
+    ///
+    /// # Panics
+    ///
+    /// If the id is not a node of this graph.
     pub fn parents(&self, id: NodeId) -> &[NodeId] {
         &self.nodes[id.0].parents
     }
 
     /// The nodes whose parents include this node.
+    ///
+    /// # Panics
+    ///
+    /// If the id is not a node of this graph.
     pub fn children(&self, id: NodeId) -> &[NodeId] {
         &self.children[id.0]
     }
