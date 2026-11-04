@@ -287,8 +287,36 @@ impl<T: Element> Tensor<T> {
     }
 }
 
+/// One comma separated item of a numpy slice string (see [`Tensor::slice`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum SliceItem {
+    /// `...`: as many whole dimensions as the other items leave.
+    Ellipsis,
+    /// An integer index, which removes its dimension.
+    Index(isize),
+    /// `start:stop` or `start:stop:step`, each part optional.
+    Range {
+        /// The first index.
+        start: Option<isize>,
+        /// The index to stop before.
+        stop: Option<isize>,
+        /// The step (1 if absent).
+        step: Option<isize>,
+    },
+}
+
+/// Parses a numpy slice string, e.g. `"1, ..., ::-1"`, into its items, without resolving them against a shape.
+pub fn parse_slice(spec: &str) -> Result<Vec<SliceItem>> {
+    spec.split(',')
+        .map(str::trim)
+        .map(slicing::parse_item)
+        .collect()
+}
+
 /// Parsing and resolution of numpy slice strings.
 pub(crate) mod slicing {
+    use super::{SliceItem as Item, parse_slice};
     use crate::error::{Result, TensorError};
 
     #[derive(Debug, Clone, Copy, PartialEq)]
@@ -299,17 +327,11 @@ pub(crate) mod slicing {
         pub drop: bool,
     }
 
-    enum Item {
-        Ellipsis,
-        Index(isize),
-        Range(Option<isize>, Option<isize>, Option<isize>),
-    }
-
     fn invalid(message: impl Into<String>) -> TensorError {
         TensorError::InvalidSlice(message.into())
     }
 
-    fn parse_item(text: &str) -> Result<Item> {
+    pub(super) fn parse_item(text: &str) -> Result<Item> {
         let parse = |s: &str| -> Result<Option<isize>> {
             if s.is_empty() {
                 Ok(None)
@@ -327,19 +349,23 @@ pub(crate) mod slicing {
             [index] => Ok(Item::Index(
                 parse(index)?.ok_or_else(|| invalid("empty index"))?,
             )),
-            [start, stop] => Ok(Item::Range(parse(start)?, parse(stop)?, None)),
-            [start, stop, step] => Ok(Item::Range(parse(start)?, parse(stop)?, parse(step)?)),
+            [start, stop] => Ok(Item::Range {
+                start: parse(start)?,
+                stop: parse(stop)?,
+                step: None,
+            }),
+            [start, stop, step] => Ok(Item::Range {
+                start: parse(start)?,
+                stop: parse(stop)?,
+                step: parse(step)?,
+            }),
             _ => Err(invalid(format!("cannot parse {text:?}"))),
         }
     }
 
     /// Resolves a slice string against a shape into one `DimSlice` per dimension.
     pub(crate) fn plan(spec: &str, shape: &[usize]) -> Result<Vec<DimSlice>> {
-        let items = spec
-            .split(',')
-            .map(str::trim)
-            .map(parse_item)
-            .collect::<Result<Vec<_>>>()?;
+        let items = parse_slice(spec)?;
         if items.iter().filter(|i| matches!(i, Item::Ellipsis)).count() > 1 {
             return Err(invalid("more than one ellipsis"));
         }
@@ -382,7 +408,7 @@ pub(crate) mod slicing {
                     });
                     dim += 1;
                 }
-                Item::Range(start, stop, step) => {
+                Item::Range { start, stop, step } => {
                     let n = shape[dim] as isize;
                     let step = step.unwrap_or(1);
                     if step == 0 {
