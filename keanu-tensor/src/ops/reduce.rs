@@ -14,7 +14,7 @@ impl<T: Numeric> Tensor<T> {
     /// Sums over the given axes (negative counts from the end), removing them.
     pub fn sum_axes(&self, axes: &[isize]) -> Result<Self> {
         let mask = shape::axis_mask(axes, self.rank())?;
-        let (s, data) = reduce(&self.data, &self.shape, &mask, false, T::ZERO, T::add);
+        let (s, data) = reduce(&self.data, &self.shape, &mask, T::ZERO, T::add);
         Ok(Tensor::from_parts(s, data))
     }
 
@@ -26,7 +26,7 @@ impl<T: Numeric> Tensor<T> {
     /// The product over the given axes, which are removed.
     pub fn product_axes(&self, axes: &[isize]) -> Result<Self> {
         let mask = shape::axis_mask(axes, self.rank())?;
-        let (s, data) = reduce(&self.data, &self.shape, &mask, false, T::ONE, T::mul);
+        let (s, data) = reduce(&self.data, &self.shape, &mask, T::ONE, T::mul);
         Ok(Tensor::from_parts(s, data))
     }
 

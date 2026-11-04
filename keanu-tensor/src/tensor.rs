@@ -198,18 +198,33 @@ impl<T: Element> Tensor<T> {
         Ok(Tensor { shape: out, data })
     }
 
-    /// Like [`zip_with`](Self::zip_with) but the function can fail.
+    /// Like [`zip_with`](Self::zip_with) but the function can fail. The error is the first in row-major order of
+    /// the result; once there is one, `f` isn't called again.
     pub fn try_zip_with<U: Element, V: Element>(
         &self,
         other: &Tensor<U>,
         f: impl Fn(T, U) -> Result<V>,
     ) -> Result<Tensor<V>> {
-        let out = shape::broadcast_shape(&self.shape, &other.shape)?;
-        let results = broadcast_zip(&self.data, &self.shape, &other.data, &other.shape, &out, f);
-        Ok(Tensor {
-            shape: out,
-            data: results.into_iter().collect::<Result<_>>()?,
-        })
+        let error = std::cell::OnceCell::new();
+        let result = self.zip_with(other, |a, b| {
+            if error.get().is_some() {
+                return V::default();
+            }
+            f(a, b).unwrap_or_else(|e| {
+                let _ = error.set(e);
+                V::default()
+            })
+        })?;
+        match error.into_inner() {
+            Some(e) => Err(e),
+            None => Ok(result),
+        }
+    }
+
+    /// Applies a function to every element, reusing this tensor's buffer.
+    pub(crate) fn map_in_place(mut self, f: impl Fn(T) -> T) -> Self {
+        self.data.iter_mut().for_each(|x| *x = f(*x));
+        self
     }
 
     /// Reads the tensor with arbitrary (possibly negative or zero) strides into a new contiguous tensor.
@@ -393,28 +408,24 @@ fn gather_into<T: Copy>(
     }
 }
 
-/// Reduces over the dimensions marked in `reduce`, removing them (or keeping them with length 1 if `keep_dims`).
-/// `init` starts each output element and `fold` accumulates input elements into it.
+/// Reduces over the dimensions marked in `reduce`, removing them. `init` starts each output element and `fold`
+/// accumulates input elements into it.
 pub(crate) fn reduce<T: Copy, A: Copy>(
     data: &[T],
     shape: &[usize],
     reduce: &[bool],
-    keep_dims: bool,
     init: A,
     fold: impl Fn(A, T) -> A,
 ) -> (Shape, Storage<A>) {
     let rank = shape.len();
+    // the reduced dimensions kept with length 1, to walk the output alongside the input
     let kept_shape: Shape = (0..rank)
         .map(|i| if reduce[i] { 1 } else { shape[i] })
         .collect();
-    let out_shape: Shape = if keep_dims {
-        kept_shape.clone()
-    } else {
-        (0..rank)
-            .filter(|&i| !reduce[i])
-            .map(|i| shape[i])
-            .collect()
-    };
+    let out_shape: Shape = (0..rank)
+        .filter(|&i| !reduce[i])
+        .map(|i| shape[i])
+        .collect();
     let mut out = smallvec::smallvec![init; shape::length(&kept_shape)];
     if data.is_empty() {
         return (out_shape, out);

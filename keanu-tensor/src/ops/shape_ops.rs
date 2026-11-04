@@ -250,11 +250,7 @@ impl<T: Element> Tensor<T> {
         let mut out_shape: Shape = self.shape[..self.rank() - 2].into();
         out_shape.push(n * (n + 1) / 2);
         let mut data = Vec::with_capacity(shape::length(&out_shape));
-        for matrix in self
-            .data
-            .chunks((n * n).max(1))
-            .take(shape::length(&out_shape[..out_shape.len() - 1]))
-        {
+        for matrix in self.data.chunks((n * n).max(1)) {
             for a in 0..n {
                 for b in a..n {
                     // upper: row a, column b; lower: column a, row b
@@ -307,11 +303,13 @@ pub enum SliceItem {
 }
 
 /// Parses a numpy slice string, e.g. `"1, ..., ::-1"`, into its items, without resolving them against a shape.
+/// Whitespace around items and their parts is ignored, and as in numpy a trailing comma is allowed (`"1,"`).
 pub fn parse_slice(spec: &str) -> Result<Vec<SliceItem>> {
-    spec.split(',')
-        .map(str::trim)
-        .map(slicing::parse_item)
-        .collect()
+    let mut items: Vec<&str> = spec.split(',').map(str::trim).collect();
+    if items.len() > 1 && items.last() == Some(&"") {
+        items.pop();
+    }
+    items.into_iter().map(slicing::parse_item).collect()
 }
 
 /// Parsing and resolution of numpy slice strings.
@@ -344,7 +342,7 @@ pub(crate) mod slicing {
         if text == "..." {
             return Ok(Item::Ellipsis);
         }
-        let parts: Vec<&str> = text.split(':').collect();
+        let parts: Vec<&str> = text.split(':').map(str::trim).collect();
         match parts.as_slice() {
             [index] => Ok(Item::Index(
                 parse(index)?.ok_or_else(|| invalid("empty index"))?,

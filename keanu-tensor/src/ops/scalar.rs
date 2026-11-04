@@ -64,10 +64,11 @@ impl<T: Numeric> Neg for &Tensor<T> {
     }
 }
 
+/// Negates in place, reusing the tensor's buffer.
 impl<T: Numeric> Neg for Tensor<T> {
     type Output = Tensor<T>;
     fn neg(self) -> Tensor<T> {
-        -&self
+        self.map_in_place(T::neg)
     }
 }
 
@@ -91,22 +92,25 @@ macro_rules! scalar_ops {
                 self.map(|x| Numeric::mul(x, rhs))
             }
         }
+        /// Updates the tensor's buffer in place.
         impl Add<$t> for Tensor<$t> {
             type Output = Tensor<$t>;
             fn add(self, rhs: $t) -> Tensor<$t> {
-                &self + rhs
+                self.map_in_place(|x| Numeric::add(x, rhs))
             }
         }
+        /// Updates the tensor's buffer in place.
         impl Sub<$t> for Tensor<$t> {
             type Output = Tensor<$t>;
             fn sub(self, rhs: $t) -> Tensor<$t> {
-                &self - rhs
+                self.map_in_place(|x| Numeric::sub(x, rhs))
             }
         }
+        /// Updates the tensor's buffer in place.
         impl Mul<$t> for Tensor<$t> {
             type Output = Tensor<$t>;
             fn mul(self, rhs: $t) -> Tensor<$t> {
-                &self * rhs
+                self.map_in_place(|x| Numeric::mul(x, rhs))
             }
         }
     };
@@ -122,9 +126,10 @@ impl Div<f64> for &DoubleTensor {
     }
 }
 
+/// Updates the tensor's buffer in place.
 impl Div<f64> for DoubleTensor {
     type Output = DoubleTensor;
     fn div(self, rhs: f64) -> DoubleTensor {
-        &self / rhs
+        self.map_in_place(|x| x / rhs)
     }
 }

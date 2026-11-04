@@ -69,6 +69,7 @@ impl DoubleTensor {
         let right_strides = shape::broadcast_strides(other.batch_shape(), &batch);
         let batch_strides = shape::row_major_strides(&batch);
 
+        // zeroed once here: matmul_into accumulates small products into it
         let mut data: Storage<f64> = smallvec::smallvec![0.0; out_len];
         for (i, out) in data
             .chunks_mut(m.saturating_mul(n).max(1))
@@ -243,12 +244,13 @@ impl DoubleTensor {
             shape::length(&dims) as isize
         };
         let contracted = size(self, &left);
+        // the permuted copies are reshaped in place
         let lhs = self
-            .permute(&[kept_left.clone(), left.clone()].concat())?
-            .reshape(&[size(self, &kept_left), contracted])?;
+            .permute(&[kept_left.as_slice(), &left].concat())?
+            .into_reshape(&[size(self, &kept_left), contracted])?;
         let rhs = other
-            .permute(&[right.clone(), kept_right.clone()].concat())?
-            .reshape(&[contracted, size(other, &kept_right)])?;
+            .permute(&[right.as_slice(), &kept_right].concat())?
+            .into_reshape(&[contracted, size(other, &kept_right)])?;
         let product = lhs.matmul(&rhs)?;
         Ok(Tensor::from_parts(out_dims, product.data))
     }
@@ -372,7 +374,7 @@ const SEQUENTIAL_MATMUL: usize = 256 * 256 * 256;
 const SMALL_CHOLESKY: usize = 64;
 
 /// out[m × n] = op(A) op(B), row-major, where op optionally transposes. `a` is (rows, cols, transposed) of A as
-/// stored, and similarly for `b`.
+/// stored, and similarly for `b`. `out` must be zeroed: small products accumulate into it.
 fn matmul_into(
     a: &[f64],
     (ar, ac, ta): (usize, usize, bool),
@@ -383,7 +385,7 @@ fn matmul_into(
 ) {
     let work = m * n * k;
     if work <= SMALL_MATMUL {
-        out.iter_mut().for_each(|x| *x = 0.0);
+        debug_assert!(out.iter().all(|&x| x == 0.0));
         let a_at = |i: usize, p: usize| if ta { a[p * ac + i] } else { a[i * ac + p] };
         for i in 0..m {
             let row = &mut out[i * n..(i + 1) * n];

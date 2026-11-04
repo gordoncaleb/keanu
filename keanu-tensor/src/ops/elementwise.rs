@@ -12,15 +12,15 @@ pub trait Numeric: Element + PartialOrd {
     const ZERO: Self;
     /// The multiplicative identity.
     const ONE: Self;
-    /// Element-wise, broadcasting: self + other.
+    /// self + other.
     fn add(self, other: Self) -> Self;
-    /// Element-wise, broadcasting: self - other.
+    /// self - other.
     fn sub(self, other: Self) -> Self;
-    /// Element-wise, broadcasting: self × other.
+    /// self × other.
     fn mul(self, other: Self) -> Self;
-    /// Element-wise: the negation.
+    /// The negation.
     fn neg(self) -> Self;
-    /// Element-wise: the absolute value.
+    /// The absolute value.
     fn abs(self) -> Self;
     /// The larger value (NaN if either is NaN; +0.0 is larger than -0.0).
     fn max(self, other: Self) -> Self;
@@ -334,7 +334,7 @@ impl IntTensor {
     pub fn pow(&self, exponent: &Self) -> Result<Self> {
         self.try_zip_with(exponent, int_pow)
     }
-    /// Element-wise: the sign (-1, 0 or 1; zero keeps its sign and NaN stays NaN).
+    /// Element-wise: the sign, -1, 0 or 1.
     pub fn sign(&self) -> Self {
         self.map(i64::signum)
     }
