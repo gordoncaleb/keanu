@@ -100,6 +100,7 @@ vector was edited by hand and the entry says so.
 - keanu-tensor: `argmax_axis`/`argmin_axis` along an empty axis return an error instead of index 0.
 - keanu-tensor (breaking): `DoubleTensor::arange` and `DoubleTensor::eye` return `Result`. `arange` rejects non-finite bounds and ranges too long to allocate, and `eye` rejects n where n × n overflows, instead of panicking.
 - keanu-tensor: `tensor_multiply` over zero-length contracted axes returns zeros (e.g. [2, 0]·[0, 3] gives a [2, 3] zero tensor, as `matmul` does) instead of failing to reshape.
+- Internal refactor, no behaviour or file format change: keanu-graph describes each distribution once, in a table that generates its name, parameter types, sampling, log probability and gradient; keanu-io keeps one table of distribution and simple-operation Java classes and parameter names, shared by saving, loading and DOT export (with hashed / binary search lookups instead of a scan per vertex), and saving parses slices with keanu-tensor's parser, now public as `keanu_tensor::ops::shape_ops::{parse_slice, SliceItem}`.
 
 ## Unreleased: Java
 

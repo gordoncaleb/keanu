@@ -2,14 +2,13 @@
 //! implementation can load it.
 
 use crate::Metadata;
-use crate::classes::JAVA_CLASSES;
+use crate::classes::{self, SimpleOp};
 use crate::error::{IoError, Result};
 use crate::proto;
 use crate::proto::named_param::Param;
-use keanu_graph::op::{
-    ArgOp, BinaryOp, CompareOp, DistributionKind, LogicOp, Op, Predicate, ReduceOp, ScanOp, UnaryOp,
-};
+use keanu_graph::op::{ArgOp, CompareOp, DistributionKind, Op, ReduceOp, ScanOp, UnaryOp};
 use keanu_graph::{DType, Graph, NodeId, State, Value};
+use keanu_tensor::ops::shape_ops::{SliceItem, parse_slice};
 use keanu_tensor::{BoolTensor, DoubleTensor, IntTensor};
 use std::collections::HashMap;
 
@@ -62,11 +61,19 @@ fn proto_value(value: &Value) -> Result<proto::VertexValue> {
 }
 
 fn java_class(simple: &str) -> Result<&'static str> {
-    JAVA_CLASSES
-        .iter()
-        .find(|(s, _)| *s == simple)
-        .map(|(_, fq)| *fq)
+    classes::java_class(simple)
         .ok_or_else(|| IoError::NotSaveable(format!("no saved type is recorded for {simple}")))
+}
+
+/// The class and parameters of a constant vertex, or None for an unsupported type.
+fn constant_vertex(value: Value) -> Option<(&'static str, Vec<(&'static str, P)>)> {
+    let (class, constant) = match value {
+        Value::F64(t) => ("ConstantDoubleVertex", P::DoubleTensor(t)),
+        Value::I64(t) => ("ConstantIntegerVertex", P::IntTensor(t)),
+        Value::Bool(t) => ("ConstantBooleanVertex", P::BoolTensor(t)),
+        _ => return None,
+    };
+    Some((class, vec![("constant", constant)]))
 }
 
 /// One parameter of a saved vertex.
@@ -170,29 +177,9 @@ impl Saver<'_> {
     /// Emits an unlabelled helper constant.
     fn constant(&mut self, value: Value) -> Result<String> {
         let shape = value.shape().to_vec();
-        match value {
-            Value::F64(t) => self.emit(
-                "ConstantDoubleVertex",
-                "",
-                &shape,
-                vec![("constant", P::DoubleTensor(t))],
-            ),
-            Value::I64(t) => self.emit(
-                "ConstantIntegerVertex",
-                "",
-                &shape,
-                vec![("constant", P::IntTensor(t))],
-            ),
-            Value::Bool(t) => self.emit(
-                "ConstantBooleanVertex",
-                "",
-                &shape,
-                vec![("constant", P::BoolTensor(t))],
-            ),
-            _ => Err(IoError::NotSaveable(
-                "a constant of an unsupported type".into(),
-            )),
-        }
+        let (class, params) = constant_vertex(value)
+            .ok_or_else(|| IoError::NotSaveable("a constant of an unsupported type".into()))?;
+        self.emit(class, "", &shape, params)
     }
 
     fn save_node(&mut self, id: NodeId) -> Result<String> {
@@ -201,13 +188,15 @@ impl Saver<'_> {
         let shape = node.shape().to_vec();
         let parents = node.parents().to_vec();
         let p = |i: usize| P::Parent(parents[i]);
-        let input = || vec![("inputVertex", P::Parent(parents[0]))];
-        let left_right = || {
-            vec![
-                ("left", P::Parent(parents[0])),
-                ("right", P::Parent(parents[1])),
-            ]
+        // the parents, with the given parameter names in order
+        let named = |names: &[&'static str]| -> Vec<(&'static str, P)> {
+            names
+                .iter()
+                .enumerate()
+                .map(|(i, &n)| (n, P::Parent(parents[i])))
+                .collect()
         };
+        let input = || vec![("inputVertex", P::Parent(parents[0]))];
         let unsupported = |what: &str| {
             Err(IoError::NotSaveable(format!(
                 "{what} (node {id:?}) has no saved form"
@@ -215,21 +204,13 @@ impl Saver<'_> {
         };
         let input_dtype = parents.first().map(|&p| self.graph.node(p).dtype());
 
+        if let Some((simple, class)) = SimpleOp::of(node.op()).and_then(|s| Some((s, s.class()?))) {
+            return self.emit(class, &label, &shape, named(simple.parameters()));
+        }
         let (class, params): (&str, Vec<(&str, P)>) = match node.op() {
-            Op::Constant(value) => match value {
-                Value::F64(t) => (
-                    "ConstantDoubleVertex",
-                    vec![("constant", P::DoubleTensor(t.clone()))],
-                ),
-                Value::I64(t) => (
-                    "ConstantIntegerVertex",
-                    vec![("constant", P::IntTensor(t.clone()))],
-                ),
-                Value::Bool(t) => (
-                    "ConstantBooleanVertex",
-                    vec![("constant", P::BoolTensor(t.clone()))],
-                ),
-                _ => return unsupported("a constant of an unsupported type"),
+            Op::Constant(value) => match constant_vertex(value.clone()) {
+                Some(vertex) => vertex,
+                None => return unsupported("a constant of an unsupported type"),
             },
             Op::Unary(op) => match op {
                 UnaryOp::Neg => {
@@ -255,64 +236,16 @@ impl Saver<'_> {
                     let c = self.constant(Value::F64(DoubleTensor::scalar(0.5)))?;
                     ("PowerVertex", vec![("left", p(0)), ("right", P::Saved(c))])
                 }
-                other => (
-                    unary_class(*other)
-                        .ok_or_else(|| IoError::NotSaveable(format!("{other:?}")))?,
-                    input(),
-                ),
+                other => return Err(IoError::NotSaveable(format!("{other:?}"))),
             },
-            Op::Binary(op) => match op {
-                BinaryOp::Max => ("MaxVertex", vec![("then", p(0)), ("else", p(1))]),
-                BinaryOp::Min => ("MinVertex", vec![("then", p(0)), ("else", p(1))]),
-                other => (
-                    binary_class(*other)
-                        .ok_or_else(|| IoError::NotSaveable(format!("{other:?}")))?,
-                    left_right(),
-                ),
-            },
-            Op::Compare(op) => match compare_class(*op) {
-                Some(class) => (class, left_right()),
-                None => return unsupported("an unsupported comparison"),
-            },
-            Op::Mask(op) => (
-                match op {
-                    CompareOp::Gt => "GreaterThanMaskVertex",
-                    CompareOp::Ge => "GreaterThanOrEqualToMaskVertex",
-                    CompareOp::Lt => "LessThanMaskVertex",
-                    CompareOp::Le => "LessThanOrEqualToMaskVertex",
-                    CompareOp::Eq | CompareOp::Ne => return unsupported("an equality mask"),
-                    _ => return unsupported("a mask of an unsupported comparison"),
-                },
-                left_right(),
-            ),
+            Op::Mask(CompareOp::Eq | CompareOp::Ne) => return unsupported("an equality mask"),
             Op::ApproxEq(epsilon) => (
                 "NumericalEqualsVertex",
                 vec![("a", p(0)), ("b", p(1)), ("epsilon", P::Double(*epsilon))],
             ),
-            Op::Logic(op) => (
-                match op {
-                    LogicOp::And => "AndBinaryVertex",
-                    LogicOp::Or => "OrBinaryVertex",
-                    LogicOp::Xor => "XorBinaryVertex",
-                    _ => return unsupported("an unsupported logical operation"),
-                },
-                left_right(),
-            ),
             Op::Not => ("NotBinaryVertex", input()),
             Op::All => ("AllTrueVertex", input()),
             Op::Any => ("AnyTrueVertex", input()),
-            Op::Predicate(predicate) => (
-                match predicate {
-                    Predicate::IsNan => "IsNaNVertex",
-                    Predicate::NotNan => "NotNaNVertex",
-                    Predicate::IsFinite => "IsFiniteVertex",
-                    Predicate::IsInfinite => "IsInfiniteVertex",
-                    Predicate::IsPositiveInfinity => "IsPositiveInfinityVertex",
-                    Predicate::IsNegativeInfinity => "IsNegativeInfinityVertex",
-                    _ => return unsupported("an unsupported predicate"),
-                },
-                input(),
-            ),
             Op::Reduce { kind, axes } => {
                 let class = match (kind, axes) {
                     (ReduceOp::Sum, _) => "SumVertex",
@@ -585,140 +518,36 @@ impl Saver<'_> {
                     vec![("parent", p(0)), ("label", P::Str(label.clone()))],
                 )
             }
-            Op::Distribution(distribution) => {
-                use DistributionKind as D;
-                let named = |names: &[&'static str]| -> Vec<(&'static str, P)> {
-                    names
-                        .iter()
-                        .enumerate()
-                        .map(|(i, &n)| (n, P::Parent(parents[i])))
-                        .collect()
-                };
-                match &distribution.kind {
-                    D::Gaussian => ("GaussianVertex", named(&["mu", "sigma"])),
-                    D::HalfGaussian => {
-                        let zero = self.constant(Value::F64(DoubleTensor::scalar(0.0)))?;
+            Op::Distribution(distribution) => match &distribution.kind {
+                DistributionKind::Kde(kde) => (
+                    "KDEVertex",
+                    vec![
                         (
-                            "HalfGaussianVertex",
-                            vec![("mu", P::Saved(zero)), ("sigma", p(0))],
-                        )
+                            "samples",
+                            P::DoubleTensor(DoubleTensor::vector(kde.samples.clone())),
+                        ),
+                        ("bandwidth", P::Double(kde.bandwidth)),
+                    ],
+                ),
+                DistributionKind::Categorical => return unsupported("a categorical node"),
+                kind => match classes::saved_distribution(kind) {
+                    Some(saved) => {
+                        let mut params = named(saved.parameters);
+                        if let Some(location) = saved.zero_location {
+                            let zero = self.constant(Value::F64(DoubleTensor::scalar(0.0)))?;
+                            params.push((location, P::Saved(zero)));
+                        }
+                        (saved.class, params)
                     }
-                    D::Cauchy => ("CauchyVertex", named(&["location", "scale"])),
-                    D::HalfCauchy => {
-                        let zero = self.constant(Value::F64(DoubleTensor::scalar(0.0)))?;
-                        (
-                            "HalfCauchyVertex",
-                            vec![("location", P::Saved(zero)), ("scale", p(0))],
-                        )
-                    }
-                    D::Beta => ("BetaVertex", named(&["alpha", "beta"])),
-                    D::ChiSquared => ("ChiSquaredVertex", named(&["k"])),
-                    D::Dirichlet => ("DirichletVertex", named(&["concentration"])),
-                    D::Exponential => ("ExponentialVertex", named(&["rate"])),
-                    D::Gamma => ("GammaVertex", named(&["theta", "k"])),
-                    D::InverseGamma => ("InverseGammaVertex", named(&["alpha", "beta"])),
-                    D::Laplace => ("LaplaceVertex", named(&["mu", "beta"])),
-                    D::Logistic => ("LogisticVertex", named(&["mu", "s"])),
-                    D::LogNormal => ("LogNormalVertex", named(&["mu", "sigma"])),
-                    D::MultivariateGaussian => {
-                        ("MultivariateGaussianVertex", named(&["mu", "covariance"]))
-                    }
-                    D::Pareto => ("ParetoVertex", named(&["location", "scale"])),
-                    D::StudentT => ("StudentTVertex", named(&["v"])),
-                    D::Triangular => ("TriangularVertex", named(&["xMin", "xMax", "c"])),
-                    D::Uniform => ("UniformVertex", named(&["xMin", "xMax"])),
-                    D::Kde(kde) => (
-                        "KDEVertex",
-                        vec![
-                            (
-                                "samples",
-                                P::DoubleTensor(DoubleTensor::vector(kde.samples.clone())),
-                            ),
-                            ("bandwidth", P::Double(kde.bandwidth)),
-                        ],
-                    ),
-                    D::Bernoulli => ("BernoulliVertex", named(&["probTrue"])),
-                    D::Binomial => ("BinomialVertex", named(&["p", "n"])),
-                    D::Geometric => ("GeometricVertex", named(&["p"])),
-                    D::Multinomial => ("MultinomialVertex", named(&["n", "p"])),
-                    D::Poisson => ("PoissonVertex", named(&["mu"])),
-                    D::UniformInt => ("UniformIntVertex", named(&["min", "max"])),
-                    D::Categorical => return unsupported("a categorical node"),
-                    _ => return unsupported("this distribution"),
-                }
-            }
+                    None => return unsupported("this distribution"),
+                },
+            },
             Op::Lambda(_) => return unsupported("a lambda"),
             Op::Cpt { .. } => return unsupported("a conditional probability table"),
             _ => return unsupported(node.op().name()),
         };
         self.emit(class, &label, &shape, params)
     }
-}
-
-fn unary_class(op: UnaryOp) -> Option<&'static str> {
-    use UnaryOp::*;
-    Some(match op {
-        Abs => "AbsVertex",
-        Sign => "SignVertex",
-        Exp => "ExpVertex",
-        Exp2 => "Exp2Vertex",
-        ExpM1 => "ExpM1Vertex",
-        Ln => "LogVertex",
-        Ln1p => "Log1pVertex",
-        Log2 => "Log2Vertex",
-        Log10 => "Log10Vertex",
-        Sin => "SinVertex",
-        Cos => "CosVertex",
-        Tan => "TanVertex",
-        Asin => "ArcSinVertex",
-        Acos => "ArcCosVertex",
-        Atan => "ArcTanVertex",
-        Sinh => "SinhVertex",
-        Cosh => "CoshVertex",
-        Tanh => "TanhVertex",
-        Asinh => "ArcSinhVertex",
-        Acosh => "ArcCoshVertex",
-        Atanh => "ArcTanhVertex",
-        Sigmoid => "SigmoidVertex",
-        Floor => "FloorVertex",
-        Ceil => "CeilVertex",
-        Round => "RoundVertex",
-        LnGamma => "LogGammaVertex",
-        Digamma => "DigammaVertex",
-        Trigamma => "TrigammaVertex",
-        _ => return None,
-    })
-}
-
-fn binary_class(op: BinaryOp) -> Option<&'static str> {
-    use BinaryOp::*;
-    Some(match op {
-        Add => "AdditionVertex",
-        Sub => "DifferenceVertex",
-        Mul => "MultiplicationVertex",
-        Div => "DivisionVertex",
-        Pow => "PowerVertex",
-        Rem => "ModVertex",
-        Atan2 => "ArcTan2Vertex",
-        LogAddExp => "LogAddExpVertex",
-        LogAddExp2 => "LogAddExp2Vertex",
-        SafeLnTimes => "SafeLogTimesVertex",
-        Max => "MaxVertex",
-        Min => "MinVertex",
-        _ => return None,
-    })
-}
-
-fn compare_class(op: CompareOp) -> Option<&'static str> {
-    Some(match op {
-        CompareOp::Gt => "GreaterThanVertex",
-        CompareOp::Ge => "GreaterThanOrEqualVertex",
-        CompareOp::Lt => "LessThanVertex",
-        CompareOp::Le => "LessThanOrEqualVertex",
-        CompareOp::Eq => "EqualsVertex",
-        CompareOp::Ne => "NotEqualsVertex",
-        _ => return None,
-    })
 }
 
 struct StridedSlice {
@@ -740,42 +569,25 @@ fn strided_slice(spec: &str) -> std::result::Result<StridedSlice, String> {
         drop_dimension: vec![],
         ellipsis: None,
     };
-    let parse = |t: &str| -> std::result::Result<Option<i64>, String> {
-        if t.is_empty() {
-            Ok(None)
-        } else {
-            t.parse()
-                .map(Some)
-                .map_err(|_| format!("cannot parse slice {spec:?}"))
-        }
-    };
-    for item in spec.split(',').map(str::trim) {
-        if item == "..." {
-            s.ellipsis = Some(s.start.len());
-            continue;
-        }
-        let parts: Vec<&str> = item.split(':').collect();
-        match parts.as_slice() {
-            [index] => {
-                let i = parse(index)?.ok_or_else(|| format!("empty index in {spec:?}"))?;
+    let items = parse_slice(spec).map_err(|_| format!("cannot parse slice {spec:?}"))?;
+    for item in items {
+        match item {
+            SliceItem::Ellipsis => s.ellipsis = Some(s.start.len()),
+            SliceItem::Index(i) => {
+                let i = i as i64;
                 s.start.push(i);
                 s.end.push(i + 1);
                 s.stride.push(1);
                 s.upper_bound_stop.push(false);
                 s.drop_dimension.push(true);
             }
-            [start, stop] | [start, stop, _] => {
-                let step = if parts.len() == 3 {
-                    parse(parts[2])?.unwrap_or(1)
-                } else {
-                    1
-                };
-                let first = parse(start)?.unwrap_or(if step > 0 { 0 } else { -1 });
-                let end = parse(stop)?;
-                s.start.push(first);
-                s.end.push(end.unwrap_or(0));
+            SliceItem::Range { start, stop, step } => {
+                let step = step.map_or(1, |v| v as i64);
+                s.start
+                    .push(start.map_or(if step > 0 { 0 } else { -1 }, |v| v as i64));
+                s.end.push(stop.map_or(0, |v| v as i64));
                 s.stride.push(step);
-                s.upper_bound_stop.push(end.is_none());
+                s.upper_bound_stop.push(stop.is_none());
                 s.drop_dimension.push(false);
             }
             _ => return Err(format!("cannot parse slice {spec:?}")),

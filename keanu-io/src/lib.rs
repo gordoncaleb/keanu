@@ -12,7 +12,7 @@
 #![deny(missing_docs)]
 #![cfg_attr(docsrs, feature(doc_cfg))]
 
-#[cfg(any(feature = "protobuf", feature = "json"))]
+#[cfg(any(feature = "protobuf", feature = "json", feature = "dot"))]
 mod classes;
 mod error;
 #[cfg(any(feature = "protobuf", feature = "json"))]

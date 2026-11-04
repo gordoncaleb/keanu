@@ -2,13 +2,12 @@
 //! node, or a few nodes where the Rust operation is defined differently.
 
 use crate::Metadata;
+use crate::classes::{self, SavedDistribution, SimpleOp};
 use crate::error::{IoError, Result};
 use crate::proto;
 use crate::proto::named_param::Param;
 use keanu_distributions::Kde;
-use keanu_graph::op::{
-    ArgOp, BinaryOp, CompareOp, DistributionKind, LogicOp, Op, Predicate, ReduceOp, ScanOp, UnaryOp,
-};
+use keanu_graph::op::{ArgOp, BinaryOp, DistributionKind, Op, ReduceOp, ScanOp};
 use keanu_graph::{DType, Graph, GraphBuilder, NodeId, State, Value};
 use keanu_tensor::{BoolTensor, DoubleTensor, IntTensor};
 use std::collections::{HashMap, HashSet};
@@ -124,7 +123,7 @@ pub(crate) fn load_model(model: &proto::ProtoModel) -> Result<Loaded> {
             None => {
                 let labels = labels.get_or_insert_with(|| {
                     let mut labels = HashMap::new();
-                    for n in (0..builder.node_count()).map(keanu_graph_node_id) {
+                    for n in (0..builder.node_count()).map(NodeId::from_index) {
                         if let Some(label) = builder.label_of(n) {
                             labels.entry(label).or_insert(n);
                         }
@@ -171,11 +170,6 @@ pub(crate) fn load_model(model: &proto::ProtoModel) -> Result<Loaded> {
     })
 }
 
-/// NodeIds are created by the builder; the loader looks nodes up by creation index.
-fn keanu_graph_node_id(index: usize) -> NodeId {
-    NodeId::from_index(index)
-}
-
 fn vertex_id(vertex: &proto::Vertex) -> Result<&str> {
     vertex
         .id
@@ -186,11 +180,7 @@ fn vertex_id(vertex: &proto::Vertex) -> Result<&str> {
 }
 
 fn simple_class(vertex: &proto::Vertex) -> &str {
-    vertex
-        .vertex_type
-        .rsplit('.')
-        .next()
-        .unwrap_or(&vertex.vertex_type)
+    classes::simple_name(&vertex.vertex_type)
 }
 
 fn find_param<'v>(vertex: &'v proto::Vertex, name: &str) -> Option<&'v Param> {
@@ -352,11 +342,7 @@ struct Loader<'a> {
 
 impl Loader<'_> {
     fn class(&self) -> &str {
-        self.vertex
-            .vertex_type
-            .rsplit('.')
-            .next()
-            .unwrap_or(&self.vertex.vertex_type)
+        simple_class(self.vertex)
     }
 
     fn invalid(&self, parameter: &str, message: impl Into<String>) -> IoError {
@@ -368,11 +354,7 @@ impl Loader<'_> {
     }
 
     fn param(&self, name: &str) -> Option<&Param> {
-        self.vertex
-            .parameters
-            .iter()
-            .find(|p| p.name == name)
-            .and_then(|p| p.param.as_ref())
+        find_param(self.vertex, name)
     }
 
     fn require(&self, name: &str) -> Result<&Param> {
@@ -480,46 +462,32 @@ impl Loader<'_> {
         self.node(op, &[self.parent("left")?, self.parent("right")?])
     }
 
-    fn distribution(&self, kind: DistributionKind, parameters: &[&str]) -> Result<NodeId> {
-        let parents = parameters
+    fn distribution(&self, saved: &SavedDistribution) -> Result<NodeId> {
+        if let Some(location) = saved.zero_location {
+            // the half distributions are saved with a location parameter, which must be zero; a zero constant used
+            // only as this location isn't loaded (see SavedHelpers)
+            let folded = parent_id(self.vertex, location)
+                .is_some_and(|id| self.helpers.zero_locations.contains(id));
+            if !folded {
+                let location_node = self.parent(location)?;
+                let is_zero_constant = matches!(
+                    self.builder.constant_value(location_node),
+                    Some(Value::F64(t)) if t.as_slice().iter().all(|&v| v == 0.0)
+                );
+                if !is_zero_constant {
+                    return Err(self.invalid(location, "must be the constant 0"));
+                }
+            }
+        }
+        let parents = saved
+            .parameters
             .iter()
             .map(|p| self.parent(p))
             .collect::<Result<Vec<_>>>()?;
         let shape = self.shape()?;
         Ok(self
             .builder
-            .add_distribution(kind, Some(&shape), &parents)?)
-    }
-
-    /// The half distributions are saved with a location parameter, which must be zero.
-    fn half_distribution(
-        &self,
-        kind: DistributionKind,
-        location: &str,
-        scale: &str,
-    ) -> Result<NodeId> {
-        // a zero constant used only as this location isn't loaded (see SavedHelpers)
-        let folded = parent_id(self.vertex, location)
-            .is_some_and(|id| self.helpers.zero_locations.contains(id));
-        if !folded {
-            let location_node = self.parent(location)?;
-            let is_zero_constant = matches!(
-                self.builder_constant(location_node),
-                Some(Value::F64(t)) if t.as_slice().iter().all(|&v| v == 0.0)
-            );
-            if !is_zero_constant {
-                return Err(self.invalid(location, "must be the constant 0"));
-            }
-        }
-        let parents = [self.parent(scale)?];
-        let shape = self.shape()?;
-        Ok(self
-            .builder
-            .add_distribution(kind, Some(&shape), &parents)?)
-    }
-
-    fn builder_constant(&self, id: NodeId) -> Option<Value> {
-        self.builder.constant_value(id)
+            .add_distribution(saved.kind.clone(), Some(&shape), &parents)?)
     }
 
     /// numpy slice text for Java's StridedSliceVertex parameters.
@@ -563,13 +531,18 @@ impl Loader<'_> {
     }
 
     fn load(&self) -> Result<NodeId> {
-        use DistributionKind as D;
-        let unary = |op: UnaryOp| self.unary(Op::Unary(op));
-        let binary = |op: BinaryOp| self.binary(Op::Binary(op));
-        let compare = |op: CompareOp| self.binary(Op::Compare(op));
-        let mask = |op: CompareOp| self.binary(Op::Mask(op));
-        let predicate = |p: Predicate| self.unary(Op::Predicate(p));
         let isize_of = |v: i64| v as isize;
+        if let Some(simple) = SimpleOp::of_class(self.class()) {
+            let parents = simple
+                .parameters()
+                .iter()
+                .map(|p| self.parent(p))
+                .collect::<Result<Vec<_>>>()?;
+            return self.node(simple.op(), &parents);
+        }
+        if let Some(saved) = classes::distribution_of_class(self.class()) {
+            return self.distribution(saved);
+        }
 
         match self.class() {
             "ConstantDoubleVertex" => match self.require("constant")? {
@@ -591,73 +564,10 @@ impl Loader<'_> {
                 _ => Err(self.invalid("constant", "expected a boolean tensor")),
             },
 
-            "AbsVertex" => unary(UnaryOp::Abs),
-            "SignVertex" => unary(UnaryOp::Sign),
-            "CeilVertex" => unary(UnaryOp::Ceil),
-            "FloorVertex" => unary(UnaryOp::Floor),
-            "RoundVertex" => unary(UnaryOp::Round),
-            "ExpVertex" => unary(UnaryOp::Exp),
-            "Exp2Vertex" => unary(UnaryOp::Exp2),
-            "ExpM1Vertex" => unary(UnaryOp::ExpM1),
-            "LogVertex" => unary(UnaryOp::Ln),
-            "Log1pVertex" => unary(UnaryOp::Ln1p),
-            "Log2Vertex" => unary(UnaryOp::Log2),
-            "Log10Vertex" => unary(UnaryOp::Log10),
-            "SinVertex" => unary(UnaryOp::Sin),
-            "CosVertex" => unary(UnaryOp::Cos),
-            "TanVertex" => unary(UnaryOp::Tan),
-            "ArcSinVertex" => unary(UnaryOp::Asin),
-            "ArcCosVertex" => unary(UnaryOp::Acos),
-            "ArcTanVertex" => unary(UnaryOp::Atan),
-            "SinhVertex" => unary(UnaryOp::Sinh),
-            "CoshVertex" => unary(UnaryOp::Cosh),
-            "TanhVertex" => unary(UnaryOp::Tanh),
-            "ArcSinhVertex" => unary(UnaryOp::Asinh),
-            "ArcCoshVertex" => unary(UnaryOp::Acosh),
-            "ArcTanhVertex" => unary(UnaryOp::Atanh),
-            "SigmoidVertex" => unary(UnaryOp::Sigmoid),
-            "LogGammaVertex" => unary(UnaryOp::LnGamma),
-            "DigammaVertex" => unary(UnaryOp::Digamma),
-            "TrigammaVertex" => unary(UnaryOp::Trigamma),
-
-            "AdditionVertex" => binary(BinaryOp::Add),
-            "DifferenceVertex" => binary(BinaryOp::Sub),
-            "MultiplicationVertex" => binary(BinaryOp::Mul),
-            "DivisionVertex" => binary(BinaryOp::Div),
-            "PowerVertex" => binary(BinaryOp::Pow),
-            "ModVertex" => binary(BinaryOp::Rem),
-            "ArcTan2Vertex" => binary(BinaryOp::Atan2),
-            "LogAddExpVertex" => binary(BinaryOp::LogAddExp),
-            "LogAddExp2Vertex" => binary(BinaryOp::LogAddExp2),
-            "SafeLogTimesVertex" => binary(BinaryOp::SafeLnTimes),
-            // saved as WhereVertex parameters; the predicate is derived again from then / else
-            "MaxVertex" => self.node(
-                Op::Binary(BinaryOp::Max),
-                &[self.parent("then")?, self.parent("else")?],
-            ),
-            "MinVertex" => self.node(
-                Op::Binary(BinaryOp::Min),
-                &[self.parent("then")?, self.parent("else")?],
-            ),
-
-            "EqualsVertex" => compare(CompareOp::Eq),
-            "NotEqualsVertex" => compare(CompareOp::Ne),
-            "GreaterThanVertex" => compare(CompareOp::Gt),
-            "GreaterThanOrEqualVertex" => compare(CompareOp::Ge),
-            "LessThanVertex" => compare(CompareOp::Lt),
-            "LessThanOrEqualVertex" => compare(CompareOp::Le),
             "NumericalEqualsVertex" => self.node(
                 Op::ApproxEq(self.double("epsilon")?),
                 &[self.parent("a")?, self.parent("b")?],
             ),
-            "GreaterThanMaskVertex" => mask(CompareOp::Gt),
-            "GreaterThanOrEqualToMaskVertex" => mask(CompareOp::Ge),
-            "LessThanMaskVertex" => mask(CompareOp::Lt),
-            "LessThanOrEqualToMaskVertex" => mask(CompareOp::Le),
-
-            "AndBinaryVertex" => self.binary(Op::Logic(LogicOp::And)),
-            "OrBinaryVertex" => self.binary(Op::Logic(LogicOp::Or)),
-            "XorBinaryVertex" => self.binary(Op::Logic(LogicOp::Xor)),
             "NotBinaryVertex" => self.unary(Op::Not),
             "AllTrueVertex" => self.unary(Op::All),
             "AnyTrueVertex" => self.unary(Op::Any),
@@ -669,13 +579,6 @@ impl Loader<'_> {
                 let all = self.unary(Op::All)?;
                 self.node(Op::Not, &[all])
             }
-            "IsNaNVertex" => predicate(Predicate::IsNan),
-            "NotNaNVertex" => predicate(Predicate::NotNan),
-            "IsFiniteVertex" => predicate(Predicate::IsFinite),
-            "IsInfiniteVertex" => predicate(Predicate::IsInfinite),
-            "IsPositiveInfinityVertex" => predicate(Predicate::IsPositiveInfinity),
-            "IsNegativeInfinityVertex" => predicate(Predicate::IsNegativeInfinity),
-
             "CastNumberToDoubleVertex" => self.unary(Op::Cast(DType::F64)),
             "CastNumberToIntegerVertex" => self.unary(Op::Cast(DType::I64)),
             "CastNumberToBooleanVertex" | "CastToBooleanVertex" => {
@@ -826,26 +729,6 @@ impl Loader<'_> {
                 Ok(proxy)
             }
 
-            "GaussianVertex" => self.distribution(D::Gaussian, &["mu", "sigma"]),
-            "HalfGaussianVertex" => self.half_distribution(D::HalfGaussian, "mu", "sigma"),
-            "CauchyVertex" => self.distribution(D::Cauchy, &["location", "scale"]),
-            "HalfCauchyVertex" => self.half_distribution(D::HalfCauchy, "location", "scale"),
-            "BetaVertex" => self.distribution(D::Beta, &["alpha", "beta"]),
-            "ChiSquaredVertex" => self.distribution(D::ChiSquared, &["k"]),
-            "DirichletVertex" => self.distribution(D::Dirichlet, &["concentration"]),
-            "ExponentialVertex" => self.distribution(D::Exponential, &["rate"]),
-            "GammaVertex" => self.distribution(D::Gamma, &["theta", "k"]),
-            "InverseGammaVertex" => self.distribution(D::InverseGamma, &["alpha", "beta"]),
-            "LaplaceVertex" => self.distribution(D::Laplace, &["mu", "beta"]),
-            "LogisticVertex" => self.distribution(D::Logistic, &["mu", "s"]),
-            "LogNormalVertex" => self.distribution(D::LogNormal, &["mu", "sigma"]),
-            "MultivariateGaussianVertex" => {
-                self.distribution(D::MultivariateGaussian, &["mu", "covariance"])
-            }
-            "ParetoVertex" => self.distribution(D::Pareto, &["location", "scale"]),
-            "StudentTVertex" => self.distribution(D::StudentT, &["v"]),
-            "TriangularVertex" => self.distribution(D::Triangular, &["xMin", "xMax", "c"]),
-            "UniformVertex" => self.distribution(D::Uniform, &["xMin", "xMax"]),
             "KDEVertex" => {
                 let samples = match self.require("samples")? {
                     Param::DoubleTensorParam(t) => double_tensor(t)?.into_vec(),
@@ -854,18 +737,11 @@ impl Loader<'_> {
                 let kde = Kde::new(samples, self.double("bandwidth")?)
                     .map_err(|e| self.invalid("samples", e.to_string()))?;
                 Ok(self.builder.add_distribution(
-                    D::Kde(Arc::new(kde)),
+                    DistributionKind::Kde(Arc::new(kde)),
                     Some(&self.shape()?),
                     &[],
                 )?)
             }
-            "BernoulliVertex" => self.distribution(D::Bernoulli, &["probTrue"]),
-            "BinomialVertex" => self.distribution(D::Binomial, &["p", "n"]),
-            "GeometricVertex" => self.distribution(D::Geometric, &["p"]),
-            "MultinomialVertex" => self.distribution(D::Multinomial, &["n", "p"]),
-            "PoissonVertex" => self.distribution(D::Poisson, &["mu"]),
-            "UniformIntVertex" => self.distribution(D::UniformInt, &["min", "max"]),
-
             other => Err(IoError::UnsupportedVertex(other.to_owned())),
         }
     }

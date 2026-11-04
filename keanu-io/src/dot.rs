@@ -1,38 +1,10 @@
 //! Graphviz DOT export, equivalent to Java's `DotSaver` (but in a deterministic order).
 
 use crate::Metadata;
-use keanu_graph::op::{BinaryOp, DistributionKind, LogicOp, Op};
+use crate::classes;
+use keanu_graph::op::{BinaryOp, LogicOp, Op};
 use keanu_graph::{Graph, NodeId, State, Value};
 use std::fmt::Write;
-
-/// The names of a distribution's parameters, in parent order, used to label the edges into it.
-fn parameter_names(kind: &DistributionKind) -> &'static [&'static str] {
-    use DistributionKind::*;
-    match kind {
-        Gaussian | LogNormal => &["mu", "sigma"],
-        HalfGaussian => &["sigma"],
-        Cauchy | Pareto => &["location", "scale"],
-        HalfCauchy => &["scale"],
-        Beta | InverseGamma => &["alpha", "beta"],
-        ChiSquared => &["k"],
-        Dirichlet => &["concentration"],
-        Exponential => &["rate"],
-        Gamma => &["theta", "k"],
-        Laplace => &["mu", "beta"],
-        Logistic => &["mu", "s"],
-        MultivariateGaussian => &["mu", "covariance"],
-        StudentT => &["v"],
-        Triangular => &["xMin", "xMax", "c"],
-        Uniform => &["xMin", "xMax"],
-        Bernoulli => &["probTrue"],
-        Binomial => &["p", "n"],
-        Geometric => &["p"],
-        Multinomial => &["n", "p"],
-        Poisson => &["mu"],
-        UniformInt => &["min", "max"],
-        _ => &[],
-    }
-}
 
 /// A short description of a node: the binary operators and logic as symbols, distributions by name, and other
 /// ops by their op name.
@@ -78,7 +50,9 @@ pub fn to_dot(graph: &Graph, state: Option<&State>, metadata: &Metadata) -> Stri
     for child in graph.ids() {
         let node = graph.node(child);
         let names = match node.op() {
-            Op::Distribution(d) => parameter_names(&d.kind),
+            Op::Distribution(d) => classes::saved_distribution(&d.kind)
+                .map(|s| s.parameters)
+                .unwrap_or_default(),
             _ => &[],
         };
         for (i, parent) in node.parents().iter().enumerate() {
