@@ -19,6 +19,11 @@ tag. `RUST_MIGRATION_PLAN.md` describes the rewrite and `book/src/from-java.md` 
 - The "Unreleased: Java" changes below were made to the Java implementation during the rewrite, mostly bug fixes
   the Rust port found, so that the Rust version is a faithful conversion.
 
+### Code review fixes
+
+Fixes from the 2026-11-04 whole-codebase review. Where a fix changes a result recorded from Java, the golden
+vector was edited by hand and the entry says so.
+
 ## Unreleased: Java
 
 #### Breaking changes
