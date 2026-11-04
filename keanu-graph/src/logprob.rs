@@ -158,6 +158,16 @@ impl LogProbGradient {
         self.gradients.get(node.0).and_then(Option::as_ref)
     }
 
+    /// Removes and returns the gradient with respect to a node (None if there is none), so it can be used
+    /// without copying.
+    pub fn take(&mut self, node: NodeId) -> Option<DoubleTensor> {
+        let gradient = self.gradients.get_mut(node.0).and_then(Option::take);
+        if gradient.is_some() {
+            self.len -= 1;
+        }
+        gradient
+    }
+
     /// Iterates over the entries, in node order.
     pub fn iter(&self) -> impl Iterator<Item = (NodeId, &DoubleTensor)> + '_ {
         self.gradients

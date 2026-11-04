@@ -171,6 +171,14 @@ vector was edited by hand and the entry says so.
 - keanu-graph (breaking): `Model::set_and_cascade` takes its values by value, as any `IntoIterator<Item = (NodeId, Value)>`, instead of cloning each from a slice; pass `values.iter().cloned()` to keep borrowed values.
 - keanu-graph: faster auto diff: element-wise binary rules no longer multiply by freshly allocated tensors of ones (nor `where` by one to broadcast its mask), reverse mode moves cotangents through proxies, CPTs and multiplexers instead of cloning them, and each shape op's index map (reshape, slice, concat, ...) is computed once per graph instead of on every gradient. Reverse mode through 41 element-wise ops on 1000-element vectors drops from ~200 µs to ~80 µs, forward mode from ~110 µs to ~23 µs, and reverse mode through 15 shape ops on a 100×100 matrix from ~1.7 ms to ~0.4 ms.
 - keanu-graph (breaking): lambda functions and Jacobians (`GraphBuilder::lambda`, `lambda_with_jacobian`, `LambdaFn`, `LambdaJacobianFn`) take their parents' values as `&[&Value]`, borrowed from the state, instead of `&[Value]`, which copied every parent value on each evaluation and gradient.
+- keanu-algorithms: NUTS computes each leapfrog step's log probability and gradient in one pass with
+  `Model::log_prob_and_gradient`, moves the gradient out instead of copying it (new
+  `LogProbGradient::take`), copies each position once instead of twice, and doesn't re-set the state when the
+  chosen sample is the trajectory's last point. Samples are bit-for-bit unchanged; a fixed-seed chain on 300 scalar
+  latents drops from ~6.35 ms to ~6.0 ms per sample, and on one 2000-element vector latent from ~1.55 ms to
+  ~1.33 ms.
+- keanu-algorithms: `ForwardSampler::sample` returns `GraphError::UnknownNode` (as `AlgorithmError::Graph`) for a
+  node that isn't in the model's graph, instead of panicking.
 
 ## Unreleased: Java
 

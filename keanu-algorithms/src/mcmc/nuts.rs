@@ -8,6 +8,7 @@ use crate::support::{evaluate_all, f64_values};
 use keanu_distributions::KeanuRng;
 use keanu_graph::{Graph, Model, NodeId, State};
 use keanu_tensor::DoubleTensor;
+use std::cell::RefCell;
 use std::rc::Rc;
 
 /// The adaptive diagonal quadratic potential (mass matrix) settings (Java's `AdaptiveQuadraticPotential`).
@@ -261,11 +262,10 @@ impl Nuts {
             .iter()
             .map(|&id| state.f64(id).cloned().ok_or_else(|| missing(id)))
             .collect::<Result<_>>()?;
-        let log_prob = model.log_prob(state)?;
+        let (log_prob, gradient) = log_prob_and_gradient_at(model, state, &latents)?;
         if is_impossible(log_prob) {
             return Err(AlgorithmError::ImpossibleStart);
         }
-        let gradient = gradient_at(model, state, &latents, log_prob)?;
 
         let step_size = self.initial_step_size.unwrap_or_else(|| {
             let n: usize = position.iter().map(DoubleTensor::len).sum();
@@ -335,23 +335,24 @@ fn missing(id: NodeId) -> AlgorithmError {
     keanu_graph::GraphError::MissingValue(id).into()
 }
 
-/// The gradient of the joint log probability with respect to each latent, in latent order. Where the log
-/// probability is impossible the gradient is meaningless (the trajectory diverges anyway), so zeros are used.
-fn gradient_at(
+/// The joint log probability and its gradient with respect to each latent, in latent order, in one pass. Where
+/// the log probability is not finite the gradient is meaningless (the trajectory diverges anyway), so zeros are used.
+fn log_prob_and_gradient_at(
     model: &Model,
     state: &State,
     latents: &[NodeId],
-    log_prob: f64,
-) -> Result<Vec<DoubleTensor>> {
+) -> Result<(f64, Vec<DoubleTensor>)> {
     let zeros = |id: NodeId| DoubleTensor::zeros(model.graph().node(id).shape());
-    if !log_prob.is_finite() {
-        return Ok(latents.iter().map(|&id| zeros(id)).collect());
-    }
-    let gradient = model.log_prob_gradient(state)?;
-    Ok(latents
-        .iter()
-        .map(|&id| gradient.get(id).cloned().unwrap_or_else(|| zeros(id)))
-        .collect())
+    let (log_prob, gradient) = model.log_prob_and_gradient(state)?;
+    let gradient = match gradient {
+        // the latents are distinct, so each gradient is moved out exactly once
+        Some(mut gradient) if log_prob.is_finite() => latents
+            .iter()
+            .map(|&id| gradient.take(id).unwrap_or_else(|| zeros(id)))
+            .collect(),
+        _ => latents.iter().map(|&id| zeros(id)).collect(),
+    };
+    Ok((log_prob, gradient))
 }
 
 /// A chosen point of a trajectory.
@@ -578,6 +579,8 @@ struct Integrator<'a, 'm> {
     potential: &'a PotentialState,
     start_energy: f64,
     max_energy_change: f64,
+    /// The position the last leapfrog step left the state at, if any.
+    in_state: RefCell<Option<Rc<Vec<DoubleTensor>>>>,
 }
 
 impl Integrator<'_, '_> {
@@ -586,16 +589,17 @@ impl Integrator<'_, '_> {
         let half = dt / 2.0;
         let momentum = axpy(&from.momentum, half, &from.gradient)?;
         let velocity = self.potential.velocity(&momentum)?;
-        let position = axpy(&from.position, dt, &velocity)?;
+        let position = Rc::new(axpy(&from.position, dt, &velocity)?);
 
+        // the state needs its own copy of the position: the trajectory keeps this one
         self.model
             .set_and_cascade(state, f64_values(self.latents, position.iter().cloned()))?;
-        let log_prob = self.model.log_prob(state)?;
-        let gradient = gradient_at(self.model, state, self.latents, log_prob)?;
+        *self.in_state.borrow_mut() = Some(Rc::clone(&position));
+        let (log_prob, gradient) = log_prob_and_gradient_at(self.model, state, self.latents)?;
 
         let momentum = axpy(&momentum, half, &gradient)?;
         LeapfrogState::new(
-            Rc::new(position),
+            position,
             momentum,
             Rc::new(gradient),
             log_prob,
@@ -821,6 +825,7 @@ impl SamplingAlgorithm for NutsSampler<'_> {
             potential: &self.potential,
             start_energy: start.energy,
             max_energy_change: self.config.max_energy_change,
+            in_state: RefCell::new(None),
         };
         let mut tree = Tree {
             sum_momentum: start.momentum.clone(),
@@ -842,9 +847,14 @@ impl SamplingAlgorithm for NutsSampler<'_> {
             self.proposal = chosen;
         }
 
-        // leave the state at the chosen sample (the trajectory left it at its last leapfrog position)
-        let values = f64_values(&self.latents, self.proposal.position.iter().cloned());
-        self.model.set_and_cascade(state, values)?;
+        // leave the state at the chosen sample. The trajectory left it at its last leapfrog position; when that
+        // is the chosen one (the same allocation, so the same values, and setting them again would cascade to the
+        // same results) there is nothing to do.
+        let in_state = integrator.in_state.into_inner();
+        if !in_state.is_some_and(|p| Rc::ptr_eq(&p, &self.proposal.position)) {
+            let values = f64_values(&self.latents, self.proposal.position.iter().cloned());
+            self.model.set_and_cascade(state, values)?;
+        }
 
         if self.config.save_statistics {
             self.statistics.step_size.push(self.step_size.step_size);

@@ -1,6 +1,6 @@
 use keanu_algorithms::{AlgorithmError, ForwardSampler};
 use keanu_distributions::KeanuRng;
-use keanu_graph::{GraphBuilder, Model};
+use keanu_graph::{GraphBuilder, GraphError, Model};
 use keanu_tensor::DoubleTensor;
 
 #[test]
@@ -181,5 +181,28 @@ fn log_probs_use_up_to_date_downstream_nodes() {
     assert_eq!(
         state.f64(doubled).unwrap().to_scalar().unwrap(),
         2.0 * a_value
+    );
+}
+
+#[test]
+fn an_unknown_node_is_an_error_not_a_panic() {
+    // a node of a larger graph is not a node of this one
+    let other = GraphBuilder::new();
+    let _ = other.gaussian(0.0, 1.0);
+    let foreign = other.gaussian(0.0, 1.0).id();
+
+    let b = GraphBuilder::new();
+    let a = b.gaussian(0.0, 1.0).id();
+    let (graph, mut state) = b.build().unwrap();
+    let mut rng = KeanuRng::seed_from_u64(1);
+    let all: Vec<_> = graph.ids().collect();
+    state.lazy_eval(&graph, &all, &mut rng).unwrap();
+    let model = Model::new(graph, &state).unwrap();
+    let error = ForwardSampler::new()
+        .sample(&model, &mut state, &[a, foreign], 10, &mut rng)
+        .unwrap_err();
+    assert_eq!(
+        error,
+        AlgorithmError::Graph(GraphError::UnknownNode(foreign))
     );
 }

@@ -4,7 +4,7 @@ use crate::error::{AlgorithmError, Result};
 use crate::samples::NetworkSamples;
 use keanu_distributions::KeanuRng;
 use keanu_graph::{
-    Graph, Model, NodeId, State, downstream_lambda_section, upstream_lambda_section,
+    Graph, GraphError, Model, NodeId, State, downstream_lambda_section, upstream_lambda_section,
 };
 
 /// Samples from the prior by sampling each latent in topological order and recomputing the deterministic nodes
@@ -36,7 +36,8 @@ impl ForwardSampler {
         Self::default()
     }
 
-    /// Draws `count` samples of `nodes`, leaving `state` at the last sample.
+    /// Draws `count` samples of `nodes`, leaving `state` at the last sample. Fails with
+    /// [`GraphError::UnknownNode`](keanu_graph::GraphError::UnknownNode) if a node is not in the model's graph.
     pub fn sample(
         &self,
         model: &Model,
@@ -46,6 +47,9 @@ impl ForwardSampler {
         rng: &mut KeanuRng,
     ) -> Result<NetworkSamples> {
         let graph = model.graph();
+        if let Some(&id) = nodes.iter().find(|&&id| !graph.contains(id)) {
+            return Err(GraphError::UnknownNode(id).into());
+        }
         if model.latents().is_empty() {
             return Err(AlgorithmError::NoLatents);
         }
