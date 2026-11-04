@@ -358,6 +358,44 @@ fn a_slice_dimension_outside_the_input_is_invalid() {
 }
 
 #[test]
+fn slices_with_spaces_and_a_trailing_comma_save_and_load() {
+    let b = GraphBuilder::new();
+    let a = b.constant(DoubleTensor::new(&[2, 4], (0..8).map(f64::from).collect()).unwrap());
+    a.slice(": , 1 : 3").label("spaced");
+    a.slice("1,").label("trailing");
+    let (graph, state) = b.build().unwrap();
+    let json = save_json(&graph, &state, &Metadata::new()).unwrap();
+    let loaded = load_json(&json).unwrap();
+    let state = recompute(&loaded.graph, &loaded.state);
+    let value = |label: &str| {
+        let id = loaded.graph.find(label).unwrap();
+        flatten(state.value(id).unwrap())
+    };
+    assert_eq!(value("spaced"), (vec![2, 2], vec![1.0, 2.0, 5.0, 6.0]));
+    assert_eq!(value("trailing"), (vec![4], vec![4.0, 5.0, 6.0, 7.0]));
+}
+
+#[test]
+fn a_tri_lower_k_that_cannot_be_negated_is_a_decode_error() {
+    let tri_lower = |k: &str| {
+        with_vector_and(&format!(
+            r#"{{"id": {{"id": "[1]"}}, "vertexType": "io.improbable.keanu.vertices.tensor.generic.nonprobabilistic.operators.unary.TriLowerVertex",
+                "parameters": [{{"name": "inputVertex", "parentVertex": {{"id": "[0]"}}}},
+                               {{"name": "k", "longParam": "{k}"}}]}}"#
+        ))
+    };
+    // used to overflow (a panic in debug builds)
+    assert!(is_decode_error(load_json(&tri_lower(
+        "-9223372036854775808"
+    ))));
+    // other values still load; tril needs rank >= 2 so the vector input fails in the graph, not decoding
+    assert!(matches!(
+        load_json(&tri_lower("9223372036854775807")),
+        Err(keanu_io::IoError::Graph(_))
+    ));
+}
+
+#[test]
 fn shapes_with_too_many_elements_are_decode_errors() {
     let huge_constant = format!(
         r#"{{"graph": {{"vertices": [{{"id": {{"id": "[0]"}}, "vertexType": "{DOUBLE_CONSTANT}",

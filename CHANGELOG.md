@@ -66,6 +66,19 @@ vector was edited by hand and the entry says so.
 - keanu-io: values stored by label are matched with a label map built once, instead of a scan of every node each.
 - keanu-io: `prost` is only a dependency with the `protobuf` or `json` feature; keanu-parity drops its unused
   `serde` dependency and inherits the workspace package fields.
+- keanu-io: integer parameters loaded as axes, offsets or reshape dimensions are converted with one checked
+  conversion (a `Decode` error where they don't fit an `isize`), and a `TriLowerVertex` `k` of `i64::MIN` is a
+  `Decode` error instead of overflowing when negated (a panic in debug builds).
+- keanu-io: saving borrows node labels, shapes, parents and constant / KDE data instead of copying them, and maps
+  nodes to saved vertices with a vector instead of a hash map; DOT export names a distribution without formatting
+  its data (it formatted a KDE's whole sample array to get the name "Kde").
+- keanu-tensor: slice strings allow spaces inside items (`"1 : 3"`) and a trailing comma (`"1,"`), as numpy does.
+- keanu-tensor: the owned scalar operators (`tensor + 1.0`, `-tensor`, ...) update the tensor's buffer in place
+  instead of allocating a new one (four chained ops on 100k elements: 318 → 123 µs); integer `div`, `rem` and
+  `pow` take the same-shape fast path and stop calling the element function after the first error (100k-element
+  division: 433 → 129 µs; a broadcast remainder 437 → 89 µs); `tensor_multiply` no longer copies its permuted
+  operands again to reshape them (20×30×40 · 40×30×10: 49 → 40 µs), and small matrix products zero their output
+  once.
 - `keanu-algorithms`: the particle filter treats a NaN log probability as impossible (−∞) when weighting, ranking
   and resampling; one NaN particle used to make every resampling draw pick the last particle.
 - `keanu-algorithms`: `Samples::variance` uses a two-pass computation (still with an n − 1 denominator) instead of

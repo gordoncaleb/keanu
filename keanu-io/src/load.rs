@@ -66,6 +66,12 @@ pub(crate) fn bool_tensor(t: &proto::BooleanTensor) -> Result<BoolTensor> {
         .map_err(|e| IoError::Decode(e.to_string()))
 }
 
+/// An integer from the file as an `isize` (an axis, offset or reshape dimension), or a decode error where it doesn't
+/// fit (on 32-bit platforms).
+fn isize_of(v: i64) -> Result<isize> {
+    isize::try_from(v).map_err(|_| IoError::Decode(format!("the integer {v} is too large")))
+}
+
 /// Builds a graph from a decoded model.
 pub(crate) fn load_model(model: &proto::ProtoModel) -> Result<Loaded> {
     let graph = model
@@ -530,8 +536,17 @@ impl Loader<'_> {
         Ok(items.join(", "))
     }
 
+    /// An integer parameter as an axis or offset.
+    fn signed(&self, name: &str) -> Result<isize> {
+        isize_of(self.int(name)?)
+    }
+
+    /// An array of integers as axes or dimensions.
+    fn signed_list(&self, name: &str) -> Result<Vec<isize>> {
+        self.longs(name)?.into_iter().map(isize_of).collect()
+    }
+
     fn load(&self) -> Result<NodeId> {
-        let isize_of = |v: i64| v as isize;
         if let Some(simple) = SimpleOp::of_class(self.class()) {
             let parents = simple
                 .parameters()
@@ -609,23 +624,18 @@ impl Loader<'_> {
             "StandardizeVertex" => self.unary(Op::Standardize),
             "CumSumVertex" => self.unary(Op::Scan {
                 kind: ScanOp::CumSum,
-                axis: isize_of(self.int("requestedDimension")?),
+                axis: self.signed("requestedDimension")?,
             }),
             "CumProdVertex" => self.unary(Op::Scan {
                 kind: ScanOp::CumProd,
-                axis: isize_of(self.int("requestedDimension")?),
+                axis: self.signed("requestedDimension")?,
             }),
             "ArgMaxVertex" => self.arg(ArgOp::ArgMax),
             "ArgMinVertex" => self.arg(ArgOp::ArgMin),
             "NaNArgMaxVertex" => self.arg(ArgOp::NanArgMax),
             "NaNArgMinVertex" => self.arg(ArgOp::NanArgMin),
 
-            "ReshapeVertex" => self.unary(Op::Reshape(
-                self.longs("proposedShape")?
-                    .into_iter()
-                    .map(isize_of)
-                    .collect(),
-            )),
+            "ReshapeVertex" => self.unary(Op::Reshape(self.signed_list("proposedShape")?)),
             "PermuteVertex" => self.unary(Op::Permute(self.unsigned("rearrange")?)),
             "BroadcastVertex" => {
                 let to_shape = self.unsigned("toShape")?;
@@ -653,8 +663,14 @@ impl Loader<'_> {
             "DiagVertex" => self.unary(Op::Diag),
             "DiagPartVertex" => self.unary(Op::DiagPart),
             // Java's TriLowerVertex counts k in the opposite direction to numpy's tril
-            "TriLowerVertex" => self.unary(Op::Tril(-isize_of(self.int("k")?))),
-            "TriUpperVertex" => self.unary(Op::Triu(isize_of(self.int("k")?))),
+            "TriLowerVertex" => {
+                let k = self.signed("k")?;
+                let k = k
+                    .checked_neg()
+                    .ok_or_else(|| IoError::Decode(format!("k = {k} is out of range")))?;
+                self.unary(Op::Tril(k))
+            }
+            "TriUpperVertex" => self.unary(Op::Triu(self.signed("k")?)),
             "FillTriangularVertex" => self.unary(Op::FillTriangular {
                 upper: self.boolean("fillUpper")?,
                 lower: self.boolean("fillLower")?,
@@ -664,7 +680,7 @@ impl Loader<'_> {
             }),
             "ConcatenationVertex" | "IntegerConcatenationVertex" | "BooleanConcatenationVertex" => {
                 self.node(
-                    Op::Concat(isize_of(self.int("dimension")?)),
+                    Op::Concat(self.signed("dimension")?),
                     &self.parents("operands")?,
                 )
             }
@@ -674,8 +690,8 @@ impl Loader<'_> {
                 transpose_right: self.boolean("transposeRight")?,
             }),
             "TensorMultiplicationVertex" => self.binary(Op::TensorMultiply {
-                left_axes: self.longs("dimsLeft")?.into_iter().map(isize_of).collect(),
-                right_axes: self.longs("dimsRight")?.into_iter().map(isize_of).collect(),
+                left_axes: self.signed_list("dimsLeft")?,
+                right_axes: self.signed_list("dimsRight")?,
             }),
             "MatrixInverseVertex" => self.unary(Op::Inverse),
             "MatrixDeterminantVertex" => self.unary(Op::Determinant),
@@ -756,12 +772,13 @@ impl Loader<'_> {
     fn reduce(&self, kind: ReduceOp) -> Result<NodeId> {
         let axes = self
             .optional_longs("overDimensions")?
-            .map(|a| a.into_iter().map(|v| v as isize).collect());
+            .map(|a| a.into_iter().map(isize_of).collect::<Result<_>>())
+            .transpose()?;
         self.unary(Op::Reduce { kind, axes })
     }
 
     fn arg(&self, kind: ArgOp) -> Result<NodeId> {
-        let axis = self.optional_int("axis")?.map(|a| a as isize);
+        let axis = self.optional_int("axis")?.map(isize_of).transpose()?;
         self.unary(Op::ArgReduce { kind, axis })
     }
 }

@@ -2,7 +2,7 @@
 
 use crate::Metadata;
 use crate::classes;
-use keanu_graph::op::{BinaryOp, LogicOp, Op};
+use keanu_graph::op::{BinaryOp, DistributionKind, LogicOp, Op};
 use keanu_graph::{Graph, NodeId, State, Value};
 use std::fmt::Write;
 
@@ -19,12 +19,20 @@ fn describe(op: &Op) -> String {
         Op::Logic(LogicOp::Xor) => "XOR".into(),
         Op::Unary(u) => format!("{u:?}"),
         Op::Binary(b) => format!("{b:?}"),
-        Op::Distribution(d) => format!("{:?}", d.kind)
-            .split('(')
-            .next()
-            .unwrap_or("Distribution")
-            .to_owned(),
+        Op::Distribution(d) => distribution_name(&d.kind).into(),
         other => other.name().to_owned(),
+    }
+}
+
+/// The name of a distribution (its `DistributionKind` variant), without formatting its data (a KDE's samples).
+fn distribution_name(kind: &DistributionKind) -> &'static str {
+    match kind {
+        DistributionKind::Kde(_) => "Kde",
+        DistributionKind::Categorical => "Categorical",
+        DistributionKind::Custom(_) => "Custom",
+        kind => classes::saved_distribution(kind)
+            .and_then(|saved| saved.class.strip_suffix("Vertex"))
+            .unwrap_or("Distribution"),
     }
 }
 
@@ -113,5 +121,29 @@ fn node_label(graph: &Graph, state: Option<&State>, id: NodeId) -> String {
         (Some(v), None) => format!("{v} ({})", describe(node.op())),
         (None, Some(n)) => n,
         (None, None) => describe(node.op()),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use keanu_distributions::Kde;
+    use std::sync::Arc;
+
+    /// The name formatting `DistributionKind` with `Debug` gives (what DOT export used before).
+    fn debug_name(kind: &DistributionKind) -> String {
+        format!("{kind:?}").split('(').next().unwrap().to_owned()
+    }
+
+    #[test]
+    fn distribution_names_are_the_variant_names() {
+        for saved in classes::DISTRIBUTIONS {
+            assert_eq!(distribution_name(&saved.kind), debug_name(&saved.kind));
+        }
+        let kde = DistributionKind::Kde(Arc::new(Kde::new(vec![0.5; 10_000], 0.1).unwrap()));
+        assert_eq!(distribution_name(&kde), "Kde");
+        assert_eq!(distribution_name(&kde), debug_name(&kde));
+        let categorical = DistributionKind::Categorical;
+        assert_eq!(distribution_name(&categorical), debug_name(&categorical));
     }
 }

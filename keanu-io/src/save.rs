@@ -10,7 +10,6 @@ use keanu_graph::op::{ArgOp, CompareOp, DistributionKind, Op, ReduceOp, ScanOp, 
 use keanu_graph::{DType, Graph, NodeId, State, Value};
 use keanu_tensor::ops::shape_ops::{SliceItem, parse_slice};
 use keanu_tensor::{BoolTensor, DoubleTensor, IntTensor};
-use std::collections::HashMap;
 
 pub(crate) fn proto_double(t: &DoubleTensor) -> proto::DoubleTensor {
     proto::DoubleTensor {
@@ -66,7 +65,7 @@ fn java_class(simple: &str) -> Result<&'static str> {
 }
 
 /// The class and parameters of a constant vertex, or None for an unsupported type.
-fn constant_vertex(value: Value) -> Option<(&'static str, Vec<(&'static str, P)>)> {
+fn constant_vertex(value: &Value) -> Option<(&'static str, Vec<(&'static str, P<'_>)>)> {
     let (class, constant) = match value {
         Value::F64(t) => ("ConstantDoubleVertex", P::DoubleTensor(t)),
         Value::I64(t) => ("ConstantIntegerVertex", P::IntTensor(t)),
@@ -76,49 +75,63 @@ fn constant_vertex(value: Value) -> Option<(&'static str, Vec<(&'static str, P)>
     Some((class, vec![("constant", constant)]))
 }
 
-/// One parameter of a saved vertex.
-enum P {
+/// One parameter of a saved vertex, borrowing from the graph where it can.
+enum P<'a> {
     Parent(NodeId),
-    Saved(String),
-    Parents(Vec<NodeId>),
+    /// A vertex already saved, by its index in the saved vertices.
+    Saved(usize),
+    Parents(&'a [NodeId]),
     Int(i64),
     Double(f64),
     Bool(bool),
-    Str(String),
+    Str(&'a str),
     Longs(Vec<i64>),
     Ints(Vec<i64>),
-    DoubleTensor(DoubleTensor),
-    IntTensor(IntTensor),
-    BoolTensor(BoolTensor),
+    /// A vector.
+    Doubles(&'a [f64]),
+    /// A vector.
+    Bools(Vec<bool>),
+    DoubleTensor(&'a DoubleTensor),
+    IntTensor(&'a IntTensor),
+    BoolTensor(&'a BoolTensor),
 }
 
 struct Saver<'g> {
     graph: &'g Graph,
     vertices: Vec<proto::Vertex>,
-    ids: HashMap<NodeId, String>,
+    /// The index in `vertices` of each node's saved vertex, indexed by node.
+    saved: Vec<Option<usize>>,
+}
+
+/// The saved id of the vertex at an index in the saved vertices.
+fn vertex_id(index: usize) -> String {
+    format!("[{index}]")
 }
 
 impl Saver<'_> {
-    fn next_id(&self) -> String {
-        format!("[{}]", self.vertices.len())
+    /// The id of the vertex a node was saved as.
+    fn id(&self, node: NodeId) -> Result<proto::VertexId> {
+        self.saved
+            .get(node.index())
+            .copied()
+            .flatten()
+            .map(|index| self.saved_id(index))
+            .ok_or_else(|| {
+                IoError::NotSaveable(format!("node {node:?} was not saved before its children"))
+            })
     }
 
-    fn id(&self, node: NodeId) -> Result<String> {
-        self.ids.get(&node).cloned().ok_or_else(|| {
-            IoError::NotSaveable(format!("node {node:?} was not saved before its children"))
-        })
+    /// The id of a saved vertex.
+    fn saved_id(&self, index: usize) -> proto::VertexId {
+        self.vertices[index].id.clone().unwrap_or_default()
     }
 
-    fn param(&self, name: &str, p: P) -> Result<proto::NamedParam> {
-        let vertex_id = |id: String| proto::VertexId { id };
+    fn param(&self, name: &str, p: P<'_>) -> Result<proto::NamedParam> {
         let param = match p {
-            P::Parent(node) => Param::ParentVertex(vertex_id(self.id(node)?)),
-            P::Saved(id) => Param::ParentVertex(vertex_id(id)),
+            P::Parent(node) => Param::ParentVertex(self.id(node)?),
+            P::Saved(index) => Param::ParentVertex(self.saved_id(index)),
             P::Parents(nodes) => Param::VertexArrayParam(proto::VertexArray {
-                values: nodes
-                    .into_iter()
-                    .map(|n| self.id(n).map(vertex_id))
-                    .collect::<Result<_>>()?,
+                values: nodes.iter().map(|&n| self.id(n)).collect::<Result<_>>()?,
             }),
             P::Int(v) => Param::IntParam(
                 i32::try_from(v)
@@ -126,7 +139,7 @@ impl Saver<'_> {
             ),
             P::Double(v) => Param::DoubleParam(v),
             P::Bool(v) => Param::BoolParam(v),
-            P::Str(v) => Param::StringParam(v),
+            P::Str(v) => Param::StringParam(v.to_owned()),
             P::Longs(v) => Param::LongArrayParam(proto::LongArray { values: v }),
             P::Ints(v) => Param::IntArrayParam(proto::IntArray {
                 values: v
@@ -137,9 +150,17 @@ impl Saver<'_> {
                     })
                     .collect::<Result<_>>()?,
             }),
-            P::DoubleTensor(t) => Param::DoubleTensorParam(proto_double(&t)),
-            P::IntTensor(t) => Param::IntTensorParam(proto_int(&t)?),
-            P::BoolTensor(t) => Param::BoolTensorParam(proto_bool(&t)),
+            P::Doubles(values) => Param::DoubleTensorParam(proto::DoubleTensor {
+                shape: vec![values.len() as i64],
+                values: values.to_vec(),
+            }),
+            P::Bools(values) => Param::BoolTensorParam(proto::BooleanTensor {
+                shape: vec![values.len() as i64],
+                values,
+            }),
+            P::DoubleTensor(t) => Param::DoubleTensorParam(proto_double(t)),
+            P::IntTensor(t) => Param::IntTensorParam(proto_int(t)?),
+            P::BoolTensor(t) => Param::BoolTensorParam(proto_bool(t)),
         };
         Ok(proto::NamedParam {
             name: name.to_owned(),
@@ -147,23 +168,25 @@ impl Saver<'_> {
         })
     }
 
-    /// Emits a vertex, returning its saved id.
+    /// Emits a vertex, returning its index in the saved vertices.
     fn emit(
         &mut self,
         class: &str,
         label: &str,
         shape: &[usize],
-        params: Vec<(&str, P)>,
-    ) -> Result<String> {
+        params: Vec<(&str, P<'_>)>,
+    ) -> Result<usize> {
         let mut parameters = params
             .into_iter()
             .map(|(name, p)| self.param(name, p))
             .collect::<Result<Vec<_>>>()?;
         // the Java saver writes parameters sorted by name
         parameters.sort_by(|a, b| a.name.cmp(&b.name));
-        let id = self.next_id();
+        let index = self.vertices.len();
         self.vertices.push(proto::Vertex {
-            id: Some(proto::VertexId { id: id.clone() }),
+            id: Some(proto::VertexId {
+                id: vertex_id(index),
+            }),
             label: label.to_owned(),
             vertex_type: java_class(class)?.to_owned(),
             parameters,
@@ -171,22 +194,23 @@ impl Saver<'_> {
             data_type: 0,
             metadata: Vec::new(),
         });
-        Ok(id)
+        Ok(index)
     }
 
     /// Emits an unlabelled helper constant.
-    fn constant(&mut self, value: Value) -> Result<String> {
-        let shape = value.shape().to_vec();
+    fn constant(&mut self, value: &Value) -> Result<usize> {
         let (class, params) = constant_vertex(value)
             .ok_or_else(|| IoError::NotSaveable("a constant of an unsupported type".into()))?;
-        self.emit(class, "", &shape, params)
+        self.emit(class, "", value.shape(), params)
     }
 
-    fn save_node(&mut self, id: NodeId) -> Result<String> {
-        let node = self.graph.node(id);
-        let label = node.label().unwrap_or("").to_owned();
-        let shape = node.shape().to_vec();
-        let parents = node.parents().to_vec();
+    /// Saves a node, returning the index of its vertex in the saved vertices.
+    fn save_node(&mut self, id: NodeId) -> Result<usize> {
+        let graph = self.graph;
+        let node = graph.node(id);
+        let label = node.label().unwrap_or("");
+        let shape = node.shape();
+        let parents = node.parents();
         let p = |i: usize| P::Parent(parents[i]);
         // the parents, with the given parameter names in order
         let named = |names: &[&'static str]| -> Vec<(&'static str, P)> {
@@ -202,13 +226,13 @@ impl Saver<'_> {
                 "{what} (node {id:?}) has no saved form"
             )))
         };
-        let input_dtype = parents.first().map(|&p| self.graph.node(p).dtype());
+        let input_dtype = parents.first().map(|&p| graph.node(p).dtype());
 
         if let Some((simple, class)) = SimpleOp::of(node.op()).and_then(|s| Some((s, s.class()?))) {
-            return self.emit(class, &label, &shape, named(simple.parameters()));
+            return self.emit(class, label, shape, named(simple.parameters()));
         }
         let (class, params): (&str, Vec<(&str, P)>) = match node.op() {
-            Op::Constant(value) => match constant_vertex(value.clone()) {
+            Op::Constant(value) => match constant_vertex(value) {
                 Some(vertex) => vertex,
                 None => return unsupported("a constant of an unsupported type"),
             },
@@ -219,21 +243,21 @@ impl Saver<'_> {
                     } else {
                         Value::F64(DoubleTensor::scalar(-1.0))
                     };
-                    let c = self.constant(minus_one)?;
+                    let c = self.constant(&minus_one)?;
                     (
                         "MultiplicationVertex",
                         vec![("left", p(0)), ("right", P::Saved(c))],
                     )
                 }
                 UnaryOp::Reciprocal => {
-                    let c = self.constant(Value::F64(DoubleTensor::scalar(1.0)))?;
+                    let c = self.constant(&Value::F64(DoubleTensor::scalar(1.0)))?;
                     (
                         "DivisionVertex",
                         vec![("left", P::Saved(c)), ("right", p(0))],
                     )
                 }
                 UnaryOp::Sqrt => {
-                    let c = self.constant(Value::F64(DoubleTensor::scalar(0.5)))?;
+                    let c = self.constant(&Value::F64(DoubleTensor::scalar(0.5)))?;
                     ("PowerVertex", vec![("left", p(0)), ("right", P::Saved(c))])
                 }
                 other => return Err(IoError::NotSaveable(format!("{other:?}"))),
@@ -312,7 +336,7 @@ impl Saver<'_> {
                 ],
             ),
             Op::Transpose => {
-                let rank = self.graph.node(parents[0]).shape().len();
+                let rank = graph.node(parents[0]).shape().len();
                 let mut permutation: Vec<i64> = (0..rank as i64).collect();
                 permutation.swap(rank - 1, rank - 2);
                 (
@@ -334,14 +358,8 @@ impl Saver<'_> {
                     ("start", P::Longs(s.start)),
                     ("end", P::Longs(s.end)),
                     ("stride", P::Longs(s.stride)),
-                    (
-                        "upperBoundStop",
-                        P::BoolTensor(BoolTensor::vector(s.upper_bound_stop)),
-                    ),
-                    (
-                        "dropDimension",
-                        P::BoolTensor(BoolTensor::vector(s.drop_dimension)),
-                    ),
+                    ("upperBoundStop", P::Bools(s.upper_bound_stop)),
+                    ("dropDimension", P::Bools(s.drop_dimension)),
                 ];
                 if let Some(e) = s.ellipsis {
                     params.push(("ellipsis", P::Int(e as i64)));
@@ -357,7 +375,7 @@ impl Saver<'_> {
                 },
                 vec![
                     ("dimension", P::Int(*axis as i64)),
-                    ("operands", P::Parents(parents.clone())),
+                    ("operands", P::Parents(parents)),
                 ],
             ),
             Op::Take(index) => (
@@ -426,24 +444,24 @@ impl Saver<'_> {
             Op::CholeskyInverse => {
                 // Java's CholeskyInverseVertex gives the lower triangle of the inverse plus its input's strict upper
                 // triangle, so: C = choleskyInverse(tril(L)); full = C + transpose(strictly lower part of C)
-                let input_shape = self.graph.node(parents[0]).shape().to_vec();
+                let input_shape = graph.node(parents[0]).shape();
                 let lower_input = self.emit(
                     "TriLowerVertex",
                     "",
-                    &input_shape,
+                    input_shape,
                     vec![("inputVertex", p(0)), ("k", P::Int(0))],
                 )?;
                 let c = self.emit(
                     "CholeskyInverseVertex",
                     "",
-                    &shape,
+                    shape,
                     vec![("inputVertex", P::Saved(lower_input))],
                 )?;
                 let strictly_lower = self.emit(
                     "TriLowerVertex",
                     "",
-                    &shape,
-                    vec![("inputVertex", P::Saved(c.clone())), ("k", P::Int(1))],
+                    shape,
+                    vec![("inputVertex", P::Saved(c)), ("k", P::Int(1))],
                 )?;
                 let rank = shape.len();
                 let mut permutation: Vec<i64> = (0..rank as i64).collect();
@@ -451,7 +469,7 @@ impl Saver<'_> {
                 let transposed = self.emit(
                     "PermuteVertex",
                     "",
-                    &shape,
+                    shape,
                     vec![
                         ("inputVertex", P::Saved(strictly_lower)),
                         ("rearrange", P::Ints(permutation)),
@@ -483,7 +501,7 @@ impl Saver<'_> {
                 "MultiplexerVertex",
                 vec![
                     ("selectorControlVertex", p(0)),
-                    ("selectVertices", P::Parents(parents[1..].to_vec())),
+                    ("selectVertices", P::Parents(&parents[1..])),
                 ],
             ),
             Op::SetWithMask => (
@@ -498,7 +516,7 @@ impl Saver<'_> {
                 "AssertVertex",
                 vec![
                     ("predicate", p(0)),
-                    ("error", P::Str(message.clone().unwrap_or_default())),
+                    ("error", P::Str(message.as_deref().unwrap_or(""))),
                 ],
             ),
             Op::Proxy => {
@@ -513,19 +531,13 @@ impl Saver<'_> {
                 };
                 // an unlabelled proxy is saved with an empty label: an invented one could collide with another
                 // node's label
-                (
-                    class,
-                    vec![("parent", p(0)), ("label", P::Str(label.clone()))],
-                )
+                (class, vec![("parent", p(0)), ("label", P::Str(label))])
             }
             Op::Distribution(distribution) => match &distribution.kind {
                 DistributionKind::Kde(kde) => (
                     "KDEVertex",
                     vec![
-                        (
-                            "samples",
-                            P::DoubleTensor(DoubleTensor::vector(kde.samples.clone())),
-                        ),
+                        ("samples", P::Doubles(&kde.samples)),
                         ("bandwidth", P::Double(kde.bandwidth)),
                     ],
                 ),
@@ -534,7 +546,7 @@ impl Saver<'_> {
                     Some(saved) => {
                         let mut params = named(saved.parameters);
                         if let Some(location) = saved.zero_location {
-                            let zero = self.constant(Value::F64(DoubleTensor::scalar(0.0)))?;
+                            let zero = self.constant(&Value::F64(DoubleTensor::scalar(0.0)))?;
                             params.push((location, P::Saved(zero)));
                         }
                         (saved.class, params)
@@ -546,7 +558,7 @@ impl Saver<'_> {
             Op::Cpt { .. } => return unsupported("a conditional probability table"),
             _ => return unsupported(node.op().name()),
         };
-        self.emit(class, &label, &shape, params)
+        self.emit(class, label, shape, params)
     }
 }
 
@@ -604,12 +616,12 @@ pub(crate) fn save_model(
 ) -> Result<proto::ProtoModel> {
     let mut saver = Saver {
         graph,
-        vertices: Vec::new(),
-        ids: HashMap::new(),
+        vertices: Vec::with_capacity(graph.len()),
+        saved: vec![None; graph.len()],
     };
     for id in graph.ids() {
         let saved = saver.save_node(id)?;
-        saver.ids.insert(id, saved);
+        saver.saved[id.index()] = Some(saved);
     }
     let mut default_state = Vec::new();
     for id in graph.ids() {
@@ -617,7 +629,7 @@ pub(crate) fn save_model(
             default_state.push(proto::StoredValue {
                 value: Some(proto_value(value)?),
                 vertex_label: String::new(),
-                id: Some(proto::VertexId { id: saver.id(id)? }),
+                id: Some(saver.id(id)?),
                 is_observed: state.is_observed(id),
             });
         }
