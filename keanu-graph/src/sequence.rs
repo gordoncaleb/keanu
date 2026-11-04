@@ -22,7 +22,7 @@
 //! assert_eq!(sequence.len(), 3);
 //! let last_x = sequence.items()[2].get("x").unwrap();
 //! let (graph, _) = b.build()?;
-//! assert_eq!(graph.node(last_x).label(), Some("Sequence_Item_2.1.x"));
+//! assert_eq!(graph[last_x].label(), Some("Sequence_Item_2.1.x"));
 //! # Ok::<(), keanu_graph::GraphError>(())
 //! ```
 

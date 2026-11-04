@@ -193,7 +193,11 @@ impl ProposalDistribution for GaussianProposal {
         let mut to = Vec::with_capacity(nodes.len());
         let mut from = Vec::with_capacity(nodes.len());
         for &id in nodes {
-            if model.graph().node(id).dtype() != DType::F64 {
+            let node = model
+                .graph()
+                .node(id)
+                .ok_or(keanu_graph::GraphError::UnknownNode(id))?;
+            if node.dtype() != DType::F64 {
                 return Err(AlgorithmError::InvalidArgument(format!(
                     "a Gaussian proposal can't be used for the discrete node {id:?}"
                 )));

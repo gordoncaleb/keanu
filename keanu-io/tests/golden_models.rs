@@ -41,7 +41,7 @@ fn recompute(loaded: &Loaded) -> State {
     let mut state = loaded.state.clone();
     let graph = &loaded.graph;
     for id in graph.ids() {
-        let node = graph.node(id);
+        let node = &graph[id];
         if !node.is_probabilistic()
             && !matches!(node.op(), Op::Constant(_))
             && !state.is_observed(id)
@@ -101,7 +101,7 @@ fn check(name: &str, format: &str, loaded: &Loaded, expected: &Json) -> Vec<Stri
             .iter()
             .map(|(id, g)| {
                 (
-                    graph.node(id).label().unwrap_or("?").to_owned(),
+                    graph[id].label().unwrap_or("?").to_owned(),
                     (g.shape().to_vec(), g.as_slice().to_vec()),
                 )
             })

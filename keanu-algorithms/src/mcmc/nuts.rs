@@ -4,7 +4,7 @@
 use crate::error::{AlgorithmError, Result};
 use crate::mcmc::{SamplingAlgorithm, SamplingOptions, generate, is_impossible};
 use crate::samples::NetworkSamples;
-use crate::support::{evaluate_all, f64_values};
+use crate::support::{check_nodes, evaluate_all, f64_values};
 use keanu_distributions::KeanuRng;
 use keanu_graph::{Graph, Model, NodeId, State};
 use keanu_tensor::DoubleTensor;
@@ -243,6 +243,7 @@ impl Nuts {
         if nodes.is_empty() {
             return Err(AlgorithmError::InvalidArgument("no nodes to sample".into()));
         }
+        check_nodes(model.graph(), nodes)?;
         if model.latents().is_empty() {
             return Err(AlgorithmError::NoLatents);
         }
@@ -324,8 +325,7 @@ impl Nuts {
 }
 
 fn describe(graph: &Graph, id: NodeId) -> String {
-    graph
-        .node(id)
+    graph[id]
         .label()
         .map(str::to_owned)
         .unwrap_or_else(|| format!("#{}", id.index()))
@@ -342,7 +342,7 @@ fn log_prob_and_gradient_at(
     state: &State,
     latents: &[NodeId],
 ) -> Result<(f64, Vec<DoubleTensor>)> {
-    let zeros = |id: NodeId| DoubleTensor::zeros(model.graph().node(id).shape());
+    let zeros = |id: NodeId| DoubleTensor::zeros(model.graph()[id].shape());
     let (log_prob, gradient) = model.log_prob_and_gradient(state)?;
     let gradient = match gradient {
         // the latents are distinct, so each gradient is moved out exactly once

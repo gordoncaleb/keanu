@@ -263,7 +263,7 @@ fn labels_are_unique_and_can_be_found() {
     b.scalar(1.0).label("one");
     let (graph, _) = b.build().unwrap();
     assert_eq!(graph.find("a"), Some(a));
-    assert_eq!(graph.node(a).label(), Some("a"));
+    assert_eq!(graph[a].label(), Some("a"));
     assert_eq!(graph.find("missing"), None);
 
     let b = GraphBuilder::new();
@@ -417,7 +417,7 @@ fn every_distribution_can_be_sampled_through_eval() {
     let (graph, mut state): (Graph, State) = b.build().unwrap();
     state.eval(&graph, &ids, &mut rng()).unwrap();
     for id in ids {
-        let node = graph.node(id);
+        let node = &graph[id];
         let value = state
             .value(id)
             .unwrap_or_else(|| panic!("{id:?} has no value"));

@@ -131,11 +131,11 @@ impl Particle {
 /// already taken (whose own latent ancestors were all taken with them); when a latent is taken, the observations
 /// that depend on it are found by walking down from it.
 pub fn latent_increments(graph: &Graph, state: &State) -> Vec<(NodeId, Vec<NodeId>)> {
-    let is_latent = |id: NodeId| graph.node(id).is_probabilistic() && !state.is_observed(id);
+    let is_latent = |id: NodeId| graph[id].is_probabilistic() && !state.is_observed(id);
     let mut observation_index: Vec<Option<usize>> = vec![None; graph.len()];
     let observations: Vec<NodeId> = graph
         .ids()
-        .filter(|&id| state.is_observed(id) && graph.node(id).is_probabilistic())
+        .filter(|&id| state.is_observed(id) && graph[id].is_probabilistic())
         .collect();
     for (i, &id) in observations.iter().enumerate() {
         observation_index[id.index()] = Some(i);
@@ -148,7 +148,7 @@ pub fn latent_increments(graph: &Graph, state: &State) -> Vec<(NodeId, Vec<NodeI
         let mut found = Vec::new();
         walker.walk(
             from,
-            |id| graph.parents(id),
+            |id| graph[id].parents(),
             |id| {
                 if !is_latent(id) {
                     return true;
@@ -182,7 +182,7 @@ pub fn latent_increments(graph: &Graph, state: &State) -> Vec<(NodeId, Vec<NodeI
         for &latent in &latents {
             walker.walk(
                 latent,
-                |id| graph.children(id),
+                |id| graph.children(id).unwrap_or_default(),
                 |id| {
                     if let Some(i) = observation_index[id.index()]
                         && queue.remove(&(remaining[i], id))
@@ -360,7 +360,7 @@ fn context_latents(
         .iter()
         .copied()
         .filter(|&id| {
-            graph.node(id).is_probabilistic()
+            graph[id].is_probabilistic()
                 && !state.is_observed(id)
                 && latents.binary_search(&id).is_err()
         })

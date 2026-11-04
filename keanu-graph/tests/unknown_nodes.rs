@@ -4,7 +4,8 @@
 use keanu_distributions::KeanuRng;
 use keanu_graph::{
     GraphBuilder, GraphError, Model, NodeId, Value, downstream_lambda_section, forward_partials,
-    is_differentiable, reverse_partials, upstream_lambda_section,
+    is_differentiable, log_prob, log_prob_gradient, node_log_prob, node_log_prob_at,
+    node_log_prob_gradient, reverse_partials, upstream_lambda_section,
 };
 use keanu_tensor::DoubleTensor;
 
@@ -22,7 +23,9 @@ fn state_lookups_of_unknown_nodes_are_none() {
     let _ = b.gaussian(0.0, 1.0);
     let (graph, state) = b.build().unwrap();
     assert!(!graph.contains(unknown()));
-    assert!(graph.get(unknown()).is_none());
+    assert!(graph.node(unknown()).is_none());
+    assert!(graph.parents(unknown()).is_none());
+    assert!(graph.children(unknown()).is_none());
     assert!(state.value(unknown()).is_none());
     assert!(state.f64(unknown()).is_none());
     assert!(!state.has_value(unknown()));
@@ -150,4 +153,61 @@ fn builder_lookups_of_unknown_nodes_are_none_or_errors() {
     let b = GraphBuilder::new();
     let _ = b.double_var(unknown()) * 2.0;
     assert!(matches!(b.build(), Err(GraphError::UnknownNode(_))));
+}
+
+#[test]
+fn log_probs_of_unknown_nodes_are_errors() {
+    let b = GraphBuilder::new();
+    let x = b.gaussian(0.0, 1.0);
+    let y = b.gaussian(x, 1.0);
+    b.observe(y, DoubleTensor::scalar(0.5));
+    let (x, y) = (x.id(), y.id());
+    let (graph, mut state) = b.build().unwrap();
+    state
+        .lazy_eval(&graph, &[x, y], &mut KeanuRng::seed_from_u64(1))
+        .unwrap();
+    fn is_unknown<T>(r: Result<T, GraphError>) -> bool {
+        matches!(r, Err(GraphError::UnknownNode(id)) if id == unknown())
+    }
+
+    assert!(is_unknown(node_log_prob(&graph, &state, unknown())));
+    assert!(is_unknown(node_log_prob_at(
+        &graph,
+        &state,
+        unknown(),
+        &scalar(0.0)
+    )));
+    assert!(is_unknown(node_log_prob_gradient(
+        &graph,
+        &state,
+        unknown()
+    )));
+    assert!(is_unknown(log_prob(&graph, &state, &[y, unknown()])));
+    assert!(is_unknown(log_prob_gradient(
+        &graph,
+        &state,
+        &[y, unknown()],
+        &[x]
+    )));
+    assert!(is_unknown(log_prob_gradient(
+        &graph,
+        &state,
+        &[y],
+        &[x, unknown()]
+    )));
+    assert!(log_prob_gradient(&graph, &state, &[y], &[x]).is_ok());
+
+    let model = Model::new(graph, &state).unwrap();
+    let gradient = model.log_prob_gradient(&state).unwrap();
+    assert!(gradient.get(unknown()).is_none());
+    assert!(gradient.clone().take(unknown()).is_none());
+}
+
+#[test]
+#[should_panic(expected = "node #1000 is not a node of this graph")]
+fn indexing_a_graph_by_an_unknown_node_panics_like_a_slice() {
+    let b = GraphBuilder::new();
+    let _ = b.gaussian(0.0, 1.0);
+    let (graph, _) = b.build().unwrap();
+    let _ = &graph[unknown()];
 }

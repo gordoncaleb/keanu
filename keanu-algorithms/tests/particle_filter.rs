@@ -157,9 +157,9 @@ fn reference_increments(graph: &Graph, state: &State) -> Vec<(NodeId, Vec<NodeId
     let mut latent_ancestors: Vec<BTreeSet<NodeId>> = vec![BTreeSet::new(); graph.len()];
     for id in graph.ids() {
         let mut ancestors = BTreeSet::new();
-        for &parent in graph.parents(id) {
+        for &parent in graph[id].parents() {
             ancestors.extend(latent_ancestors[parent.index()].iter().copied());
-            if graph.node(parent).is_probabilistic() && !state.is_observed(parent) {
+            if graph[parent].is_probabilistic() && !state.is_observed(parent) {
                 ancestors.insert(parent);
             }
         }
@@ -167,7 +167,7 @@ fn reference_increments(graph: &Graph, state: &State) -> Vec<(NodeId, Vec<NodeId
     }
     let mut remaining: BTreeMap<NodeId, BTreeSet<NodeId>> = graph
         .ids()
-        .filter(|&id| state.is_observed(id) && graph.node(id).is_probabilistic())
+        .filter(|&id| state.is_observed(id) && graph[id].is_probabilistic())
         .map(|id| (id, latent_ancestors[id.index()].clone()))
         .collect();
     let mut order = Vec::new();

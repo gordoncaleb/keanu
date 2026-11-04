@@ -69,7 +69,7 @@ impl Partials {
 /// True if gradients can flow through this node (to its parents, or from it as a leaf). False if the id is not a
 /// node of the graph.
 pub fn is_differentiable(graph: &Graph, id: NodeId) -> bool {
-    let Some(node) = graph.get(id) else {
+    let Some(node) = graph.node(id) else {
         return false;
     };
     node.dtype == DType::F64
@@ -119,7 +119,7 @@ pub fn forward_partials(
     of: &[NodeId],
 ) -> Result<Partials> {
     graph.check_ids(std::iter::once(&wrt).chain(of))?;
-    let wrt_node = graph.node(wrt);
+    let wrt_node = &graph[wrt];
     if wrt_node.dtype != DType::F64 {
         return Err(GraphError::NotDifferentiable(format!(
             "cannot differentiate with respect to {:?} node #{}",
@@ -142,7 +142,7 @@ pub fn forward_partials(
     let last = of.iter().map(|id| id.0).max().unwrap_or(wrt.0);
     for i in wrt.0 + 1..=last.max(wrt.0) {
         let id = NodeId(i);
-        let node = graph.node(id);
+        let node = &graph[id];
         if node.is_probabilistic() || !is_differentiable(graph, id) {
             continue;
         }
@@ -166,7 +166,7 @@ pub fn forward_partials(
     for &o in of {
         if let Some(t) = &tangents[o.0] {
             // [n, of...] -> [wrt..., of...] -> [of..., wrt...]
-            let of_shape = graph.node(o).shape.to_vec();
+            let of_shape = graph[o].shape.to_vec();
             let full: Vec<isize> = wrt_shape
                 .iter()
                 .chain(&of_shape)
@@ -189,7 +189,7 @@ pub fn reverse_partials(
     wrt: &[NodeId],
 ) -> Result<Partials> {
     graph.check_ids(std::iter::once(&of).chain(wrt))?;
-    let of_shape = graph.node(of).shape.to_vec();
+    let of_shape = graph[of].shape.to_vec();
     if state.is_observed(of) {
         return Ok(Partials {
             partials: HashMap::new(),
@@ -219,7 +219,7 @@ pub fn reverse_partials_from(
     wrt: &[NodeId],
 ) -> Result<Partials> {
     graph.check_ids(std::iter::once(&of).chain(wrt))?;
-    let of_shape = graph.node(of).shape.to_vec();
+    let of_shape = graph[of].shape.to_vec();
     let up_shape = upstream.shape();
     if up_shape.len() < of_shape.len()
         || up_shape[up_shape.len() - of_shape.len()..] != of_shape[..]
@@ -246,7 +246,7 @@ pub fn reverse_partials_from(
     reverse_sweep(graph, state, [(of, seed)], b, &is_wrt, |id, cotangent| {
         let shape: Dims = outer
             .iter()
-            .chain(graph.node(id).shape.iter())
+            .chain(graph[id].shape.iter())
             .map(|&d| d as isize)
             .collect();
         result.partials.insert(id, cotangent.into_reshape(&shape)?);
@@ -267,10 +267,10 @@ pub(crate) fn reverse_from_seeds(
 ) -> Result<()> {
     let seeds = seeds
         .into_iter()
-        .map(|(id, seed)| Ok((id, seed.into_reshape(&batched(1, &graph.node(id).shape))?)))
+        .map(|(id, seed)| Ok((id, seed.into_reshape(&batched(1, &graph[id].shape))?)))
         .collect::<Result<SmallVec<[(NodeId, DoubleTensor); 8]>>>()?;
     reverse_sweep(graph, state, seeds, 1, is_wrt, |id, cotangent| {
-        let shape: Dims = graph.node(id).shape.iter().map(|&d| d as isize).collect();
+        let shape: Dims = graph[id].shape.iter().map(|&d| d as isize).collect();
         emit(id, cotangent.into_reshape(&shape)?)
     })
 }
@@ -302,7 +302,7 @@ fn reverse_sweep(
             emit(id, cotangent)?;
             continue;
         }
-        let node = graph.node(id);
+        let node = &graph[id];
         if node.is_probabilistic() || !is_differentiable(graph, id) {
             continue;
         }
@@ -1058,7 +1058,7 @@ fn jvp(
     t: &[Option<&DoubleTensor>],
     b: usize,
 ) -> Result<Option<DoubleTensor>> {
-    let node = graph.node(id);
+    let node = &graph[id];
     let out_shape = node.shape.to_vec();
     let y = f64v(out)?;
     let op = &node.op;
@@ -1306,7 +1306,7 @@ fn vjp(
     cotangent: DoubleTensor,
     b: usize,
 ) -> Result<Vec<Option<DoubleTensor>>> {
-    let node = graph.node(id);
+    let node = &graph[id];
     let out_shape = node.shape.to_vec();
     let y = f64v(out)?;
     let op = &node.op;

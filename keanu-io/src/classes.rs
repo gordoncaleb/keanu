@@ -473,7 +473,7 @@ mod tests {
             let mut parameters = saved.parameters.to_vec();
             parameters.extend(saved.zero_location);
             let loaded = round_trip(&graph, &state, saved.class, &parameters);
-            let node = loaded.node(last(&loaded));
+            let node = &loaded[last(&loaded)];
             let Op::Distribution(d) = node.op() else {
                 panic!("{} loaded as {:?}", saved.class, node.op());
             };
@@ -481,7 +481,7 @@ mod tests {
                 std::mem::discriminant(&d.kind),
                 std::mem::discriminant(&saved.kind)
             );
-            assert_eq!(node.parents(), graph.node(last(&graph)).parents());
+            assert_eq!(node.parents(), graph[last(&graph)].parents());
             #[cfg(feature = "dot")]
             {
                 let dot = crate::to_dot(&graph, None, &Metadata::new());
@@ -516,7 +516,7 @@ mod tests {
             });
             let ((graph, state), parents) = built.unwrap_or_else(|| panic!("can't build {class}"));
             let loaded = round_trip(&graph, &state, class, simple.parameters());
-            let node = loaded.node(last(&loaded));
+            let node = &loaded[last(&loaded)];
             assert_eq!(SimpleOp::of(node.op()), Some(simple), "{class}");
             assert_eq!(node.parents(), &parents[..]);
         }

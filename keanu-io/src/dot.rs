@@ -56,7 +56,7 @@ pub fn to_dot(graph: &Graph, state: Option<&State>, metadata: &Metadata) -> Stri
         }
     }
     for child in graph.ids() {
-        let node = graph.node(child);
+        let node = &graph[child];
         let names = match node.op() {
             Op::Distribution(d) => classes::saved_distribution(&d.kind)
                 .map(|s| s.parameters)
@@ -107,7 +107,7 @@ fn escape(text: &str) -> String {
 }
 
 fn node_label(graph: &Graph, state: Option<&State>, id: NodeId) -> String {
-    let node = graph.node(id);
+    let node = &graph[id];
     let name = node
         .label()
         .map(|l| l.rsplit('.').next().unwrap_or(l).to_owned());

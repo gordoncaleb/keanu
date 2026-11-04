@@ -779,3 +779,39 @@ fn metropolis_hastings_rolls_back_a_proposal_that_fails() {
         assert!(failed, "{rejection:?}: no proposal went negative");
     }
 }
+
+#[test]
+fn unknown_nodes_are_errors_not_panics() {
+    use keanu_graph::GraphError;
+    let unknown = NodeId::from_index(1000);
+    let is_unknown = |e: AlgorithmError| matches!(e, AlgorithmError::Graph(GraphError::UnknownNode(id)) if id == unknown);
+
+    let b = GraphBuilder::new();
+    let mu = b.gaussian(0.0, 1.0);
+    let x = b.gaussian(mu, 1.0);
+    b.observe(x, DoubleTensor::scalar(0.5));
+    let mu = mu.id();
+    let (graph, mut state) = b.build().unwrap();
+    let model = Model::new(graph, &state).unwrap();
+    let mut rng = rng(1);
+
+    let mh = MetropolisHastings::default();
+    assert!(
+        mh.sampler(&model, &mut state, &[mu, unknown], &mut rng)
+            .is_err_and(is_unknown)
+    );
+    assert!(
+        mh.sample(&model, &mut state, &[unknown], 10, &mut rng)
+            .is_err_and(is_unknown)
+    );
+    let nuts = Nuts::default();
+    assert!(
+        nuts.sampler(&model, &mut state, &[mu, unknown], &mut rng)
+            .is_err_and(is_unknown)
+    );
+    assert!(
+        GaussianProposal::new(1.0)
+            .propose(&model, &state, &[unknown], &mut rng)
+            .is_err_and(is_unknown)
+    );
+}

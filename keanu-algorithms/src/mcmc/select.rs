@@ -24,8 +24,8 @@ pub fn is_differentiable_wrt_latents(model: &Model, state: &State) -> bool {
         .collect();
     let all_continuous_or_observed = nodes
         .iter()
-        .filter(|&&id| graph.node(id).is_probabilistic())
-        .all(|&id| graph.node(id).dtype() == DType::F64 || state.is_observed(id));
+        .filter(|&&id| graph[id].is_probabilistic())
+        .all(|&id| graph[id].dtype() == DType::F64 || state.is_observed(id));
     if !all_continuous_or_observed {
         return false;
     }
@@ -34,7 +34,7 @@ pub fn is_differentiable_wrt_latents(model: &Model, state: &State) -> bool {
     let mut visited: HashSet<NodeId> = HashSet::new();
     let mut queue: Vec<NodeId> = nodes
         .iter()
-        .flat_map(|&id| graph.parents(id).iter().copied())
+        .flat_map(|&id| graph[id].parents().iter().copied())
         .collect();
     while let Some(id) = queue.pop() {
         if !visited.insert(id) {
@@ -43,15 +43,15 @@ pub fn is_differentiable_wrt_latents(model: &Model, state: &State) -> bool {
         if !is_differentiable(graph, id) && !is_constant(graph, state, id, &mut constant_cache) {
             return false;
         }
-        if !graph.node(id).is_probabilistic() {
-            queue.extend_from_slice(graph.parents(id));
+        if !graph[id].is_probabilistic() {
+            queue.extend_from_slice(graph[id].parents());
         }
     }
     true
 }
 
 fn known_constant(graph: &Graph, state: &State, id: NodeId, cache: &HashSet<NodeId>) -> bool {
-    matches!(graph.node(id).op(), Op::Constant(_)) || state.is_observed(id) || cache.contains(&id)
+    matches!(graph[id].op(), Op::Constant(_)) || state.is_observed(id) || cache.contains(&id)
 }
 
 /// True if a node's value can't change: no unobserved probabilistic node is upstream of it.
@@ -66,12 +66,12 @@ fn is_constant(graph: &Graph, state: &State, id: NodeId, cache: &mut HashSet<Nod
         if !seen.insert(v) {
             continue;
         }
-        if graph.node(v).is_probabilistic() && !state.is_observed(v) {
+        if graph[v].is_probabilistic() && !state.is_observed(v) {
             return false;
         }
         visited.push(v);
         if !known_constant(graph, state, v, cache) {
-            queue.extend_from_slice(graph.parents(v));
+            queue.extend_from_slice(graph[v].parents());
         }
     }
     cache.extend(visited);

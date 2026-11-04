@@ -72,16 +72,20 @@ pub struct NetworkSamples {
 }
 
 impl NetworkSamples {
-    /// An empty set of samples of the given nodes.
-    pub fn new(graph: &Graph, nodes: &[NodeId]) -> Self {
-        Self {
+    /// An empty set of samples of the given nodes. Fails with [`GraphError::UnknownNode`] if a node is not in the
+    /// graph.
+    pub fn new(graph: &Graph, nodes: &[NodeId]) -> Result<Self> {
+        Ok(Self {
             nodes: nodes.to_vec(),
             columns: nodes
                 .iter()
-                .map(|&id| Column::new(graph.node(id).dtype()))
-                .collect(),
+                .map(|&id| {
+                    let node = graph.node(id).ok_or(GraphError::UnknownNode(id))?;
+                    Ok(Column::new(node.dtype()))
+                })
+                .collect::<Result<_>>()?,
             log_probs: Vec::new(),
-        }
+        })
     }
 
     /// Records the current values of the nodes as a new sample.

@@ -87,7 +87,7 @@ pub fn generate(
     for _ in 0..options.drop {
         algorithm.step(state, rng)?;
     }
-    let mut samples = NetworkSamples::new(algorithm.graph(), algorithm.sampled_nodes());
+    let mut samples = NetworkSamples::new(algorithm.graph(), algorithm.sampled_nodes())?;
     for i in 0..total - options.drop {
         algorithm.step(state, rng)?;
         if i % options.down_sample_interval == 0 {

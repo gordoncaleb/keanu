@@ -10,7 +10,7 @@ fn samples(count: usize) -> (Graph, NetworkSamples, NodeId, NodeId, NodeId) {
     let flag = b.bernoulli(0.5);
     let (x, n, flag) = (x.id(), n.id(), flag.id());
     let (graph, mut state): (Graph, State) = b.build().unwrap();
-    let mut samples = NetworkSamples::new(&graph, &[x, n, flag]);
+    let mut samples = NetworkSamples::new(&graph, &[x, n, flag]).unwrap();
     for i in 0..count {
         state
             .set(&graph, x, DoubleTensor::vector(vec![i as f64, -(i as f64)]))
@@ -103,7 +103,7 @@ fn variance_is_accurate_for_a_large_mean() {
     let b = GraphBuilder::new();
     let x = b.gaussian(0.0, 1.0).id();
     let (graph, mut state): (Graph, State) = b.build().unwrap();
-    let mut samples = NetworkSamples::new(&graph, &[x]);
+    let mut samples = NetworkSamples::new(&graph, &[x]).unwrap();
     // spread 1 around 1e9: E[x^2] - E[x]^2 cancels catastrophically here
     for offset in [-1.0, 0.0, 1.0, 0.0] {
         state
@@ -132,7 +132,7 @@ fn a_type_mismatch_leaves_the_samples_unchanged() {
         .unwrap();
     assert_eq!((x_b, y_b), (x, y));
 
-    let mut samples = NetworkSamples::new(&graph_a, &[x, y]);
+    let mut samples = NetworkSamples::new(&graph_a, &[x, y]).unwrap();
     assert!(matches!(
         samples.record(&state_b, 0.0),
         Err(AlgorithmError::InvalidArgument(_))
@@ -146,7 +146,7 @@ fn scalar_samples(values: &[f64]) -> (NetworkSamples, NodeId) {
     let b = GraphBuilder::new();
     let x = b.gaussian(0.0, 1.0).id();
     let (graph, mut state): (Graph, State) = b.build().unwrap();
-    let mut samples = NetworkSamples::new(&graph, &[x]);
+    let mut samples = NetworkSamples::new(&graph, &[x]).unwrap();
     for &v in values {
         state.set(&graph, x, DoubleTensor::scalar(v)).unwrap();
         samples.record(&state, 0.0).unwrap();
@@ -232,5 +232,17 @@ fn mode_of_vector_and_bool_samples() {
     assert_eq!(
         s.bool(flag).unwrap().mode().unwrap().to_scalar(),
         Some(true)
+    );
+}
+
+#[test]
+fn samples_of_an_unknown_node_are_an_error_not_a_panic() {
+    let b = GraphBuilder::new();
+    let x = b.gaussian(0.0, 1.0).id();
+    let (graph, _) = b.build().unwrap();
+    let unknown = NodeId::from_index(1000);
+    assert_eq!(
+        NetworkSamples::new(&graph, &[x, unknown]).unwrap_err(),
+        AlgorithmError::Graph(keanu_graph::GraphError::UnknownNode(unknown))
     );
 }

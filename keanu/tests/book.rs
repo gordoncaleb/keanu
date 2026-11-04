@@ -117,7 +117,7 @@ fn building_models() -> keanu::Result<()> {
     let ids = [y.id(), clipped.id(), k.id(), coin.id()];
     let x = x.id();
     let (graph, _state) = b.build()?;
-    assert_eq!(graph.node(x).shape(), &[3]);
+    assert_eq!(graph[x].shape(), &[3]);
     assert!(graph.find("sigma").is_some());
     assert_eq!(ids.len(), 4);
     // ANCHOR_END: building
@@ -275,7 +275,7 @@ fn sequences() -> keanu::Result<()> {
 
     // each item's nodes are labelled in its own namespace
     let last_x = sequence.last_item().unwrap().get("x").unwrap();
-    assert!(graph.node(last_x).label().unwrap().ends_with(".x"));
+    assert!(graph[last_x].label().unwrap().ends_with(".x"));
 
     let model = Model::new(graph, &state)?;
     assert_eq!(model.latents().len(), observations.len());

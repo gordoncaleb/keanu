@@ -207,7 +207,7 @@ impl Saver<'_> {
     /// Saves a node, returning the index of its vertex in the saved vertices.
     fn save_node(&mut self, id: NodeId) -> Result<usize> {
         let graph = self.graph;
-        let node = graph.node(id);
+        let node = &graph[id];
         let label = node.label().unwrap_or("");
         let shape = node.shape();
         let parents = node.parents();
@@ -226,7 +226,7 @@ impl Saver<'_> {
                 "{what} (node {id:?}) has no saved form"
             )))
         };
-        let input_dtype = parents.first().map(|&p| graph.node(p).dtype());
+        let input_dtype = parents.first().map(|&p| graph[p].dtype());
 
         if let Some((simple, class)) = SimpleOp::of(node.op()).and_then(|s| Some((s, s.class()?))) {
             return self.emit(class, label, shape, named(simple.parameters()));
@@ -336,7 +336,7 @@ impl Saver<'_> {
                 ],
             ),
             Op::Transpose => {
-                let rank = graph.node(parents[0]).shape().len();
+                let rank = graph[parents[0]].shape().len();
                 let mut permutation: Vec<i64> = (0..rank as i64).collect();
                 permutation.swap(rank - 1, rank - 2);
                 (
@@ -444,7 +444,7 @@ impl Saver<'_> {
             Op::CholeskyInverse => {
                 // Java's CholeskyInverseVertex gives the lower triangle of the inverse plus its input's strict upper
                 // triangle, so: C = choleskyInverse(tril(L)); full = C + transpose(strictly lower part of C)
-                let input_shape = graph.node(parents[0]).shape();
+                let input_shape = graph[parents[0]].shape();
                 let lower_input = self.emit(
                     "TriLowerVertex",
                     "",

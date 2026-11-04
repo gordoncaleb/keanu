@@ -34,7 +34,7 @@ impl LambdaSection {
 }
 
 fn is_stop(graph: &Graph, state: &State, id: NodeId) -> bool {
-    graph.node(id).is_probabilistic() || state.is_observed(id)
+    graph[id].is_probabilistic() || state.is_observed(id)
 }
 
 fn lambda_section(
@@ -47,9 +47,9 @@ fn lambda_section(
     let mut stack: Vec<NodeId> = from.to_vec();
     while let Some(id) = stack.pop() {
         let next = if downstream {
-            graph.children(id)
+            graph.children_of(id)
         } else {
-            graph.parents(id)
+            graph[id].parents()
         };
         for &n in next {
             if seen.insert(n) && !is_stop(graph, state, n) {
@@ -94,7 +94,7 @@ pub fn upstream_lambda_section(
 
 /// True if a deterministic observed node's value differs from what its parents compute (a violated constraint).
 fn contradicts_observation(graph: &Graph, state: &State, id: NodeId) -> Result<bool> {
-    let node = graph.node(id);
+    let node = &graph[id];
     let Some(observed) = state.value(id) else {
         return Ok(false);
     };
@@ -145,20 +145,19 @@ impl Model {
         let sections = graph
             .ids()
             .map(|id| {
-                graph
-                    .node(id)
+                graph[id]
                     .is_probabilistic()
                     .then(|| lambda_section(&graph, state, &[id], true).latent_and_observed)
             })
             .collect();
         let joint: Vec<NodeId> = latents.iter().chain(&observed).copied().collect();
-        let is_probabilistic = |id: &NodeId| graph.node(*id).is_probabilistic();
+        let is_probabilistic = |id: &NodeId| graph[*id].is_probabilistic();
         let probabilistic_joint = joint.iter().copied().filter(is_probabilistic).collect();
         let probabilistic_observed = observed.iter().copied().filter(is_probabilistic).collect();
         let continuous = latents
             .iter()
             .copied()
-            .filter(|&id| graph.node(id).dtype() == DType::F64)
+            .filter(|&id| graph[id].dtype() == DType::F64)
             .collect();
         Ok(Self {
             graph,
@@ -192,7 +191,7 @@ impl Model {
         self.latents
             .iter()
             .copied()
-            .filter(|&id| self.graph.node(id).dtype() != DType::F64)
+            .filter(|&id| self.graph[id].dtype() != DType::F64)
             .collect()
     }
 
@@ -211,7 +210,7 @@ impl Model {
     fn log_prob_of(&self, state: &State, nodes: &[NodeId]) -> Result<f64> {
         let mut sum = 0.0;
         for &id in nodes {
-            if self.graph.node(id).is_probabilistic() {
+            if self.graph[id].is_probabilistic() {
                 let lp = node_log_prob(&self.graph, state, id)?;
                 if lp == f64::NEG_INFINITY || lp.is_nan() {
                     return Ok(f64::NEG_INFINITY);
@@ -343,7 +342,7 @@ impl Model {
     /// distribution once (for gradient based samplers, which need both at every step).
     pub fn log_prob_and_gradient(&self, state: &State) -> Result<(f64, Option<LogProbGradient>)> {
         for &id in &self.observed {
-            if !self.graph.node(id).is_probabilistic()
+            if !self.graph[id].is_probabilistic()
                 && contradicts_observation(&self.graph, state, id)?
             {
                 return Ok((f64::NEG_INFINITY, None));

@@ -223,7 +223,7 @@ fn duplicate_parents_give_a_single_child_entry() {
     let cube = b.concat(0, &[x.reshape(&[1]), x.reshape(&[1]), x.reshape(&[1])]);
     let (x, square, chosen, cube) = (x.id(), square.id(), chosen.id(), cube.id());
     let (graph, _) = b.build().unwrap();
-    let children = graph.children(x);
+    let children = graph.children(x).unwrap();
     assert_eq!(children.len(), 5, "{children:?}");
     assert_eq!(children.iter().filter(|&&c| c == square).count(), 1);
     assert_eq!(children.iter().filter(|&&c| c == chosen).count(), 1);

@@ -7,6 +7,7 @@ use keanu_tensor::Shape;
 use smallvec::SmallVec;
 use std::collections::HashMap;
 use std::fmt;
+use std::ops::Index;
 use std::sync::OnceLock;
 
 /// Identifies a node within its graph. Ids are assigned in creation order and a node's parents always have smaller
@@ -139,17 +140,9 @@ impl Graph {
         self.nodes.is_empty()
     }
 
-    /// The node with this id.
-    ///
-    /// # Panics
-    ///
-    /// If the id is not a node of this graph; [`get`](Self::get) is the checked lookup.
-    pub fn node(&self, id: NodeId) -> &Node {
-        &self.nodes[id.0]
-    }
-
-    /// The node with this id, or `None` if it is not a node of this graph.
-    pub fn get(&self, id: NodeId) -> Option<&Node> {
+    /// The node with this id, or `None` if it is not a node of this graph. `graph[id]` is the unchecked
+    /// (panicking) form, for ids known to be the graph's own.
+    pub fn node(&self, id: NodeId) -> Option<&Node> {
         self.nodes.get(id.0)
     }
 
@@ -171,21 +164,18 @@ impl Graph {
         (0..self.nodes.len()).map(NodeId)
     }
 
-    /// The node's parents, in order.
-    ///
-    /// # Panics
-    ///
-    /// If the id is not a node of this graph.
-    pub fn parents(&self, id: NodeId) -> &[NodeId] {
-        &self.nodes[id.0].parents
+    /// The node's parents, in order, or `None` if it is not a node of this graph.
+    pub fn parents(&self, id: NodeId) -> Option<&[NodeId]> {
+        self.node(id).map(Node::parents)
     }
 
-    /// The nodes whose parents include this node.
-    ///
-    /// # Panics
-    ///
-    /// If the id is not a node of this graph.
-    pub fn children(&self, id: NodeId) -> &[NodeId] {
+    /// The nodes whose parents include this node, in id order, or `None` if it is not a node of this graph.
+    pub fn children(&self, id: NodeId) -> Option<&[NodeId]> {
+        self.children.get(id.0).map(|c| &c[..])
+    }
+
+    /// The node's children, for an id known to be a node of this graph.
+    pub(crate) fn children_of(&self, id: NodeId) -> &[NodeId] {
         &self.children[id.0]
     }
 
@@ -196,6 +186,24 @@ impl Graph {
 
     /// The probabilistic nodes in topological order.
     pub fn probabilistic(&self) -> impl Iterator<Item = NodeId> + '_ {
-        self.ids().filter(|&id| self.node(id).is_probabilistic())
+        self.ids().filter(|&id| self[id].is_probabilistic())
+    }
+}
+
+/// The node with this id, like slice indexing: for ids known to be nodes of this graph, such as those from
+/// [`Graph::ids`], [`Graph::probabilistic`], a node's [`parents`](Node::parents) or the builder that made the graph.
+/// [`Graph::node`] is the checked lookup.
+///
+/// # Panics
+///
+/// If the id is not a node of this graph.
+impl Index<NodeId> for Graph {
+    type Output = Node;
+
+    fn index(&self, id: NodeId) -> &Node {
+        match self.nodes.get(id.0) {
+            Some(node) => node,
+            None => panic!("{}", GraphError::UnknownNode(id)),
+        }
     }
 }

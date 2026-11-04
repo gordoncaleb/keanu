@@ -15,7 +15,7 @@ fn value(state: &State, id: NodeId) -> Result<&Value> {
 }
 
 fn kind(graph: &Graph, id: NodeId) -> Result<&DistributionKind> {
-    match graph.node(id).op() {
+    match graph.node(id).ok_or(GraphError::UnknownNode(id))?.op() {
         Op::Distribution(op) => Ok(&op.kind),
         _ => Err(GraphError::InvalidValue(format!(
             "node #{} is not probabilistic, so it has no log probability",
@@ -27,6 +27,7 @@ fn kind(graph: &Graph, id: NodeId) -> Result<&DistributionKind> {
 /// The log probability of a probabilistic node at its current value, given its parameters' current values
 /// (summed over the elements of the node).
 pub fn node_log_prob(graph: &Graph, state: &State, id: NodeId) -> Result<f64> {
+    graph.check_ids([&id])?;
     node_log_prob_at(graph, state, id, value(state, id)?)
 }
 
@@ -37,9 +38,13 @@ pub fn node_log_prob_at(graph: &Graph, state: &State, id: NodeId, v: &Value) -> 
     kind.log_prob(v, &parameters(graph, state, id)?)
 }
 
-/// The values of a node's parameters (its parents).
+/// The values of a node's parameters (its parents), for a node of the graph.
 fn parameters<'s>(graph: &Graph, state: &'s State, id: NodeId) -> Result<SmallVec<[&'s Value; 4]>> {
-    graph.parents(id).iter().map(|&p| value(state, p)).collect()
+    graph[id]
+        .parents()
+        .iter()
+        .map(|&p| value(state, p))
+        .collect()
 }
 
 /// The total log probability of the given probabilistic nodes.
@@ -213,7 +218,7 @@ impl LogProbGradient {
 
 /// True for nodes that log prob gradients can be taken with respect to: unobserved f64 probabilistic nodes.
 fn is_latent_double(graph: &Graph, state: &State, id: NodeId) -> bool {
-    let node = graph.node(id);
+    let node = &graph[id];
     node.is_probabilistic() && node.dtype() == DType::F64 && !state.is_observed(id)
 }
 
@@ -266,6 +271,7 @@ fn gradient_from_parts(
     wrt: &[NodeId],
     mut parts_of: impl FnMut(NodeId) -> Result<Option<LogProbGradientParts>>,
 ) -> Result<Option<LogProbGradient>> {
+    graph.check_ids(of.iter().chain(wrt))?;
     let mut is_wrt: smallvec::SmallVec<[bool; 32]> = smallvec::smallvec![false; graph.len()];
     let mut any_target = false;
     for &id in wrt {
@@ -288,14 +294,14 @@ fn gradient_from_parts(
         if !any_target {
             continue;
         }
-        for (&parent, dp) in graph.parents(node).iter().zip(parameters) {
+        for (&parent, dp) in graph[node].parents().iter().zip(parameters) {
             let Some(dp) = dp else { continue };
-            let parent_node = graph.node(parent);
+            let parent_node = &graph[parent];
             // a constant can't lead to a latent, so there's nothing to propagate
             if parent_node.dtype() != DType::F64 || matches!(parent_node.op(), Op::Constant(_)) {
                 continue;
             }
-            seeds.push((parent, sum_to_shape(dp, graph.node(parent).shape())?));
+            seeds.push((parent, sum_to_shape(dp, graph[parent].shape())?));
         }
     }
     reverse_from_seeds(graph, state, seeds, &is_wrt, |latent, partial| {

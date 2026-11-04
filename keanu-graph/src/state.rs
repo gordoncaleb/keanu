@@ -78,7 +78,7 @@ impl State {
 
     fn check(&self, graph: &Graph, id: NodeId, value: &Value) -> Result<()> {
         self.check_ids(graph, [&id])?;
-        let node = graph.node(id);
+        let node = &graph[id];
         if value.dtype() != node.dtype || value.shape() != node.shape() {
             return Err(GraphError::InvalidValue(format!(
                 "node {id:?} holds {:?} of shape {:?}, got {:?} of shape {:?}",
@@ -116,7 +116,7 @@ impl State {
     /// deterministic nodes cannot.
     pub fn observe(&mut self, graph: &Graph, id: NodeId, value: impl Into<Value>) -> Result<()> {
         self.check_ids(graph, [&id])?;
-        let node = graph.node(id);
+        let node = &graph[id];
         if !node.is_probabilistic() && node.dtype != DType::Bool {
             return Err(GraphError::NotObservable(format!(
                 "node {id:?} ({}) is deterministic and numeric, so it cannot be observed",
@@ -181,7 +181,7 @@ impl State {
             if last.replace(id) == Some(id) {
                 continue;
             }
-            if graph.node(id).is_probabilistic() {
+            if graph[id].is_probabilistic() {
                 if !self.has_value(id) {
                     return Err(GraphError::InvalidValue(format!(
                         "probabilistic node {id:?} has no value to cascade from"
@@ -192,9 +192,9 @@ impl State {
             }
             pending.extend(
                 graph
-                    .children(id)
+                    .children_of(id)
                     .iter()
-                    .filter(|&&child| !graph.node(child).is_probabilistic())
+                    .filter(|&&child| !graph[child].is_probabilistic())
                     .map(|&child| Reverse(child)),
             );
         }
@@ -221,7 +221,7 @@ impl State {
             if !eager && has_value {
                 continue;
             }
-            let node = graph.node(id);
+            let node = &graph[id];
             if node.is_probabilistic() {
                 if !has_value {
                     plan.push(id);
@@ -247,7 +247,7 @@ impl State {
     /// the state. The parents must have values.
     pub fn sample_prior(&self, graph: &Graph, id: NodeId, rng: &mut KeanuRng) -> Result<Value> {
         self.check_ids(graph, [&id])?;
-        let node = graph.node(id);
+        let node = &graph[id];
         let Op::Distribution(distribution) = &node.op else {
             return Err(GraphError::InvalidValue(format!(
                 "node {id:?} is not probabilistic, so it has no prior to sample from"
@@ -264,7 +264,7 @@ impl State {
     /// Java's `updateVertexValue`: sample a probabilistic node with no value, or recompute a deterministic one
     /// that isn't observed.
     fn update(&mut self, graph: &Graph, id: NodeId, rng: Option<&mut KeanuRng>) -> Result<()> {
-        let node = graph.node(id);
+        let node = &graph[id];
         if self.observed[id.0] {
             return Ok(());
         }

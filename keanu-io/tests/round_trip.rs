@@ -19,7 +19,7 @@ use std::path::PathBuf;
 fn recompute(graph: &Graph, state: &State) -> State {
     let mut state = state.clone();
     for id in graph.ids() {
-        let node = graph.node(id);
+        let node = &graph[id];
         if !node.is_probabilistic()
             && !matches!(node.op(), Op::Constant(_))
             && !state.is_observed(id)
@@ -65,8 +65,7 @@ fn summarise(graph: &Graph, state: &State) -> Summary {
     let values = graph
         .ids()
         .filter_map(|id| {
-            graph
-                .node(id)
+            graph[id]
                 .label()
                 .map(|l| (l.to_owned(), flatten(state.value(id).unwrap())))
         })
@@ -466,7 +465,7 @@ fn values_stored_by_label_are_applied_to_the_labelled_node() {
         .collect();
     let loaded = load_json(&model.to_string()).unwrap();
     for id in loaded.graph.ids() {
-        let Some(label) = loaded.graph.node(id).label() else {
+        let Some(label) = loaded.graph[id].label() else {
             continue;
         };
         let i: u32 = label[1..].parse().unwrap();
@@ -482,7 +481,7 @@ fn values_stored_by_label_are_applied_to_the_labelled_node() {
 fn labels(graph: &Graph) -> Vec<Option<String>> {
     graph
         .ids()
-        .map(|id| graph.node(id).label().map(str::to_owned))
+        .map(|id| graph[id].label().map(str::to_owned))
         .collect()
 }
 

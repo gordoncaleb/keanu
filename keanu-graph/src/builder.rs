@@ -37,7 +37,7 @@ struct Inner {
 /// let (y, mu) = (y.id(), mu.id());
 /// let (graph, _state) = b.build()?;
 /// assert_eq!(graph.find("mu"), Some(mu));
-/// assert_eq!(graph.node(y).shape(), &[] as &[usize]);
+/// assert_eq!(graph[y].shape(), &[] as &[usize]);
 /// # Ok::<(), keanu_graph::GraphError>(())
 /// ```
 #[derive(Debug, Default)]

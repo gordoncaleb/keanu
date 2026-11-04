@@ -197,8 +197,7 @@ pub(crate) fn check_latents(model: &Model) -> Result<()> {
         let names = discrete
             .iter()
             .map(|&id| {
-                graph
-                    .node(id)
+                graph[id]
                     .label()
                     .map(str::to_owned)
                     .unwrap_or_else(|| format!("node {}", id.index()))
@@ -224,7 +223,7 @@ impl<'m> Objective<'m> {
         let latents = model.continuous_latents();
         let shapes = latents
             .iter()
-            .map(|&id| model.graph().node(id).shape().to_vec())
+            .map(|&id| model.graph()[id].shape().to_vec())
             .collect();
         Self {
             model,

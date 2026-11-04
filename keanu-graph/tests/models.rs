@@ -139,7 +139,7 @@ fn compare_gradients(
         }
     }
     for (id, _) in gradient.iter() {
-        let label = graph.node(id).label().unwrap_or("<unlabelled>");
+        let label = graph[id].label().unwrap_or("<unlabelled>");
         if !expected.contains_key(label) {
             problems.push(format!(
                 "{name}: {which} has an unexpected gradient for {label}"

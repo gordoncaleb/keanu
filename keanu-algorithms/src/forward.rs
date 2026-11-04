@@ -2,9 +2,10 @@
 
 use crate::error::{AlgorithmError, Result};
 use crate::samples::NetworkSamples;
+use crate::support::check_nodes;
 use keanu_distributions::KeanuRng;
 use keanu_graph::{
-    Graph, GraphError, Model, NodeId, State, downstream_lambda_section, upstream_lambda_section,
+    Graph, Model, NodeId, State, downstream_lambda_section, upstream_lambda_section,
 };
 
 /// Samples from the prior by sampling each latent in topological order and recomputing the deterministic nodes
@@ -47,9 +48,7 @@ impl ForwardSampler {
         rng: &mut KeanuRng,
     ) -> Result<NetworkSamples> {
         let graph = model.graph();
-        if let Some(&id) = nodes.iter().find(|&&id| !graph.contains(id)) {
-            return Err(GraphError::UnknownNode(id).into());
-        }
+        check_nodes(graph, nodes)?;
         if model.latents().is_empty() {
             return Err(AlgorithmError::NoLatents);
         }
@@ -59,7 +58,7 @@ impl ForwardSampler {
         if upstream_of_observed
             .latent_and_observed()
             .iter()
-            .any(|&id| graph.node(id).is_probabilistic() && !state.is_observed(id))
+            .any(|&id| graph[id].is_probabilistic() && !state.is_observed(id))
         {
             return Err(AlgorithmError::InvalidArgument(
                 "cannot forward sample when an observed node has a random variable upstream of it"
@@ -72,7 +71,7 @@ impl ForwardSampler {
         // make sure every recorded node has a value, even those outside the sampling order (e.g. constants)
         state.lazy_eval(graph, nodes, rng)?;
 
-        let mut samples = NetworkSamples::new(graph, nodes);
+        let mut samples = NetworkSamples::new(graph, nodes)?;
         for _ in 0..count {
             for &id in &order {
                 if state.is_observed(id) {
@@ -111,7 +110,7 @@ fn sampling_order(
     let mut stack: Vec<NodeId> = nodes.to_vec();
     while let Some(id) = stack.pop() {
         if !std::mem::replace(&mut upstream[id.index()], true) {
-            stack.extend_from_slice(graph.parents(id));
+            stack.extend_from_slice(graph[id].parents());
         }
     }
 

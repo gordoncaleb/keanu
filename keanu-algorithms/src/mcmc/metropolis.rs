@@ -4,7 +4,7 @@ use crate::error::{AlgorithmError, Result};
 use crate::mcmc::proposal::{PriorProposal, Proposal, ProposalDistribution, ProposalListener};
 use crate::mcmc::{SamplingAlgorithm, SamplingOptions, generate, is_impossible};
 use crate::samples::NetworkSamples;
-use crate::support::evaluate_all;
+use crate::support::{check_nodes, evaluate_all};
 use keanu_distributions::KeanuRng;
 use keanu_graph::{Graph, Model, NodeId, State, Value, downstream_lambda_section};
 use std::collections::HashMap;
@@ -280,6 +280,7 @@ impl MetropolisHastings {
         nodes: &[NodeId],
         rng: &mut KeanuRng,
     ) -> Result<MetropolisHastingsSampler<'m>> {
+        check_nodes(model.graph(), nodes)?;
         if model.latents().is_empty() {
             return Err(AlgorithmError::NoLatents);
         }

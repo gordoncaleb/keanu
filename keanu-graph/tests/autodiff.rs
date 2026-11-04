@@ -80,7 +80,7 @@ fn finite_difference(
     output: NodeId,
 ) -> DoubleTensor {
     let h = 1e-6;
-    let out_shape = graph.node(output).shape().to_vec();
+    let out_shape = graph[output].shape().to_vec();
     let n_out: usize = out_shape.iter().product();
     let n_in = value.len();
     let mut data = vec![0.0; n_out * n_in];

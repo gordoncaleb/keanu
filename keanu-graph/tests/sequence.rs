@@ -30,16 +30,16 @@ fn items_are_labelled_in_their_namespace_and_proxies_link_to_the_previous_item()
         let x = item.get("x").unwrap();
         let y = item.get("y").unwrap();
         assert_eq!(
-            graph.node(proxy).label(),
+            graph[proxy].label(),
             Some(format!("Sequence_Item_{i}.1.proxy_for.x").as_str())
         );
         assert_eq!(
-            graph.node(x).label(),
+            graph[x].label(),
             Some(format!("Sequence_Item_{i}.1.x").as_str())
         );
-        assert_eq!(graph.parents(proxy), &[previous]);
-        assert_eq!(graph.parents(x), &[proxy]);
-        assert_eq!(graph.parents(y), &[x]);
+        assert_eq!(graph[proxy].parents(), &[previous]);
+        assert_eq!(graph[x].parents(), &[proxy]);
+        assert_eq!(graph[y].parents(), &[x]);
         // the full label also works
         assert_eq!(item.get(&format!("Sequence_Item_{i}.1.x")), Some(x));
         previous = x;
@@ -65,9 +65,7 @@ fn named_sequences_have_an_outer_namespace_and_identifiers_count_per_builder() {
     assert_eq!((first.identifier(), second.identifier()), (1, 2));
     assert_eq!(second.name(), Some("weather"));
     assert_eq!(
-        graph
-            .node(second.item(1).unwrap().get("x").unwrap())
-            .label(),
+        graph[second.item(1).unwrap().get("x").unwrap()].label(),
         Some("weather.Sequence_Item_1.2.x")
     );
     // a second builder starts again from 1, so labels are reproducible

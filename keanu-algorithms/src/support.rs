@@ -5,6 +5,14 @@ use keanu_distributions::KeanuRng;
 use keanu_graph::{Graph, GraphError, NodeId, State, Value};
 use keanu_tensor::DoubleTensor;
 
+/// [`GraphError::UnknownNode`] for the first of `nodes` that is not a node of the graph.
+pub(crate) fn check_nodes(graph: &Graph, nodes: &[NodeId]) -> Result<()> {
+    match nodes.iter().find(|&&id| !graph.contains(id)) {
+        Some(&id) => Err(GraphError::UnknownNode(id).into()),
+        None => Ok(()),
+    }
+}
+
 /// Gives every node of the graph a value: latents without one are sampled from their prior and deterministic
 /// nodes are computed. Samplers need this because a latent with a value can still have deterministic parents
 /// without one.
