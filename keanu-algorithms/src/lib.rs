@@ -39,6 +39,7 @@ pub mod particle_filter;
 pub mod regression;
 pub mod samples;
 pub mod statistics;
+mod support;
 
 pub use error::{AlgorithmError, Result};
 pub use forward::ForwardSampler;

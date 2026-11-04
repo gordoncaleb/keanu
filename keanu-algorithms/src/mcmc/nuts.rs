@@ -4,8 +4,9 @@
 use crate::error::{AlgorithmError, Result};
 use crate::mcmc::{SamplingAlgorithm, SamplingOptions, generate, is_impossible};
 use crate::samples::NetworkSamples;
+use crate::support::{evaluate_all, f64_values};
 use keanu_distributions::KeanuRng;
-use keanu_graph::{Graph, Model, NodeId, State, Value};
+use keanu_graph::{Graph, Model, NodeId, State};
 use keanu_tensor::DoubleTensor;
 use std::rc::Rc;
 
@@ -182,7 +183,10 @@ impl Default for Nuts {
 pub struct NutsStatistics {
     /// The step size used at each step (when saving statistics).
     pub step_size: Vec<f64>,
-    /// The mean Metropolis acceptance probability of each step's tree, as last used for adaptation.
+    /// The mean Metropolis acceptance probability last used for step size adaptation, recorded at each step (as
+    /// Java does). It is recorded before the step's own tree is used for adaptation, so `mean_tree_accept[i]` is the
+    /// acceptance of step i - 1's tree (0 at step 0). Once adaptation ends (after `adapt_count` steps) it stays at
+    /// the last adapted tree's value, and without step size adaptation it is always 0.
     pub mean_tree_accept: Vec<f64>,
     /// The log probability of each step's sample.
     pub log_prob: Vec<f64>,
@@ -251,9 +255,7 @@ impl Nuts {
             ));
         }
         let latents = model.continuous_latents();
-        // every node needs a value: a latent with a value can still have deterministic parents without one
-        let all: Vec<NodeId> = model.graph().ids().collect();
-        state.lazy_eval(model.graph(), &all, rng)?;
+        evaluate_all(model.graph(), state, rng)?;
 
         let position: Vec<DoubleTensor> = latents
             .iter()
@@ -586,13 +588,8 @@ impl Integrator<'_, '_> {
         let velocity = self.potential.velocity(&momentum)?;
         let position = axpy(&from.position, dt, &velocity)?;
 
-        let values: Vec<(NodeId, Value)> = self
-            .latents
-            .iter()
-            .zip(&position)
-            .map(|(&id, x)| (id, Value::F64(x.clone())))
-            .collect();
-        self.model.set_and_cascade(state, values)?;
+        self.model
+            .set_and_cascade(state, f64_values(self.latents, position.iter().cloned()))?;
         let log_prob = self.model.log_prob(state)?;
         let gradient = gradient_at(self.model, state, self.latents, log_prob)?;
 
@@ -846,12 +843,7 @@ impl SamplingAlgorithm for NutsSampler<'_> {
         }
 
         // leave the state at the chosen sample (the trajectory left it at its last leapfrog position)
-        let values: Vec<(NodeId, Value)> = self
-            .latents
-            .iter()
-            .zip(self.proposal.position.iter())
-            .map(|(&id, x)| (id, Value::F64(x.clone())))
-            .collect();
+        let values = f64_values(&self.latents, self.proposal.position.iter().cloned());
         self.model.set_and_cascade(state, values)?;
 
         if self.config.save_statistics {

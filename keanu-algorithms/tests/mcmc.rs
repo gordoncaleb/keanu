@@ -9,7 +9,7 @@ use keanu_algorithms::mcmc::proposal::{
     AcceptanceRateTracker, GaussianProposal, PriorProposal, Proposal, ProposalDistribution,
 };
 use keanu_algorithms::mcmc::select::{Sampler, is_differentiable_wrt_latents};
-use keanu_algorithms::mcmc::{SamplingOptions, generate};
+use keanu_algorithms::mcmc::{SamplingAlgorithm, SamplingOptions, generate};
 use keanu_algorithms::statistics::effective_sample_size;
 use keanu_algorithms::{AlgorithmError, NetworkSamples};
 use keanu_distributions::KeanuRng;
@@ -487,6 +487,19 @@ fn nuts_switches_to_the_averaged_step_size_when_adaptation_ends() {
             .iter()
             .all(|a| (0.0..=1.0).contains(a))
     );
+    // as documented: each entry is the previous tree's acceptance (none before the first), frozen once adaptation
+    // ends at the last adapted tree's (step adapt_count - 1, recorded at step adapt_count)
+    let accept = &statistics.mean_tree_accept;
+    assert_eq!(accept[0], 0.0);
+    assert_ne!(accept[1], 0.0);
+    assert!(
+        accept[adapt_count..]
+            .iter()
+            .all(|&a| a == accept[adapt_count]),
+        "{:?}",
+        &accept[adapt_count..]
+    );
+    assert_ne!(accept[adapt_count - 1], accept[adapt_count]);
 }
 
 #[test]
@@ -635,8 +648,8 @@ fn simulated_annealing_honours_the_variable_selector() {
 
     let proposal = Arc::new(CountingProposal::default());
     let mh = MetropolisHastings::default()
-        .with_shared_proposal(proposal.clone())
-        .with_selector(VariableSelector::Full);
+        .shared_proposal(proposal.clone())
+        .selector(VariableSelector::Full);
     SimulatedAnnealing::new(mh)
         .max_a_posteriori(&model, &mut state, 20, &mut rng(18))
         .unwrap();
@@ -726,4 +739,43 @@ fn simulated_annealing_rejects_invalid_schedules() {
             .max_a_posteriori(&model, &mut state, 0, &mut rng(1))
             .is_ok()
     );
+}
+
+/// Regression: when evaluating a proposal failed part way (here the Cholesky factor of a negative 1×1 matrix,
+/// computed while cascading the proposed value), Metropolis–Hastings returned the error with the proposal still
+/// applied. It now rolls the state back first.
+#[test]
+fn metropolis_hastings_rolls_back_a_proposal_that_fails() {
+    for rejection in [
+        RejectionStrategy::RollbackToCachedValues,
+        RejectionStrategy::RollbackAndCascade,
+    ] {
+        let b = GraphBuilder::new();
+        let x = b.gaussian_with_shape(&[1, 1], 1.0, 0.5);
+        b.set_value(x, DoubleTensor::new(&[1, 1], vec![1.0]).unwrap());
+        let factor = x.cholesky();
+        let y = b.gaussian_with_shape(&[1, 1], factor, 1.0);
+        b.observe(y, DoubleTensor::new(&[1, 1], vec![1.0]).unwrap());
+        let (x, factor) = (x.id(), factor.id());
+        let (graph, mut state) = b.build().unwrap();
+        let model = Model::new(graph, &state).unwrap();
+
+        let mh = MetropolisHastings::new()
+            .proposal(GaussianProposal::new(2.0))
+            .rejection(rejection);
+        let mut r = rng(21);
+        let mut sampler = mh.sampler(&model, &mut state, &[x], &mut r).unwrap();
+        let mut failed = false;
+        for _ in 0..100 {
+            let before = (state.clone(), sampler.log_prob());
+            if sampler.step(&mut state, &mut r).is_err() {
+                assert_eq!(state.value(x), before.0.value(x), "{rejection:?}");
+                assert_eq!(state.value(factor), before.0.value(factor), "{rejection:?}");
+                assert_eq!(sampler.log_prob(), before.1);
+                failed = true;
+                break;
+            }
+        }
+        assert!(failed, "{rejection:?}: no proposal went negative");
+    }
 }

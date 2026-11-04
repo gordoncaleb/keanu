@@ -3,6 +3,7 @@
 use crate::error::{AlgorithmError, Result};
 use crate::mcmc::is_impossible;
 use crate::mcmc::metropolis::{MetropolisHastings, MetropolisHastingsStep};
+use crate::support::{current_values, evaluate_all};
 use keanu_distributions::KeanuRng;
 use keanu_graph::{Model, NodeId, State, Value};
 
@@ -135,30 +136,14 @@ impl SimulatedAnnealing {
         if latents.is_empty() {
             return Err(AlgorithmError::NoLatents);
         }
-        // every node needs a value: a latent with a value can still have deterministic parents without one
-        let all: Vec<NodeId> = model.graph().ids().collect();
-        state.lazy_eval(model.graph(), &all, rng)?;
+        evaluate_all(model.graph(), state, rng)?;
 
         let mut log_prob = model.log_prob(state)?;
         if is_impossible(log_prob) {
             return Err(AlgorithmError::ImpossibleStart);
         }
-        let take = |state: &State| -> Result<Vec<(NodeId, Value)>> {
-            latents
-                .iter()
-                .map(|&id| {
-                    state
-                        .value(id)
-                        .cloned()
-                        .map(|v| (id, v))
-                        .ok_or(AlgorithmError::Graph(
-                            keanu_graph::GraphError::MissingValue(id),
-                        ))
-                })
-                .collect()
-        };
         let mut best = MapEstimate {
-            values: take(state)?,
+            values: current_values(state, latents)?,
             log_prob,
         };
 
@@ -172,7 +157,7 @@ impl SimulatedAnnealing {
                 .log_prob;
             if log_prob > best.log_prob {
                 best = MapEstimate {
-                    values: take(state)?,
+                    values: current_values(state, latents)?,
                     log_prob,
                 };
             }

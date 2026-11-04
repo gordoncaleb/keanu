@@ -140,6 +140,13 @@ vector was edited by hand and the entry says so.
   (a flat first step, steps too small to move the point, or a flat Brent bracket) instead of spending 40–60
   evaluations near the optimum. Reported `evaluations` drop: a one-dimensional Gaussian MAP 78 → 15, the golden
   models' conjugate gradient runs by 3–8× (e.g. thermometers MAP 80 → 24), BOBYQA by 2.
+- `keanu-algorithms` (breaking): `MetropolisHastings` has one set of builder methods, `proposal`, `selector` and
+  `rejection` (now `#[must_use]`), plus `shared_proposal` (was `with_shared_proposal`); `with_proposal`,
+  `with_selector` and `with_rejection` are removed. A Metropolis–Hastings step whose proposal fails to evaluate
+  (e.g. a cascade error) rolls the state back before returning the error instead of leaving the proposal applied.
+  Rollback snapshots reuse the changeable nodes worked out for each proposed node set, and `GaussianProposal`
+  (symmetric) returns 0 for both proposal densities instead of building two Gaussians per step (same random
+  numbers and acceptances). A 20-latent chain with full proposals runs 1.6–1.9× faster.
 - keanu-tensor: `digamma`'s asymptotic series had the wrong sign on its 1/(12x²) term (inherited from Apache Commons), so results were off by up to ~3e-9 (ψ(1) = -0.5772156677920679). Golden vectors edited by hand to mpmath values: `unary/digamma` and `unary/digamma/scalar` (tensors.json), `unary/digamma` and the `unary/logGamma` partials (vertices.json), the catalog model's `digamma` node (models.json), and the ψ-dependent gradients of `Beta/alpha=0.5,beta=0.5`, `Dirichlet/concentration=[0.5, 2.0, 3.0]` (both cases), the three `Gamma` cases and the two `InverseGamma` cases (distributions.json). The Rust-written `keanu-io` fixtures were regenerated, and the custom distribution example test uses seed 9, as its NUTS chain changed with the Beta gradient.
 - keanu-tensor: `trigamma`'s asymptotic series subtracted its 1/(42z⁷) term instead of adding it.
 - keanu-tensor: `digamma` and `trigamma` of negative arguments use the reflection formulas, so they no longer loop |x| times (or for ever from about -1e16). Non-positive integers are still poles (-∞ and +∞).

@@ -1,9 +1,9 @@
 //! Choosing a sampler for a model (Java's `Keanu.Sampling.MCMC.withDefaultConfigFor` and `DifferentiableChecker`).
 
 use crate::error::Result;
+use crate::mcmc::SamplingOptions;
 use crate::mcmc::metropolis::MetropolisHastings;
 use crate::mcmc::nuts::Nuts;
-use crate::mcmc::{SamplingOptions, generate};
 use crate::samples::NetworkSamples;
 use keanu_distributions::KeanuRng;
 use keanu_graph::op::Op;
@@ -110,10 +110,9 @@ impl Sampler {
         rng: &mut KeanuRng,
     ) -> Result<NetworkSamples> {
         match self {
-            Self::Nuts(nuts) => {
-                let mut sampler = nuts.sampler(model, state, nodes, rng)?;
-                generate(&mut sampler, state, count, options, rng)
-            }
+            Self::Nuts(nuts) => Ok(nuts
+                .sample_with_statistics(model, state, nodes, count, options, rng)?
+                .0),
             Self::MetropolisHastings(mh) => {
                 mh.sample_with(model, state, nodes, count, options, rng)
             }

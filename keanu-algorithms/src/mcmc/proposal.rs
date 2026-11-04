@@ -1,7 +1,7 @@
 //! Proposal distributions for Metropolis–Hastings, and listeners that observe proposals.
 
 use crate::error::{AlgorithmError, Result};
-use keanu_distributions::{Gaussian, KeanuRng};
+use keanu_distributions::KeanuRng;
 use keanu_graph::{DType, Model, NodeId, State, Value, node_log_prob_at};
 use keanu_tensor::DoubleTensor;
 use std::collections::HashMap;
@@ -180,15 +180,6 @@ impl GaussianProposal {
                 ))
             })
     }
-
-    fn symmetric_log_prob(&self, of: &[(NodeId, Value)], given: &[(NodeId, Value)]) -> Result<f64> {
-        let mut sum = 0.0;
-        for ((id, of), (_, given)) in of.iter().zip(given) {
-            let gaussian = Gaussian::new(as_f64(of)?.clone(), self.sigma_for(*id)?.clone());
-            sum += gaussian.log_prob(as_f64(given)?)?.sum();
-        }
-        Ok(sum)
-    }
 }
 
 impl ProposalDistribution for GaussianProposal {
@@ -220,13 +211,14 @@ impl ProposalDistribution for GaussianProposal {
         })
     }
 
-    fn log_prob_from_given_to(&self, _: &Model, _: &State, proposal: &Proposal) -> Result<f64> {
-        // Java: Gaussian(mean = of value).logProb(given value)
-        self.symmetric_log_prob(&proposal.from, &proposal.to)
+    // The proposal is symmetric, q(x | x') = q(x' | x), so the Hastings correction log q(x | x') - log q(x' | x) is
+    // 0: both are given as 0 rather than evaluating two equal Gaussian densities (as Java does) to cancel them.
+    fn log_prob_from_given_to(&self, _: &Model, _: &State, _: &Proposal) -> Result<f64> {
+        Ok(0.0)
     }
 
-    fn log_prob_to_given_from(&self, _: &Model, _: &State, proposal: &Proposal) -> Result<f64> {
-        self.symmetric_log_prob(&proposal.to, &proposal.from)
+    fn log_prob_to_given_from(&self, _: &Model, _: &State, _: &Proposal) -> Result<f64> {
+        Ok(0.0)
     }
 }
 

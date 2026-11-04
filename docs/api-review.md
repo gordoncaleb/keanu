@@ -24,7 +24,8 @@ first release, with idiomatic Rust names and no Java idioms.
     `SamplingFitting`.
   - Usage: `Nuts::default().with_adapt_count(500).with_max_tree_height(8)`.
   - `Option` fields take the inner value (`with_initial_step_size(0.1)`).
-  - `MetropolisHastings` has `with_proposal(impl ProposalDistribution)` and `with_shared_proposal(Arc<dyn …>)`.
+  - `MetropolisHastings` is the exception: its builder methods are `proposal(impl ProposalDistribution)`,
+    `shared_proposal(Arc<dyn …>)`, `selector` and `rejection` (one set of setters, as used in the examples).
   - `SamplingFitting::options` was renamed `with_options` for consistency.
 - **Result structs are `#[non_exhaustive]`**, because users read them but don't construct them: `OptimizedResult`,
   `MapEstimate`, `StepResult`, `NutsStatistics`, `Summary`, the PRIMA `Outcome`, `Loaded`, `NodeLogProbGradient`,

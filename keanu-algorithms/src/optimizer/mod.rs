@@ -12,7 +12,8 @@ pub use conjugate_gradient::{ConjugateGradient, UpdateFormula};
 pub use convergence::{ConvergenceChecker, Norm};
 
 use crate::error::{AlgorithmError, Result};
-use keanu_graph::{Model, NodeId, State, Value};
+use crate::support::f64_values;
+use keanu_graph::{Model, NodeId, State};
 use keanu_tensor::DoubleTensor;
 use std::cell::Cell;
 
@@ -276,13 +277,8 @@ impl<'m> Objective<'m> {
     }
 
     fn set(&self, state: &mut State, point: impl IntoIterator<Item = DoubleTensor>) -> Result<()> {
-        let values: Vec<(NodeId, Value)> = self
-            .latents
-            .iter()
-            .copied()
-            .zip(point.into_iter().map(Value::F64))
-            .collect();
-        self.model.set_and_cascade(state, values)?;
+        self.model
+            .set_and_cascade(state, f64_values(&self.latents, point))?;
         Ok(())
     }
 
