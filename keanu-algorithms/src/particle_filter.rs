@@ -97,7 +97,7 @@ impl Particle {
             .map(|(&id, v)| (id, v.clone()))
             .collect();
         if !values.is_empty() {
-            model.set_and_cascade(state, &values)?;
+            model.set_and_cascade(state, values)?;
         }
         Ok(())
     }
@@ -234,7 +234,7 @@ fn add_observation(
         particle.observed.push(observed);
         for &latent in &ordered {
             let value = state.sample_prior(model.graph(), latent, rng)?;
-            model.set_and_cascade(state, &[(latent, value.clone())])?;
+            model.set_and_cascade(state, [(latent, value.clone())])?;
             particle.latents.insert(latent, value);
         }
         particle.update_log_prob(model, state)?;

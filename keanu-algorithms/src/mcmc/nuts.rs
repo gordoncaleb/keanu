@@ -592,7 +592,7 @@ impl Integrator<'_, '_> {
             .zip(&position)
             .map(|(&id, x)| (id, Value::F64(x.clone())))
             .collect();
-        self.model.set_and_cascade(state, &values)?;
+        self.model.set_and_cascade(state, values)?;
         let log_prob = self.model.log_prob(state)?;
         let gradient = gradient_at(self.model, state, self.latents, log_prob)?;
 
@@ -852,7 +852,7 @@ impl SamplingAlgorithm for NutsSampler<'_> {
             .zip(self.proposal.position.iter())
             .map(|(&id, x)| (id, Value::F64(x.clone())))
             .collect();
-        self.model.set_and_cascade(state, &values)?;
+        self.model.set_and_cascade(state, values)?;
 
         if self.config.save_statistics {
             self.statistics.step_size.push(self.step_size.step_size);

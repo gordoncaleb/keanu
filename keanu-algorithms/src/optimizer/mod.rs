@@ -225,7 +225,7 @@ impl<'m> Objective<'m> {
             .copied()
             .zip(point.iter().cloned().map(Value::F64))
             .collect();
-        self.model.set_and_cascade(state, &values)?;
+        self.model.set_and_cascade(state, values)?;
         Ok(())
     }
 

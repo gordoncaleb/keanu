@@ -91,7 +91,7 @@ fn model_and_section_lookups_of_unknown_nodes_are_errors() {
     ));
     assert!(model.affected_by(&[x]).is_ok());
     assert!(matches!(
-        model.set_and_cascade(&mut state, &[(unknown(), scalar(1.0))]),
+        model.set_and_cascade(&mut state, [(unknown(), scalar(1.0))]),
         Err(GraphError::UnknownNode(_))
     ));
     assert!(matches!(

@@ -168,7 +168,7 @@ fn log_probs_use_up_to_date_downstream_nodes() {
         // the joint log probability with this value of a and everything downstream recomputed from it
         let mut expected = state.clone();
         model
-            .set_and_cascade(&mut expected, &[(a, sample.get(a).unwrap())])
+            .set_and_cascade(&mut expected, [(a, sample.get(a).unwrap())])
             .unwrap();
         let expected = model.log_prob(&expected).unwrap();
         assert!(

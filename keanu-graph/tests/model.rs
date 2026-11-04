@@ -67,9 +67,42 @@ fn a_violated_observed_constraint_makes_the_log_prob_impossible() {
     assert!(model.log_prob(&state).unwrap().is_finite());
 
     model
-        .set_and_cascade(&mut state, &[(x, Value::F64(DoubleTensor::scalar(-0.5)))])
+        .set_and_cascade(&mut state, [(x, Value::F64(DoubleTensor::scalar(-0.5)))])
         .unwrap();
     assert_eq!(model.log_prob(&state).unwrap(), f64::NEG_INFINITY);
+}
+
+#[test]
+fn set_and_cascade_takes_owned_values_from_any_iterator() {
+    let b = GraphBuilder::new();
+    let x = b.gaussian_with_shape(&[3], 0.0, 1.0);
+    let y = b.gaussian(0.0, 1.0);
+    let sum = x.sum() + y;
+    let (x, y, sum) = (x.id(), y.id(), sum.id());
+    let (graph, mut state) = b.build().unwrap();
+    state
+        .lazy_eval(&graph, &[sum], &mut KeanuRng::seed_from_u64(1))
+        .unwrap();
+    let model = Model::new(graph, &state).unwrap();
+
+    let values = vec![
+        DoubleTensor::vector(vec![1.0, 2.0, 3.0]),
+        DoubleTensor::scalar(4.0),
+    ];
+    model
+        .set_and_cascade(
+            &mut state,
+            [x, y].into_iter().zip(values.into_iter().map(Value::F64)),
+        )
+        .unwrap();
+    assert_eq!(state.f64(sum).unwrap().as_slice(), &[10.0]);
+
+    // borrowed values are cloned explicitly
+    let borrowed = [(y, Value::F64(DoubleTensor::scalar(-4.0)))];
+    model
+        .set_and_cascade(&mut state, borrowed.iter().cloned())
+        .unwrap();
+    assert_eq!(state.f64(sum).unwrap().as_slice(), &[2.0]);
 }
 
 #[test]

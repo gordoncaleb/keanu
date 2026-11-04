@@ -127,7 +127,7 @@ impl<'m> MetropolisHastingsStep<'m> {
                     }
                 }
             }
-            None => self.model.set_and_cascade(state, &proposal.from)?,
+            None => self.model.set_and_cascade(state, proposal.from)?,
         }
         Ok(StepResult {
             accepted: false,

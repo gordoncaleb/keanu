@@ -125,7 +125,7 @@ impl Fitter {
                     .iter()
                     .filter_map(|&id| best.get(id).map(|v| (id, v)))
                     .collect();
-                model.set_and_cascade(state, &values)?;
+                model.set_and_cascade(state, values)?;
                 Ok(Some(samples))
             }
         }
@@ -497,7 +497,7 @@ impl<O: RegressionOutput> RegressionModel<O> {
         let mut state = self.state.clone();
         self.model.set_and_cascade(
             &mut state,
-            &[
+            [
                 (self.weights, Value::F64(weights.clone())),
                 (self.intercept, Value::F64(DoubleTensor::scalar(intercept))),
             ],

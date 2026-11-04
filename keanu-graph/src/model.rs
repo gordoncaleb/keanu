@@ -254,12 +254,18 @@ impl Model {
         )
     }
 
-    /// Sets the values of some nodes and recomputes their deterministic descendants.
-    pub fn set_and_cascade(&self, state: &mut State, values: &[(NodeId, Value)]) -> Result<()> {
+    /// Sets the values of some nodes, taking ownership of them, and recomputes their deterministic descendants.
+    /// Pass `values.iter().cloned()` to keep borrowed values.
+    pub fn set_and_cascade(
+        &self,
+        state: &mut State,
+        values: impl IntoIterator<Item = (NodeId, Value)>,
+    ) -> Result<()> {
+        let mut from: smallvec::SmallVec<[NodeId; 8]> = smallvec::SmallVec::new();
         for (id, value) in values {
-            state.set(&self.graph, *id, value.clone())?;
+            state.set(&self.graph, id, value)?;
+            from.push(id);
         }
-        let from: smallvec::SmallVec<[NodeId; 8]> = values.iter().map(|(id, _)| *id).collect();
         state.cascade(&self.graph, &from)
     }
 
@@ -323,7 +329,7 @@ impl Model {
         let ids: Vec<NodeId> = proposal.iter().map(|(id, _)| *id).collect();
         let affected = self.affected_by(&ids)?;
         let before = self.log_prob_of(state, &affected)?;
-        self.set_and_cascade(state, proposal)?;
+        self.set_and_cascade(state, proposal.iter().cloned())?;
         let after = self.log_prob_of(state, &affected)?;
         if !(before.is_finite() && after.is_finite() && log_prob_before.is_finite()) {
             // an impossible state on either side can't be updated incrementally
