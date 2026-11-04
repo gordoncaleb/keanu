@@ -402,6 +402,37 @@ fn selection_proxies_and_lambdas() {
     );
 }
 
+#[test]
+fn set_with_mask_replace_nan_and_multiplexer_pass_gradients() {
+    // set_with_mask(x, x > 0, 0) * x at x = -1 keeps x, so the derivative of x * x is -2 (not -1)
+    check(&[DoubleTensor::scalar(-1.0)], |_, v| {
+        v[0].set_with_mask(v[0].gt_mask(0.0), 0.0) * v[0]
+    });
+    // the operand's gradient where the mask is 0, the (scalar) set value's where it is 1
+    check(
+        &[t(&[3], &[-1.0, 0.5, 2.0]), DoubleTensor::scalar(1.5)],
+        |_, v| (v[0].set_with_mask(v[0].gt_mask(0.0), v[1]) * v[0]).sin(),
+    );
+    check(
+        &[t(&[2, 2], &[-1.0, 0.5, 2.0, -0.3]), t(&[1, 1], &[0.8])],
+        |_, v| v[0].set_with_mask(v[0].lt_mask(0.0), v[1]).exp().sum(),
+    );
+    // replace_nan passes the gradient where the input wasn't NaN, and none where it was replaced
+    check(&[t(&[3], &[-1.0, 2.0, 0.5])], |_, v| {
+        v[0].ln().replace_nan(5.0) * v[0]
+    });
+    // the multiplexer passes the selected option's gradient (and zero for the others)
+    for selector in [0, 1] {
+        check(
+            &[DoubleTensor::scalar(0.7), range(0.5, 2.0, &[1])],
+            move |g, v| {
+                let options = [v[0].broadcast_to(&[1]) * 3.0, v[1].exp()];
+                g.multiplexer(g.int_scalar(selector), &options) * v[1]
+            },
+        );
+    }
+}
+
 fn build_one<'b>(g: &'b GraphBuilder, value: DoubleTensor) -> DoubleVar<'b> {
     let latent = g.uniform_with_shape(value.shape(), -1000.0, 1000.0);
     g.set_value(latent, value);
@@ -426,7 +457,6 @@ fn non_differentiable_ops_have_no_partials() {
         x.round().id(),
         x.sign().id(),
         x.gt_mask(g.scalar(0.0)).id(),
-        x.replace_nan(0.0).id(),
         (x.floor() * 2.0).id(),
         x.to_int().to_double().id(),
     ];

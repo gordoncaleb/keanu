@@ -33,11 +33,13 @@ pub(crate) fn output_type(op: &Op, parents: &[(DType, &[usize])]) -> Result<(DTy
         }
         Ok(())
     };
+    check_arity(op, parents.len())?;
     match op {
         Op::Constant(v) => Ok((v.dtype(), Shape::from_slice(v.shape()))),
-        Op::Proxy | Op::Distribution(_) => {
-            unreachable!("proxy and distribution types are given when they are created")
-        }
+        Op::Proxy | Op::Distribution(_) => Err(invalid(
+            op,
+            "proxy and probabilistic nodes are created with add_proxy and add_distribution",
+        )),
         Op::Lambda(l) => Ok((l.dtype, Shape::from_slice(&l.shape))),
         Op::MatMul {
             transpose_left,
@@ -121,6 +123,69 @@ pub(crate) fn output_type(op: &Op, parents: &[(DType, &[usize])]) -> Result<(DTy
         }
         _ => dummy(op, parents),
     }
+}
+
+/// The number of parents each op takes: exact, or at least `min` (`max` None). Every deterministic op's parent
+/// count is checked here, once, when the node is created, so evaluation and auto diff can index parents freely.
+fn check_arity(op: &Op, count: usize) -> Result<()> {
+    let (min, max) = match op {
+        Op::Constant(_) => (0, Some(0)),
+        Op::Unary(_)
+        | Op::Not
+        | Op::All
+        | Op::Any
+        | Op::Predicate(_)
+        | Op::Reduce { .. }
+        | Op::Standardize
+        | Op::Scan { .. }
+        | Op::ArgReduce { .. }
+        | Op::Reshape(_)
+        | Op::Permute(_)
+        | Op::Transpose
+        | Op::Broadcast(_)
+        | Op::Slice(_)
+        | Op::Take(_)
+        | Op::Diag
+        | Op::DiagPart
+        | Op::Tril(_)
+        | Op::Triu(_)
+        | Op::FillTriangular { .. }
+        | Op::TrianglePart { .. }
+        | Op::Inverse
+        | Op::Determinant
+        | Op::Cholesky
+        | Op::CholeskyInverse
+        | Op::Cast(_)
+        | Op::ReplaceNan(_)
+        | Op::Assert(_) => (1, Some(1)),
+        Op::Binary(_)
+        | Op::Compare(_)
+        | Op::Mask(_)
+        | Op::ApproxEq(_)
+        | Op::Logic(_)
+        | Op::MatMul { .. }
+        | Op::TensorMultiply { .. } => (2, Some(2)),
+        Op::Where | Op::SetWithMask => (3, Some(3)),
+        Op::Concat(_) => (1, None),
+        Op::Multiplexer => (2, None),
+        Op::Cpt { conditions, keys } => {
+            let n = conditions + keys.len() + 1;
+            (n, Some(n))
+        }
+        // a lambda takes any parents; proxies and distributions are rejected by the caller
+        Op::Lambda(_) | Op::Proxy | Op::Distribution(_) => (0, None),
+    };
+    let ok = count >= min && max.is_none_or(|max| count <= max);
+    if ok {
+        return Ok(());
+    }
+    Err(invalid(
+        op,
+        match max {
+            Some(max) if max == min => format!("needs {min} parents, got {count}"),
+            _ => format!("needs at least {min} parents, got {count}"),
+        },
+    ))
 }
 
 fn dummy(op: &Op, parents: &[(DType, &[usize])]) -> Result<(DType, Shape)> {

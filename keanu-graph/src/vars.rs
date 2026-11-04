@@ -152,8 +152,8 @@ pub trait IntoDoubleVar<'b> {
 }
 
 impl<'b> IntoDoubleVar<'b> for DoubleVar<'b> {
-    fn into_var(self, _: &'b GraphBuilder) -> DoubleVar<'b> {
-        self
+    fn into_var(self, builder: &'b GraphBuilder) -> DoubleVar<'b> {
+        builder.own(self)
     }
 }
 
@@ -176,8 +176,8 @@ pub trait IntoIntVar<'b> {
 }
 
 impl<'b> IntoIntVar<'b> for IntVar<'b> {
-    fn into_var(self, _: &'b GraphBuilder) -> IntVar<'b> {
-        self
+    fn into_var(self, builder: &'b GraphBuilder) -> IntVar<'b> {
+        builder.own(self)
     }
 }
 
@@ -762,8 +762,8 @@ pub trait IntoBoolVar<'b> {
 }
 
 impl<'b> IntoBoolVar<'b> for BoolVar<'b> {
-    fn into_var(self, _: &'b GraphBuilder) -> BoolVar<'b> {
-        self
+    fn into_var(self, builder: &'b GraphBuilder) -> BoolVar<'b> {
+        builder.own(self)
     }
 }
 

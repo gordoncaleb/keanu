@@ -85,7 +85,9 @@ impl Graph {
         let mut children: Vec<Parents> = vec![Parents::new(); nodes.len()];
         for (i, node) in nodes.iter().enumerate() {
             for &p in &node.parents {
-                if !children[p.0].contains(&NodeId(i)) {
+                // children are pushed in increasing id order, so a duplicate parent (e.g. x * x) can only repeat the
+                // last entry: checking it keeps this linear in fan-out, where `contains` was quadratic
+                if children[p.0].last() != Some(&NodeId(i)) {
                     children[p.0].push(NodeId(i));
                 }
             }

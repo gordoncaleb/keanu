@@ -78,7 +78,8 @@ impl<'b> SequenceBuilder<'b> {
 
     /// A node the first item's proxy for `label` connects to.
     pub fn with_initial_state<V: Var<'b>>(mut self, label: &str, var: V) -> Self {
-        self.initial_state.insert(label.to_owned(), var.id());
+        self.initial_state
+            .insert(label.to_owned(), self.builder.own(var).id());
         self
     }
 
@@ -220,6 +221,7 @@ impl<'b> SequenceItem<'b> {
 
     /// Adds a node to the item under `label`, which becomes its (scoped) label.
     pub fn add<V: Var<'b>>(&mut self, label: &str, var: V) -> V {
+        let var = self.builder.own(var);
         self.add_id(label, var.id());
         var
     }

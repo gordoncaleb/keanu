@@ -24,6 +24,17 @@ tag. `RUST_MIGRATION_PLAN.md` describes the rewrite and `book/src/from-java.md` 
 Fixes from the 2026-11-04 whole-codebase review. Where a fix changes a result recorded from Java, the golden
 vector was edited by hand and the entry says so.
 
+- keanu-graph: using a handle from one `GraphBuilder` with another now fails `build()` with the new
+  `GraphError::WrongBuilder`; it used to silently wire the other builder's node with the same id (or panic).
+- keanu-graph: auto diff now passes gradients through `set_with_mask` (the operand's where the mask isn't 1, the set
+  value's where it is), `replace_nan` (where the input wasn't NaN) and `multiplexer` (the selected option's); they
+  were treated as non-differentiable, silently dropping those paths.
+- keanu-graph: a failing `add_distribution` (or other untyped builder call) no longer leaves a placeholder node
+  behind, and returns its error even when an earlier deferred error is pending, which still fails `build()`.
+- keanu-graph: `add_node` checks each op's number of parents and returns an error instead of panicking (e.g.
+  `Op::Proxy` or `Op::Not` with no parents) or silently accepting extra parents.
+- keanu-graph: building a graph's child lists is linear in fan-out (it was quadratic).
+
 ## Unreleased: Java
 
 #### Breaking changes

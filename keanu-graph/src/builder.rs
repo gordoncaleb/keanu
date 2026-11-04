@@ -82,33 +82,65 @@ impl GraphBuilder {
         self.dtype_shape(id).1.to_vec()
     }
 
+    /// The handle if it belongs to this builder. A handle from another builder would silently refer to whichever
+    /// node of this builder has the same id, so instead this records [`GraphError::WrongBuilder`] (failing
+    /// [`build`](Self::build)) and returns a placeholder node of this builder so that building can continue.
+    pub(crate) fn own<'b, V: Var<'b>>(&'b self, var: V) -> V {
+        if std::ptr::eq(var.builder(), self) {
+            var
+        } else {
+            self.record(GraphError::WrongBuilder(var.id()));
+            V::wrap(self, self.placeholder(V::DTYPE))
+        }
+    }
+
+    /// An error if a parent isn't a node of this builder.
+    fn check_parents(&self, op: &'static str, parents: &[NodeId]) -> Result<()> {
+        match parents.iter().find(|p| p.0 >= self.node_count()) {
+            Some(p) => Err(GraphError::InvalidNode {
+                op,
+                message: format!("unknown parent {p:?}"),
+            }),
+            None => Ok(()),
+        }
+    }
+
+    /// Adds a deterministic node, inferring its type and shape. On error nothing is added.
+    fn try_add(&self, op: Op, parents: &[NodeId]) -> Result<NodeId> {
+        self.check_parents(op.name(), parents)?;
+        let types: Vec<(DType, Shape)> = parents.iter().map(|&p| self.dtype_shape(p)).collect();
+        let refs: Vec<(DType, &[usize])> = types.iter().map(|(t, s)| (*t, s.as_slice())).collect();
+        let (dtype, shape) = output_type(&op, &refs)?;
+        let value = match &op {
+            Op::Constant(v) => Some(v.clone()),
+            _ => None,
+        };
+        Ok(self.push(
+            Node {
+                op,
+                parents: Parents::from_slice(parents),
+                dtype,
+                shape,
+                label: None,
+            },
+            value,
+        ))
+    }
+
     /// Adds a deterministic node, inferring its type and shape. On error the error is recorded and a placeholder
     /// node of the expected type is returned so that building can continue.
     pub(crate) fn add(&self, op: Op, parents: &[NodeId], expected: DType) -> NodeId {
-        let types: Vec<(DType, Shape)> = parents.iter().map(|&p| self.dtype_shape(p)).collect();
-        let refs: Vec<(DType, &[usize])> = types.iter().map(|(t, s)| (*t, s.as_slice())).collect();
-        match output_type(&op, &refs) {
-            Ok((dtype, shape)) => {
+        let name = op.name();
+        match self.try_add(op, parents) {
+            Ok(id) => {
+                let dtype = self.dtype(id);
                 if dtype != expected {
                     self.record(GraphError::InvalidNode {
-                        op: op.name(),
+                        op: name,
                         message: format!("produces {dtype:?}, expected {expected:?}"),
                     });
                 }
-                let value = match &op {
-                    Op::Constant(v) => Some(v.clone()),
-                    _ => None,
-                };
-                self.push(
-                    Node {
-                        op,
-                        parents: Parents::from_slice(parents),
-                        dtype,
-                        shape,
-                        label: None,
-                    },
-                    value,
-                )
+                id
             }
             Err(e) => {
                 self.record(e);
@@ -190,16 +222,18 @@ impl GraphBuilder {
 
     // ----- untyped construction, for loaders and other generic code -----
     //
-    // These return errors immediately instead of recording them for `build`.
+    // These return errors immediately instead of recording them for `build`, and on error add no node.
 
-    fn take_error_since(&self, before: Option<GraphError>) -> Result<()> {
+    /// Runs `f` (which may record errors) and returns the error it recorded, if any, leaving an error recorded
+    /// before the call in place so that `build` still fails with it.
+    fn untyped(&self, f: impl FnOnce()) -> Result<()> {
+        let pending = self.inner.borrow_mut().error.take();
+        f();
         let mut inner = self.inner.borrow_mut();
-        if before.is_none() {
-            if let Some(e) = inner.error.take() {
-                return Err(e);
-            }
+        match std::mem::replace(&mut inner.error, pending) {
+            Some(e) => Err(e),
+            None => Ok(()),
         }
-        Ok(())
     }
 
     /// Adds a deterministic node with the given op and parents, inferring its type and shape.
@@ -210,19 +244,7 @@ impl GraphBuilder {
                 message: "use add_distribution for probabilistic nodes".into(),
             });
         }
-        if let Some(&p) = parents.iter().find(|p| p.0 >= self.node_count()) {
-            return Err(GraphError::InvalidNode {
-                op: op.name(),
-                message: format!("unknown parent {p:?}"),
-            });
-        }
-        let types: Vec<(DType, Shape)> = parents.iter().map(|&p| self.dtype_shape(p)).collect();
-        let refs: Vec<(DType, &[usize])> = types.iter().map(|(t, s)| (*t, s.as_slice())).collect();
-        let (dtype, _) = output_type(&op, &refs)?;
-        let before = self.error();
-        let id = self.add(op, parents, dtype);
-        self.take_error_since(before)?;
-        Ok(id)
+        self.try_add(op, parents)
     }
 
     /// Adds a probabilistic node. `shape` is the requested shape (None for the parameters' broadcast shape).
@@ -232,16 +254,7 @@ impl GraphBuilder {
         shape: Option<&[usize]>,
         parameters: &[NodeId],
     ) -> Result<NodeId> {
-        if let Some(&p) = parameters.iter().find(|p| p.0 >= self.node_count()) {
-            return Err(GraphError::InvalidNode {
-                op: "distribution",
-                message: format!("unknown parent {p:?}"),
-            });
-        }
-        let before = self.error();
-        let id = self.distribution(kind, shape, parameters);
-        self.take_error_since(before)?;
-        Ok(id)
+        self.try_distribution(kind, shape, parameters)
     }
 
     /// Adds an unconnected proxy node of the given type and shape.
@@ -251,13 +264,12 @@ impl GraphBuilder {
 
     /// Connects a proxy node to the (earlier) node it stands for.
     pub fn connect_ids(&self, proxy: NodeId, parent: NodeId) -> Result<()> {
-        let before = self.error();
-        match self.dtype(proxy) {
+        self.check_parents("proxy", &[proxy, parent])?;
+        self.untyped(|| match self.dtype(proxy) {
             DType::F64 => self.connect(self.double_var(proxy), self.double_var(parent)),
             DType::I64 => self.connect(IntVar::new(self, proxy), IntVar::new(self, parent)),
             DType::Bool => self.connect(BoolVar::new(self, proxy), BoolVar::new(self, parent)),
-        }
-        self.take_error_since(before)
+        })
     }
 
     /// Labels a node.
@@ -267,25 +279,25 @@ impl GraphBuilder {
 
     /// Sets the initial value of a node, checking its type and shape.
     pub fn set_value_of(&self, id: NodeId, value: Value) -> Result<()> {
-        let before = self.error();
-        if self.check_value(id, &value) {
-            let mut inner = self.inner.borrow_mut();
-            if !inner.observed[id.0] {
-                inner.values[id.0] = Some(value);
+        self.check_parents("set_value", &[id])?;
+        self.untyped(|| {
+            if self.check_value(id, &value) {
+                let mut inner = self.inner.borrow_mut();
+                if !inner.observed[id.0] {
+                    inner.values[id.0] = Some(value);
+                }
             }
-        }
-        self.take_error_since(before)
+        })
     }
 
     /// Observes a node, checking its type and shape. Only probabilistic and boolean nodes can be observed.
     pub fn observe_of(&self, id: NodeId, value: Value) -> Result<()> {
-        let before = self.error();
-        match self.dtype(id) {
+        self.check_parents("observe", &[id])?;
+        self.untyped(|| match self.dtype(id) {
             DType::F64 => self.observe(self.double_var(id), value),
             DType::I64 => self.observe(IntVar::new(self, id), value),
             DType::Bool => self.observe(BoolVar::new(self, id), value),
-        }
-        self.take_error_since(before)
+        })
     }
 
     // ----- constants -----
@@ -358,6 +370,7 @@ impl GraphBuilder {
 
     /// Sets the initial value of a node in the built state.
     pub fn set_value<'b>(&'b self, var: impl Var<'b>, value: impl Into<Value>) {
+        let var = self.own(var);
         let value = value.into();
         if self.check_value(var.id(), &value) {
             let mut inner = self.inner.borrow_mut();
@@ -369,7 +382,7 @@ impl GraphBuilder {
 
     /// Observes a node in the built state. Only probabilistic and boolean nodes can be observed.
     pub fn observe<'b>(&'b self, var: impl Var<'b>, value: impl Into<Value>) {
-        let id = var.id();
+        let id = self.own(var).id();
         let value = value.into();
         let observable = {
             let inner = self.inner.borrow();
@@ -423,7 +436,7 @@ impl GraphBuilder {
     /// Connects a proxy to the node it stands for, which must already exist (have a smaller id) and have the same
     /// type and shape.
     pub fn connect<'b, V: Var<'b>>(&'b self, proxy: V, parent: V) {
-        let (proxy, parent) = (proxy.id(), parent.id());
+        let (proxy, parent) = (self.own(proxy).id(), self.own(parent).id());
         let error = {
             let inner = self.inner.borrow();
             let node = &inner.nodes[proxy.0];
@@ -501,8 +514,8 @@ impl GraphBuilder {
 
     /// The option chosen by a scalar integer selector. Every option must have the same type and shape.
     pub fn multiplexer<'b, V: Var<'b>>(&'b self, selector: IntVar<'b>, options: &[V]) -> V {
-        let mut parents = vec![selector.id()];
-        parents.extend(options.iter().map(Var::id));
+        let mut parents = vec![self.own(selector).id()];
+        parents.extend(options.iter().map(|&o| self.own(o).id()));
         V::wrap(self, self.add(Op::Multiplexer, &parents, V::DTYPE))
     }
 
@@ -515,8 +528,8 @@ impl GraphBuilder {
         default: V,
     ) -> V {
         let mut parents = conditions.to_vec();
-        parents.extend(cases.iter().map(|(_, v)| v.id()));
-        parents.push(default.id());
+        parents.extend(cases.iter().map(|&(_, v)| self.own(v).id()));
+        parents.push(self.own(default).id());
         let keys = cases.iter().map(|(k, _)| k.clone()).collect();
         V::wrap(
             self,
@@ -542,7 +555,11 @@ impl GraphBuilder {
             self,
             self.add(
                 Op::Where,
-                &[predicate.id(), then.id(), otherwise.id()],
+                &[
+                    self.own(predicate).id(),
+                    self.own(then).id(),
+                    self.own(otherwise).id(),
+                ],
                 V::DTYPE,
             ),
         )
@@ -550,39 +567,52 @@ impl GraphBuilder {
 
     /// Joins nodes along an existing axis.
     pub fn concat<'builder, V: Var<'builder>>(&'builder self, axis: isize, parts: &[V]) -> V {
-        let parents: Vec<NodeId> = parts.iter().map(Var::id).collect();
+        let parents: Vec<NodeId> = parts.iter().map(|&p| self.own(p).id()).collect();
         V::wrap(self, self.add(Op::Concat(axis), &parents, V::DTYPE))
     }
 
     // ----- distributions -----
 
+    /// Adds a probabilistic node. On error nothing is added.
+    fn try_distribution(
+        &self,
+        kind: DistributionKind,
+        shape: Option<&[usize]>,
+        parameters: &[NodeId],
+    ) -> Result<NodeId> {
+        self.check_parents("distribution", parameters)?;
+        let types: Vec<(DType, Shape)> = parameters.iter().map(|&p| self.dtype_shape(p)).collect();
+        let refs: Vec<(DType, &[usize])> = types.iter().map(|(t, s)| (*t, s.as_slice())).collect();
+        let dtype = kind.value_type();
+        let shape = DistributionOp::value_shape(&kind, shape, &refs)?;
+        Ok(self.push(
+            Node {
+                op: Op::Distribution(DistributionOp {
+                    kind,
+                    shape: shape.clone(),
+                }),
+                parents: Parents::from_slice(parameters),
+                dtype,
+                shape,
+                label: None,
+            },
+            None,
+        ))
+    }
+
+    /// Adds a probabilistic node. On error the error is recorded and a placeholder node of the distribution's type
+    /// is returned so that building can continue.
     pub(crate) fn distribution(
         &self,
         kind: DistributionKind,
         shape: Option<&[usize]>,
         parameters: &[NodeId],
     ) -> NodeId {
-        let types: Vec<(DType, Shape)> = parameters.iter().map(|&p| self.dtype_shape(p)).collect();
-        let refs: Vec<(DType, &[usize])> = types.iter().map(|(t, s)| (*t, s.as_slice())).collect();
         let dtype = kind.value_type();
-        match DistributionOp::value_shape(&kind, shape, &refs) {
-            Ok(shape) => self.push(
-                Node {
-                    op: Op::Distribution(DistributionOp {
-                        kind,
-                        shape: shape.clone(),
-                    }),
-                    parents: Parents::from_slice(parameters),
-                    dtype,
-                    shape,
-                    label: None,
-                },
-                None,
-            ),
-            Err(e) => {
+        self.try_distribution(kind, shape, parameters)
+            .unwrap_or_else(|e| {
                 self.record(e);
                 self.placeholder(dtype)
-            }
-        }
+            })
     }
 }

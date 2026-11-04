@@ -48,6 +48,8 @@ pub enum GraphError {
     NotDifferentiable(String),
     /// A custom distribution failed.
     Custom(String),
+    /// A handle from one [`GraphBuilder`](crate::GraphBuilder) was used with another. The node is the handle's.
+    WrongBuilder(NodeId),
 }
 
 impl fmt::Display for GraphError {
@@ -77,6 +79,11 @@ impl fmt::Display for GraphError {
             ),
             Self::NotDifferentiable(m) => write!(f, "{m}"),
             Self::Custom(m) => write!(f, "custom distribution: {m}"),
+            Self::WrongBuilder(id) => write!(
+                f,
+                "node #{} belongs to a different GraphBuilder",
+                id.index()
+            ),
         }
     }
 }

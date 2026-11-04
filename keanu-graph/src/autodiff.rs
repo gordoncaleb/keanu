@@ -12,8 +12,10 @@
 //!   are non-probabilistic and differentiable;
 //! - reverse mode starts at the `of` node and visits differentiable ancestors in decreasing id order, recording and
 //!   stopping at `wrt` nodes, and stopping at probabilistic nodes;
-//! - floor, ceil, round, sign, comparisons, masks, casts, arg reductions, multiplexers, `set_with_mask` and
-//!   `replace_nan` are not differentiable, so gradients stop there.
+//! - floor, ceil, round, sign, comparisons, masks, casts and arg reductions are not differentiable, so gradients
+//!   stop there. Multiplexers pass the gradient of the selected option, `set_with_mask` the operand's gradient
+//!   where the mask isn't 1 and the set value's where it is, and `replace_nan` the input's gradient where it wasn't
+//!   NaN (zero where it was replaced).
 //!
 //! Every value used must already be in the state: evaluate the graph first.
 
@@ -93,7 +95,8 @@ pub fn is_differentiable(graph: &Graph, id: NodeId) -> bool {
             | Op::Determinant
             | Op::Cholesky
             | Op::CholeskyInverse => true,
-            Op::Where | Op::Cpt { .. } => true,
+            Op::Where | Op::Cpt { .. } | Op::Multiplexer => true,
+            Op::SetWithMask | Op::ReplaceNan(_) => true,
             Op::Lambda(l) => l.jacobian.is_some(),
             _ => false,
         }
@@ -1067,6 +1070,34 @@ fn jvp(
                 None => None,
             }
         }
+        Op::Multiplexer => {
+            // as Cpt: the selected option's tangent, zero if only unselected options depend on wrt
+            let selected = multiplexer_selected(parents)?;
+            match t[selected] {
+                Some(ts) => Some(ts.clone()),
+                None if t[1..].iter().any(Option::is_some) => Some(DoubleTensor::zeros(
+                    &batched(b, &out_shape)
+                        .iter()
+                        .map(|&d| d as usize)
+                        .collect::<Vec<_>>(),
+                )),
+                None => None,
+            }
+        }
+        Op::SetWithMask => {
+            let set = set_mask(parents)?;
+            let from_operand = t[0]
+                .map(|t0| scale(t0, &set.map(|m| 1.0 - m)))
+                .transpose()?;
+            let from_value = t[2]
+                .map(|tv| scale(&tv.reshape(&[b as isize])?, &set))
+                .transpose()?;
+            add_opt(from_operand, from_value)?
+        }
+        Op::ReplaceNan(_) => {
+            let Some(t0) = t[0] else { return Ok(None) };
+            Some(scale(t0, &not_nan_mask(parents)?)?)
+        }
         Op::Lambda(lambda) => {
             let jacobian = lambda.jacobian.as_ref().ok_or_else(|| {
                 GraphError::NotDifferentiable(format!("lambda {} has no jacobian", lambda.name))
@@ -1273,6 +1304,34 @@ fn vjp(
             }
             out
         }
+        Op::Multiplexer => {
+            // as Cpt: the selected option gets the cotangent, the other options zero
+            let selected = multiplexer_selected(parents)?;
+            let mut out = none();
+            for (i, slot) in out.iter_mut().enumerate().skip(1) {
+                *slot = Some(if i == selected {
+                    g.clone()
+                } else {
+                    g.map(|_| 0.0)
+                });
+            }
+            out
+        }
+        Op::SetWithMask => {
+            let set = set_mask(parents)?;
+            let to_operand = g.mul(&set.map(|m| 1.0 - m))?;
+            // the value is a scalar (of any rank): sum over every non-batch axis
+            let selected = g.mul(&set)?;
+            let axes: Vec<isize> = (1..selected.rank() as isize).collect();
+            let to_value = if axes.is_empty() {
+                selected
+            } else {
+                selected.sum_axes(&axes)?
+            }
+            .reshape(&batched(b, parents[2].shape()))?;
+            vec![Some(to_operand), None, Some(to_value)]
+        }
+        Op::ReplaceNan(_) => vec![Some(g.mul(&not_nan_mask(parents)?)?)],
         Op::Lambda(lambda) => {
             let jacobian = lambda.jacobian.as_ref().ok_or_else(|| {
                 GraphError::NotDifferentiable(format!("lambda {} has no jacobian", lambda.name))
@@ -1294,6 +1353,31 @@ fn vjp(
         }
         _ => none(),
     })
+}
+
+/// The parent index of the option a multiplexer selects (the same choice as its evaluation).
+fn multiplexer_selected(parents: &[&Value]) -> Result<usize> {
+    let selector = parents[0].as_i64().and_then(|t| t.to_scalar());
+    selector
+        .and_then(|s| usize::try_from(s).ok())
+        .map(|s| s + 1)
+        .filter(|&i| i < parents.len())
+        .ok_or_else(|| {
+            GraphError::InvalidValue(format!(
+                "multiplexer selector {selector:?} is out of range for {} options",
+                parents.len() - 1
+            ))
+        })
+}
+
+/// 1.0 where a `set_with_mask` node takes the set value (mask == 1.0), else 0.0, shaped like the operand.
+fn set_mask(parents: &[&Value]) -> Result<DoubleTensor> {
+    Ok(f64v(parents[1])?.map(|m| if m == 1.0 { 1.0 } else { 0.0 }))
+}
+
+/// 1.0 where a `replace_nan` node's input isn't NaN (so passes through), else 0.0.
+fn not_nan_mask(parents: &[&Value]) -> Result<DoubleTensor> {
+    Ok(f64v(parents[0])?.map(|x| if x.is_nan() { 0.0 } else { 1.0 }))
 }
 
 /// The parent index of the outcome a CPT node selects (the same choice as its evaluation).
