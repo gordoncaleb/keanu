@@ -149,7 +149,8 @@ vector was edited by hand and the entry says so.
   numbers and acceptances). A 20-latent chain with full proposals runs 1.6–1.9× faster.
 - `keanu-algorithms`: the particle filter adds each increment's new latents' and observation's log probabilities to
   a particle's total instead of re-cascading the particle and recomputing every log probability so far (quadratic
-  in the length of a time series; a 200-step random walk with 100 particles drops from 2.8 s to 0.7 s), and
+  in the length of a time series), restores only the latents an increment depends on before sampling it (a
+  200-step random walk with 100 particles drops from 2.8 s to 0.15 s), and
   `latent_increments` keeps a count per observation instead of every node's set of latent ancestors (quadratic
   memory on a chain). Same random numbers and ordering; particle log probabilities may differ in the last bits
   (summation order).

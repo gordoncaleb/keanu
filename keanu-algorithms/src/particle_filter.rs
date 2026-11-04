@@ -9,7 +9,7 @@
 use crate::error::{AlgorithmError, Result};
 use crate::support::evaluate_all;
 use keanu_distributions::KeanuRng;
-use keanu_graph::{Graph, Model, NodeId, State, Value, node_log_prob};
+use keanu_graph::{Graph, Model, NodeId, State, Value, node_log_prob, upstream_lambda_section};
 use std::collections::{BTreeMap, BTreeSet};
 
 /// Particle filter settings. Defaults follow Java's `ParticleFilterBuilder`.
@@ -316,9 +316,23 @@ fn add_observation(
 ) -> Result<()> {
     let mut ordered = dependencies.to_vec();
     ordered.sort();
+    let context = context_latents(model.graph(), state, &ordered, observed)?;
     for particle in particles.iter_mut() {
-        // the state holds whichever particle was evaluated last, so restore this one first
-        particle.apply(model, state)?;
+        // the state holds whichever particle was evaluated last, so restore this one's values of the latents the
+        // increment depends on (the rest of its latents can't affect it)
+        let values: Vec<(NodeId, Value)> = context
+            .iter()
+            .map(|id| {
+                let value = particle
+                    .latents
+                    .get(id)
+                    .expect("an increment's context latents were sampled in earlier increments");
+                (*id, value.clone())
+            })
+            .collect();
+        if !values.is_empty() {
+            model.set_and_cascade(state, values)?;
+        }
         for &latent in &ordered {
             let value = state.sample_prior(model.graph(), latent, rng)?;
             model.set_and_cascade(state, [(latent, value.clone())])?;
@@ -327,6 +341,30 @@ fn add_observation(
         particle.add_log_prob(model.graph(), state, &ordered, observed)?;
     }
     Ok(())
+}
+
+/// The previously sampled latents an increment depends on directly: those reached from its new latents and its
+/// observation by walking up through deterministic nodes. Sampling the new latents and computing their and the
+/// observation's log probabilities reads only these latents' values (and their deterministic consequences), so a
+/// particle only needs these applied, not all of its latents.
+fn context_latents(
+    graph: &Graph,
+    state: &State,
+    latents: &[NodeId],
+    observed: NodeId,
+) -> Result<Vec<NodeId>> {
+    let mut from = latents.to_vec();
+    from.push(observed);
+    Ok(upstream_lambda_section(graph, state, &from)?
+        .latent_and_observed()
+        .iter()
+        .copied()
+        .filter(|&id| {
+            graph.node(id).is_probabilistic()
+                && !state.is_observed(id)
+                && latents.binary_search(&id).is_err()
+        })
+        .collect())
 }
 
 /// A log probability with NaN replaced by -infinity, so NaN particles are treated as impossible.
