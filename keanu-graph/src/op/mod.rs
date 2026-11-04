@@ -1,7 +1,7 @@
 //! Node operations: what each node computes from its parents' values.
 
 mod distribution;
-mod eval;
+pub(crate) mod eval;
 mod shape;
 
 pub(crate) use distribution::LogProbGradientParts;

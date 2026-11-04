@@ -570,6 +570,13 @@ fn selection_proxies_and_lambdas() {
         &[DoubleTensor::scalar(0.7), range(0.5, 2.0, &[3])],
         |g, v| g.where_(v[1].gt(g.scalar(1.0)), v[0], v[1]),
     );
+    // a predicate smaller than the output, broadcasting with each branch
+    for threshold in [-100.0, 100.0] {
+        check(
+            &[range(0.5, 2.0, &[2, 3]), range(-1.0, 1.0, &[3])],
+            move |g, v| g.where_(v[1].sum().lt(g.scalar(threshold)), v[0], v[1] * 2.0),
+        );
+    }
     check(
         &[DoubleTensor::scalar(0.7), DoubleTensor::scalar(1.3)],
         |g, v| {

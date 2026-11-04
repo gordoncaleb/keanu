@@ -2,11 +2,12 @@
 
 use crate::error::{GraphError, Result};
 use crate::op::Op;
-use crate::value::DType;
+use crate::value::{DType, Value};
 use keanu_tensor::Shape;
 use smallvec::SmallVec;
 use std::collections::HashMap;
 use std::fmt;
+use std::sync::OnceLock;
 
 /// Identifies a node within its graph. Ids are assigned in creation order and a node's parents always have smaller
 /// ids, so ascending id order is a topological order.
@@ -83,7 +84,12 @@ pub struct Graph {
     pub(crate) nodes: Vec<Node>,
     pub(crate) children: Vec<Parents>,
     pub(crate) labels: HashMap<String, NodeId>,
+    /// Per node, auto diff's index map of a shape op, computed on first use (see [`Graph::index_map`]).
+    index_maps: Vec<OnceLock<IndexMap>>,
 }
+
+/// For each output element of a shape op, the (parent, flat index) it copies, or `None` for a zero.
+pub(crate) type IndexMap = Box<[Option<(usize, usize)>]>;
 
 impl Graph {
     pub(crate) fn new(nodes: Vec<Node>, labels: HashMap<String, NodeId>) -> Self {
@@ -98,10 +104,29 @@ impl Graph {
             }
         }
         Self {
+            index_maps: std::iter::repeat_with(OnceLock::new)
+                .take(nodes.len())
+                .collect(),
             nodes,
             children,
             labels,
         }
+    }
+
+    /// The index map of a shape op node (reshape, slice, concat, ...), given its parents' values: which parent
+    /// element each output element copies. It depends only on the op and its parents' shapes, which are fixed, so
+    /// it is computed once per node and cached.
+    pub(crate) fn index_map(
+        &self,
+        id: NodeId,
+        parents: &[&Value],
+    ) -> Result<&[Option<(usize, usize)>]> {
+        let cache = &self.index_maps[id.0];
+        if let Some(map) = cache.get() {
+            return Ok(map);
+        }
+        let map = crate::autodiff::index_map(&self.nodes[id.0].op, parents)?;
+        Ok(cache.get_or_init(|| map.into_boxed_slice()))
     }
 
     /// The number of nodes.

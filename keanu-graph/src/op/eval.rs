@@ -3,6 +3,7 @@
 use super::*;
 use crate::error::GraphError;
 use keanu_tensor::{BoolTensor, DoubleTensor, IntTensor};
+use smallvec::SmallVec;
 
 fn invalid(op: &Op, message: impl Into<String>) -> GraphError {
     GraphError::InvalidNode {
@@ -317,40 +318,10 @@ pub(crate) fn eval(op: &Op, inputs: &[&Value]) -> Result<Value> {
             }
         }
         Op::Multiplexer => {
-            let selector = inputs[0]
-                .i64()?
-                .to_scalar()
-                .ok_or_else(|| invalid(op, "the selector must be a scalar"))?;
-            let options = &inputs[1..];
-            usize::try_from(selector)
-                .ok()
-                .and_then(|i| options.get(i))
-                .map(|v| (*v).clone())
-                .ok_or_else(|| {
-                    invalid(
-                        op,
-                        format!(
-                            "selector {selector} is out of range for {} options",
-                            options.len()
-                        ),
-                    )
-                })?
+            inputs[multiplexer_selected(inputs).map_err(|e| invalid(op, e))?].clone()
         }
         Op::Cpt { conditions, keys } => {
-            let condition: Vec<i64> = inputs[..*conditions]
-                .iter()
-                .map(|v| match v {
-                    Value::Bool(t) => t.to_scalar().map(i64::from),
-                    Value::I64(t) => t.to_scalar(),
-                    Value::F64(_) => None,
-                })
-                .collect::<Option<_>>()
-                .ok_or_else(|| invalid(op, "conditions must be scalar booleans or integers"))?;
-            let outcomes = &inputs[*conditions..inputs.len() - 1];
-            match keys.iter().position(|k| *k == condition) {
-                Some(i) => outcomes[i].clone(),
-                None => inputs[inputs.len() - 1].clone(),
-            }
+            inputs[cpt_selected(*conditions, keys, inputs).map_err(|e| invalid(op, e))?].clone()
         }
         Op::SetWithMask => {
             expect_parents(op, inputs, 3)?;
@@ -411,6 +382,42 @@ pub(crate) fn eval(op: &Op, inputs: &[&Value]) -> Result<Value> {
                 "probabilistic nodes are sampled, not calculated",
             ));
         }
+    })
+}
+
+/// The input a multiplexer selects: its scalar integer selector (input 0) indexes the options (inputs 1..).
+pub(crate) fn multiplexer_selected(inputs: &[&Value]) -> std::result::Result<usize, String> {
+    let selector = inputs[0]
+        .as_i64()
+        .and_then(|t| t.to_scalar())
+        .ok_or("the selector must be a scalar integer")?;
+    let options = inputs.len() - 1;
+    usize::try_from(selector)
+        .ok()
+        .filter(|&i| i < options)
+        .map(|i| i + 1)
+        .ok_or_else(|| format!("selector {selector} is out of range for {options} options"))
+}
+
+/// The input a CPT selects: the outcome (after the `conditions` inputs) whose key matches the conditions' values
+/// (booleans as 0 and 1), otherwise the default (the last input).
+pub(crate) fn cpt_selected(
+    conditions: usize,
+    keys: &[Vec<i64>],
+    inputs: &[&Value],
+) -> std::result::Result<usize, String> {
+    let condition: SmallVec<[i64; 4]> = inputs[..conditions]
+        .iter()
+        .map(|v| match v {
+            Value::Bool(t) => t.to_scalar().map(i64::from),
+            Value::I64(t) => t.to_scalar(),
+            Value::F64(_) => None,
+        })
+        .collect::<Option<_>>()
+        .ok_or("conditions must be scalar booleans or integers")?;
+    Ok(match keys.iter().position(|k| k[..] == condition[..]) {
+        Some(i) => conditions + i,
+        None => inputs.len() - 1,
     })
 }
 

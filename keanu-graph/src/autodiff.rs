@@ -21,11 +21,13 @@
 
 use crate::error::{GraphError, Result};
 use crate::graph::{Graph, Node, NodeId};
+use crate::op::eval::{cpt_selected, multiplexer_selected};
 use crate::op::{BinaryOp, Op, ReduceOp, ScanOp, UnaryOp, eval};
 use crate::state::State;
 use crate::value::{DType, Value};
 use keanu_tensor::{DoubleTensor, special};
 use smallvec::SmallVec;
+use std::borrow::Cow;
 use std::collections::HashMap;
 
 /// Partial derivatives keyed by node: each shaped `[of shape..., wrt shape...]`.
@@ -158,7 +160,7 @@ pub fn forward_partials(
             .map(|&p| value(state, p))
             .collect::<Result<SmallVec<[&Value; 4]>>>()?;
         let out = value(state, id)?;
-        tangents[i] = jvp(node, &parent_values, out, &parent_tangents, n)?;
+        tangents[i] = jvp(graph, id, &parent_values, out, &parent_tangents, n)?;
     }
 
     for &o in of {
@@ -234,60 +236,22 @@ pub fn reverse_partials_from(
         fixed: of,
         forward: false,
     };
-
-    let mut cotangents: Vec<Option<DoubleTensor>> = vec![None; of.0 + 1];
-    cotangents[of.0] = Some(upstream.reshape(&batched(b, &of_shape))?);
     let mut is_wrt = vec![false; of.0 + 1];
     for &w in wrt {
         if w.0 <= of.0 {
             is_wrt[w.0] = true;
         }
     }
-
-    for i in (0..=of.0).rev() {
-        let id = NodeId(i);
-        let Some(cotangent) = cotangents[i].take() else {
-            continue;
-        };
-        if is_wrt[i] {
-            let shape: Vec<isize> = outer
-                .iter()
-                .chain(graph.node(id).shape.iter())
-                .map(|&d| d as isize)
-                .collect();
-            result.partials.insert(id, cotangent.into_reshape(&shape)?);
-            continue;
-        }
-        let node = graph.node(id);
-        if node.is_probabilistic() || !is_differentiable(graph, id) {
-            continue;
-        }
-        let parent_values = node
-            .parents
+    let seed = upstream.reshape(&batched(b, &of_shape))?;
+    reverse_sweep(graph, state, [(of, seed)], b, &is_wrt, |id, cotangent| {
+        let shape: Dims = outer
             .iter()
-            .map(|&p| value(state, p))
-            .collect::<Result<SmallVec<[&Value; 4]>>>()?;
-        let out = value(state, id)?;
-        let contributions: SmallVec<[Option<DoubleTensor>; 4]> = match (b == 1)
-            .then(|| scalar_vjp(node, &parent_values, out, &cotangent))
-            .flatten()
-        {
-            Some(fast) => fast,
-            None => vjp(node, &parent_values, out, &cotangent, b)?
-                .into_iter()
-                .collect(),
-        };
-        for (&parent, contribution) in node.parents.iter().zip(contributions) {
-            let Some(c) = contribution else { continue };
-            if !is_differentiable(graph, parent) {
-                continue;
-            }
-            cotangents[parent.0] = Some(match cotangents[parent.0].take() {
-                Some(existing) => existing.add(&c)?,
-                None => c,
-            });
-        }
-    }
+            .chain(graph.node(id).shape.iter())
+            .map(|&d| d as isize)
+            .collect();
+        result.partials.insert(id, cotangent.into_reshape(&shape)?);
+        Ok(())
+    })?;
     Ok(result)
 }
 
@@ -301,26 +265,41 @@ pub(crate) fn reverse_from_seeds(
     is_wrt: &[bool],
     mut emit: impl FnMut(NodeId, DoubleTensor) -> Result<()>,
 ) -> Result<()> {
-    let seeds: SmallVec<[(NodeId, DoubleTensor); 8]> = seeds.into_iter().collect();
-    let Some(top) = seeds.iter().map(|(id, _)| id.0).max() else {
-        return Ok(());
-    };
-    let mut cotangents: SmallVec<[Option<DoubleTensor>; 8]> = smallvec::smallvec![None; top + 1];
+    let seeds = seeds
+        .into_iter()
+        .map(|(id, seed)| Ok((id, seed.into_reshape(&batched(1, &graph.node(id).shape))?)))
+        .collect::<Result<SmallVec<[(NodeId, DoubleTensor); 8]>>>()?;
+    reverse_sweep(graph, state, seeds, 1, is_wrt, |id, cotangent| {
+        let shape: Dims = graph.node(id).shape.iter().map(|&d| d as isize).collect();
+        emit(id, cotangent.into_reshape(&shape)?)
+    })
+}
+
+/// The reverse sweep: from batched cotangents `[b, node shape...]` at the seed nodes (summed where a node is
+/// seeded twice), visits differentiable ancestors in decreasing id order, stopping at probabilistic nodes and at
+/// the nodes marked in `is_wrt`, whose batched cotangents it emits.
+fn reverse_sweep(
+    graph: &Graph,
+    state: &State,
+    seeds: impl IntoIterator<Item = (NodeId, DoubleTensor)>,
+    b: usize,
+    is_wrt: &[bool],
+    mut emit: impl FnMut(NodeId, DoubleTensor) -> Result<()>,
+) -> Result<()> {
+    let mut cotangents: SmallVec<[Option<DoubleTensor>; 8]> = SmallVec::new();
     for (id, seed) in seeds {
-        let seed = seed.into_reshape(&batched(1, &graph.node(id).shape))?;
-        cotangents[id.0] = Some(match cotangents[id.0].take() {
-            Some(existing) => existing.add(&seed)?,
-            None => seed,
-        });
+        if cotangents.len() <= id.0 {
+            cotangents.resize(id.0 + 1, None);
+        }
+        accumulate(&mut cotangents[id.0], seed)?;
     }
-    for i in (0..=top).rev() {
-        let id = NodeId(i);
+    for i in (0..cotangents.len()).rev() {
         let Some(cotangent) = cotangents[i].take() else {
             continue;
         };
+        let id = NodeId(i);
         if is_wrt.get(i).copied().unwrap_or(false) {
-            let shape: Dims = graph.node(id).shape.iter().map(|&d| d as isize).collect();
-            emit(id, cotangent.into_reshape(&shape)?)?;
+            emit(id, cotangent)?;
             continue;
         }
         let node = graph.node(id);
@@ -335,21 +314,26 @@ pub(crate) fn reverse_from_seeds(
         let out = value(state, id)?;
         let contributions = match scalar_vjp(node, &parent_values, out, &cotangent) {
             Some(fast) => fast,
-            None => vjp(node, &parent_values, out, &cotangent, 1)?
+            None => vjp(graph, id, &parent_values, out, cotangent, b)?
                 .into_iter()
                 .collect(),
         };
         for (&parent, contribution) in node.parents.iter().zip(contributions) {
             let Some(c) = contribution else { continue };
-            if !is_differentiable(graph, parent) {
-                continue;
+            if is_differentiable(graph, parent) {
+                accumulate(&mut cotangents[parent.0], c)?;
             }
-            cotangents[parent.0] = Some(match cotangents[parent.0].take() {
-                Some(existing) => existing.add(&c)?,
-                None => c,
-            });
         }
     }
+    Ok(())
+}
+
+/// Adds a contribution to a node's (co)tangent.
+fn accumulate(slot: &mut Option<DoubleTensor>, contribution: DoubleTensor) -> Result<()> {
+    *slot = Some(match slot.take() {
+        Some(existing) => existing.add(&contribution)?,
+        None => contribution,
+    });
     Ok(())
 }
 
@@ -360,10 +344,24 @@ pub(crate) fn reverse_from_seeds(
 type Dims = SmallVec<[isize; 6]>;
 
 fn batched(b: usize, shape: &[usize]) -> Dims {
-    std::iter::once(b)
-        .chain(shape.iter().copied())
-        .map(|d| d as isize)
+    batched_shape(b, shape)
+        .iter()
+        .map(|&d| d as isize)
         .collect()
+}
+
+/// The shape [b, shape...] of a batched tensor.
+fn batched_shape(b: usize, shape: &[usize]) -> SmallVec<[usize; 6]> {
+    std::iter::once(b).chain(shape.iter().copied()).collect()
+}
+
+/// Broadcasts a batched tensor [b, s...] to [b, out...] (results may lack broadcast dims of other operands).
+fn fit(x: DoubleTensor, b: usize, out_shape: &[usize]) -> Result<DoubleTensor> {
+    let shape = batched_shape(b, out_shape);
+    if x.shape() == shape.as_slice() {
+        return Ok(x);
+    }
+    Ok(lift(&x, out_shape.len())?.broadcast_to(&shape)?)
 }
 
 /// The identity as a batched tangent: [n, shape...] with element [k, j...] = 1 where j is the k-th element.
@@ -373,36 +371,37 @@ fn identity(n: usize, shape: &[usize]) -> Result<DoubleTensor> {
 
 /// Reshapes a batched tensor [B, s...] to [B, 1..., s...] with `rank` non-batch dims, so it broadcasts against
 /// tensors of that rank.
-fn lift(t: &DoubleTensor, rank: usize) -> Result<DoubleTensor> {
+fn lift(t: &DoubleTensor, rank: usize) -> Result<Cow<'_, DoubleTensor>> {
     let shape = t.shape();
     let inner = &shape[1..];
     if inner.len() >= rank {
-        return Ok(t.clone());
+        return Ok(Cow::Borrowed(t));
     }
-    let mut new_shape = vec![shape[0] as isize];
+    let mut new_shape: Dims = smallvec::smallvec![shape[0] as isize];
     new_shape.extend(std::iter::repeat_n(1, rank - inner.len()));
     new_shape.extend(inner.iter().map(|&d| d as isize));
-    Ok(t.reshape(&new_shape)?)
+    Ok(Cow::Owned(t.reshape(&new_shape)?))
 }
 
 /// Sums a batched tensor [B, out...] over the dimensions that `target` was broadcast along, giving [B, target...].
-fn reduce_to(t: &DoubleTensor, target: &[usize]) -> Result<DoubleTensor> {
+fn reduce_to(t: DoubleTensor, target: &[usize]) -> Result<DoubleTensor> {
     let inner = &t.shape()[1..];
     if inner == target {
-        return Ok(t.clone());
+        return Ok(t);
     }
     let rank = inner.len();
     let offset = rank - target.len();
-    let axes: Vec<isize> = (0..rank)
+    let axes: Dims = (0..rank)
         .filter(|&i| i < offset || (target[i - offset] == 1 && inner[i] != 1))
         .map(|i| i as isize + 1)
         .collect();
+    let shape = batched(t.shape()[0], target);
     let summed = if axes.is_empty() {
-        t.clone()
+        t
     } else {
         t.sum_axes(&axes)?
     };
-    Ok(summed.reshape(&batched(t.shape()[0], target))?)
+    Ok(summed.into_reshape(&shape)?)
 }
 
 /// Multiplies a batched parent tangent by an output-shaped local derivative, broadcasting to [B, out...].
@@ -476,8 +475,7 @@ fn lanes(shape: &[usize], axis: usize) -> (usize, usize, usize) {
 }
 
 fn batched_tensor(b: usize, shape: &[usize], data: Vec<f64>) -> Result<DoubleTensor> {
-    let full: SmallVec<[usize; 6]> = std::iter::once(b).chain(shape.iter().copied()).collect();
-    Ok(DoubleTensor::new(&full, data)?)
+    Ok(DoubleTensor::new(&batched_shape(b, shape), data)?)
 }
 
 /// Reverse mode of a cumulative sum along non-batch `axis` of a batched cotangent [B, shape...]: the reverse
@@ -658,7 +656,7 @@ fn signed(axes: &[usize], offset: usize) -> Vec<isize> {
 /// For ops whose every output element is a copy of one input element or zero (reshape, slice, concat, ...): for each
 /// output element, the (parent, flat index) it copies, found by evaluating the op on inputs holding their own
 /// (offset) indices.
-fn index_map(op: &Op, parents: &[&Value]) -> Result<Vec<Option<(usize, usize)>>> {
+pub(crate) fn index_map(op: &Op, parents: &[&Value]) -> Result<Vec<Option<(usize, usize)>>> {
     let mut offsets = Vec::with_capacity(parents.len());
     let mut total = 0usize;
     let encoded: Vec<Value> = parents
@@ -711,13 +709,7 @@ fn gather_forward(
             data[k * n_out + o] = t[k * n_p + idx];
         }
     }
-    Ok(Some(DoubleTensor::new(
-        &batched(b, out_shape)
-            .iter()
-            .map(|&d| d as usize)
-            .collect::<Vec<_>>(),
-        data,
-    )?))
+    Ok(Some(DoubleTensor::new(&batched_shape(b, out_shape), data)?))
 }
 
 fn gather_reverse(
@@ -744,10 +736,7 @@ fn gather_reverse(
     parents
         .iter()
         .zip(results)
-        .map(|(v, data)| {
-            let shape: Vec<usize> = batched(b, v.shape()).iter().map(|&d| d as usize).collect();
-            Ok(Some(DoubleTensor::new(&shape, data)?))
-        })
+        .map(|(v, data)| Ok(Some(DoubleTensor::new(&batched_shape(b, v.shape()), data)?)))
         .collect()
 }
 
@@ -792,76 +781,91 @@ fn unary_derivative(u: UnaryOp, x: &DoubleTensor, y: &DoubleTensor) -> Result<Do
     })
 }
 
-/// (∂y/∂left, ∂y/∂right), each shaped like the output.
-fn binary_derivatives(
+/// A local derivative ∂y/∂operand of an element-wise binary op, broadcastable against the output.
+enum Local<'a> {
+    /// ∂y/∂operand = 1 (add, sub's left operand)
+    Identity,
+    /// ∂y/∂operand = -1 (sub's right operand)
+    Negated,
+    /// ∂y/∂operand is this tensor
+    Scale(Cow<'a, DoubleTensor>),
+}
+
+impl Local<'_> {
+    /// Forward mode: the operand's batched tangent [B, operand...] times the derivative, as [B, out...].
+    fn forward(&self, t: &DoubleTensor, b: usize, out_shape: &[usize]) -> Result<DoubleTensor> {
+        Ok(match self {
+            Local::Identity => fit(t.clone(), b, out_shape)?,
+            Local::Negated => fit(t.neg(), b, out_shape)?,
+            Local::Scale(d) => fit(scale(t, d)?, b, out_shape)?,
+        })
+    }
+
+    /// Reverse mode: the batched output cotangent [B, out...] times the derivative, as [B, out...].
+    fn reverse(&self, g: &DoubleTensor) -> Result<DoubleTensor> {
+        Ok(match self {
+            Local::Identity => g.clone(),
+            Local::Negated => g.neg(),
+            Local::Scale(d) => g.mul(d)?,
+        })
+    }
+}
+
+/// (∂y/∂left, ∂y/∂right), each broadcastable against the output.
+fn binary_derivatives<'a>(
     op: BinaryOp,
-    l: &DoubleTensor,
-    r: &DoubleTensor,
+    l: &'a DoubleTensor,
+    r: &'a DoubleTensor,
     y: &DoubleTensor,
-) -> Result<(DoubleTensor, DoubleTensor)> {
-    let ones = || DoubleTensor::ones(y.shape());
-    let full = |t: DoubleTensor| -> Result<DoubleTensor> { Ok(t.mul(&ones())?) };
+) -> Result<(Local<'a>, Local<'a>)> {
+    let owned = |t: DoubleTensor| Local::Scale(Cow::Owned(t));
     Ok(match op {
-        BinaryOp::Add => (ones(), ones()),
-        BinaryOp::Sub => (ones(), ones().neg()),
-        BinaryOp::Mul => (full(r.clone())?, full(l.clone())?),
+        BinaryOp::Add => (Local::Identity, Local::Identity),
+        BinaryOp::Sub => (Local::Identity, Local::Negated),
+        BinaryOp::Mul => (
+            Local::Scale(Cow::Borrowed(r)),
+            Local::Scale(Cow::Borrowed(l)),
+        ),
         BinaryOp::Div => (
-            full(r.reciprocal())?,
-            l.zip_with(r, |l, r| -l / (r * r))?.mul(&ones())?,
+            owned(r.reciprocal()),
+            owned(l.zip_with(r, |l, r| -l / (r * r))?),
         ),
         BinaryOp::Pow => (
-            l.zip_with(r, |l, r| r * l.powf(r - 1.0))?.mul(&ones())?,
-            full(l.ln())?.mul(y)?,
+            owned(l.zip_with(r, |l, r| r * l.powf(r - 1.0))?),
+            owned(l.ln().mul(y)?),
         ),
-        BinaryOp::Max => {
-            let m = l
-                .zip_with(r, |l, r| f64::from(u8::from(l >= r)))?
-                .mul(&ones())?;
-            (m.clone(), m.map(|m| 1.0 - m))
-        }
-        BinaryOp::Min => {
-            let m = l
-                .zip_with(r, |l, r| f64::from(u8::from(l <= r)))?
-                .mul(&ones())?;
-            (m.clone(), m.map(|m| 1.0 - m))
+        BinaryOp::Max | BinaryOp::Min => {
+            let max = op == BinaryOp::Max;
+            let m = l.zip_with(r, |l, r| {
+                f64::from(u8::from(if max { l >= r } else { l <= r }))
+            })?;
+            let other = m.map(|m| 1.0 - m);
+            (owned(m), owned(other))
         }
         // left is x and right is y: atan2(y, x)
         BinaryOp::Atan2 => (
-            l.zip_with(r, |x, y| -y / (x * x + y * y))?.mul(&ones())?,
-            l.zip_with(r, |x, y| x / (x * x + y * y))?.mul(&ones())?,
+            owned(l.zip_with(r, |x, y| -y / (x * x + y * y))?),
+            owned(l.zip_with(r, |x, y| x / (x * x + y * y))?),
         ),
-        BinaryOp::LogAddExp => (
-            full(l.clone())?.sub(y)?.exp(),
-            full(r.clone())?.sub(y)?.exp(),
-        ),
-        BinaryOp::LogAddExp2 => (
-            full(l.clone())?.sub(y)?.exp2(),
-            full(r.clone())?.sub(y)?.exp2(),
-        ),
+        BinaryOp::LogAddExp => (owned(l.sub(y)?.exp()), owned(r.sub(y)?.exp())),
+        BinaryOp::LogAddExp2 => (owned(l.sub(y)?.exp2()), owned(r.sub(y)?.exp2())),
         // y * ln(x): d/dx = y / x; d/dy = ln(x), NaN where y == 0 (as Java)
         BinaryOp::SafeLnTimes => (
-            l.zip_with(r, |x, y| y / x)?.mul(&ones())?,
-            l.zip_with(r, |x, y| if y == 0.0 { f64::NAN } else { x.ln() })?
-                .mul(&ones())?,
+            owned(l.zip_with(r, |x, y| y / x)?),
+            owned(l.zip_with(r, |x, y| if y == 0.0 { f64::NAN } else { x.ln() })?),
         ),
         BinaryOp::Rem => {
             return Err(GraphError::NotDifferentiable(
                 "rem is not differentiable".into(),
             ));
         }
-        #[allow(unreachable_patterns)]
-        _ => {
-            return Err(GraphError::NotDifferentiable(format!(
-                "{op:?} is not differentiable"
-            )));
-        }
     })
 }
 
 // ---------------------------------------------------------------------------------------------------------------
 // scalar fast path: unary and binary ops whose operands and output are single f64 values (most nodes of typical
-// models). The formulas are exactly those of `unary_derivative` / `binary_derivatives` (which multiply by a tensor
-// of ones, an exact operation), so results are bit-for-bit the same as the tensor path.
+// models). The formulas are exactly those of `unary_derivative` / `binary_derivatives`, so results are bit-for-bit
+// the same as the tensor path.
 
 fn sign_of(x: f64) -> f64 {
     if x > 0.0 {
@@ -968,30 +972,22 @@ fn scalar_vjp(
 // ---------------------------------------------------------------------------------------------------------------
 // Jacobians of reductions
 
-/// The Jacobian [1, n] of a reduction over every element (Max, Min and StdDev only reduce over every element).
-fn reduce_jacobian(kind: ReduceOp, x: &DoubleTensor) -> Result<Option<DoubleTensor>> {
+/// The Jacobian [1, n] of the max (or min) of every element: the gradient goes to the selected element, split
+/// equally between ties. (Max, Min and StdDev only reduce over every element.)
+fn extremum_jacobian(x: &DoubleTensor, max: bool) -> Result<DoubleTensor> {
+    let best = if max { x.max() } else { x.min() }.unwrap_or(f64::NAN);
+    let selected = x.map(|v| f64::from(u8::from(v == best)));
+    let count: f64 = selected.sum();
+    Ok((selected / count).reshape(&[1, x.len() as isize])?)
+}
+
+/// The Jacobian [1, n] of the standard deviation of every element.
+fn std_dev_jacobian(x: &DoubleTensor) -> Result<DoubleTensor> {
     let n = x.len();
-    Ok(match kind {
-        ReduceOp::Max | ReduceOp::Min => {
-            // gradient to the selected element, split equally between ties
-            let best = if kind == ReduceOp::Max {
-                x.max()
-            } else {
-                x.min()
-            }
-            .unwrap_or(f64::NAN);
-            let selected = x.map(|v| f64::from(u8::from(v == best)));
-            let count: f64 = selected.sum();
-            Some((selected / count).reshape(&[1, n as isize])?)
-        }
-        ReduceOp::StdDev => {
-            let s = x.std_dev();
-            let mean = x.mean();
-            let d = x.map(|v| (v - mean) / ((n as f64 - 1.0) * s));
-            Some(d.reshape(&[1, n as isize])?)
-        }
-        ReduceOp::Sum | ReduceOp::Mean | ReduceOp::Product => None,
-    })
+    let s = x.std_dev();
+    let mean = x.mean();
+    let d = x.map(|v| (v - mean) / ((n as f64 - 1.0) * s));
+    Ok(d.reshape(&[1, n as isize])?)
 }
 
 fn standardize_jacobian(x: &DoubleTensor) -> Result<DoubleTensor> {
@@ -1055,12 +1051,14 @@ fn symmetric_from_lower(x: &DoubleTensor) -> Result<DoubleTensor> {
 // forward mode rules
 
 fn jvp(
-    node: &Node,
+    graph: &Graph,
+    id: NodeId,
     parents: &[&Value],
     out: &Value,
     t: &[Option<&DoubleTensor>],
     b: usize,
 ) -> Result<Option<DoubleTensor>> {
+    let node = graph.node(id);
     let out_shape = node.shape.to_vec();
     let y = f64v(out)?;
     let op = &node.op;
@@ -1072,8 +1070,8 @@ fn jvp(
         }
         Op::Binary(bop) => {
             let (dl, dr) = binary_derivatives(*bop, f64v(parents[0])?, f64v(parents[1])?, y)?;
-            let from_left = t[0].map(|tl| scale(tl, &dl)).transpose()?;
-            let from_right = t[1].map(|tr| scale(tr, &dr)).transpose()?;
+            let from_left = t[0].map(|tl| dl.forward(tl, b, &out_shape)).transpose()?;
+            let from_right = t[1].map(|tr| dr.forward(tr, b, &out_shape)).transpose()?;
             add_opt(from_left, from_right)?
         }
         Op::Reduce { kind, axes } => {
@@ -1107,8 +1105,12 @@ fn jvp(
                     };
                     Some(summed.reshape(&batched(b, &out_shape))?)
                 }
-                _ => {
-                    let j = reduce_jacobian(*kind, f64v(parents[0])?)?.unwrap();
+                ReduceOp::Max | ReduceOp::Min => {
+                    let j = extremum_jacobian(f64v(parents[0])?, *kind == ReduceOp::Max)?;
+                    Some(jacobian_forward(t0, &j, &out_shape)?)
+                }
+                ReduceOp::StdDev => {
+                    let j = std_dev_jacobian(f64v(parents[0])?)?;
                     Some(jacobian_forward(t0, &j, &out_shape)?)
                 }
             }
@@ -1142,7 +1144,9 @@ fn jvp(
         | Op::Tril(_)
         | Op::Triu(_)
         | Op::FillTriangular { .. }
-        | Op::TrianglePart { .. } => gather_forward(&index_map(op, parents)?, t, b, &out_shape)?,
+        | Op::TrianglePart { .. } => {
+            gather_forward(graph.index_map(id, parents)?, t, b, &out_shape)?
+        }
         Op::TensorMultiply {
             left_axes,
             right_axes,
@@ -1181,27 +1185,19 @@ fn jvp(
                 .transpose()?;
             let from_right = t[1]
                 .map(|tb| -> Result<DoubleTensor> {
-                    Ok(a.matmul_transposed(&lift(tb, rank)?, *transpose_left, *transpose_right)?)
+                    Ok(a.matmul_transposed(&*lift(tb, rank)?, *transpose_left, *transpose_right)?)
                 })
                 .transpose()?;
             // results may lack broadcast batch dims of the other operand; bring both to [B, out...]
-            let fit = |x: DoubleTensor| -> Result<DoubleTensor> {
-                Ok(x.broadcast_to(
-                    &batched(b, &out_shape)
-                        .iter()
-                        .map(|&d| d as usize)
-                        .collect::<Vec<_>>(),
-                )?)
-            };
             add_opt(
-                from_left.map(fit).transpose()?,
-                from_right.map(fit).transpose()?,
+                from_left.map(|x| fit(x, b, &out_shape)).transpose()?,
+                from_right.map(|x| fit(x, b, &out_shape)).transpose()?,
             )?
         }
         Op::Inverse => {
             let Some(t0) = t[0] else { return Ok(None) };
             // dX = -X dA X
-            Some(y.matmul(&lift(t0, out_shape.len())?)?.matmul(y)?.neg())
+            Some(y.matmul(&*lift(t0, out_shape.len())?)?.matmul(y)?.neg())
         }
         Op::Determinant => {
             let Some(t0) = t[0] else { return Ok(None) };
@@ -1218,7 +1214,7 @@ fn jvp(
             // dL = L phi(L⁻¹ dA L⁻ᵀ), dA the symmetric matrix read from the lower triangle of the tangent
             let l = y;
             let l_inv = l.inverse()?;
-            let da = symmetric_from_lower(&lift(t0, out_shape.len())?)?;
+            let da = symmetric_from_lower(&*lift(t0, out_shape.len())?)?;
             let inner = l_inv.matmul(&da)?.matmul_transposed(&l_inv, false, true)?;
             Some(l.matmul(&phi(&inner)?)?)
         }
@@ -1232,51 +1228,35 @@ fn jvp(
             Some(y.matmul(&da)?.matmul(y)?.neg())
         }
         Op::Where => {
-            let mask = parents[0]
-                .as_bool()
-                .ok_or_else(|| GraphError::InvalidValue("where predicate must be bool".into()))?
-                .to_double_mask();
-            let m = mask.mul(&DoubleTensor::ones(&out_shape))?;
+            let m = where_mask(parents)?;
             let from_then = t[1].map(|tt| scale(tt, &m)).transpose()?;
             let from_else = t[2].map(|te| scale(te, &m.map(|m| 1.0 - m))).transpose()?;
-            let fit = |x: DoubleTensor| -> Result<DoubleTensor> {
-                Ok(x.broadcast_to(
-                    &batched(b, &out_shape)
-                        .iter()
-                        .map(|&d| d as usize)
-                        .collect::<Vec<_>>(),
-                )?)
-            };
             add_opt(
-                from_then.map(fit).transpose()?,
-                from_else.map(fit).transpose()?,
+                from_then.map(|x| fit(x, b, &out_shape)).transpose()?,
+                from_else.map(|x| fit(x, b, &out_shape)).transpose()?,
             )?
         }
         Op::Cpt { conditions, keys } => {
             // the selected outcome's tangent; zero (rather than none) if only unselected outcomes depend on wrt
-            let selected = cpt_selected(*conditions, keys, parents)?;
+            let selected = cpt_selected(*conditions, keys, parents)
+                .map_err(|e| invalid_selection("cpt", e))?;
             match t[selected] {
                 Some(ts) => Some(ts.clone()),
-                None if t[*conditions..].iter().any(Option::is_some) => Some(DoubleTensor::zeros(
-                    &batched(b, &out_shape)
-                        .iter()
-                        .map(|&d| d as usize)
-                        .collect::<Vec<_>>(),
-                )),
+                None if t[*conditions..].iter().any(Option::is_some) => {
+                    Some(DoubleTensor::zeros(&batched_shape(b, &out_shape)))
+                }
                 None => None,
             }
         }
         Op::Multiplexer => {
             // as Cpt: the selected option's tangent, zero if only unselected options depend on wrt
-            let selected = multiplexer_selected(parents)?;
+            let selected =
+                multiplexer_selected(parents).map_err(|e| invalid_selection("multiplexer", e))?;
             match t[selected] {
                 Some(ts) => Some(ts.clone()),
-                None if t[1..].iter().any(Option::is_some) => Some(DoubleTensor::zeros(
-                    &batched(b, &out_shape)
-                        .iter()
-                        .map(|&d| d as usize)
-                        .collect::<Vec<_>>(),
-                )),
+                None if t[1..].iter().any(Option::is_some) => {
+                    Some(DoubleTensor::zeros(&batched_shape(b, &out_shape)))
+                }
                 None => None,
             }
         }
@@ -1320,22 +1300,25 @@ fn jvp(
 // reverse mode rules
 
 fn vjp(
-    node: &Node,
+    graph: &Graph,
+    id: NodeId,
     parents: &[&Value],
     out: &Value,
-    g: &DoubleTensor,
+    cotangent: DoubleTensor,
     b: usize,
 ) -> Result<Vec<Option<DoubleTensor>>> {
+    let node = graph.node(id);
     let out_shape = node.shape.to_vec();
     let y = f64v(out)?;
     let op = &node.op;
     let none = || vec![None; parents.len()];
+    let g = &cotangent;
     Ok(match op {
-        Op::Proxy => vec![Some(g.clone())],
+        Op::Proxy => vec![Some(cotangent)],
         Op::Unary(u) => {
             let x = f64v(parents[0])?;
             vec![Some(reduce_to(
-                &g.mul(&unary_derivative(*u, x, y)?)?,
+                g.mul(&unary_derivative(*u, x, y)?)?,
                 x.shape(),
             )?)]
         }
@@ -1343,8 +1326,8 @@ fn vjp(
             let (l, r) = (f64v(parents[0])?, f64v(parents[1])?);
             let (dl, dr) = binary_derivatives(*bop, l, r, y)?;
             vec![
-                Some(reduce_to(&g.mul(&dl)?, l.shape())?),
-                Some(reduce_to(&g.mul(&dr)?, r.shape())?),
+                Some(reduce_to(dl.reverse(g)?, l.shape())?),
+                Some(reduce_to(dr.reverse(g)?, r.shape())?),
             ]
         }
         Op::Reduce { kind, axes } => {
@@ -1358,12 +1341,9 @@ fn vjp(
                         .enumerate()
                         .map(|(i, &d)| if axes.contains(&i) { 1 } else { d })
                         .collect();
-                    let expanded = g.reshape(&batched(b, &kept))?.broadcast_to(
-                        &batched(b, x.shape())
-                            .iter()
-                            .map(|&d| d as usize)
-                            .collect::<Vec<_>>(),
-                    )?;
+                    let expanded = g
+                        .reshape(&batched(b, &kept))?
+                        .broadcast_to(&batched_shape(b, x.shape()))?;
                     vec![Some(if *kind == ReduceOp::Mean {
                         expanded / count as f64
                     } else {
@@ -1382,9 +1362,12 @@ fn vjp(
                     let others = product_of_others(x, &axes)?;
                     vec![Some(g.reshape(&batched(b, &kept))?.mul(&others)?)]
                 }
-                _ => {
-                    let j = reduce_jacobian(*kind, x)?.unwrap();
+                ReduceOp::Max | ReduceOp::Min => {
+                    let j = extremum_jacobian(x, *kind == ReduceOp::Max)?;
                     vec![Some(jacobian_reverse(g, &j, x.shape())?)]
+                }
+                ReduceOp::StdDev => {
+                    vec![Some(jacobian_reverse(g, &std_dev_jacobian(x)?, x.shape())?)]
                 }
             }
         }
@@ -1416,7 +1399,7 @@ fn vjp(
         | Op::Tril(_)
         | Op::Triu(_)
         | Op::FillTriangular { .. }
-        | Op::TrianglePart { .. } => gather_reverse(&index_map(op, parents)?, g, parents, b)?,
+        | Op::TrianglePart { .. } => gather_reverse(graph.index_map(id, parents)?, g, parents, b)?,
         Op::TensorMultiply {
             left_axes,
             right_axes,
@@ -1448,8 +1431,8 @@ fn vjp(
             let da = if tl { tr(&d_op_a)? } else { d_op_a };
             let db = if tr_ { tr(&d_op_b)? } else { d_op_b };
             vec![
-                Some(reduce_to(&da, a.shape())?),
-                Some(reduce_to(&db, bm.shape())?),
+                Some(reduce_to(da, a.shape())?),
+                Some(reduce_to(db, bm.shape())?),
             ]
         }
         Op::Inverse => {
@@ -1493,44 +1476,26 @@ fn vjp(
             vec![Some(l_bar.tril(0)?)]
         }
         Op::Where => {
-            let mask = parents[0]
-                .as_bool()
-                .ok_or_else(|| GraphError::InvalidValue("where predicate must be bool".into()))?
-                .to_double_mask();
-            let m = mask.mul(&DoubleTensor::ones(&out_shape))?;
+            let m = where_mask(parents)?;
             let then_shape = parents[1].shape();
             let else_shape = parents[2].shape();
             vec![
                 None,
-                Some(reduce_to(&g.mul(&m)?, then_shape)?),
-                Some(reduce_to(&g.mul(&m.map(|m| 1.0 - m))?, else_shape)?),
+                Some(reduce_to(g.mul(&m)?, then_shape)?),
+                Some(reduce_to(g.mul(&m.map(|m| 1.0 - m))?, else_shape)?),
             ]
         }
         Op::Cpt { conditions, keys } => {
             // the selected outcome gets the cotangent, the other outcomes zero (as forward mode)
-            let selected = cpt_selected(*conditions, keys, parents)?;
-            let mut out = none();
-            for (i, slot) in out.iter_mut().enumerate().skip(*conditions) {
-                *slot = Some(if i == selected {
-                    g.clone()
-                } else {
-                    g.map(|_| 0.0)
-                });
-            }
-            out
+            let selected = cpt_selected(*conditions, keys, parents)
+                .map_err(|e| invalid_selection("cpt", e))?;
+            route_to(parents.len(), *conditions, selected, cotangent)
         }
         Op::Multiplexer => {
             // as Cpt: the selected option gets the cotangent, the other options zero
-            let selected = multiplexer_selected(parents)?;
-            let mut out = none();
-            for (i, slot) in out.iter_mut().enumerate().skip(1) {
-                *slot = Some(if i == selected {
-                    g.clone()
-                } else {
-                    g.map(|_| 0.0)
-                });
-            }
-            out
+            let selected =
+                multiplexer_selected(parents).map_err(|e| invalid_selection("multiplexer", e))?;
+            route_to(parents.len(), 1, selected, cotangent)
         }
         Op::SetWithMask => {
             let set = set_mask(parents)?;
@@ -1570,19 +1535,35 @@ fn vjp(
     })
 }
 
-/// The parent index of the option a multiplexer selects (the same choice as its evaluation).
-fn multiplexer_selected(parents: &[&Value]) -> Result<usize> {
-    let selector = parents[0].as_i64().and_then(|t| t.to_scalar());
-    selector
-        .and_then(|s| usize::try_from(s).ok())
-        .map(|s| s + 1)
-        .filter(|&i| i < parents.len())
-        .ok_or_else(|| {
-            GraphError::InvalidValue(format!(
-                "multiplexer selector {selector:?} is out of range for {} options",
-                parents.len() - 1
-            ))
-        })
+/// Reverse mode of a selection (CPT, multiplexer): the cotangent to the selected parent, zero to the other
+/// options (parents from `first`), and none to the selectors.
+fn route_to(
+    parents: usize,
+    first: usize,
+    selected: usize,
+    cotangent: DoubleTensor,
+) -> Vec<Option<DoubleTensor>> {
+    let mut out = vec![None; parents];
+    for (i, slot) in out.iter_mut().enumerate().skip(first) {
+        if i != selected {
+            *slot = Some(DoubleTensor::zeros(cotangent.shape()));
+        }
+    }
+    out[selected] = Some(cotangent);
+    out
+}
+
+/// The error for a CPT or multiplexer whose selection fails (which its evaluation would have reported first).
+fn invalid_selection(op: &str, message: String) -> GraphError {
+    GraphError::InvalidValue(format!("{op}: {message}"))
+}
+
+/// The where predicate as 1.0 / 0.0, broadcastable against the output.
+fn where_mask(parents: &[&Value]) -> Result<DoubleTensor> {
+    Ok(parents[0]
+        .as_bool()
+        .ok_or_else(|| GraphError::InvalidValue("where predicate must be bool".into()))?
+        .to_double_mask())
 }
 
 /// 1.0 where a `set_with_mask` node takes the set value (mask == 1.0), else 0.0, shaped like the operand.
@@ -1593,23 +1574,4 @@ fn set_mask(parents: &[&Value]) -> Result<DoubleTensor> {
 /// 1.0 where a `replace_nan` node's input isn't NaN (so passes through), else 0.0.
 fn not_nan_mask(parents: &[&Value]) -> Result<DoubleTensor> {
     Ok(f64v(parents[0])?.map(|x| if x.is_nan() { 0.0 } else { 1.0 }))
-}
-
-/// The parent index of the outcome a CPT node selects (the same choice as its evaluation).
-fn cpt_selected(conditions: usize, keys: &[Vec<i64>], parents: &[&Value]) -> Result<usize> {
-    let condition: Vec<i64> = parents[..conditions]
-        .iter()
-        .map(|v| match v {
-            Value::Bool(t) => t.to_scalar().map(i64::from),
-            Value::I64(t) => t.to_scalar(),
-            Value::F64(_) => None,
-        })
-        .collect::<Option<_>>()
-        .ok_or_else(|| {
-            GraphError::InvalidValue("CPT conditions must be scalar booleans or integers".into())
-        })?;
-    Ok(match keys.iter().position(|k| *k == condition) {
-        Some(i) => conditions + i,
-        None => parents.len() - 1,
-    })
 }
