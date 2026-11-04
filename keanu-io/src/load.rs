@@ -11,7 +11,7 @@ use keanu_graph::op::{
 };
 use keanu_graph::{DType, Graph, GraphBuilder, NodeId, State, Value};
 use keanu_tensor::{BoolTensor, DoubleTensor, IntTensor};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 /// A loaded model: its graph, the saved values (observations are observed), the saved metadata, and the node each
@@ -29,12 +29,24 @@ pub struct Loaded {
     pub ids: HashMap<String, NodeId>,
 }
 
+/// A shape from the file: non-negative dimensions whose product (the element count) fits a `usize`.
 pub(crate) fn shape_of(dims: &[i64]) -> Result<Vec<usize>> {
-    dims.iter()
+    let shape = dims
+        .iter()
         .map(|&d| {
             usize::try_from(d).map_err(|_| IoError::Decode(format!("negative dimension {d}")))
         })
-        .collect()
+        .collect::<Result<Vec<usize>>>()?;
+    checked_len(&shape)?;
+    Ok(shape)
+}
+
+/// The element count of a shape, or a decode error if it overflows.
+fn checked_len(shape: &[usize]) -> Result<usize> {
+    shape
+        .iter()
+        .try_fold(1usize, |n, &d| n.checked_mul(d))
+        .ok_or_else(|| IoError::Decode(format!("the shape {shape:?} has too many elements")))
 }
 
 pub(crate) fn double_tensor(t: &proto::DoubleTensor) -> Result<DoubleTensor> {
@@ -64,36 +76,72 @@ pub(crate) fn load_model(model: &proto::ProtoModel) -> Result<Loaded> {
     let builder = GraphBuilder::new();
     let mut ids: HashMap<String, NodeId> = HashMap::new();
 
+    let mut seen = HashSet::new();
     for vertex in &graph.vertices {
-        let id = vertex.id.as_ref().map(|v| v.id.clone()).unwrap_or_default();
-        let node = Loader {
-            builder: &builder,
-            vertex,
-            ids: &ids,
+        let id = vertex_id(vertex)?;
+        if !seen.insert(id) {
+            return Err(IoError::Decode(format!(
+                "more than one vertex has the id {id:?}"
+            )));
         }
-        .load()?;
+    }
+    let helpers = SavedHelpers::find(graph);
+
+    for vertex in &graph.vertices {
+        let id = vertex_id(vertex)?;
+        if helpers.skipped.contains(id) {
+            continue;
+        }
+        let node = match helpers.cholesky_inverses.get(id) {
+            Some(input) => {
+                let input = *ids
+                    .get(*input)
+                    .ok_or_else(|| IoError::UnknownVertex((*input).to_owned()))?;
+                builder.add_node(Op::CholeskyInverse, &[input])?
+            }
+            None => Loader {
+                builder: &builder,
+                vertex,
+                ids: &ids,
+                helpers: &helpers,
+            }
+            .load()?,
+        };
         if !vertex.label.is_empty() {
             builder.set_label_of(node, &vertex.label);
         }
-        ids.insert(id, node);
+        ids.insert(id.to_owned(), node);
     }
 
+    let mut labels: Option<HashMap<String, NodeId>> = None;
     for stored in &graph.default_state {
         let node = match stored.id.as_ref().filter(|id| !id.id.is_empty()) {
+            // the value of a helper vertex that was not loaded (never an observation, see SavedHelpers)
+            Some(id) if helpers.skipped.contains(id.id.as_str()) => continue,
             Some(id) => *ids
                 .get(&id.id)
                 .ok_or_else(|| IoError::UnknownVertex(id.id.clone()))?,
-            None => (0..builder.node_count())
-                .map(keanu_graph_node_id)
-                .find(|&n| builder.label_of(n).as_deref() == Some(stored.vertex_label.as_str()))
-                .ok_or_else(|| IoError::UnknownVertex(stored.vertex_label.clone()))?,
+            None => {
+                let labels = labels.get_or_insert_with(|| {
+                    let mut labels = HashMap::new();
+                    for n in (0..builder.node_count()).map(keanu_graph_node_id) {
+                        if let Some(label) = builder.label_of(n) {
+                            labels.entry(label).or_insert(n);
+                        }
+                    }
+                    labels
+                });
+                *labels
+                    .get(&stored.vertex_label)
+                    .ok_or_else(|| IoError::UnknownVertex(stored.vertex_label.clone()))?
+            }
         };
         let value = match stored.value.as_ref().and_then(|v| v.value_type.as_ref()) {
             Some(proto::vertex_value::ValueType::DoubleVal(t)) => Value::F64(double_tensor(t)?),
             Some(proto::vertex_value::ValueType::IntVal(t)) => Value::I64(int_tensor(t)?),
             Some(proto::vertex_value::ValueType::BoolVal(t)) => Value::Bool(bool_tensor(t)?),
             Some(proto::vertex_value::ValueType::GenericVal(_)) => {
-                return Err(IoError::UnsupportedVertex("generic (object) values".into()));
+                return Err(IoError::UnsupportedValue("generic (object)".into()));
             }
             None => return Err(IoError::Decode("a stored value has no value".into())),
         };
@@ -128,10 +176,178 @@ fn keanu_graph_node_id(index: usize) -> NodeId {
     NodeId::from_index(index)
 }
 
+fn vertex_id(vertex: &proto::Vertex) -> Result<&str> {
+    vertex
+        .id
+        .as_ref()
+        .map(|id| id.id.as_str())
+        .filter(|id| !id.is_empty())
+        .ok_or_else(|| IoError::Decode(format!("a {} vertex has no id", vertex.vertex_type)))
+}
+
+fn simple_class(vertex: &proto::Vertex) -> &str {
+    vertex
+        .vertex_type
+        .rsplit('.')
+        .next()
+        .unwrap_or(&vertex.vertex_type)
+}
+
+fn find_param<'v>(vertex: &'v proto::Vertex, name: &str) -> Option<&'v Param> {
+    vertex
+        .parameters
+        .iter()
+        .find(|p| p.name == name)
+        .and_then(|p| p.param.as_ref())
+}
+
+fn parent_id<'v>(vertex: &'v proto::Vertex, name: &str) -> Option<&'v str> {
+    match find_param(vertex, name) {
+        Some(Param::ParentVertex(id)) => Some(id.id.as_str()),
+        _ => None,
+    }
+}
+
+fn int_param(vertex: &proto::Vertex, name: &str) -> Option<i64> {
+    match find_param(vertex, name) {
+        Some(Param::IntParam(v)) => Some(i64::from(*v)),
+        Some(Param::LongParam(v)) => Some(*v),
+        _ => None,
+    }
+}
+
+/// Vertices that saving writes in place of a single node, which loading folds back so that saving and loading
+/// repeatedly doesn't grow the graph:
+///
+/// - the zero location constant of a half Gaussian / half Cauchy (the Rust distributions have no location; Java
+///   saved a shared zero constant too), and
+/// - the subgraph `C + transpose(tril(C, -1))` with `C = CholeskyInverseVertex(tril(x))` that saving writes for a
+///   Rust cholesky inverse (Java's vertex keeps only the lower triangle of the inverse).
+///
+/// Only unlabelled, unobserved vertices used by nothing else are folded.
+#[derive(Default)]
+struct SavedHelpers<'a> {
+    /// Vertices not loaded.
+    skipped: HashSet<&'a str>,
+    /// Skipped zero constants that were the location of a half distribution.
+    zero_locations: HashSet<&'a str>,
+    /// AdditionVertex id -> the input of the saved cholesky inverse it completes.
+    cholesky_inverses: HashMap<&'a str, &'a str>,
+}
+
+impl<'a> SavedHelpers<'a> {
+    fn find(graph: &'a proto::Graph) -> Self {
+        let mut by_id: HashMap<&str, &proto::Vertex> = HashMap::new();
+        let mut uses: HashMap<&str, usize> = HashMap::new();
+        for vertex in &graph.vertices {
+            if let Some(id) = &vertex.id {
+                by_id.insert(id.id.as_str(), vertex);
+            }
+            for param in vertex.parameters.iter().filter_map(|p| p.param.as_ref()) {
+                match param {
+                    Param::ParentVertex(id) => *uses.entry(id.id.as_str()).or_default() += 1,
+                    Param::VertexArrayParam(array) => {
+                        for id in &array.values {
+                            *uses.entry(id.id.as_str()).or_default() += 1;
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+        let observed: HashSet<&str> = graph
+            .default_state
+            .iter()
+            .filter(|s| s.is_observed)
+            .filter_map(|s| s.id.as_ref().map(|id| id.id.as_str()))
+            .collect();
+        let uses_of = |id: &str| uses.get(id).copied().unwrap_or(0);
+        // an unlabelled, unobserved vertex of the given class
+        let helper = |id: &str, class: &str| -> Option<&'a proto::Vertex> {
+            by_id.get(id).copied().filter(|v| {
+                v.label.is_empty() && simple_class(v) == class && !observed.contains(id)
+            })
+        };
+
+        let mut helpers = SavedHelpers::default();
+
+        let mut location_uses: HashMap<&str, usize> = HashMap::new();
+        for vertex in &graph.vertices {
+            let location = match simple_class(vertex) {
+                "HalfGaussianVertex" => parent_id(vertex, "mu"),
+                "HalfCauchyVertex" => parent_id(vertex, "location"),
+                _ => None,
+            };
+            if let Some(location) = location {
+                *location_uses.entry(location).or_default() += 1;
+            }
+        }
+        for (location, count) in location_uses {
+            let is_zero = helper(location, "ConstantDoubleVertex").is_some_and(|v| {
+                matches!(
+                    find_param(v, "constant"),
+                    Some(Param::DoubleTensorParam(t)) if t.values.iter().all(|&x| x == 0.0)
+                )
+            });
+            if is_zero && uses_of(location) == count {
+                helpers.skipped.insert(location);
+                helpers.zero_locations.insert(location);
+            }
+        }
+
+        for vertex in &graph.vertices {
+            if simple_class(vertex) != "AdditionVertex" {
+                continue;
+            }
+            let Some(add) = vertex.id.as_ref().map(|id| id.id.as_str()) else {
+                continue;
+            };
+            let found = (|| {
+                let c_id = parent_id(vertex, "left")?;
+                let t_id = parent_id(vertex, "right")?;
+                let t = helper(t_id, "PermuteVertex").filter(|_| uses_of(t_id) == 1)?;
+                let rank = t.shape.len();
+                if rank < 2 {
+                    return None;
+                }
+                let permutation: Vec<i64> = match find_param(t, "rearrange")? {
+                    Param::IntArrayParam(a) => a.values.iter().map(|&v| i64::from(v)).collect(),
+                    Param::LongArrayParam(a) => a.values.clone(),
+                    _ => return None,
+                };
+                let mut swap_last_two: Vec<i64> = (0..rank as i64).collect();
+                swap_last_two.swap(rank - 1, rank - 2);
+                if permutation != swap_last_two {
+                    return None;
+                }
+                let s_id = parent_id(t, "inputVertex")?;
+                let s = helper(s_id, "TriLowerVertex").filter(|_| uses_of(s_id) == 1)?;
+                if int_param(s, "k")? != 1 || parent_id(s, "inputVertex")? != c_id {
+                    return None;
+                }
+                let c = helper(c_id, "CholeskyInverseVertex").filter(|_| uses_of(c_id) == 2)?;
+                let a_id = parent_id(c, "inputVertex")?;
+                let a = helper(a_id, "TriLowerVertex").filter(|_| uses_of(a_id) == 1)?;
+                if int_param(a, "k")? != 0 {
+                    return None;
+                }
+                let x = parent_id(a, "inputVertex")?;
+                Some(([a_id, c_id, s_id, t_id], x))
+            })();
+            if let Some((parts, x)) = found {
+                helpers.skipped.extend(parts);
+                helpers.cholesky_inverses.insert(add, x);
+            }
+        }
+        helpers
+    }
+}
+
 struct Loader<'a> {
     builder: &'a GraphBuilder,
     vertex: &'a proto::Vertex,
     ids: &'a HashMap<String, NodeId>,
+    helpers: &'a SavedHelpers<'a>,
 }
 
 impl Loader<'_> {
@@ -282,13 +498,18 @@ impl Loader<'_> {
         location: &str,
         scale: &str,
     ) -> Result<NodeId> {
-        let location_node = self.parent(location)?;
-        let is_zero_constant = matches!(
-            self.builder_constant(location_node),
-            Some(Value::F64(t)) if t.as_slice().iter().all(|&v| v == 0.0)
-        );
-        if !is_zero_constant {
-            return Err(self.invalid(location, "must be the constant 0"));
+        // a zero constant used only as this location isn't loaded (see SavedHelpers)
+        let folded = parent_id(self.vertex, location)
+            .is_some_and(|id| self.helpers.zero_locations.contains(id));
+        if !folded {
+            let location_node = self.parent(location)?;
+            let is_zero_constant = matches!(
+                self.builder_constant(location_node),
+                Some(Value::F64(t)) if t.as_slice().iter().all(|&v| v == 0.0)
+            );
+            if !is_zero_constant {
+                return Err(self.invalid(location, "must be the constant 0"));
+            }
         }
         let parents = [self.parent(scale)?];
         let shape = self.shape()?;
@@ -503,13 +724,26 @@ impl Loader<'_> {
                     .collect(),
             )),
             "PermuteVertex" => self.unary(Op::Permute(self.unsigned("rearrange")?)),
-            "BroadcastVertex" => self.unary(Op::Broadcast(self.unsigned("toShape")?)),
+            "BroadcastVertex" => {
+                let to_shape = self.unsigned("toShape")?;
+                checked_len(&to_shape)?;
+                self.unary(Op::Broadcast(to_shape))
+            }
             "SliceVertex" => {
+                let input = self.parent("inputVertex")?;
+                let rank = self.builder.shape(input).len();
                 let dimension = usize::try_from(self.int("dimension")?)
-                    .map_err(|_| self.invalid("dimension", "negative"))?;
+                    .ok()
+                    .filter(|&d| d < rank)
+                    .ok_or_else(|| {
+                        self.invalid(
+                            "dimension",
+                            format!("not a dimension of a rank {rank} input"),
+                        )
+                    })?;
                 let mut items = vec![":".to_owned(); dimension];
                 items.push(self.int("index")?.to_string());
-                self.unary(Op::Slice(items.join(", ")))
+                self.node(Op::Slice(items.join(", ")), &[input])
             }
             "StridedSliceVertex" => self.unary(Op::Slice(self.strided_slice()?)),
             "TakeVertex" => self.unary(Op::Take(self.unsigned("index")?)),
@@ -586,10 +820,9 @@ impl Loader<'_> {
                 let dtype = self.builder.dtype(parent);
                 let proxy = self.builder.add_proxy(dtype, &self.builder.shape(parent));
                 self.builder.connect_ids(proxy, parent)?;
-                let label = self.string("label")?;
-                if !label.is_empty() {
-                    self.builder.set_label_of(proxy, &label);
-                }
+                // The proxy is labelled from the vertex label, which Java always wrote equal to this parameter.
+                // Earlier Rust versions wrote an invented `proxy_<n>` here for unlabelled proxies, so it isn't used.
+                self.string("label")?;
                 Ok(proxy)
             }
 

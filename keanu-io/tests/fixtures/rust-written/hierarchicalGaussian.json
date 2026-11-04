@@ -51,19 +51,7 @@
       },
       {
         "id": {
-          "id": "[4]"
-        },
-        "value": {
-          "doubleVal": {
-            "values": [
-              0.0
-            ]
-          }
-        }
-      },
-      {
-        "id": {
-          "id": "[6]"
+          "id": "[5]"
         },
         "value": {
           "doubleVal": {
@@ -75,7 +63,7 @@
       },
       {
         "id": {
-          "id": "[7]"
+          "id": "[6]"
         },
         "value": {
           "doubleVal": {
@@ -92,7 +80,7 @@
       },
       {
         "id": {
-          "id": "[8]"
+          "id": "[7]"
         },
         "value": {
           "doubleVal": {
@@ -104,7 +92,7 @@
       },
       {
         "id": {
-          "id": "[9]"
+          "id": "[8]"
         },
         "isObserved": true,
         "value": {
@@ -215,28 +203,12 @@
         "id": {
           "id": "[5]"
         },
-        "parameters": [
-          {
-            "doubleTensorParam": {
-              "values": [
-                0.0
-              ]
-            },
-            "name": "constant"
-          }
-        ],
-        "vertexType": "io.improbable.keanu.vertices.tensor.number.floating.dbl.nonprobabilistic.ConstantDoubleVertex"
-      },
-      {
-        "id": {
-          "id": "[6]"
-        },
         "label": "sigma",
         "parameters": [
           {
             "name": "mu",
             "parentVertex": {
-              "id": "[5]"
+              "id": "[4]"
             }
           },
           {
@@ -250,7 +222,7 @@
       },
       {
         "id": {
-          "id": "[7]"
+          "id": "[6]"
         },
         "label": "groupMeans",
         "parameters": [
@@ -263,7 +235,7 @@
           {
             "name": "sigma",
             "parentVertex": {
-              "id": "[6]"
+              "id": "[5]"
             }
           }
         ],
@@ -274,7 +246,7 @@
       },
       {
         "id": {
-          "id": "[8]"
+          "id": "[7]"
         },
         "parameters": [
           {
@@ -290,20 +262,20 @@
       },
       {
         "id": {
-          "id": "[9]"
+          "id": "[8]"
         },
         "label": "observations",
         "parameters": [
           {
             "name": "mu",
             "parentVertex": {
-              "id": "[7]"
+              "id": "[6]"
             }
           },
           {
             "name": "sigma",
             "parentVertex": {
-              "id": "[8]"
+              "id": "[7]"
             }
           }
         ],

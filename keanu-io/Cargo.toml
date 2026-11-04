@@ -16,9 +16,9 @@ publish.workspace = true
 [features]
 default = ["protobuf", "json", "dot"]
 # binary protobuf files (.pb)
-protobuf = []
+protobuf = ["dep:prost"]
 # JSON files (the protobuf JSON mapping, as Java's JsonSaver writes)
-json = ["dep:pbjson", "dep:serde", "dep:serde_json"]
+json = ["dep:prost", "dep:pbjson", "dep:serde", "dep:serde_json"]
 # Graphviz DOT export
 dot = []
 
@@ -26,7 +26,7 @@ dot = []
 keanu-distributions = { workspace = true }
 keanu-graph = { workspace = true }
 keanu-tensor = { workspace = true }
-prost = "0.14"
+prost = { version = "0.14", optional = true }
 pbjson = { version = "0.9", optional = true }
 serde = { version = "1", optional = true }
 serde_json = { version = "1", features = ["float_roundtrip"], optional = true }
@@ -34,6 +34,7 @@ serde_json = { version = "1", features = ["float_roundtrip"], optional = true }
 [dev-dependencies]
 keanu-parity = { workspace = true }
 pbjson-build = "0.9"
+prost = "0.14"
 prost-build = "0.14"
 protox = "0.10"
 serde_json = { version = "1", features = ["float_roundtrip"] }

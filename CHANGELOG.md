@@ -45,6 +45,22 @@ vector was edited by hand and the entry says so.
 - `Pareto` and `Geometric` log probabilities treat invalid parameters per element (and return the broadcast shape) instead of making every element -infinity.
 - `Pareto` support includes x = location. Golden vectors `Pareto/location=1.0,scale=2.0` (x = 1) and `Pareto/location=0.5,scale=1.0` (x = 0.5) logProb edited by hand from -infinity to ln 2.
 - Multinomial and Categorical sampling never return a category with zero probability when rounding leaves the cumulative probability below the uniform draw; they return the last category with non-zero probability.
+- keanu-io: a `SliceVertex` whose `dimension` is not a dimension of its input is an `InvalidParameter` error
+  instead of a capacity overflow panic.
+- keanu-io: shapes whose element count overflows (tensor shapes, vertex shapes, `BroadcastVertex` `toShape`) are
+  `Decode` errors instead of panicking (debug) or wrapping (release).
+- keanu-io: an unlabelled proxy is saved with an empty label instead of an invented `proxy_<n>`, which could collide
+  with another node's label (failing to load) and persisted after loading; invented labels in older files are
+  ignored (proxies are labelled from the vertex label, which Java always wrote equal to the parameter).
+- keanu-io: saving and loading repeatedly no longer grows the graph: loading folds back the zero location constant
+  of half Gaussian / half Cauchy vertices (including Java's) and the subgraph saved for a Rust cholesky inverse.
+- keanu-io: duplicate or missing vertex ids are `Decode` errors instead of being accepted silently.
+- keanu-io: DOT node labels escape `"`, `\` and line breaks.
+- keanu-io: JSON serialisation failures in `save_json` are the new `IoError::Encode`, not `Decode`.
+- keanu-io: generic (object) stored values are the new `IoError::UnsupportedValue`, not `UnsupportedVertex`.
+- keanu-io: values stored by label are matched with a label map built once, instead of a scan of every node each.
+- keanu-io: `prost` is only a dependency with the `protobuf` or `json` feature; keanu-parity drops its unused
+  `serde` dependency and inherits the workspace package fields.
 
 ## Unreleased: Java
 

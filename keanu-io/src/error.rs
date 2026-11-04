@@ -7,8 +7,12 @@ use std::fmt;
 pub enum IoError {
     /// The bytes or text are not a valid saved model.
     Decode(String),
+    /// The model could not be written in the requested format.
+    Encode(String),
     /// A vertex type that can't be loaded.
     UnsupportedVertex(String),
+    /// A stored value of a type that can't be loaded (e.g. a generic object value).
+    UnsupportedValue(String),
     /// A vertex is missing a parameter, or has one of the wrong kind.
     InvalidParameter {
         /// The vertex type.
@@ -30,7 +34,9 @@ impl fmt::Display for IoError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Decode(m) => write!(f, "cannot decode the model: {m}"),
+            Self::Encode(m) => write!(f, "cannot encode the model: {m}"),
             Self::UnsupportedVertex(t) => write!(f, "vertex type {t} is not supported"),
+            Self::UnsupportedValue(t) => write!(f, "stored values of type {t} are not supported"),
             Self::InvalidParameter {
                 vertex,
                 parameter,

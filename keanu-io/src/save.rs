@@ -578,14 +578,11 @@ impl Saver<'_> {
                     DType::Bool => "BooleanProxyVertex",
                     _ => return unsupported("a proxy of an unsupported type"),
                 };
-                let proxy_label = if label.is_empty() {
-                    format!("proxy_{}", id.index())
-                } else {
-                    label.clone()
-                };
+                // an unlabelled proxy is saved with an empty label: an invented one could collide with another
+                // node's label
                 (
                     class,
-                    vec![("parent", p(0)), ("label", P::Str(proxy_label))],
+                    vec![("parent", p(0)), ("label", P::Str(label.clone()))],
                 )
             }
             Op::Distribution(distribution) => {

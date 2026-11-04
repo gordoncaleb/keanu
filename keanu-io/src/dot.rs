@@ -102,10 +102,25 @@ pub fn to_dot(graph: &Graph, state: Option<&State>, metadata: &Metadata) -> Stri
             out,
             "{}[label=\"{}\"]",
             id.index(),
-            node_label(graph, state, id)
+            escape(&node_label(graph, state, id))
         );
     }
     out.push('}');
+    out
+}
+
+/// Escapes text for a double-quoted DOT string: quotes and backslashes are escaped, and line breaks become `\n`.
+fn escape(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    for c in text.chars() {
+        match c {
+            '"' => out.push_str("\\\""),
+            '\\' => out.push_str("\\\\"),
+            '\n' => out.push_str("\\n"),
+            '\r' => {}
+            c => out.push(c),
+        }
+    }
     out
 }
 

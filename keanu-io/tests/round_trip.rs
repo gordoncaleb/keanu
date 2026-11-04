@@ -322,3 +322,229 @@ fn dot_export_describes_nodes_edges_and_metadata() {
         "{with_values}"
     );
 }
+
+const DOUBLE_CONSTANT: &str =
+    "io.improbable.keanu.vertices.tensor.number.floating.dbl.nonprobabilistic.ConstantDoubleVertex";
+
+/// A model of a vector constant `[0]` followed by `vertex` (JSON).
+fn with_vector_and(vertex: &str) -> String {
+    format!(
+        r#"{{"graph": {{"vertices": [
+            {{"id": {{"id": "[0]"}}, "vertexType": "{DOUBLE_CONSTANT}", "shape": ["3"],
+              "parameters": [{{"name": "constant", "doubleTensorParam": {{"shape": ["3"], "values": [1, 2, 3]}}}}]}},
+            {vertex}
+        ]}}}}"#
+    )
+}
+
+fn is_decode_error(result: keanu_io::Result<keanu_io::Loaded>) -> bool {
+    matches!(result, Err(keanu_io::IoError::Decode(_)))
+}
+
+#[test]
+fn a_slice_dimension_outside_the_input_is_invalid() {
+    for dimension in ["4611686018427387904", "1", "-1"] {
+        let json = with_vector_and(&format!(
+            r#"{{"id": {{"id": "[1]"}}, "vertexType": "io.improbable.keanu.vertices.tensor.generic.nonprobabilistic.operators.unary.SliceVertex",
+                "parameters": [{{"name": "inputVertex", "parentVertex": {{"id": "[0]"}}}},
+                               {{"name": "dimension", "longParam": "{dimension}"}},
+                               {{"name": "index", "longParam": "0"}}]}}"#
+        ));
+        assert!(
+            matches!(load_json(&json), Err(keanu_io::IoError::InvalidParameter { ref parameter, .. }) if parameter == "dimension"),
+            "dimension {dimension}"
+        );
+    }
+}
+
+#[test]
+fn shapes_with_too_many_elements_are_decode_errors() {
+    let huge_constant = format!(
+        r#"{{"graph": {{"vertices": [{{"id": {{"id": "[0]"}}, "vertexType": "{DOUBLE_CONSTANT}",
+            "parameters": [{{"name": "constant", "doubleTensorParam": {{"shape": ["4294967296", "4294967296"], "values": []}}}}]}}]}}}}"#
+    );
+    assert!(is_decode_error(load_json(&huge_constant)));
+
+    let huge_vertex_shape = with_vector_and(
+        r#"{"id": {"id": "[1]"}, "vertexType": "io.improbable.keanu.vertices.tensor.number.floating.dbl.probabilistic.GaussianVertex",
+            "shape": ["4294967296", "4294967296"],
+            "parameters": [{"name": "mu", "parentVertex": {"id": "[0]"}}, {"name": "sigma", "parentVertex": {"id": "[0]"}}]}"#,
+    );
+    assert!(is_decode_error(load_json(&huge_vertex_shape)));
+
+    let huge_broadcast = with_vector_and(
+        r#"{"id": {"id": "[1]"}, "vertexType": "io.improbable.keanu.vertices.tensor.generic.nonprobabilistic.operators.unary.BroadcastVertex",
+            "parameters": [{"name": "inputVertex", "parentVertex": {"id": "[0]"}},
+                           {"name": "toShape", "longArrayParam": {"values": ["4294967296", "4294967296", "3"]}}]}"#,
+    );
+    assert!(is_decode_error(load_json(&huge_broadcast)));
+}
+
+#[test]
+fn duplicate_or_missing_vertex_ids_are_decode_errors() {
+    let duplicate = with_vector_and(&format!(
+        r#"{{"id": {{"id": "[0]"}}, "vertexType": "{DOUBLE_CONSTANT}",
+            "parameters": [{{"name": "constant", "doubleTensorParam": {{"values": [1]}}}}]}}"#
+    ));
+    assert!(is_decode_error(load_json(&duplicate)));
+
+    let missing = with_vector_and(&format!(
+        r#"{{"vertexType": "{DOUBLE_CONSTANT}", "parameters": [{{"name": "constant", "doubleTensorParam": {{"values": [1]}}}}]}}"#
+    ));
+    assert!(is_decode_error(load_json(&missing)));
+}
+
+#[test]
+fn generic_stored_values_are_unsupported_values() {
+    let json = format!(
+        r#"{{"graph": {{
+            "vertices": [{{"id": {{"id": "[0]"}}, "vertexType": "{DOUBLE_CONSTANT}",
+                "parameters": [{{"name": "constant", "doubleTensorParam": {{"values": [1]}}}}]}}],
+            "defaultState": [{{"id": {{"id": "[0]"}}, "value": {{"genericVal": {{"values": ["x"]}}}}}}]}}}}"#
+    );
+    assert!(matches!(
+        load_json(&json),
+        Err(keanu_io::IoError::UnsupportedValue(_))
+    ));
+}
+
+#[test]
+fn values_stored_by_label_are_applied_to_the_labelled_node() {
+    let b = GraphBuilder::new();
+    for i in 0..200 {
+        b.gaussian(0.0, 1.0).label(&format!("x{i}"));
+    }
+    let (graph, state) = b.build().unwrap();
+    let mut model: serde_json::Value =
+        serde_json::from_str(&save_json(&graph, &state, &Metadata::new()).unwrap()).unwrap();
+    model["graph"]["defaultState"] = (0..200)
+        .map(|i| {
+            serde_json::json!({
+                "vertexLabel": format!("x{i}"),
+                "value": {"doubleVal": {"values": [f64::from(i)]}},
+                "isObserved": i % 2 == 0
+            })
+        })
+        .collect();
+    let loaded = load_json(&model.to_string()).unwrap();
+    for id in loaded.graph.ids() {
+        let Some(label) = loaded.graph.node(id).label() else {
+            continue;
+        };
+        let i: u32 = label[1..].parse().unwrap();
+        assert_eq!(
+            loaded.state.value(id),
+            Some(&Value::F64(DoubleTensor::scalar(f64::from(i))))
+        );
+        assert_eq!(loaded.state.is_observed(id), i % 2 == 0);
+    }
+}
+
+/// The labels of a graph's nodes.
+fn labels(graph: &Graph) -> Vec<Option<String>> {
+    graph
+        .ids()
+        .map(|id| graph.node(id).label().map(str::to_owned))
+        .collect()
+}
+
+#[test]
+fn unlabelled_proxies_round_trip_without_an_invented_label() {
+    let b = GraphBuilder::new();
+    // the label the saver used to invent for the proxy (node 1)
+    let x = b.scalar(1.5).label("proxy_1");
+    let proxy = b.double_proxy(&[]);
+    b.connect(proxy, x);
+    (proxy * 2.0).label("doubled");
+    let (graph, state) = b.build().unwrap();
+
+    let reloaded =
+        load_protobuf(&save_protobuf(&graph, &state, &Metadata::new()).unwrap()).unwrap();
+    assert_eq!(labels(&reloaded.graph), labels(&graph));
+    let reloaded = load_json(&save_json(&graph, &state, &Metadata::new()).unwrap()).unwrap();
+    assert_eq!(labels(&reloaded.graph), labels(&graph));
+
+    // files saved by earlier versions, with an invented label parameter, load without it
+    let mut old: serde_json::Value =
+        serde_json::from_str(&save_json(&graph, &state, &Metadata::new()).unwrap()).unwrap();
+    let vertices = old["graph"]["vertices"].as_array_mut().unwrap();
+    let proxy_vertex = vertices
+        .iter_mut()
+        .find(|v| {
+            v["vertexType"]
+                .as_str()
+                .unwrap()
+                .ends_with("DoubleProxyVertex")
+        })
+        .unwrap();
+    for param in proxy_vertex["parameters"].as_array_mut().unwrap() {
+        if param["name"] == "label" {
+            param["stringParam"] = "proxy_7".into();
+        }
+    }
+    let reloaded = load_json(&old.to_string()).unwrap();
+    assert_eq!(labels(&reloaded.graph), labels(&graph));
+}
+
+/// Saves and loads a model `cycles` times, checking each load has the same number of nodes, values and log prob.
+fn assert_save_load_is_idempotent(name: &str, graph: Graph, state: State, cycles: usize) {
+    let metadata = Metadata::new();
+    let first = load_protobuf(&save_protobuf(&graph, &state, &metadata).unwrap()).unwrap();
+    let expected = summarise(&first.graph, &first.state);
+    let nodes = first.graph.len();
+    let (mut graph, mut state) = (first.graph, first.state);
+    for cycle in 0..cycles {
+        let loaded = if cycle % 2 == 0 {
+            load_json(&save_json(&graph, &state, &metadata).unwrap()).unwrap()
+        } else {
+            load_protobuf(&save_protobuf(&graph, &state, &metadata).unwrap()).unwrap()
+        };
+        assert_eq!(
+            loaded.graph.len(),
+            nodes,
+            "{name}: nodes after cycle {cycle}"
+        );
+        assert_same(
+            &format!("{name} cycle {cycle}"),
+            &summarise(&loaded.graph, &loaded.state),
+            &expected,
+        );
+        (graph, state) = (loaded.graph, loaded.state);
+    }
+}
+
+#[test]
+fn saving_and_loading_repeatedly_does_not_grow_the_graph() {
+    let b = GraphBuilder::new();
+    let square = b
+        .constant(
+            DoubleTensor::new(&[3, 3], vec![4.0, 1.0, 0.5, 1.0, 3.0, 0.2, 0.5, 0.2, 2.0]).unwrap(),
+        )
+        .label("square");
+    square.cholesky().cholesky_inverse().label("inverse");
+    let sigma = b.half_gaussian(1.5).label("sigma");
+    b.set_value(sigma, DoubleTensor::scalar(0.8));
+    let scale = b.half_cauchy(2.0).label("scale");
+    b.set_value(scale, DoubleTensor::scalar(1.1));
+    let (graph, state) = b.build().unwrap();
+
+    let loaded = load_protobuf(&save_protobuf(&graph, &state, &Metadata::new()).unwrap()).unwrap();
+    assert_eq!(loaded.graph.len(), graph.len());
+    assert_save_load_is_idempotent("rust built", graph, state, 4);
+
+    // and the models saved by Java (whose half distributions share a zero location constant, and whose cholesky
+    // inverses are in Java's lower triangle form)
+    for (name, graph, state) in cases() {
+        assert_save_load_is_idempotent(&name, graph, state, 3);
+    }
+}
+
+#[cfg(feature = "dot")]
+#[test]
+fn dot_labels_are_escaped() {
+    let b = GraphBuilder::new();
+    b.gaussian(0.0, 1.0).label("say \"hi\"\\\nbye");
+    let (graph, _) = b.build().unwrap();
+    let dot = keanu_io::to_dot(&graph, None, &Metadata::new());
+    assert!(dot.contains(r#"2[label="say \"hi\"\\\nbye"]"#), "{dot}");
+}

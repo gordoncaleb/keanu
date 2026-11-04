@@ -90,9 +90,15 @@ pub fn save_json(
     metadata: &Metadata,
 ) -> Result<String> {
     let model = save_model(graph, state, metadata)?;
-    let mut json = serde_json::to_value(&model).map_err(|e| IoError::Decode(e.to_string()))?;
+    let mut json = serde_json::to_value(&model).map_err(encode_error)?;
     json_non_finite::restore(&model, &mut json);
-    serde_json::to_string_pretty(&json).map_err(|e| IoError::Decode(e.to_string()))
+    serde_json::to_string_pretty(&json).map_err(encode_error)
+}
+
+/// A failure to write JSON is an encoding error, not a decoding one.
+#[cfg(feature = "json")]
+fn encode_error(e: serde_json::Error) -> IoError {
+    IoError::Encode(e.to_string())
 }
 
 /// serde_json writes non-finite doubles as `null`, but the protobuf JSON mapping (and Java) write the strings
@@ -162,5 +168,19 @@ mod json_non_finite {
                 }
             }
         }
+    }
+}
+
+#[cfg(all(test, feature = "json"))]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn json_serialisation_failures_are_encode_errors() {
+        // maps with non-string keys can't be written as JSON
+        let failure = serde_json::to_value(BTreeMap::from([(vec![1u8], 1)])).unwrap_err();
+        let error = encode_error(failure);
+        assert!(matches!(error, IoError::Encode(_)), "{error:?}");
+        assert!(error.to_string().starts_with("cannot encode the model"));
     }
 }

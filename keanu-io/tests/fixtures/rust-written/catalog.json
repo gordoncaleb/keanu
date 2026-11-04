@@ -361,19 +361,7 @@
       },
       {
         "id": {
-          "id": "[168]"
-        },
-        "value": {
-          "doubleVal": {
-            "values": [
-              0.0
-            ]
-          }
-        }
-      },
-      {
-        "id": {
-          "id": "[170]"
+          "id": "[169]"
         },
         "value": {
           "doubleVal": {
@@ -389,7 +377,7 @@
       },
       {
         "id": {
-          "id": "[171]"
+          "id": "[170]"
         },
         "value": {
           "doubleVal": {
@@ -401,7 +389,7 @@
       },
       {
         "id": {
-          "id": "[172]"
+          "id": "[171]"
         },
         "value": {
           "doubleVal": {
@@ -413,12 +401,12 @@
       },
       {
         "id": {
-          "id": "[173]"
+          "id": "[172]"
         },
         "value": {
           "doubleVal": {
             "values": [
-              0.0
+              2.0
             ]
           }
         }
@@ -426,6 +414,18 @@
       {
         "id": {
           "id": "[174]"
+        },
+        "value": {
+          "doubleVal": {
+            "values": [
+              1.2
+            ]
+          }
+        }
+      },
+      {
+        "id": {
+          "id": "[175]"
         },
         "value": {
           "doubleVal": {
@@ -442,7 +442,7 @@
         "value": {
           "doubleVal": {
             "values": [
-              1.2
+              3.0
             ]
           }
         }
@@ -454,30 +454,6 @@
         "value": {
           "doubleVal": {
             "values": [
-              2.0
-            ]
-          }
-        }
-      },
-      {
-        "id": {
-          "id": "[178]"
-        },
-        "value": {
-          "doubleVal": {
-            "values": [
-              3.0
-            ]
-          }
-        }
-      },
-      {
-        "id": {
-          "id": "[179]"
-        },
-        "value": {
-          "doubleVal": {
-            "values": [
               0.35
             ]
           }
@@ -485,7 +461,7 @@
       },
       {
         "id": {
-          "id": "[180]"
+          "id": "[178]"
         },
         "value": {
           "intVal": {
@@ -497,7 +473,7 @@
       },
       {
         "id": {
-          "id": "[181]"
+          "id": "[179]"
         },
         "value": {
           "doubleVal": {
@@ -509,7 +485,7 @@
       },
       {
         "id": {
-          "id": "[182]"
+          "id": "[180]"
         },
         "value": {
           "doubleVal": {
@@ -526,7 +502,7 @@
       },
       {
         "id": {
-          "id": "[183]"
+          "id": "[181]"
         },
         "value": {
           "doubleVal": {
@@ -543,7 +519,7 @@
       },
       {
         "id": {
-          "id": "[184]"
+          "id": "[182]"
         },
         "value": {
           "doubleVal": {
@@ -555,7 +531,7 @@
       },
       {
         "id": {
-          "id": "[185]"
+          "id": "[183]"
         },
         "value": {
           "doubleVal": {
@@ -567,7 +543,7 @@
       },
       {
         "id": {
-          "id": "[186]"
+          "id": "[184]"
         },
         "value": {
           "doubleVal": {
@@ -579,7 +555,7 @@
       },
       {
         "id": {
-          "id": "[187]"
+          "id": "[185]"
         },
         "value": {
           "doubleVal": {
@@ -591,7 +567,7 @@
       },
       {
         "id": {
-          "id": "[188]"
+          "id": "[186]"
         },
         "value": {
           "doubleVal": {
@@ -603,12 +579,36 @@
       },
       {
         "id": {
-          "id": "[189]"
+          "id": "[187]"
         },
         "value": {
           "doubleVal": {
             "values": [
               3.0
+            ]
+          }
+        }
+      },
+      {
+        "id": {
+          "id": "[188]"
+        },
+        "value": {
+          "doubleVal": {
+            "values": [
+              0.5
+            ]
+          }
+        }
+      },
+      {
+        "id": {
+          "id": "[189]"
+        },
+        "value": {
+          "doubleVal": {
+            "values": [
+              0.3
             ]
           }
         }
@@ -632,7 +632,7 @@
         "value": {
           "doubleVal": {
             "values": [
-              0.3
+              -0.2
             ]
           }
         }
@@ -644,7 +644,7 @@
         "value": {
           "doubleVal": {
             "values": [
-              0.5
+              0.0
             ]
           }
         }
@@ -656,7 +656,7 @@
         "value": {
           "doubleVal": {
             "values": [
-              -0.2
+              1.0
             ]
           }
         }
@@ -668,7 +668,7 @@
         "value": {
           "doubleVal": {
             "values": [
-              0.0
+              1.3
             ]
           }
         }
@@ -680,7 +680,7 @@
         "value": {
           "doubleVal": {
             "values": [
-              1.0
+              0.0
             ]
           }
         }
@@ -692,7 +692,7 @@
         "value": {
           "doubleVal": {
             "values": [
-              1.3
+              1.0
             ]
           }
         }
@@ -704,30 +704,6 @@
         "value": {
           "doubleVal": {
             "values": [
-              0.0
-            ]
-          }
-        }
-      },
-      {
-        "id": {
-          "id": "[198]"
-        },
-        "value": {
-          "doubleVal": {
-            "values": [
-              1.0
-            ]
-          }
-        }
-      },
-      {
-        "id": {
-          "id": "[199]"
-        },
-        "value": {
-          "doubleVal": {
-            "values": [
               0.6
             ]
           }
@@ -735,7 +711,7 @@
       },
       {
         "id": {
-          "id": "[200]"
+          "id": "[198]"
         },
         "value": {
           "doubleVal": {
@@ -751,7 +727,7 @@
       },
       {
         "id": {
-          "id": "[201]"
+          "id": "[199]"
         },
         "value": {
           "doubleVal": {
@@ -770,7 +746,7 @@
       },
       {
         "id": {
-          "id": "[202]"
+          "id": "[200]"
         },
         "value": {
           "doubleVal": {
@@ -786,7 +762,7 @@
       },
       {
         "id": {
-          "id": "[203]"
+          "id": "[201]"
         },
         "value": {
           "doubleVal": {
@@ -798,7 +774,7 @@
       },
       {
         "id": {
-          "id": "[204]"
+          "id": "[202]"
         },
         "value": {
           "doubleVal": {
@@ -810,7 +786,7 @@
       },
       {
         "id": {
-          "id": "[205]"
+          "id": "[203]"
         },
         "value": {
           "doubleVal": {
@@ -822,7 +798,7 @@
       },
       {
         "id": {
-          "id": "[206]"
+          "id": "[204]"
         },
         "value": {
           "intVal": {
@@ -834,7 +810,7 @@
       },
       {
         "id": {
-          "id": "[207]"
+          "id": "[205]"
         },
         "value": {
           "doubleVal": {
@@ -846,7 +822,7 @@
       },
       {
         "id": {
-          "id": "[208]"
+          "id": "[206]"
         },
         "value": {
           "doubleVal": {
@@ -858,7 +834,7 @@
       },
       {
         "id": {
-          "id": "[209]"
+          "id": "[207]"
         },
         "value": {
           "doubleVal": {
@@ -870,7 +846,7 @@
       },
       {
         "id": {
-          "id": "[210]"
+          "id": "[208]"
         },
         "value": {
           "doubleVal": {
@@ -882,7 +858,7 @@
       },
       {
         "id": {
-          "id": "[211]"
+          "id": "[209]"
         },
         "value": {
           "doubleVal": {
@@ -894,7 +870,7 @@
       },
       {
         "id": {
-          "id": "[212]"
+          "id": "[210]"
         },
         "value": {
           "doubleVal": {
@@ -906,7 +882,7 @@
       },
       {
         "id": {
-          "id": "[213]"
+          "id": "[211]"
         },
         "value": {
           "doubleVal": {
@@ -918,7 +894,7 @@
       },
       {
         "id": {
-          "id": "[214]"
+          "id": "[212]"
         },
         "value": {
           "doubleVal": {
@@ -930,7 +906,7 @@
       },
       {
         "id": {
-          "id": "[215]"
+          "id": "[213]"
         },
         "value": {
           "doubleVal": {
@@ -942,7 +918,7 @@
       },
       {
         "id": {
-          "id": "[216]"
+          "id": "[214]"
         },
         "value": {
           "doubleVal": {
@@ -954,7 +930,7 @@
       },
       {
         "id": {
-          "id": "[217]"
+          "id": "[215]"
         },
         "isObserved": true,
         "value": {
@@ -972,7 +948,7 @@
       },
       {
         "id": {
-          "id": "[218]"
+          "id": "[216]"
         },
         "value": {
           "doubleVal": {
@@ -984,7 +960,7 @@
       },
       {
         "id": {
-          "id": "[219]"
+          "id": "[217]"
         },
         "value": {
           "intVal": {
@@ -996,7 +972,7 @@
       },
       {
         "id": {
-          "id": "[220]"
+          "id": "[218]"
         },
         "isObserved": true,
         "value": {
@@ -1013,7 +989,7 @@
       },
       {
         "id": {
-          "id": "[221]"
+          "id": "[219]"
         },
         "value": {
           "doubleVal": {
@@ -1025,7 +1001,7 @@
       },
       {
         "id": {
-          "id": "[222]"
+          "id": "[220]"
         },
         "isObserved": true,
         "value": {
@@ -1042,7 +1018,7 @@
       },
       {
         "id": {
-          "id": "[223]"
+          "id": "[221]"
         },
         "value": {
           "doubleVal": {
@@ -1059,7 +1035,7 @@
       },
       {
         "id": {
-          "id": "[224]"
+          "id": "[222]"
         },
         "value": {
           "intVal": {
@@ -1071,7 +1047,7 @@
       },
       {
         "id": {
-          "id": "[225]"
+          "id": "[223]"
         },
         "isObserved": true,
         "value": {
@@ -1089,7 +1065,7 @@
       },
       {
         "id": {
-          "id": "[227]"
+          "id": "[225]"
         },
         "isObserved": true,
         "value": {
@@ -1107,7 +1083,7 @@
       },
       {
         "id": {
-          "id": "[228]"
+          "id": "[226]"
         },
         "value": {
           "intVal": {
@@ -1119,7 +1095,7 @@
       },
       {
         "id": {
-          "id": "[229]"
+          "id": "[227]"
         },
         "value": {
           "intVal": {
@@ -1131,7 +1107,7 @@
       },
       {
         "id": {
-          "id": "[230]"
+          "id": "[228]"
         },
         "isObserved": true,
         "value": {
@@ -1148,7 +1124,7 @@
       },
       {
         "id": {
-          "id": "[232]"
+          "id": "[230]"
         },
         "value": {
           "doubleVal": {
@@ -1160,7 +1136,7 @@
       },
       {
         "id": {
-          "id": "[233]"
+          "id": "[231]"
         },
         "isObserved": true,
         "value": {
@@ -4961,28 +4937,12 @@
         "id": {
           "id": "[169]"
         },
-        "parameters": [
-          {
-            "doubleTensorParam": {
-              "values": [
-                0.0
-              ]
-            },
-            "name": "constant"
-          }
-        ],
-        "vertexType": "io.improbable.keanu.vertices.tensor.number.floating.dbl.nonprobabilistic.ConstantDoubleVertex"
-      },
-      {
-        "id": {
-          "id": "[170]"
-        },
         "label": "halfGaussian",
         "parameters": [
           {
             "name": "mu",
             "parentVertex": {
-              "id": "[169]"
+              "id": "[168]"
             }
           },
           {
@@ -4999,7 +4959,7 @@
       },
       {
         "id": {
-          "id": "[171]"
+          "id": "[170]"
         },
         "parameters": [
           {
@@ -5015,7 +4975,7 @@
       },
       {
         "id": {
-          "id": "[172]"
+          "id": "[171]"
         },
         "label": "cauchy",
         "parameters": [
@@ -5028,11 +4988,27 @@
           {
             "name": "scale",
             "parentVertex": {
-              "id": "[171]"
+              "id": "[170]"
             }
           }
         ],
         "vertexType": "io.improbable.keanu.vertices.tensor.number.floating.dbl.probabilistic.CauchyVertex"
+      },
+      {
+        "id": {
+          "id": "[172]"
+        },
+        "parameters": [
+          {
+            "doubleTensorParam": {
+              "values": [
+                2.0
+              ]
+            },
+            "name": "constant"
+          }
+        ],
+        "vertexType": "io.improbable.keanu.vertices.tensor.number.floating.dbl.nonprobabilistic.ConstantDoubleVertex"
       },
       {
         "id": {
@@ -5054,17 +5030,22 @@
         "id": {
           "id": "[174]"
         },
+        "label": "halfCauchy",
         "parameters": [
           {
-            "doubleTensorParam": {
-              "values": [
-                2.0
-              ]
-            },
-            "name": "constant"
+            "name": "location",
+            "parentVertex": {
+              "id": "[173]"
+            }
+          },
+          {
+            "name": "scale",
+            "parentVertex": {
+              "id": "[172]"
+            }
           }
         ],
-        "vertexType": "io.improbable.keanu.vertices.tensor.number.floating.dbl.nonprobabilistic.ConstantDoubleVertex"
+        "vertexType": "io.improbable.keanu.vertices.tensor.number.floating.dbl.probabilistic.HalfCauchyVertex"
       },
       {
         "id": {
@@ -5074,7 +5055,7 @@
           {
             "doubleTensorParam": {
               "values": [
-                0.0
+                2.0
               ]
             },
             "name": "constant"
@@ -5085,43 +5066,6 @@
       {
         "id": {
           "id": "[176]"
-        },
-        "label": "halfCauchy",
-        "parameters": [
-          {
-            "name": "location",
-            "parentVertex": {
-              "id": "[175]"
-            }
-          },
-          {
-            "name": "scale",
-            "parentVertex": {
-              "id": "[174]"
-            }
-          }
-        ],
-        "vertexType": "io.improbable.keanu.vertices.tensor.number.floating.dbl.probabilistic.HalfCauchyVertex"
-      },
-      {
-        "id": {
-          "id": "[177]"
-        },
-        "parameters": [
-          {
-            "doubleTensorParam": {
-              "values": [
-                2.0
-              ]
-            },
-            "name": "constant"
-          }
-        ],
-        "vertexType": "io.improbable.keanu.vertices.tensor.number.floating.dbl.nonprobabilistic.ConstantDoubleVertex"
-      },
-      {
-        "id": {
-          "id": "[178]"
         },
         "parameters": [
           {
@@ -5137,20 +5081,20 @@
       },
       {
         "id": {
-          "id": "[179]"
+          "id": "[177]"
         },
         "label": "beta",
         "parameters": [
           {
             "name": "alpha",
             "parentVertex": {
-              "id": "[177]"
+              "id": "[175]"
             }
           },
           {
             "name": "beta",
             "parentVertex": {
-              "id": "[178]"
+              "id": "[176]"
             }
           }
         ],
@@ -5158,7 +5102,7 @@
       },
       {
         "id": {
-          "id": "[180]"
+          "id": "[178]"
         },
         "parameters": [
           {
@@ -5174,14 +5118,14 @@
       },
       {
         "id": {
-          "id": "[181]"
+          "id": "[179]"
         },
         "label": "chiSquared",
         "parameters": [
           {
             "name": "k",
             "parentVertex": {
-              "id": "[180]"
+              "id": "[178]"
             }
           }
         ],
@@ -5189,7 +5133,7 @@
       },
       {
         "id": {
-          "id": "[182]"
+          "id": "[180]"
         },
         "parameters": [
           {
@@ -5213,14 +5157,14 @@
       },
       {
         "id": {
-          "id": "[183]"
+          "id": "[181]"
         },
         "label": "dirichlet",
         "parameters": [
           {
             "name": "concentration",
             "parentVertex": {
-              "id": "[182]"
+              "id": "[180]"
             }
           }
         ],
@@ -5231,7 +5175,7 @@
       },
       {
         "id": {
-          "id": "[184]"
+          "id": "[182]"
         },
         "parameters": [
           {
@@ -5247,14 +5191,14 @@
       },
       {
         "id": {
-          "id": "[185]"
+          "id": "[183]"
         },
         "label": "exponential",
         "parameters": [
           {
             "name": "rate",
             "parentVertex": {
-              "id": "[184]"
+              "id": "[182]"
             }
           }
         ],
@@ -5262,7 +5206,7 @@
       },
       {
         "id": {
-          "id": "[186]"
+          "id": "[184]"
         },
         "parameters": [
           {
@@ -5278,7 +5222,7 @@
       },
       {
         "id": {
-          "id": "[187]"
+          "id": "[185]"
         },
         "parameters": [
           {
@@ -5294,20 +5238,20 @@
       },
       {
         "id": {
-          "id": "[188]"
+          "id": "[186]"
         },
         "label": "gamma",
         "parameters": [
           {
             "name": "k",
             "parentVertex": {
-              "id": "[187]"
+              "id": "[185]"
             }
           },
           {
             "name": "theta",
             "parentVertex": {
-              "id": "[186]"
+              "id": "[184]"
             }
           }
         ],
@@ -5315,7 +5259,7 @@
       },
       {
         "id": {
-          "id": "[189]"
+          "id": "[187]"
         },
         "parameters": [
           {
@@ -5328,6 +5272,43 @@
           }
         ],
         "vertexType": "io.improbable.keanu.vertices.tensor.number.floating.dbl.nonprobabilistic.ConstantDoubleVertex"
+      },
+      {
+        "id": {
+          "id": "[188]"
+        },
+        "parameters": [
+          {
+            "doubleTensorParam": {
+              "values": [
+                0.5
+              ]
+            },
+            "name": "constant"
+          }
+        ],
+        "vertexType": "io.improbable.keanu.vertices.tensor.number.floating.dbl.nonprobabilistic.ConstantDoubleVertex"
+      },
+      {
+        "id": {
+          "id": "[189]"
+        },
+        "label": "inverseGamma",
+        "parameters": [
+          {
+            "name": "alpha",
+            "parentVertex": {
+              "id": "[187]"
+            }
+          },
+          {
+            "name": "beta",
+            "parentVertex": {
+              "id": "[188]"
+            }
+          }
+        ],
+        "vertexType": "io.improbable.keanu.vertices.tensor.number.floating.dbl.probabilistic.InverseGammaVertex"
       },
       {
         "id": {
@@ -5349,49 +5330,12 @@
         "id": {
           "id": "[191]"
         },
-        "label": "inverseGamma",
-        "parameters": [
-          {
-            "name": "alpha",
-            "parentVertex": {
-              "id": "[189]"
-            }
-          },
-          {
-            "name": "beta",
-            "parentVertex": {
-              "id": "[190]"
-            }
-          }
-        ],
-        "vertexType": "io.improbable.keanu.vertices.tensor.number.floating.dbl.probabilistic.InverseGammaVertex"
-      },
-      {
-        "id": {
-          "id": "[192]"
-        },
-        "parameters": [
-          {
-            "doubleTensorParam": {
-              "values": [
-                0.5
-              ]
-            },
-            "name": "constant"
-          }
-        ],
-        "vertexType": "io.improbable.keanu.vertices.tensor.number.floating.dbl.nonprobabilistic.ConstantDoubleVertex"
-      },
-      {
-        "id": {
-          "id": "[193]"
-        },
         "label": "laplace",
         "parameters": [
           {
             "name": "beta",
             "parentVertex": {
-              "id": "[192]"
+              "id": "[190]"
             }
           },
           {
@@ -5405,7 +5349,7 @@
       },
       {
         "id": {
-          "id": "[194]"
+          "id": "[192]"
         },
         "parameters": [
           {
@@ -5421,13 +5365,50 @@
       },
       {
         "id": {
-          "id": "[195]"
+          "id": "[193]"
         },
         "parameters": [
           {
             "doubleTensorParam": {
               "values": [
                 1.0
+              ]
+            },
+            "name": "constant"
+          }
+        ],
+        "vertexType": "io.improbable.keanu.vertices.tensor.number.floating.dbl.nonprobabilistic.ConstantDoubleVertex"
+      },
+      {
+        "id": {
+          "id": "[194]"
+        },
+        "label": "logNormal",
+        "parameters": [
+          {
+            "name": "mu",
+            "parentVertex": {
+              "id": "[192]"
+            }
+          },
+          {
+            "name": "sigma",
+            "parentVertex": {
+              "id": "[193]"
+            }
+          }
+        ],
+        "vertexType": "io.improbable.keanu.vertices.tensor.number.floating.dbl.probabilistic.LogNormalVertex"
+      },
+      {
+        "id": {
+          "id": "[195]"
+        },
+        "parameters": [
+          {
+            "doubleTensorParam": {
+              "values": [
+                0.0
               ]
             },
             "name": "constant"
@@ -5439,43 +5420,6 @@
         "id": {
           "id": "[196]"
         },
-        "label": "logNormal",
-        "parameters": [
-          {
-            "name": "mu",
-            "parentVertex": {
-              "id": "[194]"
-            }
-          },
-          {
-            "name": "sigma",
-            "parentVertex": {
-              "id": "[195]"
-            }
-          }
-        ],
-        "vertexType": "io.improbable.keanu.vertices.tensor.number.floating.dbl.probabilistic.LogNormalVertex"
-      },
-      {
-        "id": {
-          "id": "[197]"
-        },
-        "parameters": [
-          {
-            "doubleTensorParam": {
-              "values": [
-                0.0
-              ]
-            },
-            "name": "constant"
-          }
-        ],
-        "vertexType": "io.improbable.keanu.vertices.tensor.number.floating.dbl.nonprobabilistic.ConstantDoubleVertex"
-      },
-      {
-        "id": {
-          "id": "[198]"
-        },
         "parameters": [
           {
             "doubleTensorParam": {
@@ -5490,20 +5434,20 @@
       },
       {
         "id": {
-          "id": "[199]"
+          "id": "[197]"
         },
         "label": "logistic",
         "parameters": [
           {
             "name": "mu",
             "parentVertex": {
-              "id": "[197]"
+              "id": "[195]"
             }
           },
           {
             "name": "s",
             "parentVertex": {
-              "id": "[198]"
+              "id": "[196]"
             }
           }
         ],
@@ -5511,7 +5455,7 @@
       },
       {
         "id": {
-          "id": "[200]"
+          "id": "[198]"
         },
         "parameters": [
           {
@@ -5534,7 +5478,7 @@
       },
       {
         "id": {
-          "id": "[201]"
+          "id": "[199]"
         },
         "parameters": [
           {
@@ -5561,20 +5505,20 @@
       },
       {
         "id": {
-          "id": "[202]"
+          "id": "[200]"
         },
         "label": "multivariateGaussian",
         "parameters": [
           {
             "name": "covariance",
             "parentVertex": {
-              "id": "[201]"
+              "id": "[199]"
             }
           },
           {
             "name": "mu",
             "parentVertex": {
-              "id": "[200]"
+              "id": "[198]"
             }
           }
         ],
@@ -5585,7 +5529,7 @@
       },
       {
         "id": {
-          "id": "[203]"
+          "id": "[201]"
         },
         "parameters": [
           {
@@ -5601,7 +5545,7 @@
       },
       {
         "id": {
-          "id": "[204]"
+          "id": "[202]"
         },
         "parameters": [
           {
@@ -5617,20 +5561,20 @@
       },
       {
         "id": {
-          "id": "[205]"
+          "id": "[203]"
         },
         "label": "pareto",
         "parameters": [
           {
             "name": "location",
             "parentVertex": {
-              "id": "[203]"
+              "id": "[201]"
             }
           },
           {
             "name": "scale",
             "parentVertex": {
-              "id": "[204]"
+              "id": "[202]"
             }
           }
         ],
@@ -5638,7 +5582,7 @@
       },
       {
         "id": {
-          "id": "[206]"
+          "id": "[204]"
         },
         "parameters": [
           {
@@ -5654,14 +5598,14 @@
       },
       {
         "id": {
-          "id": "[207]"
+          "id": "[205]"
         },
         "label": "studentT",
         "parameters": [
           {
             "name": "v",
             "parentVertex": {
-              "id": "[206]"
+              "id": "[204]"
             }
           }
         ],
@@ -5669,7 +5613,7 @@
       },
       {
         "id": {
-          "id": "[208]"
+          "id": "[206]"
         },
         "parameters": [
           {
@@ -5685,7 +5629,7 @@
       },
       {
         "id": {
-          "id": "[209]"
+          "id": "[207]"
         },
         "parameters": [
           {
@@ -5701,7 +5645,7 @@
       },
       {
         "id": {
-          "id": "[210]"
+          "id": "[208]"
         },
         "parameters": [
           {
@@ -5717,26 +5661,26 @@
       },
       {
         "id": {
-          "id": "[211]"
+          "id": "[209]"
         },
         "label": "triangular",
         "parameters": [
           {
             "name": "c",
             "parentVertex": {
-              "id": "[210]"
+              "id": "[208]"
             }
           },
           {
             "name": "xMax",
             "parentVertex": {
-              "id": "[209]"
+              "id": "[207]"
             }
           },
           {
             "name": "xMin",
             "parentVertex": {
-              "id": "[208]"
+              "id": "[206]"
             }
           }
         ],
@@ -5744,7 +5688,7 @@
       },
       {
         "id": {
-          "id": "[212]"
+          "id": "[210]"
         },
         "parameters": [
           {
@@ -5760,7 +5704,7 @@
       },
       {
         "id": {
-          "id": "[213]"
+          "id": "[211]"
         },
         "parameters": [
           {
@@ -5776,20 +5720,20 @@
       },
       {
         "id": {
-          "id": "[214]"
+          "id": "[212]"
         },
         "label": "uniform",
         "parameters": [
           {
             "name": "xMax",
             "parentVertex": {
-              "id": "[213]"
+              "id": "[211]"
             }
           },
           {
             "name": "xMin",
             "parentVertex": {
-              "id": "[212]"
+              "id": "[210]"
             }
           }
         ],
@@ -5797,7 +5741,7 @@
       },
       {
         "id": {
-          "id": "[215]"
+          "id": "[213]"
         },
         "label": "kde",
         "parameters": [
@@ -5824,7 +5768,7 @@
       },
       {
         "id": {
-          "id": "[216]"
+          "id": "[214]"
         },
         "parameters": [
           {
@@ -5840,14 +5784,14 @@
       },
       {
         "id": {
-          "id": "[217]"
+          "id": "[215]"
         },
         "label": "bernoulli",
         "parameters": [
           {
             "name": "probTrue",
             "parentVertex": {
-              "id": "[216]"
+              "id": "[214]"
             }
           }
         ],
@@ -5858,7 +5802,7 @@
       },
       {
         "id": {
-          "id": "[218]"
+          "id": "[216]"
         },
         "parameters": [
           {
@@ -5874,7 +5818,7 @@
       },
       {
         "id": {
-          "id": "[219]"
+          "id": "[217]"
         },
         "parameters": [
           {
@@ -5890,20 +5834,20 @@
       },
       {
         "id": {
-          "id": "[220]"
+          "id": "[218]"
         },
         "label": "binomial",
         "parameters": [
           {
             "name": "n",
             "parentVertex": {
-              "id": "[219]"
+              "id": "[217]"
             }
           },
           {
             "name": "p",
             "parentVertex": {
-              "id": "[218]"
+              "id": "[216]"
             }
           }
         ],
@@ -5914,7 +5858,7 @@
       },
       {
         "id": {
-          "id": "[221]"
+          "id": "[219]"
         },
         "parameters": [
           {
@@ -5930,14 +5874,14 @@
       },
       {
         "id": {
-          "id": "[222]"
+          "id": "[220]"
         },
         "label": "geometric",
         "parameters": [
           {
             "name": "p",
             "parentVertex": {
-              "id": "[221]"
+              "id": "[219]"
             }
           }
         ],
@@ -5948,7 +5892,7 @@
       },
       {
         "id": {
-          "id": "[223]"
+          "id": "[221]"
         },
         "parameters": [
           {
@@ -5972,7 +5916,7 @@
       },
       {
         "id": {
-          "id": "[224]"
+          "id": "[222]"
         },
         "parameters": [
           {
@@ -5988,20 +5932,20 @@
       },
       {
         "id": {
-          "id": "[225]"
+          "id": "[223]"
         },
         "label": "multinomial",
         "parameters": [
           {
             "name": "n",
             "parentVertex": {
-              "id": "[224]"
+              "id": "[222]"
             }
           },
           {
             "name": "p",
             "parentVertex": {
-              "id": "[223]"
+              "id": "[221]"
             }
           }
         ],
@@ -6012,7 +5956,7 @@
       },
       {
         "id": {
-          "id": "[226]"
+          "id": "[224]"
         },
         "parameters": [
           {
@@ -6026,14 +5970,14 @@
       },
       {
         "id": {
-          "id": "[227]"
+          "id": "[225]"
         },
         "label": "poisson",
         "parameters": [
           {
             "name": "mu",
             "parentVertex": {
-              "id": "[226]"
+              "id": "[224]"
             }
           }
         ],
@@ -6044,7 +5988,7 @@
       },
       {
         "id": {
-          "id": "[228]"
+          "id": "[226]"
         },
         "parameters": [
           {
@@ -6060,7 +6004,7 @@
       },
       {
         "id": {
-          "id": "[229]"
+          "id": "[227]"
         },
         "parameters": [
           {
@@ -6076,20 +6020,20 @@
       },
       {
         "id": {
-          "id": "[230]"
+          "id": "[228]"
         },
         "label": "uniformInt",
         "parameters": [
           {
             "name": "max",
             "parentVertex": {
-              "id": "[229]"
+              "id": "[227]"
             }
           },
           {
             "name": "min",
             "parentVertex": {
-              "id": "[228]"
+              "id": "[226]"
             }
           }
         ],
@@ -6100,7 +6044,7 @@
       },
       {
         "id": {
-          "id": "[231]"
+          "id": "[229]"
         },
         "parameters": [
           {
@@ -6124,7 +6068,7 @@
       },
       {
         "id": {
-          "id": "[232]"
+          "id": "[230]"
         },
         "parameters": [
           {
@@ -6140,20 +6084,20 @@
       },
       {
         "id": {
-          "id": "[233]"
+          "id": "[231]"
         },
         "label": "gaussianObserved",
         "parameters": [
           {
             "name": "mu",
             "parentVertex": {
-              "id": "[231]"
+              "id": "[229]"
             }
           },
           {
             "name": "sigma",
             "parentVertex": {
-              "id": "[232]"
+              "id": "[230]"
             }
           }
         ],
