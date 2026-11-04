@@ -129,6 +129,17 @@ vector was edited by hand and the entry says so.
   lower bound above its upper bound. `NonGradientOptimizer` rejects NaN bounds (`InvalidArgument`).
 - `keanu-algorithms`: BOBYQA no longer overflows checking a huge `interpolation_points`; it falls back to the
   default, as for any other out-of-range value.
+- `keanu-algorithms`: BOBYQA stops as soon as the objective fails instead of iterating on to the final trust region
+  radius (new `prima::minimize_with_termination` and `ExitStatus::CallbackTerminate`, PRIMA's callback
+  termination), computes each step's Lagrange values once instead of up to seven times (bit-identical results), and
+  documents the settings it adjusts silently (`max_evaluations` below n + 3, out-of-range `interpolation_points`).
+- `keanu-algorithms`: the optimizers no longer evaluate points twice: conjugate gradient and Adam start from the
+  initial-condition check's fitness and gradient, conjugate gradient takes the fitness at the line search's step
+  from the line search, and neither it nor BOBYQA re-evaluates the final point (BOBYQA also reuses the check's
+  value for its first point). Conjugate gradient's line search also stops once no step can change the fitness
+  (a flat first step, steps too small to move the point, or a flat Brent bracket) instead of spending 40–60
+  evaluations near the optimum. Reported `evaluations` drop: a one-dimensional Gaussian MAP 78 → 15, the golden
+  models' conjugate gradient runs by 3–8× (e.g. thermometers MAP 80 → 24), BOBYQA by 2.
 - keanu-tensor: `digamma`'s asymptotic series had the wrong sign on its 1/(12x²) term (inherited from Apache Commons), so results were off by up to ~3e-9 (ψ(1) = -0.5772156677920679). Golden vectors edited by hand to mpmath values: `unary/digamma` and `unary/digamma/scalar` (tensors.json), `unary/digamma` and the `unary/logGamma` partials (vertices.json), the catalog model's `digamma` node (models.json), and the ψ-dependent gradients of `Beta/alpha=0.5,beta=0.5`, `Dirichlet/concentration=[0.5, 2.0, 3.0]` (both cases), the three `Gamma` cases and the two `InverseGamma` cases (distributions.json). The Rust-written `keanu-io` fixtures were regenerated, and the custom distribution example test uses seed 9, as its NUTS chain changed with the Beta gradient.
 - keanu-tensor: `trigamma`'s asymptotic series subtracted its 1/(42z⁷) term instead of adding it.
 - keanu-tensor: `digamma` and `trigamma` of negative arguments use the reflection formulas, so they no longer loop |x| times (or for ever from about -1e16). Non-positive integers are still poles (-∞ and +∞).

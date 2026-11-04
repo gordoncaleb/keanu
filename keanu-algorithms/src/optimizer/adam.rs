@@ -97,12 +97,14 @@ impl Adam {
         Ok(())
     }
 
-    /// Returns the final position and whether it converged.
+    /// Returns the final position and whether it converged. `initial_gradient`, if known, is the gradient at
+    /// `start`, so the first step needn't evaluate it.
     pub(crate) fn maximize(
         &self,
         objective: &Objective<'_>,
         state: &mut State,
         start: Vec<DoubleTensor>,
+        mut initial_gradient: Option<Vec<DoubleTensor>>,
     ) -> Result<(Vec<DoubleTensor>, bool)> {
         self.validate()?;
         let mut theta = start;
@@ -115,7 +117,10 @@ impl Adam {
         let mut converged = false;
         let mut t = 1usize;
         while !converged && t <= self.max_evaluations {
-            let gradients = objective.gradient(state, &theta)?;
+            let gradients = match initial_gradient.take() {
+                Some(gradient) => gradient,
+                None => objective.gradient(state, &theta)?,
+            };
             beta1_t *= self.beta1;
             beta2_t *= self.beta2;
             let b = (1.0 - beta1_t) / (1.0 - beta2_t).sqrt();

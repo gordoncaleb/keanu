@@ -125,36 +125,64 @@ impl<'m> GradientOptimizer<'m> {
         check_latents(model)?;
 
         let objective = Objective::new(model, fitness);
-        let start = objective.point(state)?;
-        if self.check_initial_conditions {
-            let initial = objective.value(state, &start)?;
-            if initial == f64::NEG_INFINITY || initial.is_nan() {
-                return Err(AlgorithmError::ImpossibleStart);
-            }
-            let gradient = objective.gradient(state, &start)?;
-            let elements = || gradient.iter().flat_map(|g| g.as_slice().iter().copied());
+        let start = objective.flat_point(state)?;
+        // the initial-condition check's fitness and gradient are where the algorithm starts, so are passed on
+        let known_start = if self.check_initial_conditions {
+            let initial = start_value(&objective, state, &start)?;
+            let gradient = objective.gradient_flat(state, &start)?;
             // checked separately: f64::max skips NaN, so a NaN gradient would pass the flatness check
-            if !elements().all(f64::is_finite) {
+            if !gradient.iter().all(|g| g.is_finite()) {
                 return Err(AlgorithmError::NonFiniteGradient);
             }
-            let largest = elements().map(f64::abs).fold(0.0, f64::max);
+            let largest = gradient.iter().copied().map(f64::abs).fold(0.0, f64::max);
             if largest <= FLAT_GRADIENT {
                 return Err(AlgorithmError::FlatGradient { largest });
             }
-        }
-
-        let (point, converged) = match &self.algorithm {
-            Algorithm::Adam(adam) => adam.maximize(&objective, state, start)?,
-            Algorithm::ConjugateGradient(cg) => cg.maximize(&objective, state, start)?,
+            Some((initial, gradient))
+        } else {
+            None
         };
-        let fitness = objective.value(state, &point)?;
+
+        let (point, fitness, converged) = match &self.algorithm {
+            Algorithm::Adam(adam) => {
+                let initial_gradient = known_start.map(|(_, g)| objective.unflatten(&g));
+                let (point, converged) = adam.maximize(
+                    &objective,
+                    state,
+                    objective.unflatten(&start),
+                    initial_gradient,
+                )?;
+                // Adam's last gradient was taken before its last step, so the fitness at the end is unknown
+                let fitness = objective.value(state, &point)?;
+                (point, fitness, converged)
+            }
+            Algorithm::ConjugateGradient(cg) => {
+                let (x, fitness, converged) = cg.maximize(&objective, state, start, known_start)?;
+                objective.apply_flat(state, &x)?;
+                (objective.unflatten(&x), fitness, converged)
+            }
+        };
         Ok(OptimizedResult {
             values: objective.latents.iter().copied().zip(point).collect(),
             fitness,
             converged,
-            evaluations: objective.evaluations.get(),
+            evaluations: objective.evaluations(),
         })
     }
+}
+
+/// The fitness at the starting point, failing if it is impossible (-infinity or NaN): the initial-condition check
+/// shared by the optimizers.
+pub(crate) fn start_value(
+    objective: &Objective<'_>,
+    state: &mut State,
+    start: &[f64],
+) -> Result<f64> {
+    let initial = objective.value_flat(state, start)?;
+    if initial == f64::NEG_INFINITY || initial.is_nan() {
+        return Err(AlgorithmError::ImpossibleStart);
+    }
+    Ok(initial)
 }
 
 /// Optimizers need at least one latent, and only continuous ones.
@@ -180,24 +208,33 @@ pub(crate) fn check_latents(model: &Model) -> Result<()> {
     Ok(())
 }
 
-/// The fitness of a model as a function of its continuous latents' values.
+/// The fitness of a model as a function of its continuous latents' values, either as one tensor per latent or as
+/// one flat vector of every latent's elements (in latent order, each row-major).
 pub(crate) struct Objective<'m> {
     model: &'m Model,
     fitness: Fitness,
     latents: Vec<NodeId>,
+    shapes: Vec<Vec<usize>>,
     evaluations: Cell<usize>,
 }
 
 impl<'m> Objective<'m> {
     pub(crate) fn new(model: &'m Model, fitness: Fitness) -> Self {
+        let latents = model.continuous_latents();
+        let shapes = latents
+            .iter()
+            .map(|&id| model.graph().node(id).shape().to_vec())
+            .collect();
         Self {
             model,
             fitness,
-            latents: model.continuous_latents(),
+            latents,
+            shapes,
             evaluations: Cell::new(0),
         }
     }
 
+    /// The number of fitness and gradient evaluations so far.
     pub(crate) fn evaluations(&self) -> usize {
         self.evaluations.get()
     }
@@ -206,37 +243,84 @@ impl<'m> Objective<'m> {
         &self.latents
     }
 
-    /// The latents' current values.
-    pub(crate) fn point(&self, state: &State) -> Result<Vec<DoubleTensor>> {
-        self.latents
+    /// The latents' current values as one flat vector.
+    pub(crate) fn flat_point(&self, state: &State) -> Result<Vec<f64>> {
+        let len = self
+            .shapes
             .iter()
-            .map(|&id| {
-                state.f64(id).cloned().ok_or(AlgorithmError::Graph(
-                    keanu_graph::GraphError::MissingValue(id),
-                ))
+            .map(|s| s.iter().product::<usize>())
+            .sum();
+        let mut x = Vec::with_capacity(len);
+        for &id in &self.latents {
+            let value = state.f64(id).ok_or(AlgorithmError::Graph(
+                keanu_graph::GraphError::MissingValue(id),
+            ))?;
+            x.extend_from_slice(value.as_slice());
+        }
+        Ok(x)
+    }
+
+    /// The flat vector `x` as one tensor per latent.
+    pub(crate) fn unflatten(&self, x: &[f64]) -> Vec<DoubleTensor> {
+        let mut offset = 0;
+        self.shapes
+            .iter()
+            .map(|shape| {
+                let len: usize = shape.iter().product();
+                let tensor = DoubleTensor::new(shape, x[offset..offset + len].to_vec())
+                    .expect("a latent's shape matches its length");
+                offset += len;
+                tensor
             })
             .collect()
     }
 
-    fn apply(&self, state: &mut State, point: &[DoubleTensor]) -> Result<()> {
+    fn set(&self, state: &mut State, point: impl IntoIterator<Item = DoubleTensor>) -> Result<()> {
         let values: Vec<(NodeId, Value)> = self
             .latents
             .iter()
             .copied()
-            .zip(point.iter().cloned().map(Value::F64))
+            .zip(point.into_iter().map(Value::F64))
             .collect();
         self.model.set_and_cascade(state, values)?;
         Ok(())
     }
 
-    /// The fitness at a point (which is applied to the state).
-    pub(crate) fn value(&self, state: &mut State, point: &[DoubleTensor]) -> Result<f64> {
-        self.evaluations.set(self.evaluations.get() + 1);
-        self.apply(state, point)?;
+    /// Sets the latents to the flat vector `x` and recomputes their deterministic descendants.
+    pub(crate) fn apply_flat(&self, state: &mut State, x: &[f64]) -> Result<()> {
+        self.set(state, self.unflatten(x))
+    }
+
+    fn fitness_of(&self, state: &State) -> Result<f64> {
         Ok(match self.fitness {
             Fitness::LogProb => self.model.log_prob(state)?,
             Fitness::LogLikelihood => self.model.log_likelihood(state)?,
         })
+    }
+
+    fn gradient_of(&self, state: &State) -> Result<keanu_graph::LogProbGradient> {
+        Ok(match self.fitness {
+            Fitness::LogProb => self.model.log_prob_gradient(state)?,
+            Fitness::LogLikelihood => self.model.log_likelihood_gradient(state)?,
+        })
+    }
+
+    fn count(&self) {
+        self.evaluations.set(self.evaluations.get() + 1);
+    }
+
+    /// The fitness at a point, one tensor per latent (which is applied to the state).
+    pub(crate) fn value(&self, state: &mut State, point: &[DoubleTensor]) -> Result<f64> {
+        self.count();
+        self.set(state, point.iter().cloned())?;
+        self.fitness_of(state)
+    }
+
+    /// The fitness at the flat vector `x` (which is applied to the state).
+    pub(crate) fn value_flat(&self, state: &mut State, x: &[f64]) -> Result<f64> {
+        self.count();
+        self.apply_flat(state, x)?;
+        self.fitness_of(state)
     }
 
     /// The gradient of the fitness at a point (which is applied to the state), one tensor per latent. A latent the
@@ -246,22 +330,35 @@ impl<'m> Objective<'m> {
         state: &mut State,
         point: &[DoubleTensor],
     ) -> Result<Vec<DoubleTensor>> {
-        self.evaluations.set(self.evaluations.get() + 1);
-        self.apply(state, point)?;
-        let gradient = match self.fitness {
-            Fitness::LogProb => self.model.log_prob_gradient(state)?,
-            Fitness::LogLikelihood => self.model.log_likelihood_gradient(state)?,
-        };
+        self.count();
+        self.set(state, point.iter().cloned())?;
+        let gradient = self.gradient_of(state)?;
         Ok(self
             .latents
             .iter()
-            .zip(point)
-            .map(|(&id, value)| {
+            .zip(&self.shapes)
+            .map(|(&id, shape)| {
                 gradient
                     .get(id)
                     .cloned()
-                    .unwrap_or_else(|| DoubleTensor::zeros(value.shape()))
+                    .unwrap_or_else(|| DoubleTensor::zeros(shape))
             })
             .collect())
+    }
+
+    /// The gradient of the fitness at the flat vector `x` (which is applied to the state), flattened like `x`. A
+    /// latent the fitness doesn't depend on has a zero gradient.
+    pub(crate) fn gradient_flat(&self, state: &mut State, x: &[f64]) -> Result<Vec<f64>> {
+        self.count();
+        self.apply_flat(state, x)?;
+        let gradient = self.gradient_of(state)?;
+        let mut flat = Vec::with_capacity(x.len());
+        for (&id, shape) in self.latents.iter().zip(&self.shapes) {
+            match gradient.get(id) {
+                Some(g) => flat.extend_from_slice(g.as_slice()),
+                None => flat.extend(std::iter::repeat_n(0.0, shape.iter().product())),
+            }
+        }
+        Ok(flat)
     }
 }

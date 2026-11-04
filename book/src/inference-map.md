@@ -40,6 +40,10 @@ unavailable or unreliable. Its settings are Java Keanu's:
 - `bounds_range` (default unbounded): latents without explicit bounds stay within this distance of their start;
 - `max_evaluations` (default unlimited) and `interpolation_points` (default 2n + 1 for n latent dimensions).
 
+As in PRIMA, settings BOBYQA can't use are adjusted rather than rejected: fewer than n + 3 evaluations are raised
+to n + 3, an `interpolation_points` outside n + 2 to (n + 1)(n + 2) / 2 falls back to the default, and the initial
+radius shrinks to fit the bounds. If evaluating the model fails, the optimization stops at once with that error.
+
 `OptimizerBounds` bounds individual latents, with a scalar or a tensor shaped like the latent:
 
 ```rust,ignore

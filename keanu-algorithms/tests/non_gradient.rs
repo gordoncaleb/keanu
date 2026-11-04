@@ -243,8 +243,8 @@ fn max_evaluations_stops_early_without_converging() {
         .max_a_posteriori(&mut state)
         .unwrap();
     assert!(!result.converged);
-    // the initial-condition check, 8 solver evaluations and the final fitness
-    assert_eq!(result.evaluations, 10);
+    // 8 solver evaluations, the first of them the initial-condition check's, and no final re-evaluation
+    assert_eq!(result.evaluations, 8);
 }
 
 /// Regression: an upper bound of -infinity was treated as no bound (rather than an error like any other upper

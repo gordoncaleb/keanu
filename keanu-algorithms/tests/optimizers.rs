@@ -49,10 +49,48 @@ fn both_algorithms_find_the_conjugate_gaussian_posterior_mode() {
             (found - expected).abs() < 1e-3,
             "{algorithm:?}: {found} vs {expected}"
         );
-        // the state is left at the optimum
+        // the state is left at the optimum, and the fitness is the one there
         assert_eq!(state.f64(mu).unwrap().to_scalar().unwrap(), found);
+        assert_eq!(result.fitness, model.log_prob(&state).unwrap());
         assert!(result.converged);
     }
+}
+
+/// Regression: conjugate gradient re-evaluated points it had already evaluated (the start after the
+/// initial-condition check, the line search's chosen step, the final point), and its line search spent 40 to 60
+/// evaluations refining a step that could no longer change the fitness once the optimum was reached: a
+/// one-dimensional Gaussian took 78 evaluations, a conjugate Gaussian 60.
+#[test]
+fn conjugate_gradient_does_not_waste_evaluations_at_the_optimum() {
+    let b = GraphBuilder::new();
+    let a = b.gaussian(0.0, 1.0);
+    b.set_value(a, DoubleTensor::scalar(0.5));
+    let id = a.id();
+    let (graph, mut state) = b.build().unwrap();
+    let model = Model::new(graph, &state).unwrap();
+    let result = GradientOptimizer::new(&model)
+        .max_a_posteriori(&mut state)
+        .unwrap();
+    assert!(result.converged);
+    assert!(result.get(id).unwrap().to_scalar().unwrap().abs() < 1e-6);
+    assert!(
+        result.evaluations <= 20,
+        "{} evaluations",
+        result.evaluations
+    );
+
+    let observations = [0.3, 1.2, 0.9, 1.7];
+    let (model, mut state, mu) = conjugate_gaussian(&observations);
+    let result = GradientOptimizer::new(&model)
+        .max_a_posteriori(&mut state)
+        .unwrap();
+    let found = result.get(mu).unwrap().to_scalar().unwrap();
+    assert!((found - posterior_mode(&observations)).abs() < 1e-6);
+    assert!(
+        result.evaluations <= 20,
+        "{} evaluations",
+        result.evaluations
+    );
 }
 
 #[test]
@@ -308,7 +346,7 @@ fn conjugate_gradient_keeps_to_its_evaluation_budget() {
         .max_a_posteriori(&mut state)
         .unwrap();
     assert!(!result.converged);
-    // the budget, plus the final fitness evaluation
-    assert!(result.evaluations <= 6, "{}", result.evaluations);
+    // the budget, with no final fitness evaluation
+    assert!(result.evaluations <= 5, "{}", result.evaluations);
     assert!(result.fitness.is_finite());
 }

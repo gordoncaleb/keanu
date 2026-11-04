@@ -5,17 +5,30 @@
 
 pub mod prima;
 
-use super::{Fitness, Objective, OptimizedResult};
+use super::{Fitness, Objective, OptimizedResult, start_value};
 use crate::error::{AlgorithmError, Result};
 use keanu_graph::{Model, NodeId, State};
 use keanu_tensor::DoubleTensor;
 use std::collections::HashMap;
+use std::ops::ControlFlow;
 
 /// BOBYQA settings (Java's `BOBYQA` builder).
+///
+/// As in PRIMA, some settings that can't be used as given are adjusted rather than rejected, without warning (for
+/// n latent dimensions):
+/// - `max_evaluations` below n + 3 is raised to n + 3, the fewest BOBYQA can work with;
+/// - `interpolation_points` outside n + 2 to (n + 1)(n + 2) / 2, or not below the (adjusted) `max_evaluations`,
+///   is replaced by the default, 2n + 1 (or `max_evaluations` - 1 if that is smaller);
+/// - `initial_trust_region_radius` is reduced to fit the bounds (to a quarter of the smallest bound range if it is
+///   more than half of it, and to the distance from the start to its nearest bound), and
+///   `stopping_trust_region_radius` is reduced in proportion.
+///
+/// If the objective fails (returns an error) the optimization stops at once with that error.
 #[derive(Debug, Clone, PartialEq)]
 #[non_exhaustive]
 pub struct Bobyqa {
-    /// The maximum number of fitness evaluations (default: unlimited).
+    /// The maximum number of fitness evaluations (default: unlimited). At least n + 3 are used for n latent
+    /// dimensions.
     pub max_evaluations: usize,
     /// Latents without explicit bounds are bounded to their starting value ± this (default: unbounded).
     pub bounds_range: f64,
@@ -24,7 +37,7 @@ pub struct Bobyqa {
     /// The final trust region radius: the accuracy required in the latents (default 1e-8).
     pub stopping_trust_region_radius: f64,
     /// The number of interpolation points, between n + 2 and (n + 1)(n + 2) / 2 for n latent dimensions
-    /// (default 2n + 1).
+    /// (default 2n + 1). A number outside that range is replaced by the default.
     pub interpolation_points: Option<usize>,
 }
 
@@ -188,36 +201,20 @@ impl<'m> NonGradientOptimizer<'m> {
         self.algorithm.validate()?;
         super::check_latents(self.model)?;
         let objective = Objective::new(self.model, fitness);
-        let start = objective.point(state)?;
-        if self.check_initial_conditions {
-            let initial = objective.value(state, &start)?;
-            if initial == f64::NEG_INFINITY || initial.is_nan() {
-                return Err(AlgorithmError::ImpossibleStart);
-            }
-        }
-
-        let shapes: Vec<Vec<usize>> = start.iter().map(|t| t.shape().to_vec()).collect();
-        let x0: Vec<f64> = start
-            .iter()
-            .flat_map(|t| t.as_slice().iter().copied())
-            .collect();
-        let (xl, xu) = self.flat_bounds(objective.latents(), &start)?;
-
-        let unflatten = |x: &[f64]| -> Vec<DoubleTensor> {
-            let mut offset = 0;
-            shapes
-                .iter()
-                .map(|shape| {
-                    let len: usize = shape.iter().product();
-                    let t = DoubleTensor::new(shape, x[offset..offset + len].to_vec())
-                        .expect("shape and length agree");
-                    offset += len;
-                    t
-                })
-                .collect()
+        let x0 = objective.flat_point(state)?;
+        // the initial-condition check's value is reused for the solver's first evaluation, which is at x0
+        let mut known_start = if self.check_initial_conditions {
+            Some(start_value(&objective, state, &x0)?)
+        } else {
+            None
         };
+        let (xl, xu) = self.flat_bounds(objective.latents(), &objective.unflatten(&x0))?;
 
         let mut failure: Option<AlgorithmError> = None;
+        // the last and the best points evaluated, with their fitness, so the fitness of the point the solver
+        // returns is known without evaluating it again
+        let mut last: Option<(Vec<f64>, f64)> = None;
+        let mut best: Option<(Vec<f64>, f64)> = None;
         let settings = prima::Settings {
             rhobeg: Some(self.algorithm.initial_trust_region_radius),
             rhoend: Some(self.algorithm.stopping_trust_region_radius),
@@ -226,18 +223,24 @@ impl<'m> NonGradientOptimizer<'m> {
             ftarget: None,
             honour_x0: Some(true),
         };
-        let outcome = prima::minimize(
+        let outcome = prima::minimize_with_termination(
             |x| {
-                if failure.is_some() {
-                    return f64::NAN;
+                let value = match known_start.take() {
+                    Some(value) if x == x0.as_slice() => value,
+                    _ => match objective.value_flat(state, x) {
+                        Ok(value) => value,
+                        Err(e) => {
+                            // stop at once: there is no point continuing once the objective fails
+                            failure = Some(e);
+                            return ControlFlow::Break(f64::NAN);
+                        }
+                    },
+                };
+                if best.as_ref().is_none_or(|(_, b)| value > *b || b.is_nan()) {
+                    best = Some((x.to_vec(), value));
                 }
-                match objective.value(state, &unflatten(x)) {
-                    Ok(v) => -v,
-                    Err(e) => {
-                        failure = Some(e);
-                        f64::NAN
-                    }
-                }
+                last = Some((x.to_vec(), value));
+                ControlFlow::Continue(-value)
             },
             &x0,
             &xl,
@@ -252,10 +255,27 @@ impl<'m> NonGradientOptimizer<'m> {
                 "every lower bound must be below its upper bound".into(),
             ));
         }
-        let point = unflatten(&outcome.x);
-        let fitness = objective.value(state, &point)?;
+        let known = [last, best]
+            .into_iter()
+            .flatten()
+            .find(|(x, _)| *x == outcome.x)
+            .map(|(_, value)| value);
+        let fitness = match known {
+            Some(value) => {
+                objective.apply_flat(state, &outcome.x)?;
+                value
+            }
+            // the solver's point is (in rare cases) recomputed from a shifted base, so may differ in its last bits
+            // from any point it evaluated
+            None => objective.value_flat(state, &outcome.x)?,
+        };
         Ok(OptimizedResult {
-            values: objective.latents().iter().copied().zip(point).collect(),
+            values: objective
+                .latents()
+                .iter()
+                .copied()
+                .zip(objective.unflatten(&outcome.x))
+                .collect(),
             fitness,
             // an impossible optimum (only possible with the initial-condition check off) never counts as converged
             converged: fitness.is_finite()
