@@ -3,11 +3,11 @@
 use crate::autodiff::reverse_from_seeds;
 use crate::error::{GraphError, Result};
 use crate::graph::{Graph, NodeId};
-use crate::op::{DistributionKind, Op};
+use crate::op::{DistributionKind, LogProbGradientParts, Op};
 use crate::state::State;
 use crate::value::{DType, Value};
-use keanu_distributions as d;
 use keanu_tensor::DoubleTensor;
+use smallvec::SmallVec;
 use std::collections::HashMap;
 
 fn value(state: &State, id: NodeId) -> Result<&Value> {
@@ -33,52 +33,13 @@ pub fn node_log_prob(graph: &Graph, state: &State, id: NodeId) -> Result<f64> {
 /// The log probability that a probabilistic node takes the value `v`, given its parameters' current values
 /// (summed over the elements of the node). The node's own current value is ignored.
 pub fn node_log_prob_at(graph: &Graph, state: &State, id: NodeId, v: &Value) -> Result<f64> {
-    use DistributionKind::*;
     let kind = kind(graph, id)?;
-    let parents = graph.parents(id);
-    let p = |i: usize| -> Result<DoubleTensor> { Ok(value(state, parents[i])?.f64()?.clone()) };
-    let q = |i: usize| -> Result<keanu_tensor::IntTensor> {
-        Ok(value(state, parents[i])?.i64()?.clone())
-    };
-    let total = |t: DoubleTensor| t.sum();
-    Ok(match kind {
-        Gaussian => total(d::Gaussian::new(p(0)?, p(1)?).log_prob(v.f64()?)?),
-        HalfGaussian => total(d::HalfGaussian::new(p(0)?).log_prob(v.f64()?)?),
-        Cauchy => total(d::Cauchy::new(p(0)?, p(1)?).log_prob(v.f64()?)?),
-        HalfCauchy => total(d::HalfCauchy::new(p(0)?).log_prob(v.f64()?)?),
-        Beta => total(d::Beta::standard(p(0)?, p(1)?).log_prob(v.f64()?)?),
-        ChiSquared => total(d::ChiSquared::new(q(0)?).log_prob(v.f64()?)?),
-        Dirichlet => d::Dirichlet::new(p(0)?).log_prob(v.f64()?)?,
-        Exponential => total(d::Exponential::new(p(0)?).log_prob(v.f64()?)?),
-        Gamma => total(d::Gamma::new(p(0)?, p(1)?).log_prob(v.f64()?)?),
-        InverseGamma => total(d::InverseGamma::new(p(0)?, p(1)?).log_prob(v.f64()?)?),
-        Laplace => total(d::Laplace::new(p(0)?, p(1)?).log_prob(v.f64()?)?),
-        Logistic => total(d::Logistic::new(p(0)?, p(1)?).log_prob(v.f64()?)?),
-        LogNormal => total(d::LogNormal::new(p(0)?, p(1)?).log_prob(v.f64()?)?),
-        MultivariateGaussian => d::MultivariateGaussian::new(p(0)?, p(1)?).log_prob(v.f64()?)?,
-        Pareto => total(d::Pareto::new(p(0)?, p(1)?).log_prob(v.f64()?)?),
-        StudentT => total(d::StudentT::new(q(0)?).log_prob(v.f64()?)?),
-        Triangular => total(d::Triangular::new(p(0)?, p(1)?, p(2)?).log_prob(v.f64()?)?),
-        Uniform => total(d::Uniform::new(p(0)?, p(1)?).log_prob(v.f64()?)?),
-        Kde(kde) => total(kde.log_prob(v.f64()?)),
-        Bernoulli => total(d::Bernoulli::new(p(0)?).log_prob(v.bool()?)?),
-        Binomial => total(d::Binomial::new(p(0)?, q(1)?).log_prob(v.i64()?)?),
-        Categorical => {
-            let probabilities = (0..parents.len()).map(p).collect::<Result<Vec<_>>>()?;
-            total(d::Categorical::new(probabilities)?.log_prob(v.i64()?)?)
-        }
-        Custom(c) => {
-            let values = parents
-                .iter()
-                .map(|&id| value(state, id))
-                .collect::<Result<Vec<_>>>()?;
-            c.log_prob(v, &values).map_err(GraphError::Custom)?
-        }
-        Geometric => total(d::Geometric::new(p(0)?).log_prob(v.i64()?)?),
-        Multinomial => total(d::Multinomial::new(q(0)?, p(1)?)?.log_prob(v.i64()?)?),
-        Poisson => total(d::Poisson::new(p(0)?).log_prob(v.i64()?)?),
-        UniformInt => total(d::UniformInt::new(q(0)?, q(1)?).log_prob(v.i64()?)?),
-    })
+    kind.log_prob(v, &parameters(graph, state, id)?)
+}
+
+/// The values of a node's parameters (its parents).
+fn parameters<'s>(graph: &Graph, state: &'s State, id: NodeId) -> Result<SmallVec<[&'s Value; 4]>> {
+    graph.parents(id).iter().map(|&p| value(state, p)).collect()
 }
 
 /// The total log probability of the given probabilistic nodes.
@@ -142,157 +103,10 @@ pub fn node_log_prob_gradient(
     })
 }
 
-/// Per-parameter gradients, inline for up to four parameters.
-type Parameters = smallvec::SmallVec<[Option<DoubleTensor>; 4]>;
-
-fn node_gradient_parts(
-    graph: &Graph,
-    state: &State,
-    id: NodeId,
-) -> Result<(Option<DoubleTensor>, Parameters)> {
-    use DistributionKind::*;
+fn node_gradient_parts(graph: &Graph, state: &State, id: NodeId) -> Result<LogProbGradientParts> {
     let kind = kind(graph, id)?;
-    let parents = graph.parents(id);
-    let p = |i: usize| -> Result<DoubleTensor> { Ok(value(state, parents[i])?.f64()?.clone()) };
-    let q = |i: usize| -> Result<keanu_tensor::IntTensor> {
-        Ok(value(state, parents[i])?.i64()?.clone())
-    };
     let v = value(state, id)?;
-    let some = Some;
-    let (x, params): (Option<DoubleTensor>, Parameters) = match kind {
-        Gaussian => {
-            let g = d::Gaussian::new(p(0)?, p(1)?).d_log_prob(v.f64()?)?;
-            (some(g.x), smallvec::smallvec![some(g.mu), some(g.sigma)])
-        }
-        HalfGaussian => {
-            let g = d::HalfGaussian::new(p(0)?).d_log_prob(v.f64()?)?;
-            (some(g.x), smallvec::smallvec![some(g.sigma)])
-        }
-        Cauchy => {
-            let g = d::Cauchy::new(p(0)?, p(1)?).d_log_prob(v.f64()?)?;
-            (
-                some(g.x),
-                smallvec::smallvec![some(g.location), some(g.scale)],
-            )
-        }
-        HalfCauchy => {
-            let g = d::HalfCauchy::new(p(0)?).d_log_prob(v.f64()?)?;
-            (some(g.x), smallvec::smallvec![some(g.scale)])
-        }
-        Beta => {
-            let g = d::Beta::standard(p(0)?, p(1)?).d_log_prob(v.f64()?)?;
-            (some(g.x), smallvec::smallvec![some(g.alpha), some(g.beta)])
-        }
-        ChiSquared => {
-            let g = d::ChiSquared::new(q(0)?).d_log_prob(v.f64()?)?;
-            (some(g.x), smallvec::smallvec![None])
-        }
-        Dirichlet => {
-            let g = d::Dirichlet::new(p(0)?).d_log_prob(v.f64()?)?;
-            (some(g.x), smallvec::smallvec![some(g.concentration)])
-        }
-        Exponential => {
-            let g = d::Exponential::new(p(0)?).d_log_prob(v.f64()?)?;
-            (some(g.x), smallvec::smallvec![some(g.rate)])
-        }
-        Gamma => {
-            let g = d::Gamma::new(p(0)?, p(1)?).d_log_prob(v.f64()?)?;
-            (some(g.x), smallvec::smallvec![some(g.theta), some(g.k)])
-        }
-        InverseGamma => {
-            let g = d::InverseGamma::new(p(0)?, p(1)?).d_log_prob(v.f64()?)?;
-            (some(g.x), smallvec::smallvec![some(g.alpha), some(g.beta)])
-        }
-        Laplace => {
-            let g = d::Laplace::new(p(0)?, p(1)?).d_log_prob(v.f64()?)?;
-            (some(g.x), smallvec::smallvec![some(g.mu), some(g.beta)])
-        }
-        Logistic => {
-            let g = d::Logistic::new(p(0)?, p(1)?).d_log_prob(v.f64()?)?;
-            (some(g.x), smallvec::smallvec![some(g.mu), some(g.s)])
-        }
-        LogNormal => {
-            let g = d::LogNormal::new(p(0)?, p(1)?).d_log_prob(v.f64()?)?;
-            (some(g.x), smallvec::smallvec![some(g.mu), some(g.sigma)])
-        }
-        MultivariateGaussian => {
-            let g = d::MultivariateGaussian::new(p(0)?, p(1)?).d_log_prob(v.f64()?)?;
-            (
-                some(g.x),
-                smallvec::smallvec![some(g.mu), some(g.covariance)],
-            )
-        }
-        Pareto => {
-            let g = d::Pareto::new(p(0)?, p(1)?).d_log_prob(v.f64()?)?;
-            (
-                some(g.x),
-                smallvec::smallvec![some(g.location), some(g.scale)],
-            )
-        }
-        StudentT => {
-            let g = d::StudentT::new(q(0)?).d_log_prob(v.f64()?)?;
-            (some(g.x), smallvec::smallvec![None])
-        }
-        Triangular => {
-            let g = d::Triangular::new(p(0)?, p(1)?, p(2)?).d_log_prob(v.f64()?)?;
-            (
-                some(g.x),
-                smallvec::smallvec![some(g.x_min), some(g.x_max), some(g.c)],
-            )
-        }
-        Uniform => {
-            // as UniformVertex: zero inside the support, -inf above x_max and +inf at or below x_min
-            let x = v.f64()?;
-            let (min, max) = (p(0)?, p(1)?);
-            let dx = x
-                .zip_with(&max, |x, max| if x > max { f64::NEG_INFINITY } else { 0.0 })?
-                .zip_with(
-                    &x.le(&min)?,
-                    |d, below| if below { f64::INFINITY } else { d },
-                )?;
-            (some(dx), smallvec::smallvec![None, None])
-        }
-        Kde(kde) => (some(kde.d_log_prob(v.f64()?)?.x), smallvec::smallvec![]),
-        Bernoulli => {
-            let g = d::Bernoulli::new(p(0)?).d_log_prob(v.bool()?)?;
-            (None, smallvec::smallvec![some(g.prob_true)])
-        }
-        Binomial => {
-            let g = d::Binomial::new(p(0)?, q(1)?).d_log_prob(v.i64()?)?;
-            (None, smallvec::smallvec![some(g.p), None])
-        }
-        Geometric => {
-            let g = d::Geometric::new(p(0)?).d_log_prob(v.i64()?)?;
-            (None, smallvec::smallvec![some(g.p)])
-        }
-        Multinomial => {
-            let g = d::Multinomial::new(q(0)?, p(1)?)?.d_log_prob(v.i64()?)?;
-            (None, smallvec::smallvec![None, some(g.p)])
-        }
-        Poisson => {
-            let g = d::Poisson::new(p(0)?).d_log_prob(v.i64()?)?;
-            (None, smallvec::smallvec![some(g.mu)])
-        }
-        Categorical | UniformInt => (None, smallvec::smallvec![None; parents.len()]),
-        Custom(c) => {
-            let values = parents
-                .iter()
-                .map(|&id| value(state, id))
-                .collect::<Result<Vec<_>>>()?;
-            match c
-                .log_prob_gradient(v, &values)
-                .map_err(GraphError::Custom)?
-            {
-                Some(g) => {
-                    let mut parameters: Parameters = g.parameters.into_iter().collect();
-                    parameters.resize(parents.len(), None);
-                    (g.value, parameters)
-                }
-                None => (None, smallvec::smallvec![None; parents.len()]),
-            }
-        }
-    };
-    Ok((x, params))
+    kind.log_prob_gradient(v, &parameters(graph, state, id)?)
 }
 
 /// Sums a gradient over the dimensions that a tensor of `target` shape was broadcast along (as Java's

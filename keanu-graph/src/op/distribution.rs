@@ -4,7 +4,7 @@ use crate::error::{GraphError, Result};
 use crate::value::{DType, Value};
 use keanu_distributions as d;
 use keanu_distributions::KeanuRng;
-use keanu_tensor::Shape;
+use keanu_tensor::{DoubleTensor, Shape};
 use std::sync::Arc;
 
 /// The distribution of a probabilistic node. The node's parents are the parameters, in the order listed.
@@ -115,70 +115,262 @@ pub struct CustomGradient {
     pub parameters: Vec<Option<keanu_tensor::DoubleTensor>>,
 }
 
+/// Per-parameter log prob gradients, inline for up to four parameters.
+pub(crate) type ParameterGradients = smallvec::SmallVec<[Option<DoubleTensor>; 4]>;
+
+/// A node's log prob gradient with respect to its value (None for non-f64 values and distributions without one)
+/// and to each parameter (None where there is no derivative).
+pub(crate) type LogProbGradientParts = (Option<DoubleTensor>, ParameterGradients);
+
+/// The first bracketed tokens if there are any (an optional override), else the second.
+macro_rules! override_or {
+    ([] [$($default:tt)*]) => { $($default)* };
+    ([$($given:tt)+] [$($default:tt)*]) => { $($given)+ };
+}
+
+/// The tensor of a value of the given [`DType`] variant.
+macro_rules! tensor {
+    (F64, $value:expr) => {
+        $value.f64()?
+    };
+    (I64, $value:expr) => {
+        $value.i64()?
+    };
+    (Bool, $value:expr) => {
+        $value.bool()?
+    };
+}
+
+/// A log prob gradient with respect to a value or parameter of the given [`DType`] variant: only f64 ones have one.
+macro_rules! gradient {
+    (F64, $gradient:expr) => {
+        Some($gradient)
+    };
+    ($dtype:ident, $gradient:expr) => {
+        None
+    };
+}
+
+/// Describes each distribution with a fixed parameter list once, as
+/// `Kind "name" (parameter: dtype, ...) -> value dtype => constructor`, and generates [`DistributionKind`]'s name,
+/// types, sampling, log probability and gradient from the table (the remaining kinds are written out here).
+///
+/// The parameters are bound to their (cloned) tensors for the constructor. By default a distribution is sampled
+/// with `sample(shape, rng)`, and its gradient is the `d_log_prob` field named after each f64 parameter, and `x`
+/// for an f64 value. A row can override either: `sample = f` is called as `f(&distribution, shape, rng)` and
+/// `gradient = f` as `f(&distribution, x)` (both non-capturing closures or functions).
+macro_rules! distributions {
+    ($(
+        $kind:ident $name:literal ($($param:ident: $ptype:ident),+) -> $vtype:ident => $build:expr
+        $(, sample = $sample:expr)? $(, gradient = $gradient:expr)?;
+    )+) => {
+        impl DistributionKind {
+            /// The parameter types, or None for a variable number of f64 parameters (Categorical).
+            pub(crate) fn parameter_types(&self) -> Option<&'static [DType]> {
+                match self {
+                    $(DistributionKind::$kind => Some(&[$(DType::$ptype),+]),)+
+                    DistributionKind::Kde(_) => Some(&[]),
+                    DistributionKind::Categorical | DistributionKind::Custom(_) => None,
+                }
+            }
+
+            /// The type of the node's value.
+            pub fn value_type(&self) -> DType {
+                match self {
+                    $(DistributionKind::$kind => DType::$vtype,)+
+                    DistributionKind::Kde(_) => DType::F64,
+                    DistributionKind::Categorical => DType::I64,
+                    DistributionKind::Custom(c) => c.value_type(),
+                }
+            }
+
+            pub(crate) fn name(&self) -> &'static str {
+                match self {
+                    $(DistributionKind::$kind => $name,)+
+                    DistributionKind::Kde(_) => "kde",
+                    DistributionKind::Categorical => "categorical",
+                    DistributionKind::Custom(_) => "custom",
+                }
+            }
+
+            /// Draws a value of the given shape from the distribution given its parameters' values.
+            fn sample(&self, shape: &[usize], parameters: &[&Value], rng: &mut KeanuRng) -> Result<Value> {
+                Ok(match self {
+                    $(DistributionKind::$kind => {
+                        let &[$($param),+] = parameters else { return Err(self.wrong_parameters()) };
+                        $(let $param = tensor!($ptype, $param).clone();)+
+                        let dist = $build;
+                        Value::$vtype(override_or!(
+                            [$({
+                                let sample: fn(&_, &[usize], &mut KeanuRng) -> d::Result<_> = $sample;
+                                sample(&dist, shape, rng)
+                            })?]
+                            [dist.sample(shape, rng)]
+                        )?)
+                    })+
+                    DistributionKind::Kde(kde) => {
+                        let count: usize = shape.iter().product();
+                        let signed: Vec<isize> = shape.iter().map(|&s| s as isize).collect();
+                        Value::F64(kde.sample(count, rng).reshape(&signed)?)
+                    }
+                    DistributionKind::Categorical => {
+                        Value::I64(d::Categorical::new(f64_tensors(parameters)?)?.sample(shape, rng)?)
+                    }
+                    DistributionKind::Custom(c) => {
+                        let value = c
+                            .sample(shape, parameters, rng)
+                            .map_err(GraphError::Custom)?;
+                        if value.dtype() != c.value_type() || value.shape() != shape {
+                            return Err(GraphError::Custom(format!(
+                                "sample returned a {:?} value of shape {:?}, expected {:?} of shape {shape:?}",
+                                value.dtype(),
+                                value.shape(),
+                                c.value_type()
+                            )));
+                        }
+                        value
+                    }
+                })
+            }
+
+            /// The log probability of `value` given the parameters' values, summed over its elements.
+            pub(crate) fn log_prob(&self, value: &Value, parameters: &[&Value]) -> Result<f64> {
+                Ok(match self {
+                    $(DistributionKind::$kind => {
+                        let &[$($param),+] = parameters else { return Err(self.wrong_parameters()) };
+                        $(let $param = tensor!($ptype, $param).clone();)+
+                        $build.log_prob(tensor!($vtype, value))?.total()
+                    })+
+                    DistributionKind::Kde(kde) => kde.log_prob(value.f64()?).sum(),
+                    DistributionKind::Categorical => {
+                        d::Categorical::new(f64_tensors(parameters)?)?.log_prob(value.i64()?)?.sum()
+                    }
+                    DistributionKind::Custom(c) => c.log_prob(value, parameters).map_err(GraphError::Custom)?,
+                })
+            }
+
+            /// The gradient of [`Self::log_prob`] with respect to `value` and each parameter, following the Java
+            /// vertices' `dLogProb`.
+            pub(crate) fn log_prob_gradient(
+                &self,
+                value: &Value,
+                parameters: &[&Value],
+            ) -> Result<LogProbGradientParts> {
+                Ok(match self {
+                    $(DistributionKind::$kind => {
+                        let &[$($param),+] = parameters else { return Err(self.wrong_parameters()) };
+                        $(let $param = tensor!($ptype, $param).clone();)+
+                        let dist = $build;
+                        let x = tensor!($vtype, value);
+                        override_or!(
+                            [$({
+                                let gradient: fn(&_, &_) -> Result<LogProbGradientParts> = $gradient;
+                                gradient(&dist, x)?
+                            })?]
+                            [{
+                                let g = dist.d_log_prob(x)?;
+                                (gradient!($vtype, g.x), smallvec::smallvec![$(gradient!($ptype, g.$param)),+])
+                            }]
+                        )
+                    })+
+                    DistributionKind::Kde(kde) => (Some(kde.d_log_prob(value.f64()?)?.x), smallvec::smallvec![]),
+                    DistributionKind::Categorical => no_gradient(parameters.len()),
+                    DistributionKind::Custom(c) => {
+                        match c.log_prob_gradient(value, parameters).map_err(GraphError::Custom)? {
+                            Some(g) => {
+                                let mut gradients: ParameterGradients = g.parameters.into_iter().collect();
+                                gradients.resize(parameters.len(), None);
+                                (g.value, gradients)
+                            }
+                            None => no_gradient(parameters.len()),
+                        }
+                    }
+                })
+            }
+        }
+    };
+}
+
+distributions! {
+    Gaussian "gaussian" (mu: F64, sigma: F64) -> F64 => d::Gaussian::new(mu, sigma);
+    HalfGaussian "half_gaussian" (sigma: F64) -> F64 => d::HalfGaussian::new(sigma);
+    Cauchy "cauchy" (location: F64, scale: F64) -> F64 => d::Cauchy::new(location, scale);
+    HalfCauchy "half_cauchy" (scale: F64) -> F64 => d::HalfCauchy::new(scale);
+    Beta "beta" (alpha: F64, beta: F64) -> F64 => d::Beta::standard(alpha, beta);
+    ChiSquared "chi_squared" (k: I64) -> F64 => d::ChiSquared::new(k);
+    Dirichlet "dirichlet" (concentration: F64) -> F64 => d::Dirichlet::new(concentration),
+        sample = |dist: &d::Dirichlet, _, rng| dist.sample(rng);
+    Exponential "exponential" (rate: F64) -> F64 => d::Exponential::new(rate);
+    Gamma "gamma" (theta: F64, k: F64) -> F64 => d::Gamma::new(theta, k);
+    InverseGamma "inverse_gamma" (alpha: F64, beta: F64) -> F64 => d::InverseGamma::new(alpha, beta);
+    Laplace "laplace" (mu: F64, beta: F64) -> F64 => d::Laplace::new(mu, beta);
+    Logistic "logistic" (mu: F64, s: F64) -> F64 => d::Logistic::new(mu, s);
+    LogNormal "log_normal" (mu: F64, sigma: F64) -> F64 => d::LogNormal::new(mu, sigma);
+    MultivariateGaussian "multivariate_gaussian" (mu: F64, covariance: F64) -> F64 =>
+        d::MultivariateGaussian::new(mu, covariance);
+    Pareto "pareto" (location: F64, scale: F64) -> F64 => d::Pareto::new(location, scale);
+    StudentT "student_t" (v: I64) -> F64 => d::StudentT::new(v);
+    Triangular "triangular" (x_min: F64, x_max: F64, c: F64) -> F64 => d::Triangular::new(x_min, x_max, c);
+    Uniform "uniform" (x_min: F64, x_max: F64) -> F64 => d::Uniform::new(x_min, x_max),
+        gradient = uniform_gradient;
+    Bernoulli "bernoulli" (prob_true: F64) -> Bool => d::Bernoulli::new(prob_true);
+    Binomial "binomial" (p: F64, n: I64) -> I64 => d::Binomial::new(p, n);
+    Geometric "geometric" (p: F64) -> I64 => d::Geometric::new(p);
+    Multinomial "multinomial" (n: I64, p: F64) -> I64 => d::Multinomial::new(n, p)?;
+    Poisson "poisson" (mu: F64) -> I64 => d::Poisson::new(mu);
+    UniformInt "uniform_int" (x_min: I64, x_max: I64) -> I64 => d::UniformInt::new(x_min, x_max),
+        gradient = |_, _| Ok(no_gradient(2));
+}
+
 impl DistributionKind {
-    /// The parameter types, or None for a variable number of f64 parameters (Categorical).
-    pub(crate) fn parameter_types(&self) -> Option<&'static [DType]> {
-        use DType::*;
-        use DistributionKind::*;
-        Some(match self {
-            Gaussian | Cauchy | Beta | Gamma | InverseGamma | Laplace | Logistic | LogNormal
-            | Pareto | Uniform => &[F64, F64],
-            MultivariateGaussian => &[F64, F64],
-            HalfGaussian | HalfCauchy | Exponential | Dirichlet | Bernoulli | Geometric
-            | Poisson => &[F64],
-            ChiSquared | StudentT => &[I64],
-            Triangular => &[F64, F64, F64],
-            Kde(_) => &[],
-            Binomial => &[F64, I64],
-            Multinomial => &[I64, F64],
-            UniformInt => &[I64, I64],
-            Categorical | Custom(_) => return None,
-        })
-    }
-
-    /// The type of the node's value.
-    pub fn value_type(&self) -> DType {
-        use DistributionKind::*;
-        match self {
-            Bernoulli => DType::Bool,
-            Binomial | Categorical | Geometric | Multinomial | Poisson | UniformInt => DType::I64,
-            Custom(c) => c.value_type(),
-            _ => DType::F64,
+    /// The error for a parameter list that doesn't match the distribution (checked when the node is built).
+    fn wrong_parameters(&self) -> GraphError {
+        GraphError::InvalidNode {
+            op: self.name(),
+            message: format!("needs parameters of types {:?}", self.parameter_types()),
         }
     }
+}
 
-    pub(crate) fn name(&self) -> &'static str {
-        use DistributionKind::*;
-        match self {
-            Gaussian => "gaussian",
-            HalfGaussian => "half_gaussian",
-            Cauchy => "cauchy",
-            HalfCauchy => "half_cauchy",
-            Beta => "beta",
-            ChiSquared => "chi_squared",
-            Dirichlet => "dirichlet",
-            Exponential => "exponential",
-            Gamma => "gamma",
-            InverseGamma => "inverse_gamma",
-            Laplace => "laplace",
-            Logistic => "logistic",
-            LogNormal => "log_normal",
-            MultivariateGaussian => "multivariate_gaussian",
-            Pareto => "pareto",
-            StudentT => "student_t",
-            Triangular => "triangular",
-            Uniform => "uniform",
-            Kde(_) => "kde",
-            Bernoulli => "bernoulli",
-            Binomial => "binomial",
-            Categorical => "categorical",
-            Geometric => "geometric",
-            Multinomial => "multinomial",
-            Poisson => "poisson",
-            UniformInt => "uniform_int",
-            Custom(_) => "custom",
-        }
+/// The sum of an element-wise log probability (distributions that reduce over their event dimension return the
+/// sum already).
+trait Total {
+    fn total(self) -> f64;
+}
+
+impl Total for DoubleTensor {
+    fn total(self) -> f64 {
+        self.sum()
     }
+}
+
+impl Total for f64 {
+    fn total(self) -> f64 {
+        self
+    }
+}
+
+/// Every parameter's f64 tensor (Categorical's probabilities).
+fn f64_tensors(parameters: &[&Value]) -> Result<Vec<DoubleTensor>> {
+    parameters.iter().map(|p| p.f64().cloned()).collect()
+}
+
+/// No gradient with respect to the value or any of `parameters` parameters.
+fn no_gradient(parameters: usize) -> LogProbGradientParts {
+    (None, smallvec::smallvec![None; parameters])
+}
+
+/// As UniformVertex: zero inside the support, -inf above x_max and +inf at or below x_min, and no gradient with
+/// respect to the bounds.
+fn uniform_gradient(uniform: &d::Uniform, x: &DoubleTensor) -> Result<LogProbGradientParts> {
+    let dx = x
+        .zip_with(&uniform.x_max, |x, max| {
+            if x > max { f64::NEG_INFINITY } else { 0.0 }
+        })?
+        .zip_with(&x.le(&uniform.x_min)?, |d, below| {
+            if below { f64::INFINITY } else { d }
+        })?;
+    Ok((Some(dx), smallvec::smallvec![None, None]))
 }
 
 /// A probabilistic node's distribution and the shape of its value.
@@ -264,60 +456,6 @@ impl DistributionOp {
 
     /// Draws a value from the distribution given its parameters' values.
     pub(crate) fn sample(&self, parameters: &[&Value], rng: &mut KeanuRng) -> Result<Value> {
-        use DistributionKind::*;
-        let f = |i: usize| parameters[i].f64().cloned();
-        let i = |i: usize| parameters[i].i64().cloned();
-        let shape = self.shape.as_slice();
-        Ok(match &self.kind {
-            Gaussian => Value::F64(d::Gaussian::new(f(0)?, f(1)?).sample(shape, rng)?),
-            HalfGaussian => Value::F64(d::HalfGaussian::new(f(0)?).sample(shape, rng)?),
-            Cauchy => Value::F64(d::Cauchy::new(f(0)?, f(1)?).sample(shape, rng)?),
-            HalfCauchy => Value::F64(d::HalfCauchy::new(f(0)?).sample(shape, rng)?),
-            Beta => Value::F64(d::Beta::standard(f(0)?, f(1)?).sample(shape, rng)?),
-            ChiSquared => Value::F64(d::ChiSquared::new(i(0)?).sample(shape, rng)?),
-            Dirichlet => Value::F64(d::Dirichlet::new(f(0)?).sample(rng)?),
-            Exponential => Value::F64(d::Exponential::new(f(0)?).sample(shape, rng)?),
-            Gamma => Value::F64(d::Gamma::new(f(0)?, f(1)?).sample(shape, rng)?),
-            InverseGamma => Value::F64(d::InverseGamma::new(f(0)?, f(1)?).sample(shape, rng)?),
-            Laplace => Value::F64(d::Laplace::new(f(0)?, f(1)?).sample(shape, rng)?),
-            Logistic => Value::F64(d::Logistic::new(f(0)?, f(1)?).sample(shape, rng)?),
-            LogNormal => Value::F64(d::LogNormal::new(f(0)?, f(1)?).sample(shape, rng)?),
-            MultivariateGaussian => {
-                Value::F64(d::MultivariateGaussian::new(f(0)?, f(1)?).sample(shape, rng)?)
-            }
-            Pareto => Value::F64(d::Pareto::new(f(0)?, f(1)?).sample(shape, rng)?),
-            StudentT => Value::F64(d::StudentT::new(i(0)?).sample(shape, rng)?),
-            Triangular => Value::F64(d::Triangular::new(f(0)?, f(1)?, f(2)?).sample(shape, rng)?),
-            Uniform => Value::F64(d::Uniform::new(f(0)?, f(1)?).sample(shape, rng)?),
-            Kde(kde) => {
-                let count: usize = shape.iter().product();
-                let signed: Vec<isize> = shape.iter().map(|&s| s as isize).collect();
-                Value::F64(kde.sample(count, rng).reshape(&signed)?)
-            }
-            Bernoulli => Value::Bool(d::Bernoulli::new(f(0)?).sample(shape, rng)?),
-            Binomial => Value::I64(d::Binomial::new(f(0)?, i(1)?).sample(shape, rng)?),
-            Categorical => {
-                let probabilities = (0..parameters.len()).map(f).collect::<Result<Vec<_>>>()?;
-                Value::I64(d::Categorical::new(probabilities)?.sample(shape, rng)?)
-            }
-            Geometric => Value::I64(d::Geometric::new(f(0)?).sample(shape, rng)?),
-            Multinomial => Value::I64(d::Multinomial::new(i(0)?, f(1)?)?.sample(shape, rng)?),
-            Poisson => Value::I64(d::Poisson::new(f(0)?).sample(shape, rng)?),
-            UniformInt => Value::I64(d::UniformInt::new(i(0)?, i(1)?).sample(shape, rng)?),
-            Custom(c) => {
-                let value = c
-                    .sample(shape, parameters, rng)
-                    .map_err(GraphError::Custom)?;
-                if value.dtype() != c.value_type() || value.shape() != shape {
-                    return Err(GraphError::Custom(format!(
-                        "sample returned a {:?} value of shape {:?}, expected {:?} of shape {shape:?}",
-                        value.dtype(),
-                        value.shape(),
-                        c.value_type()
-                    )));
-                }
-                value
-            }
-        })
+        self.kind.sample(self.shape.as_slice(), parameters, rng)
     }
 }
