@@ -162,9 +162,9 @@ impl DoubleTensor {
         Ok(Tensor::from_parts(self.shape.clone(), data))
     }
 
-    /// Solves op(T) X = B for X, where T is the triangular matrix in the last two dimensions of self ([..., n, n])
+    /// Solves op(T) X = B for X, where T is the triangular matrix in the last two dimensions of self (`[..., n, n]`)
     /// and op(T) is T, or Tᵀ if `transpose`. Only the lower (if `lower`) or upper triangle of T, diagonal
-    /// included, is read. B is [..., n, k], or a single vector [n] (giving [..., n]). Leading (batch) dimensions
+    /// included, is read. B is `[..., n, k]`, or a single vector `[n]` (giving `[..., n]`). Leading (batch) dimensions
     /// broadcast, as in [`Self::matmul`]. A matrix with an exactly zero diagonal element is singular, which is
     /// an error.
     ///
