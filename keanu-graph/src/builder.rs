@@ -7,6 +7,7 @@ use crate::state::State;
 use crate::value::{DType, Value};
 use crate::vars::{BoolVar, DoubleVar, IntVar, Var};
 use keanu_tensor::{BoolTensor, DoubleTensor, IntTensor, Shape};
+use smallvec::SmallVec;
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -116,12 +117,21 @@ impl GraphBuilder {
         }
     }
 
+    /// Calls `f` with the type and shape of each of `parents`, which must be nodes of this builder, to infer the
+    /// type and shape of a new node. `f` must not change the builder.
+    fn with_types<R>(&self, parents: &[NodeId], f: impl FnOnce(&[(DType, &[usize])]) -> R) -> R {
+        let inner = self.inner.borrow();
+        let types: SmallVec<[(DType, &[usize]); 4]> = parents
+            .iter()
+            .map(|p| (inner.nodes[p.0].dtype, inner.nodes[p.0].shape.as_slice()))
+            .collect();
+        f(&types)
+    }
+
     /// Adds a deterministic node, inferring its type and shape. On error nothing is added.
     fn try_add(&self, op: Op, parents: &[NodeId]) -> Result<NodeId> {
         self.check_parents(op.name(), parents)?;
-        let types: Vec<(DType, Shape)> = parents.iter().map(|&p| self.dtype_shape(p)).collect();
-        let refs: Vec<(DType, &[usize])> = types.iter().map(|(t, s)| (*t, s.as_slice())).collect();
-        let (dtype, shape) = output_type(&op, &refs)?;
+        let (dtype, shape) = self.with_types(parents, |types| output_type(&op, types))?;
         let value = match &op {
             Op::Constant(v) => Some(v.clone()),
             _ => None,
@@ -276,11 +286,7 @@ impl GraphBuilder {
     /// Connects a proxy node to the (earlier) node it stands for.
     pub fn connect_ids(&self, proxy: NodeId, parent: NodeId) -> Result<()> {
         self.check_ids(&[proxy, parent])?;
-        self.untyped(|| match self.dtype_shape(proxy).0 {
-            DType::F64 => self.connect(self.double_var(proxy), self.double_var(parent)),
-            DType::I64 => self.connect(IntVar::new(self, proxy), IntVar::new(self, parent)),
-            DType::Bool => self.connect(BoolVar::new(self, proxy), BoolVar::new(self, parent)),
-        })
+        self.untyped(|| self.connect_node(proxy, parent))
     }
 
     /// Labels a node.
@@ -293,24 +299,13 @@ impl GraphBuilder {
     /// Sets the initial value of a node, checking its type and shape.
     pub fn set_value_of(&self, id: NodeId, value: Value) -> Result<()> {
         self.check_ids(&[id])?;
-        self.untyped(|| {
-            if self.check_value(id, &value) {
-                let mut inner = self.inner.borrow_mut();
-                if !inner.observed[id.0] {
-                    inner.values[id.0] = Some(value);
-                }
-            }
-        })
+        self.untyped(|| self.set_node_value(id, value))
     }
 
     /// Observes a node, checking its type and shape. Only probabilistic and boolean nodes can be observed.
     pub fn observe_of(&self, id: NodeId, value: Value) -> Result<()> {
         self.check_ids(&[id])?;
-        self.untyped(|| match self.dtype_shape(id).0 {
-            DType::F64 => self.observe(self.double_var(id), value),
-            DType::I64 => self.observe(IntVar::new(self, id), value),
-            DType::Bool => self.observe(BoolVar::new(self, id), value),
-        })
+        self.untyped(|| self.observe_node(id, value))
     }
 
     // ----- constants -----
@@ -386,20 +381,28 @@ impl GraphBuilder {
 
     /// Sets the initial value of a node in the built state.
     pub fn set_value<'b>(&'b self, var: impl Var<'b>, value: impl Into<Value>) {
-        let var = self.own(var);
-        let value = value.into();
-        if self.check_value(var.id(), &value) {
+        self.set_node_value(self.own(var).id(), value.into());
+    }
+
+    /// Sets the initial value of a node of this builder (unless it is observed), recording an error if the value
+    /// has the wrong type or shape.
+    fn set_node_value(&self, id: NodeId, value: Value) {
+        if self.check_value(id, &value) {
             let mut inner = self.inner.borrow_mut();
-            if !inner.observed[var.id().0] {
-                inner.values[var.id().0] = Some(value);
+            if !inner.observed[id.0] {
+                inner.values[id.0] = Some(value);
             }
         }
     }
 
     /// Observes a node in the built state. Only probabilistic and boolean nodes can be observed.
     pub fn observe<'b>(&'b self, var: impl Var<'b>, value: impl Into<Value>) {
-        let id = self.own(var).id();
-        let value = value.into();
+        self.observe_node(self.own(var).id(), value.into());
+    }
+
+    /// Observes a node of this builder, recording an error if it can't be observed or the value has the wrong
+    /// type or shape.
+    fn observe_node(&self, id: NodeId, value: Value) {
         let observable = {
             let inner = self.inner.borrow();
             let node = &inner.nodes[id.0];
@@ -452,7 +455,11 @@ impl GraphBuilder {
     /// Connects a proxy to the node it stands for, which must already exist (have a smaller id) and have the same
     /// type and shape.
     pub fn connect<'b, V: Var<'b>>(&'b self, proxy: V, parent: V) {
-        let (proxy, parent) = (self.own(proxy).id(), self.own(parent).id());
+        self.connect_node(self.own(proxy).id(), self.own(parent).id());
+    }
+
+    /// Connects a proxy node of this builder to a node of this builder, recording an error if it can't be.
+    fn connect_node(&self, proxy: NodeId, parent: NodeId) {
         let error = {
             let inner = self.inner.borrow();
             let node = &inner.nodes[proxy.0];
@@ -597,10 +604,10 @@ impl GraphBuilder {
         parameters: &[NodeId],
     ) -> Result<NodeId> {
         self.check_parents("distribution", parameters)?;
-        let types: Vec<(DType, Shape)> = parameters.iter().map(|&p| self.dtype_shape(p)).collect();
-        let refs: Vec<(DType, &[usize])> = types.iter().map(|(t, s)| (*t, s.as_slice())).collect();
         let dtype = kind.value_type();
-        let shape = DistributionOp::value_shape(&kind, shape, &refs)?;
+        let shape = self.with_types(parameters, |types| {
+            DistributionOp::value_shape(&kind, shape, types)
+        })?;
         Ok(self.push(
             Node {
                 op: Op::Distribution(DistributionOp {
