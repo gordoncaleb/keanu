@@ -140,3 +140,97 @@ fn a_type_mismatch_leaves_the_samples_unchanged() {
     assert_eq!(samples.len(), 0);
     assert_eq!(samples.f64(x).unwrap().len(), 0);
 }
+
+/// Samples of a scalar node with the given values.
+fn scalar_samples(values: &[f64]) -> (NetworkSamples, NodeId) {
+    let b = GraphBuilder::new();
+    let x = b.gaussian(0.0, 1.0).id();
+    let (graph, mut state): (Graph, State) = b.build().unwrap();
+    let mut samples = NetworkSamples::new(&graph, &[x]);
+    for &v in values {
+        state.set(&graph, x, DoubleTensor::scalar(v)).unwrap();
+        samples.record(&state, 0.0).unwrap();
+    }
+    (samples, x)
+}
+
+fn mode_of(values: &[f64]) -> Option<f64> {
+    let (samples, x) = scalar_samples(values);
+    samples
+        .f64(x)
+        .unwrap()
+        .mode()
+        .map(|t| t.to_scalar().unwrap())
+}
+
+/// The original quadratic mode: distinct values in order of first appearance, the first with the highest count.
+fn reference_mode(values: &[f64]) -> Option<f64> {
+    let mut distinct: Vec<(f64, usize)> = Vec::new();
+    for &v in values {
+        match distinct.iter_mut().find(|(d, _)| *d == v) {
+            Some((_, count)) => *count += 1,
+            None => distinct.push((v, 1)),
+        }
+    }
+    let mut best: Option<(f64, usize)> = None;
+    for (v, count) in distinct {
+        if best.is_none_or(|(_, c)| count > c) {
+            best = Some((v, count));
+        }
+    }
+    best.map(|(v, _)| v)
+}
+
+/// Regression: `mode` compared every sample with every distinct value so far (quadratic). It now sorts, keeping
+/// the same answer: of the values with the highest count, the one that appears first.
+#[test]
+fn mode_breaks_ties_by_first_appearance() {
+    assert_eq!(mode_of(&[]), None);
+    assert_eq!(mode_of(&[2.0, 1.0, 1.0, 2.0]), Some(2.0));
+    assert_eq!(mode_of(&[3.0, 1.0, 2.0, 2.0, 1.0]), Some(1.0));
+    assert_eq!(mode_of(&[3.0, 1.0, 2.0, 2.0, 1.0, 2.0]), Some(2.0));
+    // -0 == 0, so they count together, as the first of them
+    let zero = mode_of(&[5.0, -0.0, 0.0, 5.0, 0.0]).unwrap();
+    assert!(zero == 0.0 && zero.is_sign_negative());
+    // NaN is never equal to anything, so each counts once
+    assert!(mode_of(&[f64::NAN, f64::NAN, 4.0]).unwrap().is_nan());
+    assert_eq!(mode_of(&[f64::NAN, 3.0, f64::NAN, 3.0]), Some(3.0));
+
+    // agrees with the original on many small sequences
+    let mut seed = 12345u64;
+    for _ in 0..500 {
+        seed = seed
+            .wrapping_mul(6364136223846793005)
+            .wrapping_add(1442695040888963407);
+        let len = ((seed >> 33) % 12) as usize;
+        let values: Vec<f64> = (0..len)
+            .map(|_| {
+                seed = seed
+                    .wrapping_mul(6364136223846793005)
+                    .wrapping_add(1442695040888963407);
+                match (seed >> 33) % 6 {
+                    5 => f64::NAN,
+                    k => k as f64 - 2.0,
+                }
+            })
+            .collect();
+        let (got, expected) = (mode_of(&values), reference_mode(&values));
+        let same = match (got, expected) {
+            (Some(g), Some(e)) => g.to_bits() == e.to_bits() || (g.is_nan() && e.is_nan()),
+            (g, e) => g == e,
+        };
+        assert!(same, "{values:?}: {got:?} vs {expected:?}");
+    }
+}
+
+#[test]
+fn mode_of_vector_and_bool_samples() {
+    let (_, s, x, _, flag) = samples(5);
+    // every x is distinct, so the first wins
+    assert_eq!(s.f64(x).unwrap().mode().unwrap().as_slice(), &[0.0, -0.0]);
+    // flag is true, false, true, false, true
+    assert_eq!(
+        s.bool(flag).unwrap().mode().unwrap().to_scalar(),
+        Some(true)
+    );
+}

@@ -305,23 +305,64 @@ impl<'a, T: Element> Samples<'a, T> {
         self.values.iter().filter(|v| predicate(v)).count() as f64 / self.values.len() as f64
     }
 
-    /// The most frequent value (the first to reach the highest count, if there are ties). None if empty.
-    pub fn mode(&self) -> Option<&'a Tensor<T>> {
-        let mut distinct: Vec<(&Tensor<T>, usize)> = Vec::new();
-        for v in self.values {
-            match distinct.iter_mut().find(|(d, _)| *d == v) {
-                Some((_, count)) => *count += 1,
-                None => distinct.push((v, 1)),
+    /// The most frequent value, or None if there are no samples. Of values with the same highest count, the one
+    /// that appears first wins. Values are compared with `==`, so a tensor containing NaN is never equal to
+    /// another (or itself) and counts once.
+    pub fn mode(&self) -> Option<&'a Tensor<T>>
+    where
+        T: PartialOrd,
+    {
+        // sort sample indices so equal values are adjacent (the sort is stable, so each run of equal values
+        // starts with its first appearance), then count the runs
+        let mut order: Vec<usize> = (0..self.values.len()).collect();
+        order.sort_by(|&a, &b| total_cmp(&self.values[a], &self.values[b]));
+        // (count, first index) of the best run so far
+        let mut best: Option<(usize, usize)> = None;
+        let mut consider = |count: usize, first: usize| {
+            if best.is_none_or(|(c, f)| count > c || (count == c && first < f)) {
+                best = Some((count, first));
             }
-        }
-        let mut best: Option<(&Tensor<T>, usize)> = None;
-        for (v, count) in distinct {
-            if best.is_none_or(|(_, c)| count > c) {
-                best = Some((v, count));
+        };
+        let mut i = 0;
+        while i < order.len() {
+            let first = order[i];
+            let value = &self.values[first];
+            let mut j = i + 1;
+            #[allow(clippy::eq_op)] // false for a tensor holding NaN
+            let comparable = value == value;
+            if comparable {
+                while j < order.len() && self.values[order[j]] == *value {
+                    j += 1;
+                }
+                consider(j - i, first);
+            } else {
+                // contains NaN: equal to nothing, so a run of its own
+                consider(1, first);
             }
+            i = j;
         }
-        best.map(|(v, _)| v)
+        best.map(|(_, first)| &self.values[first])
     }
+}
+
+/// A total order on tensors consistent with `==` for values without NaN: by shape, then element by element, with
+/// NaN after every number (and NaNs ordered equal, so a tensor holding NaN sorts next to similar ones without being
+/// equal to them).
+fn total_cmp<T: Element + PartialOrd>(a: &Tensor<T>, b: &Tensor<T>) -> std::cmp::Ordering {
+    use std::cmp::Ordering;
+    let element = |x: &T, y: &T| match x.partial_cmp(y) {
+        Some(ordering) => ordering,
+        #[allow(clippy::eq_op)]
+        None => (x != x).cmp(&(y != y)),
+    };
+    a.shape().cmp(b.shape()).then_with(|| {
+        a.as_slice()
+            .iter()
+            .zip(b.as_slice())
+            .map(|(x, y)| element(x, y))
+            .find(|&o| o != Ordering::Equal)
+            .unwrap_or(Ordering::Equal)
+    })
 }
 
 impl Samples<'_, f64> {
