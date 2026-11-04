@@ -50,6 +50,30 @@ vector was edited by hand and the entry says so.
 - `Pareto` and `Geometric` log probabilities treat invalid parameters per element (and return the broadcast shape) instead of making every element -infinity.
 - `Pareto` support includes x = location. Golden vectors `Pareto/location=1.0,scale=2.0` (x = 1) and `Pareto/location=0.5,scale=1.0` (x = 0.5) logProb edited by hand from -infinity to ln 2.
 - Multinomial and Categorical sampling never return a category with zero probability when rounding leaves the cumulative probability below the uniform draw; they return the last category with non-zero probability.
+- keanu-distributions (breaking): distributions borrow or own their parameters. Each struct takes a lifetime
+  (`Gaussian<'a>`), its parameter fields are `Param<'a>` (`Cow<'a, Tensor>`), and constructors take
+  `impl IntoParam`, so `Gaussian::new(mu, sigma)` still works and `Gaussian::new(&mu, &sigma)` copies nothing;
+  `Categorical::new` takes any iterator of owned or borrowed tensors. keanu-graph no longer copies every parameter
+  tensor on each log prob and gradient evaluation (log prob plus gradient of a two-node, 100,000-element Gaussian
+  model: 2.35 ms to 2.2 ms).
+- keanu-graph: `Model::log_prob_and_gradient` returns the joint log probability and (unless it is -∞) its gradient
+  in one pass that evaluates each node's distribution once, bit-for-bit equal to `log_prob` and
+  `log_prob_gradient` (1.7 ms on the model above); Gaussian nodes use the new one-pass
+  `Gaussian::log_prob_and_d_log_prob`.
+- `Binomial` sampling with more than 50 trials uses inversion (small mean) or Hörmann's BTRS, and `Poisson`
+  sampling with mu >= 10 uses Hörmann's PTRS, both O(1) expected per draw instead of O(n) / O(mu) (Binomial
+  n = 1e8: 2.7 s to ~6 µs per draw). Smaller parameters draw exactly the same values as before.
+- Gradients of Cauchy, Gamma, InverseGamma, Laplace, Logistic, LogNormal, Pareto, Beta and Exponential, and
+  Triangular's (which evaluated every piece four times), are computed in one broadcast pass; Categorical log prob
+  in one pass instead of one per category; Beta sampling in one pass. Results are unchanged, except that
+  `Pareto`'s x gradient is now shaped like the broadcast of x and every parameter, as the module documents.
+- Sampling rejects invalid parameters with `InvalidParameter` for every distribution: Gaussian, HalfGaussian and
+  LogNormal sigma, Exponential rate, Logistic s, Pareto location and scale must be positive, Uniform, UniformInt,
+  Beta and Triangular need x_max > x_min, Bernoulli and Binomial p in [0, 1], Binomial n >= 0, Geometric p in
+  (0, 1), ChiSquared k > 0, Poisson mu finite. They used to return garbage (negative exponential draws, NaN).
+- `Beta`, `Uniform` and `Triangular` log probabilities are -infinity everywhere for an empty or NaN range
+  (x_max <= x_min, or a Triangular mode outside it) instead of NaN or +infinity; Categorical log prob and sampling
+  reject negative or NaN probabilities instead of returning NaN.
 - keanu-io: a `SliceVertex` whose `dimension` is not a dimension of its input is an `InvalidParameter` error
   instead of a capacity overflow panic.
 - keanu-io: shapes whose element count overflows (tensor shapes, vertex shapes, `BroadcastVertex` `toShape`) are

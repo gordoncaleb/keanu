@@ -155,14 +155,16 @@ macro_rules! gradient {
 /// `Kind "name" (parameter: dtype, ...) -> value dtype => constructor`, and generates [`DistributionKind`]'s name,
 /// types, sampling, log probability and gradient from the table (the remaining kinds are written out here).
 ///
-/// The parameters are bound to their (cloned) tensors for the constructor. By default a distribution is sampled
-/// with `sample(shape, rng)`, and its gradient is the `d_log_prob` field named after each f64 parameter, and `x`
+/// The parameters are bound to references to their tensors, which the distribution borrows (nothing is copied). By
+/// default a distribution is sampled with `sample(shape, rng)`, and its gradient is the `d_log_prob` field named after each f64 parameter, and `x`
 /// for an f64 value. A row can override either: `sample = f` is called as `f(&distribution, shape, rng)` and
-/// `gradient = f` as `f(&distribution, x)` (both non-capturing closures or functions).
+/// `gradient = f` as `f(&distribution, x)` (both non-capturing closures or functions). `fused = f`, called as
+/// `f(&distribution, x)`, computes the summed log probability and the gradient together for
+/// `log_prob_and_gradient`; it must return exactly what the separate methods do.
 macro_rules! distributions {
     ($(
         $kind:ident $name:literal ($($param:ident: $ptype:ident),+) -> $vtype:ident => $build:expr
-        $(, sample = $sample:expr)? $(, gradient = $gradient:expr)?;
+        $(, sample = $sample:expr)? $(, gradient = $gradient:expr)? $(, fused = $fused:expr)?;
     )+) => {
         impl DistributionKind {
             /// The parameter types, or None for a variable number of f64 parameters (Categorical).
@@ -198,7 +200,7 @@ macro_rules! distributions {
                 Ok(match self {
                     $(DistributionKind::$kind => {
                         let &[$($param),+] = parameters else { return Err(self.wrong_parameters()) };
-                        $(let $param = tensor!($ptype, $param).clone();)+
+                        $(let $param = tensor!($ptype, $param);)+
                         let dist = $build;
                         Value::$vtype(override_or!(
                             [$({
@@ -238,7 +240,7 @@ macro_rules! distributions {
                 Ok(match self {
                     $(DistributionKind::$kind => {
                         let &[$($param),+] = parameters else { return Err(self.wrong_parameters()) };
-                        $(let $param = tensor!($ptype, $param).clone();)+
+                        $(let $param = tensor!($ptype, $param);)+
                         $build.log_prob(tensor!($vtype, value))?.total()
                     })+
                     DistributionKind::Kde(kde) => kde.log_prob(value.f64()?).sum(),
@@ -259,19 +261,10 @@ macro_rules! distributions {
                 Ok(match self {
                     $(DistributionKind::$kind => {
                         let &[$($param),+] = parameters else { return Err(self.wrong_parameters()) };
-                        $(let $param = tensor!($ptype, $param).clone();)+
+                        $(let $param = tensor!($ptype, $param);)+
                         let dist = $build;
                         let x = tensor!($vtype, value);
-                        override_or!(
-                            [$({
-                                let gradient: fn(&_, &_) -> Result<LogProbGradientParts> = $gradient;
-                                gradient(&dist, x)?
-                            })?]
-                            [{
-                                let g = dist.d_log_prob(x)?;
-                                (gradient!($vtype, g.x), smallvec::smallvec![$(gradient!($ptype, g.$param)),+])
-                            }]
-                        )
+                        distribution_gradient!(dist, x, $vtype, [$($param: $ptype),+], [$($gradient)?])
                     })+
                     DistributionKind::Kde(kde) => (Some(kde.d_log_prob(value.f64()?)?.x), smallvec::smallvec![]),
                     DistributionKind::Categorical => no_gradient(parameters.len()),
@@ -287,19 +280,86 @@ macro_rules! distributions {
                     }
                 })
             }
+
+            /// [`Self::log_prob`] and, unless it is impossible (-infinity or NaN), [`Self::log_prob_gradient`],
+            /// sharing the work of reading the parameters and building the distribution. Each is exactly what the
+            /// separate method returns.
+            pub(crate) fn log_prob_and_gradient(
+                &self,
+                value: &Value,
+                parameters: &[&Value],
+            ) -> Result<(f64, Option<LogProbGradientParts>)> {
+                Ok(match self {
+                    $(DistributionKind::$kind => {
+                        let &[$($param),+] = parameters else { return Err(self.wrong_parameters()) };
+                        $(let $param = tensor!($ptype, $param);)+
+                        let dist = $build;
+                        let x = tensor!($vtype, value);
+                        override_or!(
+                            [$({
+                                let fused: fn(&_, &_) -> Result<(f64, LogProbGradientParts)> = $fused;
+                                let (log_prob, gradient) = fused(&dist, x)?;
+                                (log_prob, (!is_impossible(log_prob)).then_some(gradient))
+                            })?]
+                            [{
+                                let log_prob = dist.log_prob(x)?.total();
+                                if is_impossible(log_prob) {
+                                    return Ok((log_prob, None));
+                                }
+                                let gradient = distribution_gradient!(
+                                    dist, x, $vtype, [$($param: $ptype),+], [$($gradient)?]
+                                );
+                                (log_prob, Some(gradient))
+                            }]
+                        )
+                    })+
+                    DistributionKind::Kde(_)
+                    | DistributionKind::Categorical
+                    | DistributionKind::Custom(_) => {
+                        let log_prob = self.log_prob(value, parameters)?;
+                        if is_impossible(log_prob) {
+                            return Ok((log_prob, None));
+                        }
+                        (log_prob, Some(self.log_prob_gradient(value, parameters)?))
+                    }
+                })
+            }
         }
     };
 }
 
+/// The log prob gradient parts of a built distribution `$dist` at `$x`: the row's `gradient` override if it has
+/// one, else the `d_log_prob` field named after each f64 parameter (and `x` for an f64 value).
+macro_rules! distribution_gradient {
+    ($dist:ident, $x:ident, $vtype:ident, [$($param:ident: $ptype:ident),+], [$($gradient:expr)?]) => {
+        override_or!(
+            [$({
+                let gradient: fn(&_, &_) -> Result<LogProbGradientParts> = $gradient;
+                gradient(&$dist, $x)?
+            })?]
+            [{
+                let g = $dist.d_log_prob($x)?;
+                (gradient!($vtype, g.x), smallvec::smallvec![$(gradient!($ptype, g.$param)),+])
+            }]
+        )
+    };
+}
+
+/// Whether a log probability makes the state impossible: -infinity or NaN.
+pub(crate) fn is_impossible(log_prob: f64) -> bool {
+    log_prob == f64::NEG_INFINITY || log_prob.is_nan()
+}
+
 distributions! {
-    Gaussian "gaussian" (mu: F64, sigma: F64) -> F64 => d::Gaussian::new(mu, sigma);
+    Gaussian "gaussian" (mu: F64, sigma: F64) -> F64 => d::Gaussian::new(mu, sigma),
+        fused = gaussian_log_prob_and_gradient;
     HalfGaussian "half_gaussian" (sigma: F64) -> F64 => d::HalfGaussian::new(sigma);
     Cauchy "cauchy" (location: F64, scale: F64) -> F64 => d::Cauchy::new(location, scale);
     HalfCauchy "half_cauchy" (scale: F64) -> F64 => d::HalfCauchy::new(scale);
     Beta "beta" (alpha: F64, beta: F64) -> F64 => d::Beta::standard(alpha, beta);
     ChiSquared "chi_squared" (k: I64) -> F64 => d::ChiSquared::new(k);
     Dirichlet "dirichlet" (concentration: F64) -> F64 => d::Dirichlet::new(concentration),
-        sample = |dist: &d::Dirichlet, _, rng| dist.sample(rng);
+        sample = |dist: &d::Dirichlet<'_>, _, rng| dist.sample(rng);
     Exponential "exponential" (rate: F64) -> F64 => d::Exponential::new(rate);
     Gamma "gamma" (theta: F64, k: F64) -> F64 => d::Gamma::new(theta, k);
     InverseGamma "inverse_gamma" (alpha: F64, beta: F64) -> F64 => d::InverseGamma::new(alpha, beta);
@@ -351,8 +411,8 @@ impl Total for f64 {
 }
 
 /// Every parameter's f64 tensor (Categorical's probabilities).
-fn f64_tensors(parameters: &[&Value]) -> Result<Vec<DoubleTensor>> {
-    parameters.iter().map(|p| p.f64().cloned()).collect()
+fn f64_tensors<'v>(parameters: &[&'v Value]) -> Result<Vec<&'v DoubleTensor>> {
+    parameters.iter().map(|p| p.f64()).collect()
 }
 
 /// No gradient with respect to the value or any of `parameters` parameters.
@@ -360,11 +420,23 @@ fn no_gradient(parameters: usize) -> LogProbGradientParts {
     (None, smallvec::smallvec![None; parameters])
 }
 
+/// The Gaussian log probability and gradient in one pass.
+fn gaussian_log_prob_and_gradient(
+    gaussian: &d::Gaussian<'_>,
+    x: &DoubleTensor,
+) -> Result<(f64, LogProbGradientParts)> {
+    let (log_prob, g) = gaussian.log_prob_and_d_log_prob(x)?;
+    Ok((
+        log_prob.sum(),
+        (Some(g.x), smallvec::smallvec![Some(g.mu), Some(g.sigma)]),
+    ))
+}
+
 /// As UniformVertex: zero inside the support, -inf above x_max and +inf at or below x_min, and no gradient with
 /// respect to the bounds.
-fn uniform_gradient(uniform: &d::Uniform, x: &DoubleTensor) -> Result<LogProbGradientParts> {
+fn uniform_gradient(uniform: &d::Uniform<'_>, x: &DoubleTensor) -> Result<LogProbGradientParts> {
     let dx = x
-        .zip_with(&uniform.x_max, |x, max| {
+        .zip_with(&*uniform.x_max, |x, max| {
             if x > max { f64::NEG_INFINITY } else { 0.0 }
         })?
         .zip_with(&x.le(&uniform.x_min)?, |d, below| {

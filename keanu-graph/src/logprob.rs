@@ -220,6 +220,42 @@ pub fn log_prob_gradient(
     of: &[NodeId],
     wrt: &[NodeId],
 ) -> Result<LogProbGradient> {
+    let gradient = gradient_from_parts(graph, state, of, wrt, |node| {
+        node_gradient_parts(graph, state, node).map(Some)
+    })?;
+    Ok(gradient.expect("every node has gradient parts"))
+}
+
+/// The total log probability of the probabilistic nodes `of` and its gradient with respect to the latents in
+/// `wrt`, exactly as [`log_prob`] (summed in the order of `of`) and [`log_prob_gradient`], but in one pass that
+/// reads each node's value and parameters and builds its distribution once.
+///
+/// None if any node's log probability is impossible (-infinity or NaN); the remaining nodes are not evaluated.
+pub(crate) fn log_prob_and_gradient(
+    graph: &Graph,
+    state: &State,
+    of: &[NodeId],
+    wrt: &[NodeId],
+) -> Result<Option<(f64, LogProbGradient)>> {
+    let mut log_prob = 0.0;
+    let gradient = gradient_from_parts(graph, state, of, wrt, |node| {
+        let (node_log_prob, parts) = kind(graph, node)?
+            .log_prob_and_gradient(value(state, node)?, &parameters(graph, state, node)?)?;
+        log_prob += node_log_prob;
+        Ok(parts)
+    })?;
+    Ok(gradient.map(|gradient| (log_prob, gradient)))
+}
+
+/// The gradient of [`log_prob_gradient`], given each node's gradient parts by `parts_of`. None as soon as
+/// `parts_of` returns None for a node.
+fn gradient_from_parts(
+    graph: &Graph,
+    state: &State,
+    of: &[NodeId],
+    wrt: &[NodeId],
+    mut parts_of: impl FnMut(NodeId) -> Result<Option<LogProbGradientParts>>,
+) -> Result<Option<LogProbGradient>> {
     let mut is_wrt: smallvec::SmallVec<[bool; 32]> = smallvec::smallvec![false; graph.len()];
     let mut any_target = false;
     for &id in wrt {
@@ -233,7 +269,9 @@ pub fn log_prob_gradient(
     // same sum as one sweep per parameter)
     let mut seeds: smallvec::SmallVec<[(NodeId, DoubleTensor); 8]> = smallvec::SmallVec::new();
     for &node in of {
-        let (value_gradient, parameters) = node_gradient_parts(graph, state, node)?;
+        let Some((value_gradient, parameters)) = parts_of(node)? else {
+            return Ok(None);
+        };
         if let (true, Some(dx)) = (is_latent_double(graph, state, node), value_gradient) {
             result.add(node, dx)?;
         }
@@ -253,7 +291,7 @@ pub fn log_prob_gradient(
     reverse_from_seeds(graph, state, seeds, &is_wrt, |latent, partial| {
         result.add(latent, partial)
     })?;
-    Ok(result)
+    Ok(Some(result))
 }
 
 /// The gradient of the joint log probability of every probabilistic node with respect to every latent f64 node.

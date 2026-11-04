@@ -19,7 +19,7 @@ pub(crate) fn broadcast_all(shapes: &[&[usize]]) -> Result<Shape> {
 
 /// Read access to a tensor as if broadcast to a shape, without copying when it already has that shape or is a
 /// single value.
-enum Operand<'a, T> {
+pub(crate) enum Operand<'a, T> {
     Slice(&'a [T]),
     Scalar(T),
     Expanded(Vec<T>),
@@ -27,7 +27,7 @@ enum Operand<'a, T> {
 
 impl<T: Element> Operand<'_, T> {
     #[inline]
-    fn at(&self, i: usize) -> T {
+    pub(crate) fn at(&self, i: usize) -> T {
         match self {
             Operand::Slice(s) => s[i],
             Operand::Scalar(v) => *v,
@@ -36,7 +36,7 @@ impl<T: Element> Operand<'_, T> {
     }
 }
 
-fn operand<'a, T: Element>(t: &'a Tensor<T>, shape: &[usize]) -> Result<Operand<'a, T>> {
+pub(crate) fn operand<'a, T: Element>(t: &'a Tensor<T>, shape: &[usize]) -> Result<Operand<'a, T>> {
     Ok(if t.shape() == shape {
         Operand::Slice(t.as_slice())
     } else if t.len() == 1 {
@@ -46,102 +46,82 @@ fn operand<'a, T: Element>(t: &'a Tensor<T>, shape: &[usize]) -> Result<Operand<
     })
 }
 
-pub(crate) fn map2<A: Element, B: Element>(
-    a: &Tensor<A>,
-    b: &Tensor<B>,
-    f: impl Fn(A, B) -> f64,
-) -> Result<DoubleTensor> {
-    Ok(a.zip_with(b, f)?)
+/// A tuple of tensor references that broadcast together (see [`map`]).
+pub(crate) trait Operands<'a> {
+    /// A tuple of one element of each tensor.
+    type Item;
+    /// The tensors as broadcast.
+    type Broadcast: Broadcast<Item = Self::Item>;
+    /// The broadcast shape of the tensors, and the tensors broadcast to it.
+    fn broadcast(self) -> Result<(Shape, Self::Broadcast)>;
 }
 
-pub(crate) fn map3<A: Element, B: Element, C: Element>(
-    a: &Tensor<A>,
-    b: &Tensor<B>,
-    c: &Tensor<C>,
-    f: impl Fn(A, B, C) -> f64,
-) -> Result<DoubleTensor> {
-    let shape = broadcast_all(&[a.shape(), b.shape(), c.shape()])?;
-    let (a, b, c) = (
-        operand(a, &shape)?,
-        operand(b, &shape)?,
-        operand(c, &shape)?,
-    );
-    Ok(DoubleTensor::from_fn(&shape, |i| {
-        f(a.at(i), b.at(i), c.at(i))
-    }))
+/// Tensors broadcast to a common shape, read element by element.
+pub(crate) trait Broadcast {
+    /// A tuple of one element of each tensor.
+    type Item;
+    /// The elements at a flat index of the broadcast shape.
+    fn at(&self, i: usize) -> Self::Item;
 }
 
-/// Like [`map3`] but computes two outputs in one pass.
-pub(crate) fn map3_pair<A: Element, B: Element, C: Element>(
-    a: &Tensor<A>,
-    b: &Tensor<B>,
-    c: &Tensor<C>,
-    f: impl Fn(A, B, C) -> (f64, f64),
-) -> Result<(DoubleTensor, DoubleTensor)> {
-    let shape = broadcast_all(&[a.shape(), b.shape(), c.shape()])?;
-    let (a, b, c) = (
-        operand(a, &shape)?,
-        operand(b, &shape)?,
-        operand(c, &shape)?,
-    );
-    let n: usize = shape.iter().product();
-    let mut second = Vec::new();
-    let first = if n <= 4 {
-        // small: compute twice rather than allocate (f is cheap and pure)
-        DoubleTensor::from_fn(&shape, |i| f(a.at(i), b.at(i), c.at(i)).0)
-    } else {
-        second.reserve(n);
-        DoubleTensor::from_fn(&shape, |i| {
-            let (x, y) = f(a.at(i), b.at(i), c.at(i));
-            second.push(y);
-            x
-        })
+macro_rules! operands {
+    ($($t:ident $v:ident),+) => {
+        impl<'a, $($t: Element),+> Operands<'a> for ($(&'a Tensor<$t>,)+) {
+            type Item = ($($t,)+);
+            type Broadcast = ($(Operand<'a, $t>,)+);
+
+            fn broadcast(self) -> Result<(Shape, Self::Broadcast)> {
+                let ($($v,)+) = self;
+                let shape = broadcast_all(&[$($v.shape()),+])?;
+                let broadcast = ($(operand($v, &shape)?,)+);
+                Ok((shape, broadcast))
+            }
+        }
+
+        impl<'a, $($t: Element),+> Broadcast for ($(Operand<'a, $t>,)+) {
+            type Item = ($($t,)+);
+
+            #[inline]
+            fn at(&self, i: usize) -> Self::Item {
+                let ($($v,)+) = self;
+                ($($v.at(i),)+)
+            }
+        }
     };
-    let second = if n <= 4 {
-        DoubleTensor::from_fn(&shape, |i| f(a.at(i), b.at(i), c.at(i)).1)
-    } else {
-        DoubleTensor::new(&shape, second)?
-    };
-    Ok((first, second))
 }
 
-pub(crate) fn map4<A: Element, B: Element, C: Element, D: Element>(
-    a: &Tensor<A>,
-    b: &Tensor<B>,
-    c: &Tensor<C>,
-    d: &Tensor<D>,
-    f: impl Fn(A, B, C, D) -> f64,
+operands!(A a, B b);
+operands!(A a, B b, C c);
+operands!(A a, B b, C c, D d);
+operands!(A a, B b, C c, D d, E e);
+operands!(A a, B b, C c, D d, E e, F f);
+
+/// `f` of each element of the broadcast of the `operands`, a tuple of tensor references.
+pub(crate) fn map<'a, O: Operands<'a>>(
+    operands: O,
+    f: impl Fn(O::Item) -> f64,
 ) -> Result<DoubleTensor> {
-    let shape = broadcast_all(&[a.shape(), b.shape(), c.shape(), d.shape()])?;
-    let (a, b, c, d) = (
-        operand(a, &shape)?,
-        operand(b, &shape)?,
-        operand(c, &shape)?,
-        operand(d, &shape)?,
-    );
-    Ok(DoubleTensor::from_fn(&shape, |i| {
-        f(a.at(i), b.at(i), c.at(i), d.at(i))
-    }))
+    let (shape, broadcast) = operands.broadcast()?;
+    Ok(DoubleTensor::from_fn(&shape, |i| f(broadcast.at(i))))
 }
 
-pub(crate) fn map5<A: Element, B: Element, C: Element, D: Element, E: Element>(
-    a: &Tensor<A>,
-    b: &Tensor<B>,
-    c: &Tensor<C>,
-    d: &Tensor<D>,
-    e: &Tensor<E>,
-    f: impl Fn(A, B, C, D, E) -> f64,
-) -> Result<DoubleTensor> {
-    let shape = broadcast_all(&[a.shape(), b.shape(), c.shape(), d.shape(), e.shape()])?;
-    let (a, b, c, d, e) = (
-        operand(a, &shape)?,
-        operand(b, &shape)?,
-        operand(c, &shape)?,
-        operand(d, &shape)?,
-        operand(e, &shape)?,
-    );
-    Ok(DoubleTensor::from_fn(&shape, |i| {
-        f(a.at(i), b.at(i), c.at(i), d.at(i), e.at(i))
+/// Like [`map`], but computes `N` outputs in one pass over the broadcast operands.
+pub(crate) fn map_n<'a, O: Operands<'a>, const N: usize>(
+    operands: O,
+    f: impl Fn(O::Item) -> [f64; N],
+) -> Result<[DoubleTensor; N]> {
+    let (shape, broadcast) = operands.broadcast()?;
+    let len: usize = shape.iter().product();
+    let mut outputs: [Vec<f64>; N] = std::array::from_fn(|_| Vec::with_capacity(len));
+    for i in 0..len {
+        for (output, value) in outputs.iter_mut().zip(f(broadcast.at(i))) {
+            output.push(value);
+        }
+    }
+    let mut outputs = outputs.into_iter();
+    Ok(std::array::from_fn(|_| {
+        let data = outputs.next().expect("N outputs");
+        DoubleTensor::new(&shape, data).expect("each output has one value per element of the shape")
     }))
 }
 
@@ -194,6 +174,49 @@ pub(crate) fn sample_each<T: Element>(
         data.push(draw(&values)?);
     }
     Ok(Tensor::new(&out, data)?)
+}
+
+/// An error unless `valid` holds for every element of `t`.
+pub(crate) fn require<T: Element>(
+    t: &Tensor<T>,
+    valid: impl Fn(T) -> bool,
+    message: impl FnOnce() -> String,
+) -> Result<()> {
+    if t.as_slice().iter().all(|&v| valid(v)) {
+        Ok(())
+    } else {
+        crate::error::invalid_parameter(message())
+    }
+}
+
+/// An error unless every element of `t` is positive (NaN is not).
+pub(crate) fn require_positive(name: &str, t: &DoubleTensor) -> Result<()> {
+    require(t, |v| v > 0.0, || format!("{name} must be positive"))
+}
+
+/// An error unless every element of `t` is a probability, in [0, 1] (NaN is not).
+pub(crate) fn require_probability(name: &str, t: &DoubleTensor) -> Result<()> {
+    require(
+        t,
+        |v| (0.0..=1.0).contains(&v),
+        || format!("{name} must be in [0, 1]"),
+    )
+}
+
+/// An error unless `max > min` element-wise, broadcasting (NaN bounds are not).
+pub(crate) fn require_ordered<T: Element + PartialOrd>(
+    min: &Tensor<T>,
+    max: &Tensor<T>,
+    message: &str,
+) -> Result<()> {
+    let shape = broadcast_all(&[min.shape(), max.shape()])?;
+    let (lo, hi) = (operand(min, &shape)?, operand(max, &shape)?);
+    let len: usize = shape.iter().product();
+    if (0..len).all(|i| hi.at(i) > lo.at(i)) {
+        Ok(())
+    } else {
+        crate::error::invalid_parameter(message)
+    }
 }
 
 /// `y * ln(x)`, taken to be 0 where `y` is 0 (even if `x` is 0).

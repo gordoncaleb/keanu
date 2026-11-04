@@ -1,11 +1,13 @@
 //! Probability distributions for [Keanu](https://github.com/gordoncaleb/keanu).
 //!
-//! Each distribution is a struct of parameter tensors with:
+//! Each distribution is a struct of parameter tensors, owned or borrowed (see [`Param`]), with:
 //! - `log_prob(x)`: the element-wise log density or mass, broadcasting x with the parameters
 //!   (-infinity outside the support),
 //! - `d_log_prob(x)`: derivatives of the log density with respect to x and each parameter, as a typed gradient
 //!   struct (where the distribution is differentiable),
 //! - `sample(shape, rng)`: draws using Keanu's own algorithms and an explicit [`KeanuRng`].
+//!   Sampling with parameters outside their valid range (e.g. a non-positive scale) is an
+//!   [`DistributionError::InvalidParameter`] error.
 //!
 //! ```
 //! use keanu_distributions::{Gaussian, KeanuRng};
@@ -29,6 +31,7 @@ pub mod discrete;
 mod error;
 pub mod kde;
 pub mod multivariate;
+mod param;
 mod rng;
 mod util;
 
@@ -37,4 +40,5 @@ pub use discrete::*;
 pub use error::{DistributionError, Result};
 pub use kde::{Kde, KdeGradient};
 pub use multivariate::*;
+pub use param::{IntoParam, Param};
 pub use rng::KeanuRng;

@@ -2,19 +2,20 @@
 
 use crate::continuous::sample_gamma;
 use crate::error::{DistributionError, Result, invalid_parameter};
+use crate::param::{IntoParam, Param};
 use crate::rng::KeanuRng;
-use crate::util::{digamma, ln_gamma, map4, safe_ln_times};
+use crate::util::{digamma, ln_gamma, map, safe_ln_times};
 use keanu_tensor::{DoubleTensor, IntTensor, TensorError, broadcast_shape};
 use std::f64::consts::PI;
 
 /// Multivariate normal distribution over the last dimension. Leading dimensions of x, mu and covariance are
 /// batch dimensions and broadcast.
 #[derive(Debug, Clone, PartialEq)]
-pub struct MultivariateGaussian {
+pub struct MultivariateGaussian<'a> {
     /// Mean, shape [..., n].
-    pub mu: DoubleTensor,
+    pub mu: Param<'a>,
     /// Covariance, shape [..., n, n].
-    pub covariance: DoubleTensor,
+    pub covariance: Param<'a>,
 }
 
 /// Derivatives of [`MultivariateGaussian::log_prob`], each shaped like the corresponding input.
@@ -50,10 +51,13 @@ fn sum_over_batch(batched: &DoubleTensor, target_shape: &[usize]) -> Result<Doub
     Ok(batched.sum_axes(&axes)?.reshape(&target)?)
 }
 
-impl MultivariateGaussian {
+impl<'a> MultivariateGaussian<'a> {
     /// Creates the distribution from its parameters.
-    pub fn new(mu: DoubleTensor, covariance: DoubleTensor) -> Self {
-        Self { mu, covariance }
+    pub fn new(mu: impl IntoParam<'a, f64>, covariance: impl IntoParam<'a, f64>) -> Self {
+        Self {
+            mu: mu.into_param(),
+            covariance: covariance.into_param(),
+        }
     }
 
     /// Checks the shapes and returns the broadcast shape of a sample.
@@ -148,9 +152,9 @@ impl MultivariateGaussian {
 
 /// Dirichlet distribution over a single probability vector.
 #[derive(Debug, Clone, PartialEq)]
-pub struct Dirichlet {
+pub struct Dirichlet<'a> {
     /// The concentration.
-    pub concentration: DoubleTensor,
+    pub concentration: Param<'a>,
 }
 
 /// Derivatives of [`Dirichlet::log_prob`].
@@ -164,10 +168,12 @@ pub struct DirichletGradient {
 
 const DIRICHLET_EPSILON: f64 = 1e-5;
 
-impl Dirichlet {
+impl<'a> Dirichlet<'a> {
     /// Creates the distribution from its parameters.
-    pub fn new(concentration: DoubleTensor) -> Self {
-        Self { concentration }
+    pub fn new(concentration: impl IntoParam<'a, f64>) -> Self {
+        Self {
+            concentration: concentration.into_param(),
+        }
     }
 
     /// Log density of x. x must sum to 1 (within 1e-5); -infinity if any element of x is negative.
@@ -180,7 +186,7 @@ impl Dirichlet {
         if x.as_slice().iter().any(|&x| x < 0.0) {
             return Ok(f64::NEG_INFINITY);
         }
-        let c = &self.concentration;
+        let c: &DoubleTensor = &self.concentration;
         // (c - 1) ln x, taken as 0 where c is 1 (even at x = 0)
         let sum_concentration_logged = x.zip_with(c, |x, c| safe_ln_times(x, c - 1.0))?.sum();
         let sum_ln_gamma_concentration = c.ln_gamma().sum();
@@ -189,7 +195,7 @@ impl Dirichlet {
 
     /// The element-wise derivatives of [`Self::log_prob`] with respect to x and each parameter.
     pub fn d_log_prob(&self, x: &DoubleTensor) -> Result<DirichletGradient> {
-        let c = &self.concentration;
+        let c: &DoubleTensor = &self.concentration;
         Ok(DirichletGradient {
             concentration: &x.ln().sub(&c.digamma())? + digamma(c.sum()),
             x: (c - 1.0).div(x)?,
@@ -213,11 +219,11 @@ impl Dirichlet {
 /// Multinomial distribution: counts of `n` draws over the categories in the last dimension of `p`.
 /// `p` need not be normalised.
 #[derive(Debug, Clone, PartialEq)]
-pub struct Multinomial {
+pub struct Multinomial<'a> {
     /// The number of trials.
-    pub n: IntTensor,
+    pub n: Param<'a, i64>,
     /// The probability parameter.
-    pub p: DoubleTensor,
+    pub p: Param<'a>,
 }
 
 /// Derivative of [`Multinomial::log_prob`] with respect to `p`.
@@ -227,9 +233,10 @@ pub struct MultinomialGradient {
     pub p: DoubleTensor,
 }
 
-impl Multinomial {
+impl<'a> Multinomial<'a> {
     /// Creates the distribution from its parameters.
-    pub fn new(n: IntTensor, p: DoubleTensor) -> Result<Self> {
+    pub fn new(n: impl IntoParam<'a, i64>, p: impl IntoParam<'a, f64>) -> Result<Self> {
+        let (n, p) = (n.into_param(), p.into_param());
         if p.rank() == 0 {
             return invalid_parameter("p must be a vector or batch of vectors");
         }
@@ -266,12 +273,9 @@ impl Multinomial {
         let negative_counts = x_double
             .map(|x| if x < 0.0 { 1.0 } else { 0.0 })
             .sum_axes(&[-1])?;
-        map4(
-            &log_prob,
-            &x_sum,
-            &negative_counts,
-            &n,
-            |lp, sum, negatives, n| {
+        map(
+            (&log_prob, &x_sum, &negative_counts, &n),
+            |(lp, sum, negatives, n)| {
                 if negatives > 0.0 || sum != n {
                     f64::NEG_INFINITY
                 } else {
@@ -291,7 +295,7 @@ impl Multinomial {
         };
         let p_sum = expand(self.p.sum_axes(&[-1])?)?;
         let x_sum = expand(x_double.sum_axes(&[-1])?)?;
-        let x_div_p = x_double.zip_with(&self.p, |x, p| if x == 0.0 { 0.0 } else { x / p })?;
+        let x_div_p = x_double.zip_with(&*self.p, |x, p| if x == 0.0 { 0.0 } else { x / p })?;
         Ok(MultinomialGradient {
             p: x_div_p.sub(&x_sum.div(&p_sum)?)?,
         })

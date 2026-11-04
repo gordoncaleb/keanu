@@ -337,4 +337,27 @@ impl Model {
         }
         Ok(log_prob_before + (after - before))
     }
+
+    /// The joint log probability and, unless it is impossible (-∞), its gradient with respect to each continuous
+    /// latent: exactly [`Self::log_prob`] and [`Self::log_prob_gradient`], in one pass that evaluates each node's
+    /// distribution once (for gradient based samplers, which need both at every step).
+    pub fn log_prob_and_gradient(&self, state: &State) -> Result<(f64, Option<LogProbGradient>)> {
+        for &id in &self.observed {
+            if !self.graph.node(id).is_probabilistic()
+                && contradicts_observation(&self.graph, state, id)?
+            {
+                return Ok((f64::NEG_INFINITY, None));
+            }
+        }
+        let joint = crate::logprob::log_prob_and_gradient(
+            &self.graph,
+            state,
+            &self.probabilistic_joint,
+            &self.continuous,
+        )?;
+        Ok(match joint {
+            Some((log_prob, gradient)) => (log_prob, Some(gradient)),
+            None => (f64::NEG_INFINITY, None),
+        })
+    }
 }
