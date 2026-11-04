@@ -328,6 +328,25 @@ fn lambdas_compute_from_parent_values_and_check_the_declared_type() {
     ));
 }
 
+/// A lambda sees its parents' values in place, not copies of them.
+#[test]
+fn lambdas_borrow_their_parents_values() {
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    let seen = Arc::new(AtomicUsize::new(0));
+    let b = GraphBuilder::new();
+    let x = b.constant(DoubleTensor::vector(vec![1.0, 2.0])).id();
+    let recorded = seen.clone();
+    let y = b.lambda("first", &[x], DType::F64, &[2], move |v| {
+        recorded.store(v[0] as *const Value as usize, Ordering::SeqCst);
+        Ok(v[0].clone())
+    });
+    let (graph, mut state) = b.build().unwrap();
+    state.eval(&graph, &[y], &mut rng()).unwrap();
+    let parent: &Value = state.value(x).unwrap();
+    assert_eq!(seen.load(Ordering::SeqCst), parent as *const Value as usize);
+}
+
 #[test]
 fn multiplexer_and_cpt_select_by_their_conditions() {
     let b = GraphBuilder::new();

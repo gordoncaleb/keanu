@@ -277,7 +277,7 @@ fn nodes_without_a_saved_form_are_reported() {
         &[x.id()],
         keanu_graph::DType::F64,
         &[],
-        |v: &[Value]| Ok(v[0].clone()),
+        |v: &[&Value]| Ok(v[0].clone()),
     );
     let (graph, state) = b.build().unwrap();
     assert!(matches!(

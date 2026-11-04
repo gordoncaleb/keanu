@@ -497,7 +497,7 @@ impl GraphBuilder {
         parents: &[NodeId],
         dtype: DType,
         shape: &[usize],
-        function: impl Fn(&[Value]) -> std::result::Result<Value, String> + Send + Sync + 'static,
+        function: impl Fn(&[&Value]) -> std::result::Result<Value, String> + Send + Sync + 'static,
     ) -> NodeId {
         let lambda = Lambda {
             name: name.to_owned(),
@@ -516,9 +516,9 @@ impl GraphBuilder {
         name: &str,
         parents: &[NodeId],
         shape: &[usize],
-        function: impl Fn(&[Value]) -> std::result::Result<Value, String> + Send + Sync + 'static,
+        function: impl Fn(&[&Value]) -> std::result::Result<Value, String> + Send + Sync + 'static,
         jacobian: impl Fn(
-            &[Value],
+            &[&Value],
         )
             -> std::result::Result<Vec<Option<keanu_tensor::DoubleTensor>>, String>
         + Send

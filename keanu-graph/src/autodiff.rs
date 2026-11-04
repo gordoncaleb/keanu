@@ -1278,8 +1278,7 @@ fn jvp(
             let jacobian = lambda.jacobian.as_ref().ok_or_else(|| {
                 GraphError::NotDifferentiable(format!("lambda {} has no jacobian", lambda.name))
             })?;
-            let values: Vec<Value> = parents.iter().map(|v| (*v).clone()).collect();
-            let jacobians = jacobian(&values).map_err(GraphError::Lambda)?;
+            let jacobians = jacobian(parents).map_err(GraphError::Lambda)?;
             let n_out = out_shape.iter().product::<usize>() as isize;
             let mut total = None;
             for ((tp, j), v) in t.iter().zip(jacobians).zip(parents) {
@@ -1516,8 +1515,7 @@ fn vjp(
             let jacobian = lambda.jacobian.as_ref().ok_or_else(|| {
                 GraphError::NotDifferentiable(format!("lambda {} has no jacobian", lambda.name))
             })?;
-            let values: Vec<Value> = parents.iter().map(|v| (*v).clone()).collect();
-            let jacobians = jacobian(&values).map_err(GraphError::Lambda)?;
+            let jacobians = jacobian(parents).map_err(GraphError::Lambda)?;
             let n_out = out_shape.iter().product::<usize>() as isize;
             jacobians
                 .into_iter()

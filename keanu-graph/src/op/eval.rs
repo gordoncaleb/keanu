@@ -351,8 +351,7 @@ pub(crate) fn eval(op: &Op, inputs: &[&Value]) -> Result<Value> {
             inputs[0].clone()
         }
         Op::Lambda(lambda) => {
-            let values: Vec<Value> = inputs.iter().map(|v| (*v).clone()).collect();
-            let out = (lambda.function)(&values).map_err(GraphError::Lambda)?;
+            let out = (lambda.function)(inputs).map_err(GraphError::Lambda)?;
             if out.dtype() != lambda.dtype || out.shape() != lambda.shape.as_slice() {
                 return Err(GraphError::Lambda(format!(
                     "{} returned a {:?} value of shape {:?}, declared {:?} of shape {:?}",

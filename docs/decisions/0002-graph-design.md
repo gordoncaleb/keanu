@@ -67,7 +67,7 @@ let (graph, state) = b.build()?;     // the first construction error, if any, su
 - `Cast`
 - `Where`, `Multiplexer`, `Cpt`
 - `Proxy`
-- `Lambda`: `Arc<dyn Fn(&[Value]) -> Result<Value> + Send + Sync>`, with optional forward and reverse derivative
+- `Lambda`: `Arc<dyn Fn(&[&Value]) -> Result<Value> + Send + Sync>`, with optional forward and reverse derivative
   closures
 - `Assert`
 - `Distribution(DistributionOp)`: the probabilistic nodes. Their parents are the distribution parameters.

@@ -210,11 +210,11 @@ pub enum ArgOp {
 }
 
 /// The function of a lambda node.
-pub type LambdaFn = dyn Fn(&[Value]) -> std::result::Result<Value, String> + Send + Sync;
+pub type LambdaFn = dyn Fn(&[&Value]) -> std::result::Result<Value, String> + Send + Sync;
 
 /// The Jacobian of a lambda: for each parent, ∂output/∂parent shaped `[output shape..., parent shape...]`
 /// (`None` for parents the output doesn't depend on differentiably, e.g. non-f64 parents).
-pub type LambdaJacobianFn = dyn Fn(&[Value]) -> std::result::Result<Vec<Option<keanu_tensor::DoubleTensor>>, String>
+pub type LambdaJacobianFn = dyn Fn(&[&Value]) -> std::result::Result<Vec<Option<keanu_tensor::DoubleTensor>>, String>
     + Send
     + Sync;
 
