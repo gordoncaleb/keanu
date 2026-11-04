@@ -133,6 +133,10 @@ impl DoubleTensor {
             .chunks((n * n).max(1))
             .zip(data.chunks_mut((n * n).max(1)))
         {
+            if n > SMALL_TRIANGULAR_SOLVE {
+                cholesky_inverse_large(l, n, out)?;
+                continue;
+            }
             // inverse of L by forward substitution
             let mut l_inv: Scratch = smallvec::smallvec![0.0; n * n];
             for j in 0..n {
@@ -156,6 +160,82 @@ impl DoubleTensor {
             }
         }
         Ok(Tensor::from_parts(self.shape.clone(), data))
+    }
+
+    /// Solves op(T) X = B for X, where T is the triangular matrix in the last two dimensions of self ([..., n, n])
+    /// and op(T) is T, or Tᵀ if `transpose`. Only the lower (if `lower`) or upper triangle of T, diagonal
+    /// included, is read. B is [..., n, k], or a single vector [n] (giving [..., n]). Leading (batch) dimensions
+    /// broadcast, as in [`Self::matmul`]. A matrix with an exactly zero diagonal element is singular, which is
+    /// an error.
+    ///
+    /// With L the [`Self::cholesky`] factor of A, `l.solve_triangular(b, true, false)` and then
+    /// `.solve_triangular(.., true, true)` on the result solve A X = B without forming A⁻¹.
+    pub fn solve_triangular(&self, b: &Self, lower: bool, transpose: bool) -> Result<Self> {
+        let n = self.square_dims("solve_triangular")?;
+        let incompatible = || TensorError::IncompatibleShapes {
+            left: self.shape.to_vec(),
+            right: b.shape.to_vec(),
+        };
+        let vector = b.rank() == 1;
+        let (bn, k) = if vector {
+            (b.shape[0], 1)
+        } else {
+            b.matrix_dims("solve_triangular")?
+        };
+        if bn != n {
+            return Err(incompatible());
+        }
+        if self
+            .data
+            .chunks_exact((n * n).max(1))
+            .any(|t| (0..n).any(|i| t[i * n + i] == 0.0))
+        {
+            return Err(TensorError::SingularMatrix);
+        }
+        let b_batch: &[usize] = if vector { &[] } else { b.batch_shape() };
+        let batch = shape::broadcast_shape(self.batch_shape(), b_batch)?;
+        let batch_len = shape::length(&batch);
+        let out_len = shape::checked_length(&[batch_len, n, k]).ok_or_else(incompatible)?;
+        let left_strides = shape::broadcast_strides(self.batch_shape(), &batch);
+        let right_strides = shape::broadcast_strides(b_batch, &batch);
+        let batch_strides = shape::row_major_strides(&batch);
+        // forward substitution for a lower triangular op(T), back substitution for an upper one
+        let forward = lower != transpose;
+
+        let mut data: Storage<f64> = smallvec::smallvec![0.0; out_len];
+        for (i, out) in data.chunks_mut((n * k).max(1)).enumerate().take(batch_len) {
+            let (mut l, mut r) = (0, 0);
+            for d in 0..batch.len() {
+                let index = (i / batch_strides[d]) % batch[d];
+                l += index * left_strides[d];
+                r += index * right_strides[d];
+            }
+            out.copy_from_slice(&b.data[r * n * k..(r + 1) * n * k]);
+            let t = &self.data[l * n * n..(l + 1) * n * n];
+            if n <= SMALL_TRIANGULAR_SOLVE {
+                substitute_in_place(t, n, transpose, forward, out, k);
+                continue;
+            }
+            let t = MatRef::from_row_major_slice(t, n, n);
+            let t = if transpose { t.transpose() } else { t };
+            let rhs = faer::MatMut::from_row_major_slice_mut(out, n, k);
+            let par = if n * n * k <= SEQUENTIAL_MATMUL {
+                faer::Par::Seq
+            } else {
+                faer::get_global_parallelism()
+            };
+            if forward {
+                faer::linalg::triangular_solve::solve_lower_triangular_in_place(t, rhs, par);
+            } else {
+                faer::linalg::triangular_solve::solve_upper_triangular_in_place(t, rhs, par);
+            }
+        }
+        let mut out_shape = batch;
+        out_shape.push(n);
+        if !vector {
+            out_shape.push(k);
+        }
+        Ok(Tensor::from_parts(out_shape, data))
     }
 
     /// Inverse of each square matrix. A matrix with an exactly zero pivot is singular, which is an error.
@@ -422,6 +502,92 @@ fn matmul_into(
         1.0,
         par,
     );
+}
+
+/// Up to this size a triangular solve uses direct substitution rather than faer.
+const SMALL_TRIANGULAR_SOLVE: usize = 64;
+
+/// Solves op(T) X = B in place in `x` (row-major n × k, holding B on entry), where T is row-major n × n and op
+/// transposes it if `transpose`. Substitutes forward (op(T) lower triangular) or backward, reading only that
+/// triangle of op(T). The diagonal must be non-zero.
+fn substitute_in_place(
+    t: &[f64],
+    n: usize,
+    transpose: bool,
+    forward: bool,
+    x: &mut [f64],
+    k: usize,
+) {
+    let at = |i: usize, j: usize| {
+        if transpose {
+            t[j * n + i]
+        } else {
+            t[i * n + j]
+        }
+    };
+    let mut solve_row = |i: usize, solved: &mut dyn Iterator<Item = usize>| {
+        for j in solved {
+            let factor = at(i, j);
+            if factor != 0.0 {
+                let (row_i, row_j) = if j < i {
+                    let (head, tail) = x.split_at_mut(i * k);
+                    (&mut tail[..k], &head[j * k..(j + 1) * k])
+                } else {
+                    let (head, tail) = x.split_at_mut(j * k);
+                    (&mut head[i * k..(i + 1) * k], &tail[..k])
+                };
+                for (xi, &xj) in row_i.iter_mut().zip(row_j) {
+                    *xi -= factor * xj;
+                }
+            }
+        }
+        let diagonal = at(i, i);
+        x[i * k..(i + 1) * k]
+            .iter_mut()
+            .for_each(|xi| *xi /= diagonal);
+    };
+    if forward {
+        for i in 0..n {
+            solve_row(i, &mut (0..i));
+        }
+    } else {
+        for i in (0..n).rev() {
+            solve_row(i, &mut (i + 1..n));
+        }
+    }
+}
+
+/// `cholesky_inverse` of one n × n factor with faer: L⁻¹ by a triangular solve against the identity, then
+/// L⁻ᵀ L⁻¹, mirrored from its lower triangle so the result is exactly symmetric.
+fn cholesky_inverse_large(l: &[f64], n: usize, out: &mut [f64]) -> Result<()> {
+    if (0..n).any(|i| l[i * n + i] == 0.0) {
+        return Err(TensorError::SingularMatrix);
+    }
+    let par = if n * n * n <= SEQUENTIAL_MATMUL {
+        faer::Par::Seq
+    } else {
+        faer::get_global_parallelism()
+    };
+    let mut l_inv = faer::Mat::<f64>::identity(n, n);
+    faer::linalg::triangular_solve::solve_lower_triangular_in_place(
+        MatRef::from_row_major_slice(l, n, n),
+        l_inv.as_mut(),
+        par,
+    );
+    faer::linalg::matmul::matmul(
+        faer::MatMut::from_row_major_slice_mut(out, n, n),
+        faer::Accum::Replace,
+        l_inv.transpose(),
+        l_inv.as_ref(),
+        1.0,
+        par,
+    );
+    for i in 0..n {
+        for j in 0..i {
+            out[j * n + i] = out[i * n + j];
+        }
+    }
+    Ok(())
 }
 
 /// Lower Cholesky factor of one n × n matrix (reading only its lower triangle) into `out`, which must be zeroed.

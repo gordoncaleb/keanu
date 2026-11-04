@@ -277,3 +277,69 @@ fn pareto_support_includes_the_location() {
     let below = Pareto::new(s(1.0), s(2.0)).log_prob(&s(0.999)).unwrap();
     assert_eq!(below.as_slice()[0], f64::NEG_INFINITY);
 }
+
+/// A batch of symmetric positive definite n × n matrices, B Bᵀ + n I with B from a fixed sequence.
+fn spd(batch: usize, n: usize) -> DoubleTensor {
+    let data: Vec<f64> = (0..batch * n * n)
+        .map(|i| ((i * 7919 % 1000) as f64 / 500.0) - 1.0)
+        .collect();
+    let b = DoubleTensor::new(&[batch, n, n], data).unwrap();
+    let eye = &DoubleTensor::eye(n).unwrap() * n as f64;
+    b.matmul_transposed(&b, false, true)
+        .unwrap()
+        .add(&eye)
+        .unwrap()
+}
+
+#[test]
+fn multivariate_gaussian_by_triangular_solves_matches_the_explicit_inverse() {
+    // log_prob and d_log_prob solve with the Cholesky factor; check against the textbook formulas with Σ⁻¹,
+    // batched, below and above the size where the solves switch to faer
+    for n in [3, 100] {
+        let covariance = spd(2, n);
+        let mu = DoubleTensor::new(&[n], (0..n).map(|i| i as f64 / n as f64).collect()).unwrap();
+        let x = DoubleTensor::new(
+            &[2, n],
+            (0..2 * n).map(|i| ((i * 31 % 17) as f64) / 8.0).collect(),
+        )
+        .unwrap();
+        let d = MultivariateGaussian::new(mu.clone(), covariance.clone());
+
+        let inverse = covariance.inverse().unwrap();
+        let diff = x.sub(&mu).unwrap().reshape(&[2, n as isize, 1]).unwrap();
+        let a = inverse.matmul(&diff).unwrap();
+        let quadratic = diff.mul(&a).unwrap().sum();
+        let log_det: f64 = covariance
+            .determinant()
+            .unwrap()
+            .as_slice()
+            .iter()
+            .map(|d| d.ln())
+            .sum();
+        let expected =
+            -0.5 * (quadratic + log_det + 2.0 * n as f64 * (2.0 * std::f64::consts::PI).ln());
+        let actual = d.log_prob(&x).unwrap();
+        close(actual, expected, 1e-9 * expected.abs());
+
+        let g = d.d_log_prob(&x).unwrap();
+        let expected_mu = a.reshape(&[2, n as isize]).unwrap();
+        let outer = a.matmul_transposed(&a, false, true).unwrap();
+        let expected_cov = &outer.sub(&inverse).unwrap() * 0.5;
+        for (actual, expected) in [
+            (&g.mu, expected_mu.sum_axes(&[0]).unwrap()),
+            (&g.x, expected_mu.neg()),
+            (&g.covariance, expected_cov),
+        ] {
+            assert_eq!(actual.shape(), expected.shape());
+            for (a, e) in actual.as_slice().iter().zip(expected.as_slice()) {
+                close(*a, *e, 1e-12);
+            }
+        }
+    }
+
+    // a covariance that is not positive definite: log_prob is -infinity, the gradient an error, as before
+    let not_pd = DoubleTensor::new(&[2, 2], vec![1.0, 2.0, 2.0, 1.0]).unwrap();
+    let d = MultivariateGaussian::new(v(&[0.0, 0.0]), not_pd);
+    assert_eq!(d.log_prob(&v(&[0.0, 0.0])).unwrap(), f64::NEG_INFINITY);
+    assert!(d.d_log_prob(&v(&[0.0, 0.0])).is_err());
+}

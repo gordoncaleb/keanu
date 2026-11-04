@@ -97,13 +97,11 @@ impl<'a> MultivariateGaussian<'a> {
             Err(e) => return Err(e.into()),
         };
         let log_cov_det = &cholesky.diag_part()?.ln().sum_axes(&[-1])? * 2.0;
-        let cov_inv = cholesky.cholesky_inverse()?;
+        // (x - mu)ᵀ Σ⁻¹ (x - mu) = ‖z‖² where L z = x - mu: one triangular solve, no inverse
         let x_minus_mu = x.sub(&self.mu)?;
-        let shape = x_minus_mu.shape().to_vec();
-        let row = x_minus_mu.reshape(&with_suffix(&shape[..shape.len() - 1], &[1, n]))?;
-        let column = x_minus_mu.reshape(&with_suffix(&shape, &[1]))?;
-        let quadratic = row.matmul(&cov_inv.matmul(&column)?)?;
-        let quadratic = quadratic.reshape(&with_suffix(batch(quadratic.shape(), 2), &[]))?;
+        let column = x_minus_mu.reshape(&with_suffix(x_minus_mu.shape(), &[1]))?;
+        let z = cholesky.solve_triangular(&column, true, false)?;
+        let quadratic = z.mul(&z)?.sum_axes(&[-2, -1])?;
         let k_log_2pi = n as f64 * (2.0 * PI).ln();
         Ok(quadratic.add(&(&log_cov_det + k_log_2pi))?.sum() * -0.5)
     }
@@ -112,20 +110,22 @@ impl<'a> MultivariateGaussian<'a> {
     pub fn d_log_prob(&self, x: &DoubleTensor) -> Result<MultivariateGaussianGradient> {
         let result_shape = self.validate(x.shape())?;
         let n = x.shape()[x.rank() - 1];
-        let cov_inv = self.covariance.cholesky()?.cholesky_inverse()?;
+        let cholesky = self.covariance.cholesky()?;
         let x_minus_mu = x.sub(&self.mu)?;
 
+        // Σ⁻¹ (x - mu) by two triangular solves: L y = x - mu, then Lᵀ a = y
         let column = x_minus_mu.reshape(&with_suffix(batch(x_minus_mu.shape(), 1), &[n, 1]))?;
-        let d_mu_batched = cov_inv
-            .matmul(&column)?
-            .reshape(&with_suffix(batch(&result_shape, 1), &[n]))?;
+        let y = cholesky.solve_triangular(&column, true, false)?;
+        let precision_times_diff = cholesky.solve_triangular(&y, true, true)?;
+        let d_mu_batched =
+            precision_times_diff.reshape(&with_suffix(batch(&result_shape, 1), &[n]))?;
 
-        let cov_inv_t = cov_inv.transpose()?;
-        let outer = column.matmul(&column.transpose()?)?;
-        let d_cov_batched = &cov_inv_t
-            .matmul(&outer.matmul(&cov_inv_t)?)?
-            .sub(&cov_inv_t)?
-            * 0.5;
+        // dΣ = ½ (Σ⁻¹ (x - mu)(x - mu)ᵀ Σ⁻¹ - Σ⁻¹) = ½ (a aᵀ - Σ⁻¹) with a = Σ⁻¹ (x - mu). The second term is
+        // the full inverse itself, so it is formed (from the Cholesky factor, as solving against the identity
+        // would cost the same); the outer product replaces the two n³ products of the explicit form.
+        let cov_inv = cholesky.cholesky_inverse()?;
+        let outer = precision_times_diff.matmul_transposed(&precision_times_diff, false, true)?;
+        let d_cov_batched = &outer.sub(&cov_inv)? * 0.5;
 
         Ok(MultivariateGaussianGradient {
             x: sum_over_batch(&d_mu_batched, x.shape())?.neg(),
