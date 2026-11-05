@@ -9,52 +9,14 @@ use crate::tensor::{Element, IntTensor, Tensor};
 impl<T: Element> Tensor<T> {
     /// As [`reshape`](Self::reshape), but consumes the tensor so its data is moved rather than copied.
     pub fn into_reshape(self, new_shape: &[isize]) -> Result<Self> {
-        let shape = self.reshape_target(new_shape)?;
+        let shape = reshape_shape(&self.shape, new_shape)?;
         Ok(Tensor::from_parts(shape, self.data))
     }
 
     /// Reshapes to a new shape with the same length. At most one dimension may be -1, which is inferred.
     pub fn reshape(&self, new_shape: &[isize]) -> Result<Self> {
-        let shape = self.reshape_target(new_shape)?;
+        let shape = reshape_shape(&self.shape, new_shape)?;
         Ok(Tensor::from_parts(shape, self.data.clone()))
-    }
-
-    fn reshape_target(&self, new_shape: &[isize]) -> Result<Shape> {
-        let invalid = || TensorError::InvalidReshape {
-            from: self.shape.to_vec(),
-            to: new_shape.to_vec(),
-        };
-        let wildcards = new_shape.iter().filter(|&&d| d == -1).count();
-        if wildcards > 1 || new_shape.iter().any(|&d| d < -1) {
-            return Err(invalid());
-        }
-        let known_dims: Shape = new_shape
-            .iter()
-            .filter(|&&d| d >= 0)
-            .map(|&d| d as usize)
-            .collect();
-        let known = shape::checked_length(&known_dims).ok_or_else(invalid)?;
-        let resolved: Shape = if wildcards == 1 {
-            if known == 0 || self.len() % known != 0 {
-                return Err(invalid());
-            }
-            new_shape
-                .iter()
-                .map(|&d| {
-                    if d == -1 {
-                        self.len() / known
-                    } else {
-                        d as usize
-                    }
-                })
-                .collect()
-        } else {
-            new_shape.iter().map(|&d| d as usize).collect()
-        };
-        if shape::checked_length(&resolved) != Some(self.len()) {
-            return Err(invalid());
-        }
-        Ok(resolved)
     }
 
     /// Rearranges the dimensions: dimension `i` of the result is dimension `permutation[i]` of this tensor.
@@ -392,6 +354,51 @@ fn checked_indices(indices: &IntTensor, n: usize) -> Result<Vec<usize>> {
             })
         })
         .collect()
+}
+
+/// The shape [`Tensor::reshape`] gives a tensor of shape `from` for the requested `new_shape` (at most one dimension -1,
+/// inferred), computed from the shapes alone.
+pub fn reshape_shape(from: &[usize], new_shape: &[isize]) -> Result<Shape> {
+    let invalid = || TensorError::InvalidReshape {
+        from: from.to_vec(),
+        to: new_shape.to_vec(),
+    };
+    let len = shape::checked_length(from).ok_or_else(invalid)?;
+    let wildcards = new_shape.iter().filter(|&&d| d == -1).count();
+    if wildcards > 1 || new_shape.iter().any(|&d| d < -1) {
+        return Err(invalid());
+    }
+    let known_dims: Shape = new_shape
+        .iter()
+        .filter(|&&d| d >= 0)
+        .map(|&d| d as usize)
+        .collect();
+    let known = shape::checked_length(&known_dims).ok_or_else(invalid)?;
+    let resolved: Shape = if wildcards == 1 {
+        if known == 0 || len % known != 0 {
+            return Err(invalid());
+        }
+        new_shape
+            .iter()
+            .map(|&d| if d == -1 { len / known } else { d as usize })
+            .collect()
+    } else {
+        new_shape.iter().map(|&d| d as usize).collect()
+    };
+    if shape::checked_length(&resolved) != Some(len) {
+        return Err(invalid());
+    }
+    Ok(resolved)
+}
+
+/// The shape [`Tensor::slice`] gives a tensor of shape `shape` for the slice string `spec`, computed from the shapes
+/// alone.
+pub fn slice_shape(spec: &str, shape: &[usize]) -> Result<Shape> {
+    Ok(slicing::plan(spec, shape)?
+        .iter()
+        .filter(|s| !s.drop)
+        .map(|s| s.len)
+        .collect())
 }
 
 /// One comma separated item of a numpy slice string (see [`Tensor::slice`]).

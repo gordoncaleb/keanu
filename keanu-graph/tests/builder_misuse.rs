@@ -257,7 +257,7 @@ fn shapes_too_large_to_allocate_are_errors_not_panics() {
     let b = GraphBuilder::new();
     let x = b.scalar(1.0).id();
     let index = b
-        .int_constant(keanu_tensor::IntTensor::vector(vec![0]))
+        .int_constant(keanu_tensor::IntTensor::vector(vec![0, 0, 0]))
         .id();
     let v = b.constant(DoubleTensor::vector(vec![1.0, 2.0, 3.0])).id();
     // 2^61 f64s are 2^64 bytes, more than isize::MAX
