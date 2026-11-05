@@ -264,6 +264,7 @@ Phases run in letter order. U18's occupancy example needs U10 and U17. U23 needs
 - **Requirements:** R4. **Files:** `keanu-algorithms/src/psis.rs`, `keanu-algorithms/tests/psis.rs`.
 - **Approach:** per KTD3; returns smoothed log weights and k̂; `gpdfit` public.
 - **Test scenarios:** k̂ for draws of known generalized Pareto tails (k = 0.3, 0.8) within 0.1; reference values computed with the R `loo` algorithm on a fixed vector committed as a fixture (generated offline from the published algorithm, recorded in the test); smoothed weights are non-decreasing in the raw weights' order in the tail; constant ratios give k̂ = −∞ or NaN handled gracefully.
+- **Implementation note:** the API is `psis(log_ratios, r_eff) -> Psis` (`log_weights`, unnormalised as in `loo`, `normalized_log_weights`, `weights`, `pareto_k`, `tail_length`, `is_reliable`), with `gpdfit`, `GeneralizedPareto`, `khat_threshold` and `tail_length` public. Weights are truncated at the largest raw weight, as `loo` 2.8 and arviz-stats do, rather than at S^{3/4} times the mean weight (KTD3's wording, from earlier versions of the paper). Tails of equal ratios give k̂ = −∞ (`loo` reports +∞ with a warning); tails shorter than five draws give +∞ as in `loo`. Grid points of the Zhang–Stephens fit whose profile likelihood is NaN get no weight. The fixture (`tests/data/arviz_loo.{py,json}`) was generated with arviz-stats 1.3.3, whose `psislw` follows the same algorithm (R was not available); its inputs are deterministic formulas rebuilt in the test.
 
 ### U5. LOO, WAIC and comparison
 

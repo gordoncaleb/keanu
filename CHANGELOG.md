@@ -147,6 +147,12 @@ Work from `docs/plans/2026-11-05-001-feat-applied-modelling-gaps-plan.md`.
   (named as ArviZ labels them, `y[3]` or `y[1, 2]`) and whole nodes otherwise; factors have none. The samples must
   record every latent the observations depend on. With the `parallel` feature the draws are evaluated on rayon's
   thread pool. keanu-graph gained `node_log_prob_terms`, the unreduced terms of a node's log probability.
+- keanu-algorithms: **Pareto-smoothed importance sampling** (`psis::psis`, `Psis`, `gpdfit`, `GeneralizedPareto`,
+  `khat_threshold`, `tail_length`) following Vehtari et al. (2024) and R's `loo`: the ⌈min(0.2·S, 3·√(S / r_eff))⌉
+  largest ratios are fitted with Zhang and Stephens' generalized Pareto estimate, its shape shrunk towards 0.5 by a
+  prior worth 10 observations, and replaced by the fit's expected order statistics; weights are truncated at the
+  largest raw weight. k̂ is reliable up to min(1 − 1 / log₁₀(S), 0.7). Tails too short to fit give k̂ = +∞, as in
+  `loo`, and tails of equal ratios k̂ = −∞ (where `loo` reports +∞). Matches arviz-stats' `psislw` on fixed vectors.
 
 ### Code review fixes
 
