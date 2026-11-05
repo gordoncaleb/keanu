@@ -19,6 +19,36 @@ tag. `RUST_MIGRATION_PLAN.md` describes the rewrite and `book/src/from-java.md` 
 - The "Unreleased: Java" changes below were made to the Java implementation during the rewrite, mostly bug fixes
   the Rust port found, so that the Rust version is a faithful conversion.
 
+### Closing the feature gaps with PyMC and TensorFlow Probability
+
+Work from `docs/plans/2026-11-04-001-feat-ppl-feature-gaps-plan.md`. Java compatibility is no longer a goal, so
+some of the "Same model semantics" guarantees above no longer hold where noted.
+
+- keanu-graph: every distribution reports its `Support` (`DistributionKind::support`, `node_support`,
+  `CustomDistribution::support`).
+- keanu-graph: `transform` module of bijectors (lower bound, interval, ordered, simplex via the inverse isometric
+  log-ratio as in Stan 2.37, correlation Cholesky, circular), and `Parameterisation` / `Space`, which map a flat
+  unconstrained vector to a state and evaluate the log probability with or without the log-Jacobian.
+- keanu-algorithms: **NUTS and the gradient optimizers now run in unconstrained space by default**
+  (`Nuts::with_space`, `GradientOptimizer::space`; `Space::Constrained` restores the old behaviour exactly). NUTS
+  includes the log-Jacobian; MAP and maximum likelihood don't, so interior optima are unchanged. A mode on a support
+  boundary is reported in the new `OptimizedResult::boundary` instead of running to the iteration cap.
+  Metropolis–Hastings stays in constrained space; BOBYQA derives default bounds from scalar supports.
+  - Re-baselined tests: the golden Adam parity cases run in `Space::Constrained` (unconstrained Adam reached
+    25.99994 on thermometers against Java's 25.99494); `conjugate_gradient_stops_at_an_impossible_start` and
+    `an_impossible_optimum_is_not_converged` were adapted to the support checks.
+- keanu-io: **new versioned Keanu-native save schema** (`proto/keanu/graph.proto`) replacing the Java-compatible
+  format; Java-saved files no longer load. The golden models were converted with identical log probabilities.
+  `Loaded::ids` is gone (saved node i is `NodeId` i); `IoError` gains `UnsupportedVersion` and `InvalidNode`;
+  integers are saved as 64-bit; CPT and categorical nodes can now be saved.
+- keanu-algorithms: multi-chain diagnostics following Vehtari et al. (2021), matching ArviZ: rank-normalised split
+  R-hat, bulk and tail ESS, MCSE and a summary table (`ChainSamples`, `sample_chains`, `diagnostics`).
+- keanu-algorithms: `PredictiveSampler` for prior- and posterior-predictive draws.
+- keanu-tensor: special functions (erf, erfc, erfinv, normal CDF, log-CDF and quantile, softplus, logit,
+  log1mexp, log-beta, regularised incomplete gamma and beta with shape derivatives, log-scaled Bessel I0 and I1),
+  with the elementwise ones also available as graph ops.
+- keanu-distributions, keanu-graph: `LkjCholesky` prior on Cholesky factors of correlation matrices.
+
 ### Code review fixes
 
 Fixes from the 2026-11-04 whole-codebase review. Where a fix changes a result recorded from Java, the golden
