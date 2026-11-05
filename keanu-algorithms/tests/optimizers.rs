@@ -3,8 +3,8 @@
 use keanu_algorithms::AlgorithmError;
 use keanu_algorithms::Space;
 use keanu_algorithms::optimizer::{
-    Adam, Algorithm, ConjugateGradient, ConvergenceChecker, GradientOptimizer, Lbfgs, Norm,
-    UpdateFormula,
+    Adam, Algorithm, ConjugateGradient, ConvergenceChecker, GradientOptimizer, Lbfgs,
+    NonGradientOptimizer, Norm, OptimizerBounds, UpdateFormula,
 };
 use keanu_graph::{GraphBuilder, Model, State};
 use keanu_tensor::{DoubleTensor, IntTensor};
@@ -602,4 +602,53 @@ fn lbfgs_stops_at_its_iteration_limit() {
         .unwrap();
     assert!(!result.converged);
     assert!(result.fitness.is_finite());
+}
+
+/// mu ~ N(0, 10), x_i ~ N(mu, sigma) observed, where sigma = exp(log 0.5) is a deterministic node of constants only.
+/// Building the graph does not compute sigma, so it has no value until something evaluates it.
+fn constant_only_deterministic_scale() -> (Model, State, keanu_graph::NodeId, keanu_graph::NodeId) {
+    let b = GraphBuilder::new();
+    let mu = b.gaussian(0.0, 10.0).label("mu");
+    b.set_value(mu, DoubleTensor::scalar(0.0));
+    let sigma = b.constant(0.5f64.ln()).exp();
+    let x = b.gaussian_with_shape(&[3], mu, sigma);
+    b.observe(x, DoubleTensor::vector(vec![1.0, 2.0, 3.0]));
+    let (mu, sigma) = (mu.id(), sigma.id());
+    let (graph, state) = b.build().unwrap();
+    (Model::new(graph, &state).unwrap(), state, mu, sigma)
+}
+
+/// Regression: the optimizers did not compute deterministic nodes that depend only on constants (as the samplers
+/// do), so a model whose distribution parameters are such nodes (the constant parts of a Gaussian process kernel)
+/// failed with a missing value unless every node was evaluated first.
+#[test]
+fn optimizers_compute_deterministic_nodes_of_constants_first() {
+    // the posterior mode of mu: precision-weighted mean of the prior N(0, 10) and three observations with sd 0.5
+    let expected = (6.0 / 0.25) / (1.0 / 100.0 + 3.0 / 0.25);
+    for space in [Space::Unconstrained, Space::Constrained] {
+        let (model, mut state, mu, sigma) = constant_only_deterministic_scale();
+        assert!(!state.has_value(sigma));
+        let result = GradientOptimizer::new(&model)
+            .space(space)
+            .max_a_posteriori(&mut state)
+            .unwrap();
+        let found = result.get(mu).unwrap().to_scalar().unwrap();
+        assert!(
+            (found - expected).abs() < 1e-4,
+            "{space:?}: {found} vs {expected}"
+        );
+        assert!((state.f64(sigma).unwrap().to_scalar().unwrap() - 0.5).abs() < 1e-12);
+    }
+
+    let (model, mut state, mu, sigma) = constant_only_deterministic_scale();
+    let result = NonGradientOptimizer::new(&model)
+        .bounds(OptimizerBounds::new().add_scalar(mu, -10.0, 10.0))
+        .max_a_posteriori(&mut state)
+        .unwrap();
+    let found = result.get(mu).unwrap().to_scalar().unwrap();
+    assert!(
+        (found - expected).abs() < 1e-3,
+        "BOBYQA: {found} vs {expected}"
+    );
+    assert!(state.has_value(sigma));
 }

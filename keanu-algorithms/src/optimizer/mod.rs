@@ -33,7 +33,7 @@ pub use convergence::{ConvergenceChecker, Norm};
 pub use lbfgs::Lbfgs;
 
 use crate::error::{AlgorithmError, Result};
-use crate::support::{block_shapes, concat, split, start_point};
+use crate::support::{block_shapes, compute_deterministic, concat, split, start_point};
 use keanu_graph::{Model, NodeId, Parameterisation, Space, State, Support, node_support};
 use keanu_tensor::DoubleTensor;
 use std::cell::Cell;
@@ -185,6 +185,7 @@ impl<'m> GradientOptimizer<'m> {
     pub fn optimize(&self, state: &mut State, fitness: Fitness) -> Result<OptimizedResult> {
         let model = self.model;
         check_latents(model)?;
+        compute_deterministic(model.graph(), state)?;
 
         let param = Parameterisation::with_space(model, state, self.space)?;
         let objective = Objective::new(param, state, fitness, false)?;

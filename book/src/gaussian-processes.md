@@ -58,6 +58,3 @@ order of the jitter.
 Shape errors (inputs with different feature counts, a length scale with the wrong number of elements, targets of the
 wrong length) fail `build` like any other invalid node. Hyperparameter values are not checked: give them priors on the
 right support, such as `half_gaussian`, and the samplers and optimizers keep them positive.
-
-Parts of the kernel that depend only on constant inputs are deterministic nodes with no latent ancestor, so compute
-every node once (as above, with `lazy_eval` over `graph.ids()`) before running an optimizer on the model.

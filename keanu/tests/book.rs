@@ -866,9 +866,6 @@ fn gaussian_processes() -> keanu::Result<()> {
     let prediction = gp.predict(x, y, grid.clone());
     let (mean, sd) = (prediction.mean.id(), prediction.variance().sqrt().id());
     let (graph, mut state) = b.build()?;
-    // compute every node once, including the parts of the kernel that depend only on the constant inputs
-    let all: Vec<NodeId> = graph.ids().collect();
-    state.lazy_eval(&graph, &all, &mut rng)?;
     let model = Model::new(graph, &state)?;
 
     // fit the hyperparameters by MAP, then evaluate the predictive at the fitted values

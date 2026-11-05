@@ -22,6 +22,32 @@ pub(crate) fn evaluate_all(graph: &Graph, state: &mut State, rng: &mut KeanuRng)
     Ok(())
 }
 
+/// Computes every deterministic node that has no value but can be computed without sampling: one whose ancestors,
+/// back to the nearest nodes with values, are all deterministic. Deterministic nodes of constants only (such as the
+/// parts of a Gaussian process kernel that depend only on its inputs) have no value after `build`, and the
+/// optimizers, which take no random number generator, need them as [`evaluate_all`] gives them to the samplers.
+/// Latents without a value are left without one.
+pub(crate) fn compute_deterministic(graph: &Graph, state: &mut State) -> Result<()> {
+    // ids are in topological order, so each node's parents are decided before it
+    let mut computable = vec![false; graph.ids().len()];
+    let mut missing = Vec::new();
+    for id in graph.ids() {
+        let node = &graph[id];
+        let has_value = state.has_value(id);
+        computable[id.index()] = has_value
+            || (!node.is_probabilistic() && node.parents().iter().all(|p| computable[p.index()]));
+        if computable[id.index()] && !has_value {
+            missing.push(id);
+        }
+    }
+    if !missing.is_empty() {
+        // every ancestor the lazy plan visits has a value or is deterministic, so nothing is sampled and the
+        // generator is never used
+        state.lazy_eval(graph, &missing, &mut KeanuRng::seed_from_u64(0))?;
+    }
+    Ok(())
+}
+
 /// The current values of `nodes`, paired with their ids.
 pub(crate) fn current_values(state: &State, nodes: &[NodeId]) -> Result<Vec<(NodeId, Value)>> {
     nodes

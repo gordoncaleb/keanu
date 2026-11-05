@@ -207,6 +207,7 @@ impl<'m> NonGradientOptimizer<'m> {
     pub fn optimize(&self, state: &mut State, fitness: Fitness) -> Result<OptimizedResult> {
         self.algorithm.validate()?;
         super::check_latents(self.model)?;
+        crate::support::compute_deterministic(self.model.graph(), state)?;
         let param = Parameterisation::with_space(self.model, state, Space::Constrained)?;
         let objective = Objective::new(param, state, fitness, false)?;
         let x0 = objective.flat_point(state)?;
