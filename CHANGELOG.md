@@ -244,6 +244,18 @@ Work from `docs/plans/2026-11-05-001-feat-applied-modelling-gaps-plan.md`.
   with L(Aᵀ, Ḡ) as the vector-Jacobian product, and its Hessian-vector products the second Fréchet derivative from
   3 × 3 block matrices (`DoubleTensor::matrix_exp_frechet_second`). A matrix with a non-finite element gives NaN.
   The save schema gained `matrix_exp`.
+- keanu-graph: **ODE integrators** (the new `ode` module: `integrate`, `solve`, `solve_sensitivities`, `OdeSystem`,
+  `SensitivitySystem`, `FnSystem`, `OdeOptions`, `OdeSolver`, `OdeSolution`, `OdeStatistics`, `OdeError`,
+  `SolverFailed` and `FailureReason`) on plain `&[f64]` states: Dormand–Prince 5(4) with its dense output and PI
+  step-size control (`OdeSolver::Rk45`), and a Rosenbrock method with the coefficients of Hairer and Wanner's Rodas4
+  and its embedded order 3 error estimate, using the exact Jacobian and ∂f/∂t (`OdeSolver::Stiff`). Solutions are
+  reported at output times that must be finite, strictly increasing and after the initial time. Tolerances
+  default to Stan's (rtol and atol 10⁻⁶, at most 10⁶ steps). A non-finite initial state, the step limit and a step
+  size underflow fail with `OdeError::SolverFailed`; a step with non-finite stages is retried with a smaller step.
+  `solve_sensitivities` integrates forward sensitivities dS/dt = J S + ∂f/∂p with the state, with error control
+  over both; the stiff solver uses the combined system's block triangular Jacobian, whose off-diagonal block comes
+  from `SensitivitySystem::sensitivity_jacobian_product` (a central difference by default). keanu-tensor gained
+  `LuFactorization`, an LU factorisation for repeated solves.
 
 ### Code review fixes
 

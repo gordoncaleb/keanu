@@ -509,7 +509,65 @@ fn lu_determinant(matrix: &[f64], n: usize) -> f64 {
     sign * (0..n).map(|i| lu[i * n + i]).product::<f64>()
 }
 
+/// The LU factorisation with partial pivoting, P A = L U, of one square matrix, for solving several systems
+/// A x = b with the same matrix (as an implicit ODE integrator does at every stage of a step).
+///
+/// ```
+/// use keanu_tensor::ops::linalg::LuFactorization;
+///
+/// let lu = LuFactorization::new(&[0.0, 2.0, 1.0, 1.0], 2)?; // [[0, 2], [1, 1]], which needs pivoting
+/// let mut x = [4.0, 3.0];
+/// lu.solve_in_place(&mut x);
+/// assert_eq!(x, [1.0, 2.0]);
+/// # Ok::<(), keanu_tensor::TensorError>(())
+/// ```
+#[derive(Debug, Clone)]
+pub struct LuFactorization(Lu);
+
+impl LuFactorization {
+    /// Factors the row-major n × n `matrix`. A matrix with an exactly zero pivot is singular, which is an error
+    /// ([`TensorError::SingularMatrix`]), as is a slice whose length isn't n².
+    pub fn new(matrix: &[f64], n: usize) -> Result<Self> {
+        if Some(matrix.len()) != n.checked_mul(n) {
+            return Err(TensorError::InvalidArgument(format!(
+                "an LU factorisation of a {n} × {n} matrix needs {n}² values, got {}",
+                matrix.len()
+            )));
+        }
+        let lu = Lu::factor(matrix, n);
+        if lu.singular {
+            return Err(TensorError::SingularMatrix);
+        }
+        Ok(Self(lu))
+    }
+
+    /// The matrix's dimension n.
+    pub fn dim(&self) -> usize {
+        self.0.n
+    }
+
+    /// Solves A X = B in place: `rhs` holds B on entry, one right-hand side per column of a row-major n × k matrix (a
+    /// single vector when its length is n), and X on return.
+    ///
+    /// # Panics
+    ///
+    /// If the length of `rhs` isn't a multiple of n (for n > 0).
+    pub fn solve_in_place(&self, rhs: &mut [f64]) {
+        let n = self.0.n;
+        if n == 0 {
+            return;
+        }
+        assert!(
+            rhs.len() % n == 0,
+            "the right-hand sides of a {n} × {n} system must have a multiple of {n} values, got {}",
+            rhs.len()
+        );
+        self.0.solve_in_place(rhs, rhs.len() / n);
+    }
+}
+
 /// LU factorisation with partial pivoting, P A = L U, on one row-major n × n matrix.
+#[derive(Debug, Clone)]
 struct Lu {
     n: usize,
     lu: Scratch,

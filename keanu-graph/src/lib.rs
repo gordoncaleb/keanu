@@ -41,6 +41,7 @@ mod graph;
 mod logprob;
 mod marginalize;
 mod model;
+pub mod ode;
 pub mod op;
 pub mod parameterisation;
 pub mod sequence;

@@ -37,5 +37,6 @@ mod tensor;
 
 pub use error::{Result, TensorError};
 pub use ops::elementwise::{Numeric, int_pow};
+pub use ops::linalg::LuFactorization;
 pub use shape::{Shape, broadcast_shape};
 pub use tensor::{BoolTensor, DoubleTensor, Element, IntTensor, Tensor};
