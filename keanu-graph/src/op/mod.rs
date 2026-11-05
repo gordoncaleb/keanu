@@ -474,8 +474,9 @@ pub enum Op {
     Factor,
     /// Parents: `value`, then the distribution's parameters -> f64: the log density of each element of `value`
     /// under the distribution, broadcast with the parameters. Defined for the element-wise kinds only (a
-    /// distribution of one value per element with an element-wise density, or a truncated or censored one); the
-    /// value has the kind's value type (f64 or i64). Differentiable, to second order, in its f64 parents. See
+    /// distribution of one value per element with an element-wise density, or a truncated or censored one, and the
+    /// Bernoulli); the value has the kind's value type (f64, i64, or bool for the Bernoulli). Differentiable, to
+    /// second order, in its f64 parents. See
     /// [`GraphBuilder::log_density`](crate::GraphBuilder::log_density).
     LogDensity(DistributionKind),
 }

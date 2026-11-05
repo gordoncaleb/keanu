@@ -7,7 +7,7 @@ use keanu_graph::{
     DoubleVar, GraphBuilder, GraphError, Model, NodeId, Parameterisation, Space, State, Value,
     forward_partials, node_log_prob, reverse_partials,
 };
-use keanu_tensor::{DoubleTensor, IntTensor};
+use keanu_tensor::{BoolTensor, DoubleTensor, IntTensor};
 use std::sync::Arc;
 
 mod common;
@@ -53,6 +53,11 @@ fn cases() -> Vec<(DistributionKind, Value, Vec<Value>)> {
             truncated_gaussian(),
             f(v(&[0.2, 1.0, 2.9])),
             vec![f(s(0.5)), f(s(1.0)), f(s(0.0)), f(s(3.0))],
+        ),
+        (
+            DistributionKind::Bernoulli,
+            Value::Bool(BoolTensor::vector(vec![true, false, true])),
+            vec![f(v(&[0.3, 0.6, 0.9]))],
         ),
     ]
 }
@@ -131,6 +136,11 @@ fn differentiable_case(kind: &DistributionKind) -> (Model, State, NodeId, Vec<No
             b.int_constant(IntTensor::vector(vec![0, 4, 9])).id(),
             vec![(p.exp() * 3.0).id(), (q.exp() + 0.2).id()],
         ),
+        DistributionKind::Bernoulli => (
+            b.bool_constant(BoolTensor::vector(vec![true, false, true]))
+                .id(),
+            vec![(q * p).sigmoid().id()],
+        ),
         _ => {
             // a Gaussian truncated to [lower, upper], with the value inside the bounds
             let lower = p - 1.0;
@@ -148,7 +158,9 @@ fn differentiable_case(kind: &DistributionKind) -> (Model, State, NodeId, Vec<No
     b.factor(b.double_var(density) * b.constant(v(&[1.0, 0.7, 1.3])));
     // a count value doesn't depend on u
     let latents = match kind {
-        DistributionKind::Poisson | DistributionKind::NegativeBinomial => vec![p.id(), q.id()],
+        DistributionKind::Poisson
+        | DistributionKind::NegativeBinomial
+        | DistributionKind::Bernoulli => vec![p.id(), q.id()],
         _ => vec![u.id(), p.id(), q.id()],
     };
     let (graph, mut state) = b.build().unwrap();
@@ -274,14 +286,13 @@ fn kinds_without_an_elementwise_density_are_rejected() {
             "{name}: {error}"
         );
     }
-    let flag = b.bool_constant(keanu_tensor::BoolTensor::vector(vec![true]));
-    let error = b
-        .add_node(
-            Op::LogDensity(DistributionKind::Bernoulli),
-            &[flag.id(), b.scalar(0.5).id()],
-        )
-        .unwrap_err();
-    assert!(error.to_string().contains("element-wise"), "{error}");
+    // the Bernoulli has an element-wise density, though it can't be a mixture component
+    let flag = b.bool_constant(BoolTensor::vector(vec![true]));
+    b.add_node(
+        Op::LogDensity(DistributionKind::Bernoulli),
+        &[flag.id(), b.scalar(0.5).id()],
+    )
+    .unwrap();
 }
 
 #[test]

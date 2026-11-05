@@ -111,7 +111,7 @@ fn invalid_user_input_is_an_error_not_a_panic() {
     let _ = x;
     assert!(b.build().is_err(), "duplicate labels are rejected");
 
-    // a model needs at least one latent or observed node (as Java's KeanuProbabilisticModel)
+    // a model needs at least one latent, observed or factor node (as Java's KeanuProbabilisticModel needed a vertex)
     let b = GraphBuilder::new();
     let _ = b.constant(DoubleTensor::scalar(1.0)) * 2.0;
     let (graph, state) = b.build().unwrap();

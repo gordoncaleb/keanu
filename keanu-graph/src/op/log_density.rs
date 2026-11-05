@@ -1,9 +1,11 @@
 //! The log-density op ([`Op::LogDensity`](super::Op::LogDensity)): the element-wise log density of a value under an
 //! element-wise distribution, as a deterministic node. Its value, first derivatives and second derivatives reuse the
 //! distribution's element-wise rules (`DistributionKind::univariate` and the scalar second-order rules), so a
-//! log density on the graph differentiates exactly as the same distribution's node does.
+//! log density on the graph differentiates exactly as the same distribution's node does. The Bernoulli, whose value
+//! is boolean and which therefore can't be a mixture component, has an element-wise density too: its value and
+//! derivatives come from its node's unreduced log probability terms and gradient, which are element-wise.
 
-use super::distribution::{DistributionKind, Univariate};
+use super::distribution::{DistributionKind, LogProbGradientParts, Univariate};
 use super::distribution_hvp::{elementwise, spread, spread_tangent};
 use crate::autodiff::{batched_shape, fit, reduce_to};
 use crate::error::{GraphError, Result};
@@ -17,6 +19,33 @@ fn invalid(message: String) -> GraphError {
     }
 }
 
+/// Whether `kind` has an element-wise log density, so that a log density node of it can be built: the
+/// [element-wise](DistributionKind::is_elementwise) kinds and the Bernoulli.
+pub(crate) fn has_elementwise_density(kind: &DistributionKind) -> bool {
+    kind.is_elementwise() || matches!(kind, DistributionKind::Bernoulli)
+}
+
+/// The element-wise log density of `value` given the parameters and, with `gradient`, its element-wise derivatives
+/// with respect to the value and each parameter.
+fn density(
+    kind: &DistributionKind,
+    value: &Value,
+    parameters: &[&Value],
+    gradient: bool,
+) -> Result<(DoubleTensor, Option<LogProbGradientParts>)> {
+    if kind.is_elementwise() {
+        return kind.univariate(Univariate::Density, value, parameters, gradient);
+    }
+    // the Bernoulli: its terms and gradient are element-wise, broadcast with the parameter
+    let terms = kind.log_prob_terms(value, parameters)?;
+    let parts = if gradient {
+        Some(kind.log_prob_gradient(value, parameters)?)
+    } else {
+        None
+    };
+    Ok((terms, parts))
+}
+
 /// The number of parents of a log density of `kind` (the value and each parameter), if fixed.
 pub(crate) fn arity(kind: &DistributionKind) -> Option<usize> {
     kind.parameter_types().map(|types| types.len() + 1)
@@ -28,7 +57,7 @@ pub(crate) fn output_type(
     kind: &DistributionKind,
     parents: &[(DType, &[usize])],
 ) -> Result<(DType, Shape)> {
-    if !kind.is_elementwise() {
+    if !has_elementwise_density(kind) {
         return Err(invalid(format!(
             "the {} distribution does not have one value per element with an element-wise density, so it has no \
              element-wise log density",
@@ -82,7 +111,7 @@ fn shape_of(inputs: &[&Value]) -> Result<Shape> {
 pub(crate) fn eval(kind: &DistributionKind, inputs: &[&Value]) -> Result<Value> {
     let (value, parameters) = split(kind, inputs)?;
     let shape = shape_of(inputs)?;
-    let (densities, _) = kind.univariate(Univariate::Density, value, parameters, false)?;
+    let (densities, _) = density(kind, value, parameters, false)?;
     Ok(Value::F64(DoubleTensor::new(
         &shape,
         spread(&densities, &shape)?,
@@ -107,7 +136,7 @@ fn derivatives(
     shape: &[usize],
 ) -> Result<Vec<Option<DoubleTensor>>> {
     let (value, parameters) = split(kind, inputs)?;
-    let (_, parts) = kind.univariate(Univariate::Density, value, parameters, true)?;
+    let (_, parts) = density(kind, value, parameters, true)?;
     let (value_gradient, parameter_gradients) =
         parts.unwrap_or_else(|| (None, smallvec::smallvec![None; parameters.len()]));
     std::iter::once(value_gradient)

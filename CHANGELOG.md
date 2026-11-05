@@ -221,6 +221,22 @@ Work from `docs/plans/2026-11-05-001-feat-applied-modelling-gaps-plan.md`.
   `keanu-algorithms/tests/diagnostics.rs`; and
   `uniform_and_discrete_nodes_contribute_no_gradient_with_respect_to_themselves` (the categorical's gradient) in
   `keanu-graph/tests/logprob.rs`. The guide's sampling chapter has a new section on discrete latents.
+- keanu-graph: **automatic marginalisation of discrete latents** (`marginalize`, `Marginalized`,
+  `MarginalizedLatent`, `MAX_MARGINALIZED_VALUES`; `marginalize` and `Marginalized` also in the `keanu` prelude), a
+  graph rewrite that sums Bernoulli, categorical and other finite-support element-wise discrete latents (at most
+  1000 values, the same and fixed for every element) out of the model. For each value k it copies the deterministic
+  path from the latent to its observed children with the latent replaced by k, sums each child's log density over
+  its trailing axes, adds log p(z = k), and puts the log-sum-exp over k in a factor; the children become constants
+  holding their observations and the latent and its path are removed, so the rewritten model is all continuous and
+  gets NUTS by default. A vector latent's path may use only element-wise operations, axis-preserving reshapes,
+  broadcasts and reductions, and `gather` by the latent along the first axis; a scalar latent's may use any
+  deterministic operation. Several latents are marginalised one after another. Unsupported patterns fail with the
+  new `GraphError::CannotMarginalize`, naming the node in the way. keanu-algorithms: `marginal::recover_marginals`
+  (with `LatentMarginals`, both also in the `keanu` prelude) gives each draw's conditional probabilities
+  p(z = k | draw), their mean over draws, and draws of the latent. `Op::LogDensity` now accepts the Bernoulli (a
+  boolean value), and `Model::new` accepts a graph whose only log-probability terms are factors. The Gaussian
+  mixture example gained `run_marginalized` (explicit assignments, marginalised), and the guide's "Building models"
+  chapter a section on marginalising discrete latents.
 
 ### Code review fixes
 

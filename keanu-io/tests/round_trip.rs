@@ -751,6 +751,41 @@ fn factors_and_log_densities_keep_their_log_probability() {
     assert_eq!(model.log_prob(&loaded.state).unwrap(), expected);
 }
 
+/// A model rewritten by marginalising a discrete latent (whose factor holds Bernoulli log densities) keeps its log
+/// probability and the latent's log weights through saving and loading.
+#[test]
+fn marginalised_models_keep_their_log_probability() {
+    let b = GraphBuilder::new();
+    let psi = b.beta(2.0, 2.0);
+    let p = b.beta(2.0, 2.0);
+    let occupied = b.bernoulli_with_shape(&[3], psi);
+    let y = b.bernoulli_with_shape(&[3, 2], occupied.to_double_mask().reshape(&[3, 1]) * p);
+    b.observe(
+        y,
+        BoolTensor::new(&[3, 2], vec![true, false, false, false, false, true]).unwrap(),
+    );
+    b.set_value(psi, DoubleTensor::scalar(0.4));
+    b.set_value(p, DoubleTensor::scalar(0.7));
+    let occupied = occupied.id();
+    let (graph, state) = b.build().unwrap();
+    let (graph, state, marginalized) =
+        keanu_graph::marginalize(&graph, &state, &[occupied]).unwrap();
+    let weights = marginalized.latents()[0].log_weights();
+    let expected = Model::new(graph.clone(), &state)
+        .unwrap()
+        .log_prob(&state)
+        .unwrap();
+    assert!(expected.is_finite());
+    let protobuf = save_protobuf(&graph, &state, &Metadata::new()).unwrap();
+    let json = save_json(&graph, &state, &Metadata::new()).unwrap();
+    for loaded in [load_protobuf(&protobuf).unwrap(), load_json(&json).unwrap()] {
+        let loaded_state = recompute(&loaded.graph, &loaded.state);
+        assert_eq!(loaded_state.value(weights), state.value(weights));
+        let model = Model::new(loaded.graph, &loaded_state).unwrap();
+        assert_eq!(model.log_prob(&loaded_state).unwrap(), expected);
+    }
+}
+
 #[test]
 fn every_distribution_kind_round_trips() {
     let cases = distribution_cases();

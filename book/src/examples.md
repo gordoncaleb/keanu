@@ -75,6 +75,9 @@ Gelman & Hill's book.
 A two-component mixture with a Dirichlet prior on the weights and ordered means, built as the first mean plus a
 positive gap (Keanu has no distribution over ordered vectors; this is how Stan's ordered transform builds them).
 Four NUTS chains recover the components, and `ChainSamples::summary` reports R-hat and effective sample sizes.
+`run_marginalized` fits the same mixture written with an explicit group assignment per measurement, summed out by
+`marginalize` (see [Marginalising discrete latents](building-models.md#marginalising-discrete-latents)), and recovers
+each measurement's group probabilities with `recover_marginals`.
 
 ```rust,ignore
 {{#include ../../keanu/examples/gaussian_mixture.rs}}

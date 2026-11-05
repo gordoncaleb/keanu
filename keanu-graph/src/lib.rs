@@ -39,6 +39,7 @@ mod error;
 pub mod gp;
 mod graph;
 mod logprob;
+mod marginalize;
 mod model;
 pub mod op;
 pub mod parameterisation;
@@ -59,6 +60,7 @@ pub use logprob::{
     log_likelihood_gradient, log_prior, log_prob, log_prob_gradient, node_log_prob,
     node_log_prob_at, node_log_prob_gradient, node_log_prob_terms, node_support,
 };
+pub use marginalize::{MAX_MARGINALIZED_VALUES, Marginalized, MarginalizedLatent, marginalize};
 pub use model::{LambdaSection, Model, downstream_lambda_section, upstream_lambda_section};
 pub use op::{CustomDistribution, CustomGradient, Support};
 pub use parameterisation::{Parameterisation, Space};

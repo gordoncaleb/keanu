@@ -447,6 +447,41 @@ fn gaussian_mixture_recovers_the_components() {
     }
 }
 
+/// The mixture written with explicit assignments and marginalised automatically recovers the components as the
+/// `Mixture` form does, and the recovered assignments put measurements far from the other group in their own.
+#[test]
+fn gaussian_mixture_with_marginalised_assignments_recovers_the_components() {
+    use keanu::algorithms::diagnostics::RHAT_THRESHOLD;
+    let observations = gaussian_mixture::data(300, 7);
+    let result = gaussian_mixture::run_marginalized(&observations, 4, 500, 13).unwrap();
+    let fit = &result.fit;
+    for c in 0..2 {
+        for (node, truth, what) in [
+            (fit.means, gaussian_mixture::TRUE_MEANS[c], "mean"),
+            (fit.sigmas, gaussian_mixture::TRUE_SIGMA, "sigma"),
+            (fit.weights, gaussian_mixture::TRUE_WEIGHTS[c], "weight"),
+        ] {
+            let stats = fit.chains.summarize(node, &[c]).unwrap();
+            let within = 4.0 * stats.sd + 4.0 * stats.mcse_mean;
+            assert_close(stats.mean, truth, within, &format!("component {c} {what}"));
+            assert!(
+                stats.r_hat < RHAT_THRESHOLD,
+                "component {c} {what}: R-hat {}",
+                stats.r_hat
+            );
+        }
+    }
+    for (i, &y) in observations.iter().enumerate() {
+        let row = &result.assignments.as_slice()[2 * i..2 * i + 2];
+        assert!((row[0] + row[1] - 1.0).abs() < 1e-9, "measurement {i}");
+        if y < -3.5 {
+            assert!(row[0] > 0.99, "measurement {y}: {row:?}");
+        } else if y > 4.5 {
+            assert!(row[1] > 0.99, "measurement {y}: {row:?}");
+        }
+    }
+}
+
 #[test]
 fn gp_regression_recovers_the_sine_curve() {
     // 4 chains of 500 draws after 500 adaptation steps each. Over seeds 1 to 10 every grid point was within 2

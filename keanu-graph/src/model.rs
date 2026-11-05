@@ -135,7 +135,8 @@ pub struct Model {
 
 impl Model {
     /// A model of every latent, observed and factor node of the graph, in the given state. Fails if there are no
-    /// latent or observed nodes.
+    /// latent, observed or factor nodes. (A model of factors alone, such as one whose latents have all been
+    /// [marginalised](crate::marginalize) with fixed parameters, has a log probability but nothing to sample.)
     pub fn new(graph: impl Into<Arc<Graph>>, state: &State) -> Result<Self> {
         let graph = graph.into();
         let latents: Vec<NodeId> = graph
@@ -143,9 +144,9 @@ impl Model {
             .filter(|&id| !state.is_observed(id))
             .collect();
         let observed: Vec<NodeId> = graph.ids().filter(|&id| state.is_observed(id)).collect();
-        if latents.is_empty() && observed.is_empty() {
+        if latents.is_empty() && observed.is_empty() && graph.factors().next().is_none() {
             return Err(GraphError::InvalidValue(
-                "a model needs at least one latent or observed node".into(),
+                "a model needs at least one latent, observed or factor node".into(),
             ));
         }
         let sections = graph

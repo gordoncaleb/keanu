@@ -94,9 +94,9 @@ likelihoods that no distribution provides. A factor that isn't finite (NaN or ±
 deterministic node: its sum is the log probability a node of that distribution with that value would have, so a
 factor of it gives a likelihood to a value that isn't itself a probabilistic node (such as a transformed
 observation). It works for every distribution with one value per element (the continuous and count distributions,
-and truncated and censored ones; not `dirichlet`, `multivariate_gaussian`, `lkj_cholesky`, `kde`, `categorical`,
-`multinomial`, `ordered_logistic`, `bernoulli` or mixtures), its value has the distribution's type (f64, or i64 for
-counts), and it differentiates, to second order, as the distribution does.
+`bernoulli`, and truncated and censored ones; not `dirichlet`, `multivariate_gaussian`, `lkj_cholesky`, `kde`,
+`categorical`, `multinomial`, `ordered_logistic` or mixtures), its value has the distribution's type (f64, i64 for
+counts, or bool for `bernoulli`), and it differentiates, to second order, as the distribution does.
 
 ```rust,ignore
 {{#include ../../keanu/tests/book.rs:log_density}}
@@ -107,6 +107,40 @@ are those of the expression, so NUTS, the optimizers, variational inference and 
 them, and Metropolis–Hastings updates them incrementally with the nodes a proposal reaches. A factor is a term of
 the density rather than a generative step, so forward sampling, predictive sampling and the particle filter ignore
 it. Factors are saved and loaded with the model, but scan bodies can't hold them.
+
+## Marginalising discrete latents
+
+NUTS needs every latent to be continuous. A discrete latent with finitely many values can instead be summed out of
+the model, as Stan users do by hand: `marginalize(&graph, &state, &[z])` rewrites the graph so that, in place of `z`
+and the observations that depend on it, a factor holds their marginal likelihood,
+
+log p(y | θ) = Σₛ logsumexpₖ (log p(zₛ = k | θ) + Σ log p(yₛ | zₛ = k, θ)),
+
+computed by copying the path from `z` to its observations once for each value k, with `z` replaced by k. It returns
+the new graph and state and a `Marginalized` record: `node(id)` gives the new node of each node of the original
+graph (labels are kept), and `latents()` describes each marginalised latent. Afterwards
+`recover_marginals(&model, &state, &marginalized, &samples)` gives, for each draw, the latent's conditional
+distribution p(zₛ = k | draw), whose average over the draws is its posterior (with less Monte Carlo error than
+counting sampled values); `draw` samples the latent from it, for draws of the original model's joint posterior.
+
+```rust,ignore
+{{#include ../../keanu/tests/book.rs:marginalize}}
+```
+
+The latent's distribution is `bernoulli`, `categorical` or another discrete one whose elements take the same fixed,
+finite set of values (at most 1000; a `uniform_int`, a `binomial` or a truncated count), and every probabilistic node
+depending on it is observed and has an element-wise density (as for `log_density`). A scalar latent can reach its
+observations through any deterministic nodes. For a vector latent of shape S, each element's observations must
+depend on that element alone: the observations' shape starts with S (their trailing axes, such as repeated visits
+to a site, are summed), and the path from the latent uses only element-wise operations, `where_`, casts, reshapes and
+broadcasts that keep the leading axes, reductions over trailing axes, and `gather` with the latent as the indices
+(choosing each element's component parameters, as in a mixture). Anything else, such as a matrix product or a sum
+across the latent's elements, is rejected with `GraphError::CannotMarginalize`, naming the node in the way. Several
+latents are marginalised one after another when each has its own observations.
+
+A Gaussian mixture written with an explicit `categorical` assignment per point and marginalised this way has the
+same log probability, gradients and posterior as the same model written with `mixture`; the
+[Gaussian mixture example](examples.md#a-gaussian-mixture) fits both.
 
 ## Deterministic nodes
 

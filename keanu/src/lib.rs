@@ -79,6 +79,7 @@ pub mod prelude {
     pub use crate::algorithms::laplace::{Laplace, LaplaceResult};
     pub use crate::algorithms::loglik::PointwiseLogLik;
     pub use crate::algorithms::loo::{Comparison, Loo, Waic, loo, waic};
+    pub use crate::algorithms::marginal::{LatentMarginals, recover_marginals};
     pub use crate::algorithms::mcmc::annealing::{AnnealingSchedule, SimulatedAnnealing};
     pub use crate::algorithms::mcmc::compound::Compound;
     pub use crate::algorithms::mcmc::gibbs::{DiscreteMetropolis, Gibbs};
@@ -103,7 +104,8 @@ pub mod prelude {
     pub use crate::distributions::KeanuRng;
     pub use crate::graph::{
         BoolVar, CustomDistribution, CustomGradient, DType, DoubleVar, Graph, GraphBuilder, IntVar,
-        Model, NodeId, Parameterisation, Space, State, Support, Value, Var,
+        Marginalized, Model, NodeId, Parameterisation, Space, State, Support, Value, Var,
+        marginalize,
     };
     pub use crate::tensor::{BoolTensor, DoubleTensor, IntTensor, Tensor};
     pub use crate::{Error, Result};

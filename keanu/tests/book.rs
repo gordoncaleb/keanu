@@ -330,6 +330,56 @@ fn log_densities() -> keanu::Result<()> {
     Ok(())
 }
 
+#[test]
+fn marginalising_discrete_latents() -> keanu::Result<()> {
+    // ANCHOR: marginalize
+    // yearly counts whose rate drops from `early` to `late` in an unknown year
+    let counts = vec![5, 4, 6, 3, 5, 6, 4, 1, 0, 2, 1, 1, 0, 2, 1, 0];
+    let years = counts.len() as i64;
+    let b = GraphBuilder::new();
+    let switch = b.uniform_int(0, years).label("switch");
+    let early = b.exponential(0.5).label("early");
+    let late = b.exponential(0.5).label("late");
+    let year = b.int_constant(IntTensor::vector((0..years).collect()));
+    let rate = b.where_(year.lt(switch), early, late);
+    let observed = b.poisson(rate);
+    b.observe(observed, IntTensor::vector(counts));
+    b.set_value(switch, IntTensor::scalar(8));
+    let switch = switch.id();
+    let (graph, state) = b.build()?;
+
+    // sum the switch year out: the counts' likelihood becomes a factor of the two rates
+    let (graph, state, marginalized) = marginalize(&graph, &state, &[switch])?;
+    let model = Model::new(graph, &state)?;
+    assert!(matches!(
+        Sampler::for_model(&model, &state),
+        Sampler::Nuts(_)
+    ));
+    let rates = [model.find("early").unwrap(), model.find("late").unwrap()];
+    let mut work = state.clone();
+    let samples = Nuts::default().sample(
+        &model,
+        &mut work,
+        &rates,
+        1000,
+        &mut KeanuRng::seed_from_u64(4),
+    )?;
+
+    // the switch year's posterior: its conditional distribution at each draw, averaged over the draws
+    let switch = &recover_marginals(&model, &state, &marginalized, &samples.drop(500)?)?[0];
+    let posterior = switch.mean()?;
+    let year_of = |k: usize| switch.latent().values().start() + k as i64;
+    let (most_likely, p) = posterior
+        .as_slice()
+        .iter()
+        .enumerate()
+        .max_by(|a, b| a.1.total_cmp(b.1))
+        .unwrap();
+    assert_eq!(year_of(most_likely), 7, "p = {p}");
+    // ANCHOR_END: marginalize
+    Ok(())
+}
+
 /// The thermometer example: a room temperature read by two noisy thermometers.
 fn thermometers() -> keanu::Result<(Model, State, NodeId)> {
     // ANCHOR: thermometers
