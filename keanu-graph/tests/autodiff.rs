@@ -872,3 +872,69 @@ fn values_must_be_evaluated_first() {
         Err(GraphError::MissingValue(_))
     ));
 }
+
+#[test]
+fn log_sum_exp_and_softmax_gradients() {
+    let cube = t(
+        &[2, 3, 2],
+        &[
+            0.3, -1.2, 2.0, 0.7, -0.4, 1.1, 0.9, -2.0, 0.2, 1.6, -0.8, 0.05,
+        ],
+    );
+    check(&[cube.clone()], |_, v| v[0].log_sum_exp());
+    for axes in [vec![0], vec![1], vec![-1], vec![0, 2], vec![]] {
+        check(&[cube.clone()], |_, v| v[0].log_sum_exp_axes(&axes));
+    }
+    for axis in [0, 1, 2, -1] {
+        check(&[cube.clone()], |_, v| v[0].softmax(axis));
+        check(&[cube.clone()], |_, v| v[0].log_softmax(axis));
+        // a non-identity cotangent into each rule
+        check(&[cube.clone()], |_, v| {
+            (v[0].softmax(axis) * cube.clone()).sum()
+        });
+        check(&[cube.clone()], |_, v| {
+            (v[0].log_softmax(axis) * cube.clone()).exp().sum()
+        });
+    }
+    // large values: the shifted forms stay finite and the gradients are the softmax
+    check(&[t(&[3], &[1000.0, 1000.5, 999.0])], |_, v| {
+        v[0].log_sum_exp()
+    });
+}
+
+#[test]
+fn log_sum_exp_gradient_is_softmax_and_never_nan() {
+    let g = GraphBuilder::new();
+    let x = g.uniform_with_shape(&[2], -1000.0, 1000.0);
+    g.set_value(x, t(&[2], &[1000.0, 1000.0]));
+    let lse = x.log_sum_exp();
+    let soft = x.softmax(0);
+    let (x, lse, soft) = (x.id(), lse.id(), soft.id());
+    let (graph, mut state) = g.build().unwrap();
+    state
+        .lazy_eval(&graph, &[lse, soft], &mut KeanuRng::seed_from_u64(1))
+        .unwrap();
+    let value = state.f64(lse).unwrap().as_slice()[0];
+    assert!((value - (1000.0 + std::f64::consts::LN_2)).abs() < 1e-12);
+    let grad = reverse_partials(&graph, &state, lse, &[x]).unwrap();
+    assert_eq!(grad.get(x).unwrap().as_slice(), &[0.5, 0.5]);
+    assert_eq!(state.f64(soft).unwrap().as_slice(), &[0.5, 0.5]);
+
+    // every element -inf: the value is -inf and the gradients are finite (uniform)
+    state
+        .set_and_cascade(&graph, x, t(&[2], &[f64::NEG_INFINITY; 2]))
+        .unwrap();
+    assert_eq!(state.f64(lse).unwrap().as_slice(), &[f64::NEG_INFINITY]);
+    let reverse = reverse_partials(&graph, &state, lse, &[x]).unwrap();
+    assert_eq!(reverse.get(x).unwrap().as_slice(), &[0.5, 0.5]);
+    let forward = forward_partials(&graph, &state, x, &[lse, soft]).unwrap();
+    assert_eq!(forward.get(lse).unwrap().as_slice(), &[0.5, 0.5]);
+    assert!(
+        forward
+            .get(soft)
+            .unwrap()
+            .as_slice()
+            .iter()
+            .all(|v| v.is_finite())
+    );
+}

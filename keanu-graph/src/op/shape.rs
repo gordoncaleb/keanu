@@ -149,6 +149,8 @@ fn check_arity(op: &Op, count: usize) -> Result<()> {
         | Op::Predicate(_)
         | Op::Reduce { .. }
         | Op::Standardize
+        | Op::Softmax { .. }
+        | Op::LogSoftmax { .. }
         | Op::Scan { .. }
         | Op::ArgReduce { .. }
         | Op::Reshape(_)

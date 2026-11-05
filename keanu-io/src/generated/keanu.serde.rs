@@ -2376,6 +2376,101 @@ impl<'de> serde::Deserialize<'de> for Kde {
         deserializer.deserialize_struct("keanu.Kde", FIELDS, GeneratedVisitor)
     }
 }
+impl serde::Serialize for LogSoftmax {
+    #[allow(deprecated)]
+    fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        use serde::ser::SerializeStruct;
+        let mut len = 0;
+        if self.axis != 0 {
+            len += 1;
+        }
+        let mut struct_ser = serializer.serialize_struct("keanu.LogSoftmax", len)?;
+        if self.axis != 0 {
+            #[allow(clippy::needless_borrow)]
+            #[allow(clippy::needless_borrows_for_generic_args)]
+            struct_ser.serialize_field("axis", ToString::to_string(&self.axis).as_str())?;
+        }
+        struct_ser.end()
+    }
+}
+impl<'de> serde::Deserialize<'de> for LogSoftmax {
+    #[allow(deprecated)]
+    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        const FIELDS: &[&str] = &[
+            "axis",
+        ];
+
+        #[allow(clippy::enum_variant_names)]
+        enum GeneratedField {
+            Axis,
+        }
+        impl<'de> serde::Deserialize<'de> for GeneratedField {
+            fn deserialize<D>(deserializer: D) -> std::result::Result<GeneratedField, D::Error>
+            where
+                D: serde::Deserializer<'de>,
+            {
+                struct GeneratedVisitor;
+
+                impl serde::de::Visitor<'_> for GeneratedVisitor {
+                    type Value = GeneratedField;
+
+                    fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                        write!(formatter, "expected one of: {:?}", &FIELDS)
+                    }
+
+                    #[allow(unused_variables)]
+                    fn visit_str<E>(self, value: &str) -> std::result::Result<GeneratedField, E>
+                    where
+                        E: serde::de::Error,
+                    {
+                        match value {
+                            "axis" => Ok(GeneratedField::Axis),
+                            _ => Err(serde::de::Error::unknown_field(value, FIELDS)),
+                        }
+                    }
+                }
+                deserializer.deserialize_identifier(GeneratedVisitor)
+            }
+        }
+        struct GeneratedVisitor;
+        impl<'de> serde::de::Visitor<'de> for GeneratedVisitor {
+            type Value = LogSoftmax;
+
+            fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                formatter.write_str("struct keanu.LogSoftmax")
+            }
+
+            fn visit_map<V>(self, mut map_: V) -> std::result::Result<LogSoftmax, V::Error>
+                where
+                    V: serde::de::MapAccess<'de>,
+            {
+                let mut axis__ = None;
+                while let Some(k) = map_.next_key()? {
+                    match k {
+                        GeneratedField::Axis => {
+                            if axis__.is_some() {
+                                return Err(serde::de::Error::duplicate_field("axis"));
+                            }
+                            axis__ = 
+                                Some(map_.next_value::<::pbjson::private::NumberDeserialize<_>>()?.0)
+                            ;
+                        }
+                    }
+                }
+                Ok(LogSoftmax {
+                    axis: axis__.unwrap_or_default(),
+                })
+            }
+        }
+        deserializer.deserialize_struct("keanu.LogSoftmax", FIELDS, GeneratedVisitor)
+    }
+}
 impl serde::Serialize for LogicOp {
     #[allow(deprecated)]
     fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
@@ -2871,6 +2966,12 @@ impl serde::Serialize for Node {
                 node::Op::Stack(v) => {
                     struct_ser.serialize_field("stack", v)?;
                 }
+                node::Op::Softmax(v) => {
+                    struct_ser.serialize_field("softmax", v)?;
+                }
+                node::Op::LogSoftmax(v) => {
+                    struct_ser.serialize_field("logSoftmax", v)?;
+                }
             }
         }
         struct_ser.end()
@@ -2941,6 +3042,9 @@ impl<'de> serde::Deserialize<'de> for Node {
             "scatter_add",
             "scatterAdd",
             "stack",
+            "softmax",
+            "log_softmax",
+            "logSoftmax",
         ];
 
         #[allow(clippy::enum_variant_names)]
@@ -2993,6 +3097,8 @@ impl<'de> serde::Deserialize<'de> for Node {
             Gather,
             ScatterAdd,
             Stack,
+            Softmax,
+            LogSoftmax,
         }
         impl<'de> serde::Deserialize<'de> for GeneratedField {
             fn deserialize<D>(deserializer: D) -> std::result::Result<GeneratedField, D::Error>
@@ -3062,6 +3168,8 @@ impl<'de> serde::Deserialize<'de> for Node {
                             "gather" => Ok(GeneratedField::Gather),
                             "scatterAdd" | "scatter_add" => Ok(GeneratedField::ScatterAdd),
                             "stack" => Ok(GeneratedField::Stack),
+                            "softmax" => Ok(GeneratedField::Softmax),
+                            "logSoftmax" | "log_softmax" => Ok(GeneratedField::LogSoftmax),
                             _ => Err(serde::de::Error::unknown_field(value, FIELDS)),
                         }
                     }
@@ -3414,6 +3522,20 @@ impl<'de> serde::Deserialize<'de> for Node {
                                 return Err(serde::de::Error::duplicate_field("stack"));
                             }
                             op__ = map_.next_value::<::std::option::Option<_>>()?.map(node::Op::Stack)
+;
+                        }
+                        GeneratedField::Softmax => {
+                            if op__.is_some() {
+                                return Err(serde::de::Error::duplicate_field("softmax"));
+                            }
+                            op__ = map_.next_value::<::std::option::Option<_>>()?.map(node::Op::Softmax)
+;
+                        }
+                        GeneratedField::LogSoftmax => {
+                            if op__.is_some() {
+                                return Err(serde::de::Error::duplicate_field("logSoftmax"));
+                            }
+                            op__ = map_.next_value::<::std::option::Option<_>>()?.map(node::Op::LogSoftmax)
 ;
                         }
                     }
@@ -3845,6 +3967,7 @@ impl serde::Serialize for ReduceOp {
             Self::Max => "REDUCE_OP_MAX",
             Self::Min => "REDUCE_OP_MIN",
             Self::StdDev => "REDUCE_OP_STD_DEV",
+            Self::LogSumExp => "REDUCE_OP_LOG_SUM_EXP",
         };
         serializer.serialize_str(variant)
     }
@@ -3863,6 +3986,7 @@ impl<'de> serde::Deserialize<'de> for ReduceOp {
             "REDUCE_OP_MAX",
             "REDUCE_OP_MIN",
             "REDUCE_OP_STD_DEV",
+            "REDUCE_OP_LOG_SUM_EXP",
         ];
 
         struct GeneratedVisitor;
@@ -3910,6 +4034,7 @@ impl<'de> serde::Deserialize<'de> for ReduceOp {
                     "REDUCE_OP_MAX" => Ok(ReduceOp::Max),
                     "REDUCE_OP_MIN" => Ok(ReduceOp::Min),
                     "REDUCE_OP_STD_DEV" => Ok(ReduceOp::StdDev),
+                    "REDUCE_OP_LOG_SUM_EXP" => Ok(ReduceOp::LogSumExp),
                     _ => Err(serde::de::Error::unknown_variant(value, FIELDS)),
                 }
             }
@@ -4309,6 +4434,101 @@ impl<'de> serde::Deserialize<'de> for Slice {
             }
         }
         deserializer.deserialize_struct("keanu.Slice", FIELDS, GeneratedVisitor)
+    }
+}
+impl serde::Serialize for Softmax {
+    #[allow(deprecated)]
+    fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        use serde::ser::SerializeStruct;
+        let mut len = 0;
+        if self.axis != 0 {
+            len += 1;
+        }
+        let mut struct_ser = serializer.serialize_struct("keanu.Softmax", len)?;
+        if self.axis != 0 {
+            #[allow(clippy::needless_borrow)]
+            #[allow(clippy::needless_borrows_for_generic_args)]
+            struct_ser.serialize_field("axis", ToString::to_string(&self.axis).as_str())?;
+        }
+        struct_ser.end()
+    }
+}
+impl<'de> serde::Deserialize<'de> for Softmax {
+    #[allow(deprecated)]
+    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        const FIELDS: &[&str] = &[
+            "axis",
+        ];
+
+        #[allow(clippy::enum_variant_names)]
+        enum GeneratedField {
+            Axis,
+        }
+        impl<'de> serde::Deserialize<'de> for GeneratedField {
+            fn deserialize<D>(deserializer: D) -> std::result::Result<GeneratedField, D::Error>
+            where
+                D: serde::Deserializer<'de>,
+            {
+                struct GeneratedVisitor;
+
+                impl serde::de::Visitor<'_> for GeneratedVisitor {
+                    type Value = GeneratedField;
+
+                    fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                        write!(formatter, "expected one of: {:?}", &FIELDS)
+                    }
+
+                    #[allow(unused_variables)]
+                    fn visit_str<E>(self, value: &str) -> std::result::Result<GeneratedField, E>
+                    where
+                        E: serde::de::Error,
+                    {
+                        match value {
+                            "axis" => Ok(GeneratedField::Axis),
+                            _ => Err(serde::de::Error::unknown_field(value, FIELDS)),
+                        }
+                    }
+                }
+                deserializer.deserialize_identifier(GeneratedVisitor)
+            }
+        }
+        struct GeneratedVisitor;
+        impl<'de> serde::de::Visitor<'de> for GeneratedVisitor {
+            type Value = Softmax;
+
+            fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                formatter.write_str("struct keanu.Softmax")
+            }
+
+            fn visit_map<V>(self, mut map_: V) -> std::result::Result<Softmax, V::Error>
+                where
+                    V: serde::de::MapAccess<'de>,
+            {
+                let mut axis__ = None;
+                while let Some(k) = map_.next_key()? {
+                    match k {
+                        GeneratedField::Axis => {
+                            if axis__.is_some() {
+                                return Err(serde::de::Error::duplicate_field("axis"));
+                            }
+                            axis__ = 
+                                Some(map_.next_value::<::pbjson::private::NumberDeserialize<_>>()?.0)
+                            ;
+                        }
+                    }
+                }
+                Ok(Softmax {
+                    axis: axis__.unwrap_or_default(),
+                })
+            }
+        }
+        deserializer.deserialize_struct("keanu.Softmax", FIELDS, GeneratedVisitor)
     }
 }
 impl serde::Serialize for Stack {

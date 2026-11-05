@@ -82,6 +82,8 @@ fn save_op(graph: &Graph, id: NodeId) -> Result<P> {
             }),
         }),
         Op::Standardize => P::Standardize(empty()),
+        Op::Softmax { axis } => P::Softmax(proto::Softmax { axis: *axis as i64 }),
+        Op::LogSoftmax { axis } => P::LogSoftmax(proto::LogSoftmax { axis: *axis as i64 }),
         Op::Scan { kind, axis } => P::Cumulative(proto::Cumulative {
             kind: encode(kind)?,
             axis: *axis as i64,

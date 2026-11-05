@@ -152,6 +152,32 @@ proptest! {
         prop_assert_eq!(last.shape(), &[2, 3, 2]);
         prop_assert_eq!(last.slice("..., 0").unwrap(), a);
     }
+
+    #[test]
+    fn softmax_sums_to_one_and_log_softmax_is_its_log(
+        x in shape(3, 4).prop_filter("rank >= 1", |s| !s.is_empty()).prop_flat_map(tensor_with_shape),
+        axis_seed in 0usize..3,
+    ) {
+        let axis = (axis_seed % x.rank()) as isize;
+        let x = x.map(|v| v * 0.37);
+        let s = x.softmax(axis).unwrap();
+        let sums = s.sum_axes(&[axis]).unwrap();
+        for &total in sums.as_slice() {
+            prop_assert!((total - 1.0).abs() < 1e-12, "sum {}", total);
+        }
+        let ls = x.log_softmax(axis).unwrap();
+        for (&a, &b) in ls.as_slice().iter().zip(s.ln().as_slice()) {
+            prop_assert!((a - b).abs() < 1e-9 * b.abs().max(1.0), "{} != {}", a, b);
+        }
+        // logsumexp over the axis matches the naive form for moderate values
+        let lse = x.log_sum_exp_axes(&[axis]).unwrap();
+        let naive = x.exp().sum_axes(&[axis]).unwrap().ln();
+        for (&a, &b) in lse.as_slice().iter().zip(naive.as_slice()) {
+            prop_assert!((a - b).abs() < 1e-9 * b.abs().max(1.0), "{} != {}", a, b);
+        }
+        let all = x.log_sum_exp();
+        prop_assert!((all - x.exp().sum().ln()).abs() < 1e-9 * all.abs().max(1.0));
+    }
 }
 
 #[test]
@@ -202,4 +228,51 @@ fn stack_needs_matching_shapes() {
     assert!(DoubleTensor::stack(2, &[&a]).is_err());
     let s = DoubleTensor::stack(0, &[&a, &a, &a]).unwrap();
     assert_eq!(s.shape(), &[3, 2]);
+}
+
+#[test]
+fn log_sum_exp_is_stable() {
+    let big = DoubleTensor::vector(vec![1000.0, 1000.0]);
+    assert!((big.log_sum_exp() - (1000.0 + std::f64::consts::LN_2)).abs() < 1e-12);
+    assert_eq!(big.softmax(0).unwrap().as_slice(), &[0.5, 0.5]);
+    let small = DoubleTensor::vector(vec![-1000.0, -1000.0, -1000.0]);
+    assert!((small.log_sum_exp() - (-1000.0 + 3f64.ln())).abs() < 1e-9);
+
+    let ninf = DoubleTensor::vector(vec![f64::NEG_INFINITY; 2]);
+    assert_eq!(ninf.log_sum_exp(), f64::NEG_INFINITY);
+    assert_eq!(ninf.softmax(0).unwrap().as_slice(), &[0.5, 0.5]);
+    assert!(
+        ninf.log_softmax(0)
+            .unwrap()
+            .as_slice()
+            .iter()
+            .all(|v| v.is_finite())
+    );
+    let some = DoubleTensor::vector(vec![f64::NEG_INFINITY, 0.0]);
+    assert_eq!(some.log_sum_exp(), 0.0);
+    assert_eq!(some.softmax(0).unwrap().as_slice(), &[0.0, 1.0]);
+    let pinf = DoubleTensor::vector(vec![f64::INFINITY, 0.0]);
+    assert_eq!(pinf.log_sum_exp(), f64::INFINITY);
+    assert_eq!(pinf.softmax(0).unwrap().as_slice(), &[1.0, 0.0]);
+    assert!(
+        DoubleTensor::vector(vec![f64::NAN, 0.0])
+            .log_sum_exp()
+            .is_nan()
+    );
+
+    // an empty reduction is -inf, the log of an empty sum
+    let empty = DoubleTensor::new(&[0, 2], vec![]).unwrap();
+    assert_eq!(empty.log_sum_exp(), f64::NEG_INFINITY);
+    assert_eq!(
+        empty.log_sum_exp_axes(&[0]).unwrap().as_slice(),
+        &[f64::NEG_INFINITY; 2]
+    );
+    assert_eq!(empty.softmax(0).unwrap().shape(), &[0, 2]);
+
+    let m = DoubleTensor::new(&[2, 2], vec![0.0, 1000.0, 3.0, 3.0]).unwrap();
+    let rows = m.log_sum_exp_axes(&[-1]).unwrap();
+    assert!((rows.as_slice()[0] - 1000.0).abs() < 1e-12);
+    assert!((rows.as_slice()[1] - (3.0 + std::f64::consts::LN_2)).abs() < 1e-12);
+    assert!(m.softmax(2).is_err());
+    assert!(m.log_sum_exp_axes(&[5]).is_err());
 }

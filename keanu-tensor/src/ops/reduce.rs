@@ -167,6 +167,79 @@ impl DoubleTensor {
         self.map(|x| (x - mean) / sd)
     }
 
+    /// ln Σ eˣ over every element, computed stably by shifting by the maximum: -∞ if every element is -∞ (or
+    /// there are none), +∞ if any is +∞, NaN if any is NaN.
+    pub fn log_sum_exp(&self) -> f64 {
+        let all: Vec<isize> = (0..self.rank() as isize).collect();
+        self.log_sum_exp_axes(&all)
+            .ok()
+            .and_then(|t| t.to_scalar())
+            .unwrap_or(f64::NAN)
+    }
+
+    /// ln Σ eˣ over the given axes, which are removed, computed stably as [`log_sum_exp`](Self::log_sum_exp).
+    pub fn log_sum_exp_axes(&self, axes: &[isize]) -> Result<Self> {
+        let mask = shape::axis_mask(axes, self.rank())?;
+        Ok(self.log_softmax_parts(&mask)?.1)
+    }
+
+    /// The softmax along an axis: eˣ normalised to sum to 1 along it. Computed stably by shifting by the maximum;
+    /// where every element of a lane is -∞ the lane is uniform, and where some are +∞ they share the mass.
+    pub fn softmax(&self, axis: isize) -> Result<Self> {
+        self.softmax_axes(&[axis])
+    }
+
+    /// The softmax over the elements of each group spanned by the given axes (see [`softmax`](Self::softmax)):
+    /// the gradient of [`log_sum_exp_axes`](Self::log_sum_exp_axes) over the same axes.
+    pub fn softmax_axes(&self, axes: &[isize]) -> Result<Self> {
+        Ok(self.log_softmax_axes(axes)?.exp())
+    }
+
+    /// The log of the [`softmax`](Self::softmax) along an axis, x - logsumexp(x), computed without forming the
+    /// softmax so it stays accurate for very negative values.
+    pub fn log_softmax(&self, axis: isize) -> Result<Self> {
+        self.log_softmax_axes(&[axis])
+    }
+
+    fn log_softmax_axes(&self, axes: &[isize]) -> Result<Self> {
+        let mask = shape::axis_mask(axes, self.rank())?;
+        Ok(self.log_softmax_parts(&mask)?.0)
+    }
+
+    /// The log-softmax over the groups of the masked axes (shaped like self) and their logsumexp (with the masked
+    /// axes removed). Each element is shifted by its group's maximum m, taking x - m as 0 where x == m so that
+    /// infinite maxima give 0 rather than NaN.
+    fn log_softmax_parts(&self, mask: &[bool]) -> Result<(Self, Self)> {
+        let kept: Vec<isize> = self
+            .shape
+            .iter()
+            .zip(mask)
+            .map(|(&d, &m)| if m { 1 } else { d as isize })
+            .collect();
+        let expand = |reduced: Tensor<f64>| -> Result<Self> {
+            reduced.into_reshape(&kept)?.broadcast_to(&self.shape)
+        };
+        let (s, data) = reduce(
+            &self.data,
+            &self.shape,
+            mask,
+            f64::NEG_INFINITY,
+            Numeric::max,
+        );
+        let max = Tensor::from_parts(s, data);
+        let shifted = self.zip_with(
+            &expand(max.clone())?,
+            |x, m| if x == m { 0.0 } else { x - m },
+        )?;
+        let (s, data) = reduce(&shifted.data, &self.shape, mask, 0.0, |a, x: f64| {
+            a + x.exp()
+        });
+        let log_sum = Tensor::from_parts(s, data).ln();
+        let log_softmax = shifted.sub(&expand(log_sum.clone())?)?;
+        let lse = max.zip_with(&log_sum, |m, l| m + l)?;
+        Ok((log_softmax, lse))
+    }
+
     /// Flat index of the largest element, ignoring NaN (0 if every element is NaN). None if empty.
     pub fn nan_argmax(&self) -> Option<usize> {
         nan_arg_best(&self.data, |v, b| v > b)

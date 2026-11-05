@@ -704,6 +704,22 @@ impl<'b> DoubleVar<'b> {
     pub fn mean_axes(self, axes: &[isize]) -> Self {
         self.reduce(ReduceOp::Mean, Some(axes))
     }
+    /// ln Σ eˣ over every element, computed stably (-∞ if every element is -∞). Its gradient is the softmax.
+    pub fn log_sum_exp(self) -> Self {
+        self.reduce(ReduceOp::LogSumExp, None)
+    }
+    /// ln Σ eˣ over the given axes, which are removed, computed stably.
+    pub fn log_sum_exp_axes(self, axes: &[isize]) -> Self {
+        self.reduce(ReduceOp::LogSumExp, Some(axes))
+    }
+    /// eˣ normalised to sum to 1 along an axis, computed stably (uniform where every element is -∞).
+    pub fn softmax(self, axis: isize) -> Self {
+        self.same(Op::Softmax { axis })
+    }
+    /// The log of the softmax along an axis, x - logsumexp(x), accurate for very negative values.
+    pub fn log_softmax(self, axis: isize) -> Self {
+        self.same(Op::LogSoftmax { axis })
+    }
     /// Sample standard deviation of every element.
     pub fn std_dev(self) -> Self {
         self.reduce(ReduceOp::StdDev, None)

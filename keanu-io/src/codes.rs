@@ -74,7 +74,7 @@ codes! {
     "predicate": Predicate => Predicate {
         IsNan, NotNan, IsFinite, IsInfinite, IsPositiveInfinity, IsNegativeInfinity,
     }
-    "reduction": ReduceOp => ReduceOp { Sum, Product, Mean, Max, Min, StdDev }
+    "reduction": ReduceOp => ReduceOp { Sum, Product, Mean, Max, Min, StdDev, LogSumExp }
     "cumulative op": ScanOp => CumulativeOp { CumSum => Sum, CumProd => Product }
     "arg reduction": ArgOp => ArgOp { ArgMax, ArgMin, NanArgMax, NanArgMin }
     "type": DType => DType { F64, I64, Bool }
@@ -169,7 +169,7 @@ mod tests {
         every_code_has_a_variant::<CompareOp>(6);
         every_code_has_a_variant::<LogicOp>(3);
         every_code_has_a_variant::<Predicate>(6);
-        every_code_has_a_variant::<ReduceOp>(6);
+        every_code_has_a_variant::<ReduceOp>(7);
         every_code_has_a_variant::<ScanOp>(2);
         every_code_has_a_variant::<ArgOp>(4);
         every_code_has_a_variant::<DType>(3);

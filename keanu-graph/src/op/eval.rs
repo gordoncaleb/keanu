@@ -234,6 +234,8 @@ pub(crate) fn eval(op: &Op, inputs: &[&Value]) -> Result<Value> {
             reduce(op, *kind, axes.as_deref(), inputs[0])?
         }
         Op::Standardize => Value::F64(inputs[0].f64()?.standardize()),
+        Op::Softmax { axis } => Value::F64(inputs[0].f64()?.softmax(*axis)?),
+        Op::LogSoftmax { axis } => Value::F64(inputs[0].f64()?.log_softmax(*axis)?),
         Op::Scan { kind, axis } => match (inputs[0], kind) {
             (Value::F64(x), ScanOp::CumSum) => Value::F64(x.cumsum(*axis)?),
             (Value::F64(x), ScanOp::CumProd) => Value::F64(x.cumprod(*axis)?),
@@ -512,6 +514,10 @@ fn reduce(op: &Op, kind: ReduceOp, axes: Option<&[isize]>, input: &Value) -> Res
             Value::F64(DoubleTensor::scalar(x.min().ok_or_else(none)?))
         }
         (Value::F64(x), ReduceOp::StdDev, None) => Value::F64(DoubleTensor::scalar(x.std_dev())),
+        (Value::F64(x), ReduceOp::LogSumExp, None) => {
+            Value::F64(DoubleTensor::scalar(x.log_sum_exp()))
+        }
+        (Value::F64(x), ReduceOp::LogSumExp, Some(a)) => Value::F64(x.log_sum_exp_axes(a)?),
         (Value::I64(x), ReduceOp::Sum, None) => Value::I64(IntTensor::scalar(x.sum())),
         (Value::I64(x), ReduceOp::Sum, Some(a)) => Value::I64(x.sum_axes(a)?),
         (Value::I64(x), ReduceOp::Product, None) => Value::I64(IntTensor::scalar(x.product())),

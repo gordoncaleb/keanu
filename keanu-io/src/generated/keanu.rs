@@ -34,7 +34,7 @@ pub struct Node {
     pub label: ::prost::alloc::string::String,
     #[prost(
         oneof = "node::Op",
-        tags = "10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55"
+        tags = "10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57"
     )]
     pub op: ::core::option::Option<node::Op>,
 }
@@ -134,6 +134,10 @@ pub mod node {
         ScatterAdd(super::ScatterAdd),
         #[prost(message, tag = "55")]
         Stack(super::Stack),
+        #[prost(message, tag = "56")]
+        Softmax(super::Softmax),
+        #[prost(message, tag = "57")]
+        LogSoftmax(super::LogSoftmax),
     }
 }
 /// The parameters of an operation that has none.
@@ -272,6 +276,18 @@ pub struct ScatterAdd {
 /// Parents: inputs of the same type and shape, joined along a new axis.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct Stack {
+    #[prost(sint64, tag = "1")]
+    pub axis: i64,
+}
+/// eˣ normalised to sum to 1 along an axis.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct Softmax {
+    #[prost(sint64, tag = "1")]
+    pub axis: i64,
+}
+/// The log of the softmax along an axis.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct LogSoftmax {
     #[prost(sint64, tag = "1")]
     pub axis: i64,
 }
@@ -723,6 +739,7 @@ pub enum ReduceOp {
     Max = 4,
     Min = 5,
     StdDev = 6,
+    LogSumExp = 7,
 }
 impl ReduceOp {
     /// String value of the enum field names used in the ProtoBuf definition.
@@ -738,6 +755,7 @@ impl ReduceOp {
             Self::Max => "REDUCE_OP_MAX",
             Self::Min => "REDUCE_OP_MIN",
             Self::StdDev => "REDUCE_OP_STD_DEV",
+            Self::LogSumExp => "REDUCE_OP_LOG_SUM_EXP",
         }
     }
     /// Creates an enum from field names used in the ProtoBuf definition.
@@ -750,6 +768,7 @@ impl ReduceOp {
             "REDUCE_OP_MAX" => Some(Self::Max),
             "REDUCE_OP_MIN" => Some(Self::Min),
             "REDUCE_OP_STD_DEV" => Some(Self::StdDev),
+            "REDUCE_OP_LOG_SUM_EXP" => Some(Self::LogSumExp),
             _ => None,
         }
     }

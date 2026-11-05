@@ -82,6 +82,8 @@ message Node {
     Gather gather = 53;
     ScatterAdd scatter_add = 54;
     Stack stack = 55;
+    Softmax softmax = 56;
+    LogSoftmax log_softmax = 57;
   }
 
   // Reserved for a general scan whose body is a nested `Graph`.
@@ -236,6 +238,7 @@ enum ReduceOp {
   REDUCE_OP_MAX = 4;
   REDUCE_OP_MIN = 5;
   REDUCE_OP_STD_DEV = 6;
+  REDUCE_OP_LOG_SUM_EXP = 7;
 }
 
 // A reduction over some axes, or over every axis when `axes` is absent.
@@ -315,6 +318,16 @@ message ScatterAdd {
 
 // Parents: inputs of the same type and shape, joined along a new axis.
 message Stack {
+  sint64 axis = 1;
+}
+
+// eˣ normalised to sum to 1 along an axis.
+message Softmax {
+  sint64 axis = 1;
+}
+
+// The log of the softmax along an axis.
+message LogSoftmax {
   sint64 axis = 1;
 }
 

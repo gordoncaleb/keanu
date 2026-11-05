@@ -236,10 +236,15 @@ fn op_cases() -> Vec<(String, Graph, State)> {
         cases.push(op_case(Op::Predicate(p), &[scalar(f64::NAN)]));
     }
     use ReduceOp::*;
-    for kind in [Sum, Product, Mean, Max, Min, StdDev] {
+    for kind in [Sum, Product, Mean, Max, Min, StdDev, LogSumExp] {
         cases.push(op_case(Op::Reduce { kind, axes: None }, &[matrix()]));
     }
-    for (kind, axes) in [(Sum, vec![-1]), (Product, vec![0, 1]), (Mean, vec![])] {
+    for (kind, axes) in [
+        (Sum, vec![-1]),
+        (Product, vec![0, 1]),
+        (Mean, vec![]),
+        (LogSumExp, vec![0]),
+    ] {
         cases.push(op_case(
             Op::Reduce {
                 kind,
@@ -249,6 +254,8 @@ fn op_cases() -> Vec<(String, Graph, State)> {
         ));
     }
     cases.push(op_case(Op::Standardize, &[matrix()]));
+    cases.push(op_case(Op::Softmax { axis: -1 }, &[matrix()]));
+    cases.push(op_case(Op::LogSoftmax { axis: 0 }, &[matrix()]));
     for kind in [ScanOp::CumSum, ScanOp::CumProd] {
         cases.push(op_case(Op::Scan { kind, axis: -1 }, &[matrix()]));
     }
@@ -529,6 +536,8 @@ fn every_operation_round_trips() {
         "predicate",
         "reduce",
         "standardize",
+        "softmax",
+        "log_softmax",
         "scan",
         "arg_reduce",
         "reshape",

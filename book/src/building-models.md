@@ -26,6 +26,7 @@ Handles (`DoubleVar`, `IntVar`, `BoolVar`) support:
   - element-wise math (`exp`, `ln`, `sigmoid`, `ln_gamma`, ...)
   - comparisons (`gt`, `le`, ...) and masks
   - reductions (`sum`, `sum_axes`, `mean`, `max`, ...) and scans (`cumsum`)
+  - stable `log_sum_exp`, `softmax` and `log_softmax` (shifted by the maximum, so large or `-∞` inputs stay exact)
   - shapes (`reshape`, `permute`, `slice`, `broadcast_to`, ...) and indexing (`gather`, `scatter_add`; see
     [Indexing](#indexing))
   - linear algebra (`matmul`, `inverse`, `cholesky`, `determinant`, `tensor_multiply`)

@@ -187,7 +187,8 @@ pub enum Predicate {
     IsNegativeInfinity,
 }
 
-/// Reductions. `Mean` and `StdDev` apply to f64 only. `Max`, `Min` and `StdDev` reduce over every dimension.
+/// Reductions. `Mean`, `StdDev` and `LogSumExp` apply to f64 only. `Max`, `Min` and `StdDev` reduce over every
+/// dimension.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[non_exhaustive]
 pub enum ReduceOp {
@@ -203,6 +204,8 @@ pub enum ReduceOp {
     Min,
     /// Sample standard deviation.
     StdDev,
+    /// ln Σ eˣ, computed stably by shifting by the maximum (-∞ if every element is -∞).
+    LogSumExp,
 }
 
 /// Running accumulations along an axis.
@@ -309,6 +312,16 @@ pub enum Op {
         kind: ArgOp,
         /// The axis, or `None` for the flat index over every element.
         axis: Option<isize>,
+    },
+    /// Parents: `input`, f64 -> eˣ normalised to sum to 1 along the axis (computed stably)
+    Softmax {
+        /// The axis to normalise along.
+        axis: isize,
+    },
+    /// Parents: `input`, f64 -> the log of the softmax along the axis, x - logsumexp(x)
+    LogSoftmax {
+        /// The axis to normalise along.
+        axis: isize,
     },
     /// Parents: `input`
     Reshape(Vec<isize>),
@@ -435,6 +448,8 @@ impl Op {
             Op::Standardize => "standardize",
             Op::Scan { .. } => "scan",
             Op::ArgReduce { .. } => "arg_reduce",
+            Op::Softmax { .. } => "softmax",
+            Op::LogSoftmax { .. } => "log_softmax",
             Op::Reshape(_) => "reshape",
             Op::Permute(_) => "permute",
             Op::Transpose => "transpose",

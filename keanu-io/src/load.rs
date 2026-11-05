@@ -160,6 +160,12 @@ fn add_node(builder: &GraphBuilder, op: &P, parents: &[NodeId]) -> Result<NodeId
             axes: p.axes.as_ref().map(|a| isizes(&a.values)).transpose()?,
         },
         P::Standardize(_) => Op::Standardize,
+        P::Softmax(p) => Op::Softmax {
+            axis: isize_of(p.axis)?,
+        },
+        P::LogSoftmax(p) => Op::LogSoftmax {
+            axis: isize_of(p.axis)?,
+        },
         P::Cumulative(p) => Op::Scan {
             kind: decode(p.kind)?,
             axis: isize_of(p.axis)?,

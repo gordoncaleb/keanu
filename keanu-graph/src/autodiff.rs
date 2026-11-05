@@ -80,7 +80,11 @@ pub fn is_differentiable(graph: &Graph, id: NodeId) -> bool {
                 UnaryOp::Floor | UnaryOp::Ceil | UnaryOp::Round | UnaryOp::Sign
             ),
             Op::Binary(b) => !matches!(b, BinaryOp::Rem),
-            Op::Reduce { .. } | Op::Standardize | Op::Scan { .. } => true,
+            Op::Reduce { .. }
+            | Op::Standardize
+            | Op::Softmax { .. }
+            | Op::LogSoftmax { .. }
+            | Op::Scan { .. } => true,
             Op::Reshape(_)
             | Op::Permute(_)
             | Op::Transpose
@@ -455,6 +459,17 @@ fn jacobian_reverse(
 // ---------------------------------------------------------------------------------------------------------------
 // products, scans and contractions: closed forms that never divide by an element (so are exact where elements are
 // zero) and never build a dense Jacobian
+
+/// Sums a tensor over one axis, keeping it with length 1 so the result broadcasts against the tensor.
+fn sum_keep(t: &DoubleTensor, axis: usize) -> Result<DoubleTensor> {
+    let kept: Dims = t
+        .shape()
+        .iter()
+        .enumerate()
+        .map(|(i, &d)| if i == axis { 1 } else { d as isize })
+        .collect();
+    Ok(t.sum_axes(&[axis as isize])?.into_reshape(&kept)?)
+}
 
 /// Resolves a possibly negative axis of a tensor of the given rank.
 fn resolve_axis(axis: isize, rank: usize) -> Result<usize> {
@@ -1194,7 +1209,31 @@ fn jvp(
                     let j = std_dev_jacobian(f64v(parents[0])?)?;
                     Some(jacobian_forward(t0, &j, &out_shape)?)
                 }
+                ReduceOp::LogSumExp => {
+                    // ẏ = Σ over each group of softmax(x) ẋ
+                    let x = f64v(parents[0])?;
+                    let (axes, _) = reduced_axes(axes, x.rank(), x.shape())?;
+                    let weighted = t0.mul(&x.softmax_axes(&signed(&axes, 0))?)?;
+                    let summed = if axes.is_empty() {
+                        weighted
+                    } else {
+                        weighted.sum_axes(&signed(&axes, 1))?
+                    };
+                    Some(summed.reshape(&batched(b, &out_shape))?)
+                }
             }
+        }
+        Op::Softmax { axis } => {
+            // ẏ = y (ẋ - Σ_axis y ẋ)
+            let Some(t0) = t[0] else { return Ok(None) };
+            let axis = resolve_axis(*axis, y.rank())?;
+            Some(t0.sub(&sum_keep(&t0.mul(y)?, axis + 1)?)?.mul(y)?)
+        }
+        Op::LogSoftmax { axis } => {
+            // ẏ = ẋ - Σ_axis softmax ẋ
+            let Some(t0) = t[0] else { return Ok(None) };
+            let axis = resolve_axis(*axis, y.rank())?;
+            Some(t0.sub(&sum_keep(&t0.mul(&y.exp())?, axis + 1)?)?)
         }
         Op::Standardize => {
             let Some(t0) = t[0] else { return Ok(None) };
@@ -1461,7 +1500,29 @@ fn vjp(
                 ReduceOp::StdDev => {
                     vec![Some(jacobian_reverse(g, &std_dev_jacobian(x)?, x.shape())?)]
                 }
+                ReduceOp::LogSumExp => {
+                    // x̄ = ȳ of x's group × softmax(x) over the group
+                    let (axes, _) = reduced_axes(axes, x.rank(), x.shape())?;
+                    let kept: Vec<usize> = x
+                        .shape()
+                        .iter()
+                        .enumerate()
+                        .map(|(i, &d)| if axes.contains(&i) { 1 } else { d })
+                        .collect();
+                    let weights = x.softmax_axes(&signed(&axes, 0))?;
+                    vec![Some(g.reshape(&batched(b, &kept))?.mul(&weights)?)]
+                }
             }
+        }
+        Op::Softmax { axis } => {
+            // x̄ = y (ȳ - Σ_axis ȳ y)
+            let axis = resolve_axis(*axis, y.rank())?;
+            vec![Some(g.sub(&sum_keep(&g.mul(y)?, axis + 1)?)?.mul(y)?)]
+        }
+        Op::LogSoftmax { axis } => {
+            // x̄ = ȳ - softmax Σ_axis ȳ
+            let axis = resolve_axis(*axis, y.rank())?;
+            vec![Some(g.sub(&sum_keep(g, axis + 1)?.mul(&y.exp())?)?)]
         }
         Op::Standardize => {
             let x = f64v(parents[0])?;
