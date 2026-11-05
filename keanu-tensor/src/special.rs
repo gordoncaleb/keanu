@@ -149,7 +149,7 @@ pub fn tetragamma(x: f64) -> f64 {
 /// The pentagamma function ψ₃(x) = d/dx ψ₂(x), NaN at the poles (0 and the negative integers).
 ///
 /// Computed by reflection for x < 0, the recurrence ψ₃(x) = ψ₃(x + 1) + 6 / x⁴ up to x >= 10, then the asymptotic
-/// series, whose truncation leaves a relative error of at most about 2 × 10⁻¹¹.
+/// series (through the B₁₆ term), whose truncation leaves a relative error of at most about 10⁻¹⁴.
 pub fn pentagamma(x: f64) -> f64 {
     if x.is_nan() || (x <= 0.0 && x == x.floor()) {
         return f64::NAN;
@@ -162,16 +162,29 @@ pub fn pentagamma(x: f64) -> f64 {
         return 2.0 * PI.powi(4) * csc2 * (csc2 + 2.0 * cot * cot) - pentagamma(1.0 - x);
     }
     // the recurrence ψ₃(z) = ψ₃(z + 1) + 6 / z⁴ up to z >= 10, then the asymptotic series
-    // 2/z³ + 3/z⁴ + 2/z⁵ - 1/z⁷ + 4/(3z⁹) - 3/z¹¹ + 10/z¹³
+    // 2/z³ + 3/z⁴ + Σₖ B₂ₖ (2k + 1)(2k + 2) / z^(2k+3) = 2/z³ + 3/z⁴ + 2/z⁵ - 1/z⁷ + 4/(3z⁹) - 3/z¹¹ + 10/z¹³
+    // - 691/(15z¹⁵) + 280/z¹⁷ - 3617·3/(5z¹⁹), whose first omitted term, 43867·380/(798 z²¹), is below 10⁻¹⁴ of the
+    // sum at z = 10
     let mut result = 0.0;
     let mut z = x;
     while z < 10.0 {
         result += 6.0 / z.powi(4);
         z += 1.0;
     }
+    // the coefficients of 1/z⁵, 1/z⁷, ..., 1/z¹⁹, summed by Horner's rule in 1/z²
+    const ODD: [f64; 8] = [
+        2.0,
+        -1.0,
+        4.0 / 3.0,
+        -3.0,
+        10.0,
+        -691.0 / 15.0,
+        280.0,
+        -3617.0 * 3.0 / 5.0,
+    ];
     let (iz, iz2) = (1.0 / z, 1.0 / (z * z));
-    let series = 2.0
-        + iz * (3.0 + iz * (2.0 + iz2 * (-1.0 + iz2 * (4.0 / 3.0 + iz2 * (-3.0 + iz2 * 10.0)))));
+    let odd = ODD.iter().rev().fold(0.0, |sum, &c| sum * iz2 + c);
+    let series = 2.0 + iz * (3.0 + iz * odd);
     result + iz2 * iz * series
 }
 

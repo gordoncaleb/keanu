@@ -407,22 +407,24 @@ fn pentagamma_matches_closed_forms_recurrence_and_differences_of_tetragamma() {
         "{}",
         pentagamma(0.5)
     );
-    // reference values from mpmath's polygamma(3, x) at 30 digits; the asymptotic series used from 10 up is good
-    // to about 2 parts in 10¹¹ at 10 (its first omitted term is 691·182 / (2730 x¹⁵)), and better beyond
+    // reference values from mpmath's polygamma(3, x) at 40 digits; the asymptotic series used from 10 up is good
+    // to about 1 part in 10¹⁴ at 10 (its first omitted term is 43867·380 / (798 x²¹)), and better beyond
     for (x, expected) in [
         (-2.7, 768.962_635_115_522_6),
-        (-0.4, 281.782_041_045_345_7),
+        (-0.4, 281.782_041_045_345_75),
         (0.3, 743.141_764_655_049_8),
         (1.7, 0.889_562_006_624_316_4),
         (4.5, 0.030_322_508_542_366_587),
         (9.9, 0.002_394_451_263_746_16),
-        (10.0, 0.002_319_901_304_289_868_4),
+        (10.0, 0.002_319_901_304_289_868_6),
+        (10.5, 0.001_990_086_237_144_354_4),
+        (12.0, 0.001_310_093_231_070_826),
         (25.0, 0.000_135_884_636_508_273_7),
         (1000.0, 2.003_001_999_999e-9),
     ] {
         let actual = pentagamma(x);
         assert!(
-            close(actual, expected, 3e-11),
+            close(actual, expected, 1e-13),
             "ψ₃({x}) = {actual}, not {expected}"
         );
     }
@@ -430,7 +432,7 @@ fn pentagamma_matches_closed_forms_recurrence_and_differences_of_tetragamma() {
     for x in [-2.7f64, -0.4, 0.3, 1.7, 8.5, 9.5, 12.0, 100.0] {
         let expected = pentagamma(x) - 6.0 / x.powi(4);
         assert!(
-            close(pentagamma(x + 1.0), expected, 1e-11),
+            close(pentagamma(x + 1.0), expected, 1e-13),
             "ψ₃({}) vs {expected}",
             x + 1.0
         );

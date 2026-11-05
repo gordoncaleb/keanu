@@ -7,7 +7,6 @@ Review of `e8d5a30c1..main` (plan `docs/plans/2026-11-04-001-feat-ppl-feature-ga
 - keanu-graph: a scan of 2^40 steps over a scalar carry is within the cap, so a tiny file can make evaluation loop for a very long time.
 - keanu-graph `ScanBody::jvp` multiplies batch × length × carry size unchecked.
 - `add_proxy` / `add_distribution` with huge shapes from Rust code are not capped (only the loader caps them).
-- keanu-tensor `pentagamma` is accurate to ~2e-11 (series cut one term early); adding the next asymptotic term would reach 1e-12.
 - keanu-tensor large-shape incomplete beta: ~1e-10 relative at 1e10, ~1e-8 at 1e14 (Temme's expansion for the beta function would tighten it).
 - Weibull sampling can return +inf with probability 2^-53 per draw (u = 0); NegativeBinomial gradients are NaN at mu = 0; Weibull `d_log_cdf` is NaN when (x/beta)^alpha underflows.
 - OrderedLogistic, Mixture, HMM and Truncated/Censored return `Err` (not −∞) when latent parameters leave their valid region, so Metropolis–Hastings aborts rather than rejects.
