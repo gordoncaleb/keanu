@@ -29,6 +29,7 @@ use crate::autodiff::{batched_shape, reduce_to};
 use crate::error::{GraphError, Result};
 use crate::value::{DType, Value};
 use keanu_distributions::{DistributionError, HiddenMarkovChain, KeanuRng};
+use keanu_tensor::special::log_sum_exp;
 use keanu_tensor::{DoubleTensor, Shape, broadcast_shape};
 use smallvec::SmallVec;
 
@@ -238,15 +239,6 @@ pub(crate) fn sample(
         .map(|i| i * count + states[i / inner.max(1)])
         .collect();
     gather(&draws, shape, &picks)
-}
-
-/// log Σ exp(terms), −∞ for no terms or all −∞.
-fn log_sum_exp(terms: impl Iterator<Item = f64> + Clone) -> f64 {
-    let max = terms.clone().fold(f64::NEG_INFINITY, f64::max);
-    if !max.is_finite() {
-        return max;
-    }
-    max + terms.map(|t| (t - max).exp()).sum::<f64>().ln()
 }
 
 /// `exp(log_weight)` for a term of a log-sum-exp, 0 where the term or the total is −∞ (so that a zero weight

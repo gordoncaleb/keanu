@@ -434,6 +434,26 @@ fn invalid_hidden_markov_models_are_errors() {
 }
 
 #[test]
+fn a_nan_emission_term_makes_the_hmm_log_prob_nan() {
+    // the observation's log density is NaN under every state: the forward pass must not drop the NaN terms (as a
+    // log-sum-exp whose max skips NaN does, returning -inf), and agrees with HiddenMarkovChain
+    let initial = v(&[0.5, 0.5]);
+    let transition = m(2, 2, &[0.9, 0.1, 0.2, 0.8]);
+    let mut h = hmm(
+        DistributionKind::Gaussian,
+        &[f(v(&[-1.0, 1.0])), f(s(1.0))],
+        initial.clone(),
+        transition.clone(),
+        &[2],
+    );
+    let log_prob = h.log_prob_at(f(v(&[0.3, f64::NAN])));
+    assert!(log_prob.is_nan(), "{log_prob}");
+    let emissions = DoubleTensor::new(&[2, 2], vec![-1.0, -2.0, f64::NAN, f64::NAN]).unwrap();
+    let chain = keanu_distributions::HiddenMarkovChain::new(&initial, &transition);
+    assert!(chain.log_likelihood(&emissions).unwrap().is_nan());
+}
+
+#[test]
 fn hmm_parameter_names_list_the_emission_then_the_chain() {
     let kind = DistributionKind::HiddenMarkovModel(Arc::new(DistributionKind::Gaussian));
     assert_eq!(

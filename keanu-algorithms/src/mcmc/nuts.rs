@@ -18,6 +18,7 @@ use crate::support::{
 use keanu_distributions::KeanuRng;
 use keanu_graph::{Graph, Model, NodeId, Parameterisation, Space, State};
 use keanu_tensor::DoubleTensor;
+use keanu_tensor::special::log_sum_exp;
 use std::cell::RefCell;
 use std::rc::Rc;
 
@@ -670,11 +671,6 @@ impl Tree {
     }
 }
 
-fn log_sum_exp(a: f64, b: f64) -> f64 {
-    let max = a.max(b);
-    max + ((a - max).exp() + (b - max).exp()).ln()
-}
-
 fn accept_with_log_probability(log_probability: f64, rng: &mut KeanuRng) -> bool {
     rng.next_f64().ln() < log_probability
 }
@@ -770,7 +766,7 @@ impl Integrator<'_, '_> {
                     &tree.backward.velocity,
                     &tree.sum_momentum,
                 )?;
-                let total = log_sum_exp(tree.log_sum_weight, extension.log_sum_weight);
+                let total = log_sum_exp([tree.log_sum_weight, extension.log_sum_weight]);
                 tree.log_sum_weight = total;
                 if accept_with_log_probability(extension.log_sum_weight - total, rng) {
                     tree.proposal = extension.proposal;
@@ -808,7 +804,7 @@ impl Integrator<'_, '_> {
             if accept_with_log_probability(other.log_sum_weight - tree.log_sum_weight, rng) {
                 tree.proposal = other.proposal;
             }
-            tree.log_sum_weight = log_sum_exp(tree.log_sum_weight, other.log_sum_weight);
+            tree.log_sum_weight = log_sum_exp([tree.log_sum_weight, other.log_sum_weight]);
             tree.sum_momentum = add_all(&tree.sum_momentum, &other.sum_momentum)?;
         }
         tree.diverged = other.diverged;

@@ -15,24 +15,12 @@
 use crate::error::{DistributionError, Result, invalid_parameter};
 use crate::param::{IntoParam, Param};
 use crate::rng::KeanuRng;
+use keanu_tensor::special::log_sum_exp;
 use keanu_tensor::{DoubleTensor, IntTensor};
 use std::f64::consts::PI;
 
 /// How far each set of probabilities may sum from 1.
 const PROBABILITY_TOLERANCE: f64 = 1e-5;
-
-/// log(Σ exp(terms)), -∞ for no terms or all -∞ (and NaN if any term is NaN).
-fn log_sum_exp(terms: impl Iterator<Item = f64> + Clone) -> f64 {
-    let max = terms.clone().fold(f64::NEG_INFINITY, f64::max);
-    if max == f64::NEG_INFINITY || max.is_nan() || max == f64::INFINITY {
-        return if terms.clone().any(f64::is_nan) {
-            f64::NAN
-        } else {
-            max
-        };
-    }
-    max + terms.map(|t| (t - max).exp()).sum::<f64>().ln()
-}
 
 /// The Markov chain of a hidden Markov model with K states: the state at the first step is drawn from the
 /// `initial` probabilities (`[K]`) and each later state from the row of the `transition` matrix ([K, K], row i the

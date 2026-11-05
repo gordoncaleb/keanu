@@ -528,6 +528,36 @@ pub fn log1mexp(x: f64) -> f64 {
     }
 }
 
+/// ln Σ eᵗ over `terms`, computed stably by shifting by the largest term: -∞ for no terms or when every term is
+/// -∞, +∞ if any term is +∞ (and none is NaN), and NaN if any term is NaN, as
+/// [`DoubleTensor::log_sum_exp`](crate::DoubleTensor::log_sum_exp) gives for a tensor.
+///
+/// ```
+/// use keanu_tensor::special::log_sum_exp;
+///
+/// assert!((log_sum_exp([1.0_f64.ln(), 3.0_f64.ln()]) - 4.0_f64.ln()).abs() < 1e-15);
+/// assert_eq!(log_sum_exp([f64::NEG_INFINITY, f64::NEG_INFINITY]), f64::NEG_INFINITY);
+/// assert!(log_sum_exp([f64::NAN, f64::NEG_INFINITY]).is_nan());
+/// ```
+pub fn log_sum_exp<I>(terms: I) -> f64
+where
+    I: IntoIterator<Item = f64>,
+    I::IntoIter: Clone,
+{
+    let terms = terms.into_iter();
+    let mut max = f64::NEG_INFINITY;
+    for t in terms.clone() {
+        if t.is_nan() {
+            return f64::NAN;
+        }
+        max = max.max(t);
+    }
+    if max.is_infinite() {
+        return max;
+    }
+    max + terms.map(|t| (t - max).exp()).sum::<f64>().ln()
+}
+
 /// The log of the beta function, ln B(a, b) = ln Γ(a) + ln Γ(b) - ln Γ(a + b), for a, b > 0 (+∞ if either is 0,
 /// NaN if either is negative).
 ///
@@ -1345,5 +1375,22 @@ mod tests {
         // and one that converges: 1 + 1/(1 + 1/(1 + ...)) is the golden ratio
         let (f, _) = continued_fraction::<1>(1.0, [0.0], |_| (1.0, [0.0], 1.0, [0.0])).unwrap();
         assert!((f - (1.0 + 5f64.sqrt()) / 2.0).abs() < 1e-15);
+    }
+
+    #[test]
+    fn log_sum_exp_propagates_nan_and_infinities() {
+        let lse = |terms: &[f64]| log_sum_exp(terms.iter().copied());
+        // a NaN term wins even where the others alone give an infinite result
+        assert!(lse(&[f64::NAN, f64::NEG_INFINITY]).is_nan());
+        assert!(lse(&[f64::NAN, f64::INFINITY]).is_nan());
+        assert!(lse(&[0.0, f64::NAN]).is_nan());
+        assert_eq!(lse(&[]), f64::NEG_INFINITY);
+        assert_eq!(lse(&[f64::NEG_INFINITY; 3]), f64::NEG_INFINITY);
+        assert_eq!(lse(&[f64::INFINITY, 1.0]), f64::INFINITY);
+        // stable far from 0, and agreeing with the tensor reduction
+        assert!((lse(&[-1000.0, -1000.0]) - (-1000.0 + std::f64::consts::LN_2)).abs() < 1e-12);
+        let values = [0.3, -2.0, 5.0, f64::NEG_INFINITY];
+        let tensor = crate::DoubleTensor::vector(values.to_vec()).log_sum_exp();
+        assert!((lse(&values) - tensor).abs() < 1e-14);
     }
 }
