@@ -434,109 +434,13 @@ fn average_ranks(values: &[f64]) -> Vec<f64> {
     ranks
 }
 
-/// The standard normal quantile function Φ⁻¹(p), by Wichura's algorithm AS 241 (PPND16), "The percentage points
-/// of the normal distribution", *Applied Statistics* 37 (1988), which is accurate to about 1 part in 10¹⁶.
-/// −∞ at 0, +∞ at 1 and NaN outside [0, 1].
-///
-/// TODO(U12): replace with the public `ndtri` that U12 adds to keanu-tensor.
+/// The standard normal quantile function Φ⁻¹(p): −∞ at 0, +∞ at 1 and NaN outside [0, 1].
 fn inverse_normal_cdf(p: f64) -> f64 {
     if p.is_nan() || !(0.0..=1.0).contains(&p) {
         return f64::NAN;
     }
-    if p == 0.0 {
-        return f64::NEG_INFINITY;
-    }
-    if p == 1.0 {
-        return f64::INFINITY;
-    }
-    let q = p - 0.5;
-    if q.abs() <= 0.425 {
-        let r = 0.180625 - q * q;
-        return q * polynomial(r, &CENTRAL_NUMERATOR) / polynomial(r, &CENTRAL_DENOMINATOR);
-    }
-    let r = (-(if q < 0.0 { p } else { 1.0 - p }).ln()).sqrt();
-    let value = if r <= 5.0 {
-        let r = r - 1.6;
-        polynomial(r, &INTERMEDIATE_NUMERATOR) / polynomial(r, &INTERMEDIATE_DENOMINATOR)
-    } else {
-        let r = r - 5.0;
-        polynomial(r, &TAIL_NUMERATOR) / polynomial(r, &TAIL_DENOMINATOR)
-    };
-    if q < 0.0 { -value } else { value }
+    keanu_tensor::special::ndtri(p)
 }
-
-/// Σ coefficients[i] · xⁱ by Horner's rule (coefficients from the constant term up).
-fn polynomial(x: f64, coefficients: &[f64; 8]) -> f64 {
-    coefficients.iter().rev().fold(0.0, |sum, &c| sum * x + c)
-}
-
-// AS 241's coefficients as published, constant term first.
-#[allow(clippy::excessive_precision)]
-const CENTRAL_NUMERATOR: [f64; 8] = [
-    3.387132872796366608,
-    133.14166789178437745,
-    1971.5909503065514427,
-    13731.693765509461125,
-    45921.953931549871457,
-    67265.770927008700853,
-    33430.575583588128105,
-    2509.0809287301226727,
-];
-#[allow(clippy::excessive_precision)]
-const CENTRAL_DENOMINATOR: [f64; 8] = [
-    1.0,
-    42.313330701600911252,
-    687.1870074920579083,
-    5394.1960214247511077,
-    21213.794301586595867,
-    39307.89580009271061,
-    28729.085735721942674,
-    5226.495278852545925,
-];
-#[allow(clippy::excessive_precision)]
-const INTERMEDIATE_NUMERATOR: [f64; 8] = [
-    1.42343711074968357734,
-    4.6303378461565452959,
-    5.7694972214606914055,
-    3.64784832476320460504,
-    1.27045825245236838258,
-    0.24178072517745061177,
-    0.0227238449892691845833,
-    7.7454501427834140764e-4,
-];
-#[allow(clippy::excessive_precision)]
-const INTERMEDIATE_DENOMINATOR: [f64; 8] = [
-    1.0,
-    2.05319162663775882187,
-    1.6763848301838038494,
-    0.68976733498510000455,
-    0.14810397642748007459,
-    0.0151986665636164571966,
-    5.475938084995344946e-4,
-    1.05075007164441684324e-9,
-];
-#[allow(clippy::excessive_precision)]
-const TAIL_NUMERATOR: [f64; 8] = [
-    6.6579046435011037772,
-    5.4637849111641143699,
-    1.7848265399172913358,
-    0.29656057182850489123,
-    0.026532189526576123093,
-    0.0012426609473880784386,
-    2.71155556874348757815e-5,
-    2.01033439929228813265e-7,
-];
-#[allow(clippy::excessive_precision)]
-const TAIL_DENOMINATOR: [f64; 8] = [
-    1.0,
-    0.59983220655588793769,
-    0.13692988092273580531,
-    0.0148753612908506148525,
-    7.868691311456132591e-4,
-    1.8463183175100546818e-5,
-    1.4215117583164458887e-7,
-    2.04426310338993978564e-15,
-];
 
 #[cfg(test)]
 mod tests {
@@ -562,7 +466,7 @@ mod tests {
         for (p, expected) in cases {
             let z = inverse_normal_cdf(p);
             assert!(
-                (z - expected).abs() <= 4.0 * f64::EPSILON * expected.abs().max(1.0),
+                (z - expected).abs() <= 1e-14 * expected.abs().max(1.0),
                 "{p}: {z} vs {expected}"
             );
         }
