@@ -1,7 +1,7 @@
 //! Log probabilities of probabilistic nodes and their gradients with respect to latent nodes.
 
 use crate::autodiff::{
-    SecondOrderSeed, accumulate, describe, forward_tangents, reverse_from_seeds, second_order_sweep,
+    SecondOrderSeed, accumulate, forward_tangents, reverse_from_seeds, second_order_sweep,
 };
 use crate::error::{GraphError, Result};
 use crate::graph::{Graph, NodeId};
@@ -386,7 +386,7 @@ pub(crate) fn log_prob_hvp(
                     .map_err(|e| match e {
                         GraphError::NoSecondOrderRule(m) => GraphError::NoSecondOrderRule(format!(
                             "{m} of node {}",
-                            describe(graph, node)
+                            graph.describe(node)
                         )),
                         other => other,
                     })?

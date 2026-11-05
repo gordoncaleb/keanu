@@ -513,14 +513,6 @@ pub(crate) fn second_order_sweep(
     Ok(())
 }
 
-/// A node's label, quoted, or its index, for error messages.
-pub(crate) fn describe(graph: &Graph, id: NodeId) -> String {
-    match graph.node(id).and_then(Node::label) {
-        Some(label) => format!("{label:?}"),
-        None => format!("#{}", id.0),
-    }
-}
-
 // ---------------------------------------------------------------------------------------------------------------
 // helpers on batched tensors [B, shape...]
 
@@ -2437,7 +2429,7 @@ fn vjp_tangent(
             return Err(GraphError::NoSecondOrderRule(format!(
                 "the lambda {:?} (node {})",
                 lambda.name,
-                describe(graph, id)
+                graph.describe(id)
             )));
         }
         _ => none(),

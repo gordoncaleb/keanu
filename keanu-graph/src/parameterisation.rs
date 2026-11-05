@@ -126,14 +126,6 @@ pub struct Parameterisation<'m> {
     dimension: usize,
 }
 
-/// A node's label, quoted, or its index.
-fn describe(graph: &Graph, id: NodeId) -> String {
-    match graph[id].label() {
-        Some(label) => format!("{label:?}"),
-        None => format!("#{}", id.index()),
-    }
-}
-
 /// For each node, a continuous latent its value depends on (itself, for a continuous latent), following
 /// deterministic, unobserved nodes. Ids are a topological order, so one forward pass suffices.
 fn latent_dependencies(model: &Model, state: &State) -> Vec<Option<NodeId>> {
@@ -191,8 +183,8 @@ fn check_fixed_support(
                 "the support of {} depends on the latent {}, so its bounds would move during inference and no \
                  fixed transform can keep it inside them; reparameterise it, e.g. for x ~ Uniform(lo, hi) use \
                  u ~ Uniform(0, 1) and x = lo + (hi - lo) * u, or use Space::Constrained",
-                describe(graph, id),
-                describe(graph, latent),
+                graph.describe(id),
+                graph.describe(latent),
             )));
         }
     }
@@ -564,7 +556,7 @@ impl<'m> Parameterisation<'m> {
 fn in_latent(graph: &Graph, id: NodeId, error: GraphError) -> GraphError {
     match error {
         GraphError::Transform(message) => {
-            GraphError::Transform(format!("latent {}: {message}", describe(graph, id)))
+            GraphError::Transform(format!("latent {}: {message}", graph.describe(id)))
         }
         other => other,
     }

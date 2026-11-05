@@ -3,9 +3,9 @@
 
 use crate::error::{AlgorithmError, Result};
 use crate::samples::NetworkSamples;
-use crate::support::{check_nodes, evaluate_all, start_point};
+use crate::support::{check_latents, evaluate_all, sample_approximation, start_point};
 use keanu_distributions::KeanuRng;
-use keanu_graph::{Graph, Model, NodeId, Parameterisation, State};
+use keanu_graph::{Model, NodeId, Parameterisation, State};
 use keanu_tensor::DoubleTensor;
 use std::collections::VecDeque;
 
@@ -231,18 +231,7 @@ impl Advi {
         rng: &mut KeanuRng,
     ) -> Result<AdviResult<'m>> {
         self.validate()?;
-        let discrete = model.discrete_latents();
-        if !discrete.is_empty() {
-            return Err(AlgorithmError::DiscreteLatents(
-                discrete
-                    .iter()
-                    .map(|id| describe(model.graph(), *id))
-                    .collect(),
-            ));
-        }
-        if model.latents().is_empty() {
-            return Err(AlgorithmError::NoLatents);
-        }
+        check_latents(model)?;
         evaluate_all(model.graph(), state, rng)?;
         let param = Parameterisation::new(model, state)?;
         if param.dimension() == 0 {
@@ -364,13 +353,6 @@ impl Advi {
                 .into(),
         ))
     }
-}
-
-fn describe(graph: &Graph, id: NodeId) -> String {
-    graph[id]
-        .label()
-        .map(str::to_owned)
-        .unwrap_or_else(|| format!("#{}", id.index()))
 }
 
 fn median(values: &VecDeque<f64>) -> f64 {
@@ -682,18 +664,6 @@ impl AdviResult<'_> {
         count: usize,
         rng: &mut KeanuRng,
     ) -> Result<NetworkSamples> {
-        if nodes.is_empty() {
-            return Err(AlgorithmError::InvalidArgument("no nodes to sample".into()));
-        }
-        let model = self.param.model();
-        check_nodes(model.graph(), nodes)?;
-        let mut samples = NetworkSamples::new(model.graph(), nodes)?;
-        for _ in 0..count {
-            let z = self.draw(rng);
-            self.param.to_state(&z, state)?;
-            let log_prob = model.log_prob(state)?;
-            samples.record(state, log_prob)?;
-        }
-        Ok(samples)
+        sample_approximation(&self.param, || self.draw(rng), state, nodes, count)
     }
 }

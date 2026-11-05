@@ -77,7 +77,7 @@ impl PredictiveSampler {
             .filter(|&&id| {
                 is_latent(graph, &work, id) && !is_target(targets, id) && !sampled[id.index()]
             })
-            .map(|&id| describe(graph, id))
+            .map(|&id| graph.describe(id))
             .collect();
         if !missing.is_empty() {
             return Err(AlgorithmError::InvalidArgument(format!(
@@ -147,7 +147,7 @@ impl PredictiveSampler {
         let conflicting: Vec<String> = ancestors
             .iter()
             .filter(|&&id| work.is_observed(id) && random[id.index()])
-            .map(|&id| describe(graph, id))
+            .map(|&id| graph.describe(id))
             .collect();
         if !conflicting.is_empty() {
             return Err(AlgorithmError::InvalidArgument(format!(
@@ -199,7 +199,7 @@ fn check_targets(graph: &Graph, state: &State, targets: &[NodeId]) -> Result<()>
     {
         Some(&id) => Err(AlgorithmError::InvalidArgument(format!(
             "predictive targets must be observed probabilistic nodes, but {} is not",
-            describe(graph, id)
+            graph.describe(id)
         ))),
         None => Ok(()),
     }
@@ -233,13 +233,6 @@ fn is_latent(graph: &Graph, state: &State, id: NodeId) -> bool {
 
 fn is_target(targets: &[NodeId], id: NodeId) -> bool {
     targets.contains(&id)
-}
-
-fn describe(graph: &Graph, id: NodeId) -> String {
-    match graph[id].label() {
-        Some(label) => format!("{label} ({id:?})"),
-        None => format!("{id:?}"),
-    }
 }
 
 /// Clears `nodes` (in topological order) and recomputes the targets, which samples each cleared probabilistic node

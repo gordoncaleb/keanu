@@ -12,7 +12,9 @@
 use crate::error::{AlgorithmError, Result};
 use crate::mcmc::{SamplingAlgorithm, SamplingOptions, generate, is_impossible};
 use crate::samples::NetworkSamples;
-use crate::support::{block_shapes, check_nodes, concat, evaluate_all, split, start_point};
+use crate::support::{
+    block_shapes, check_latents, check_nodes, concat, evaluate_all, split, start_point,
+};
 use keanu_distributions::KeanuRng;
 use keanu_graph::{Graph, Model, NodeId, Parameterisation, Space, State};
 use keanu_tensor::DoubleTensor;
@@ -306,18 +308,7 @@ impl Nuts {
             return Err(AlgorithmError::InvalidArgument("no nodes to sample".into()));
         }
         check_nodes(model.graph(), nodes)?;
-        if model.latents().is_empty() {
-            return Err(AlgorithmError::NoLatents);
-        }
-        let discrete = model.discrete_latents();
-        if !discrete.is_empty() {
-            return Err(AlgorithmError::DiscreteLatents(
-                discrete
-                    .iter()
-                    .map(|id| describe(model.graph(), *id))
-                    .collect(),
-            ));
-        }
+        check_latents(model)?;
         evaluate_all(model.graph(), state, rng)?;
 
         let param = Parameterisation::with_space(model, state, self.space)?;
@@ -386,13 +377,6 @@ impl Nuts {
         let samples = generate(&mut sampler, state, count, options, rng)?;
         Ok((samples, sampler.statistics))
     }
-}
-
-fn describe(graph: &Graph, id: NodeId) -> String {
-    graph[id]
-        .label()
-        .map(str::to_owned)
-        .unwrap_or_else(|| format!("#{}", id.index()))
 }
 
 /// Sets the state to the point `z` and returns the log probability of `z` (with the Jacobian of the transforms) and

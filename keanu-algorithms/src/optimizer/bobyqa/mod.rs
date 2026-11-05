@@ -206,7 +206,7 @@ impl<'m> NonGradientOptimizer<'m> {
     /// Optimizes the given fitness, leaving the state at the optimum.
     pub fn optimize(&self, state: &mut State, fitness: Fitness) -> Result<OptimizedResult> {
         self.algorithm.validate()?;
-        super::check_latents(self.model)?;
+        crate::support::check_latents(self.model)?;
         crate::support::compute_deterministic(self.model.graph(), state)?;
         let param = Parameterisation::with_space(self.model, state, Space::Constrained)?;
         let objective = Objective::new(param, state, fitness, false)?;
@@ -357,8 +357,8 @@ impl<'m> NonGradientOptimizer<'m> {
                 // explicit bounds the wrong way round are reported as such, below
                 if explicit && *l < *u && (*l).max(lo) >= (*u).min(hi) {
                     return Err(AlgorithmError::InvalidArgument(format!(
-                        "the bounds [{l}, {u}] of {} do not overlap its support [{lo}, {hi}]",
-                        describe(self.model, id)
+                        "the bounds [{l}, {u}] of latent {} do not overlap its support [{lo}, {hi}]",
+                        self.model.graph().describe(id)
                     )));
                 }
                 *l = l.max(lo);
@@ -366,14 +366,6 @@ impl<'m> NonGradientOptimizer<'m> {
             }
         }
         Ok((xl, xu))
-    }
-}
-
-/// A latent's label, or its index.
-fn describe(model: &Model, id: NodeId) -> String {
-    match model.graph()[id].label() {
-        Some(label) => format!("latent {label:?}"),
-        None => format!("latent #{}", id.index()),
     }
 }
 

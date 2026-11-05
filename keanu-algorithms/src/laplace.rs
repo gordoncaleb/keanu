@@ -45,11 +45,11 @@
 //! ```
 
 use crate::error::{AlgorithmError, Result};
-use crate::optimizer::{Fitness, Lbfgs, Objective, check_latents};
+use crate::optimizer::{Fitness, Lbfgs, Objective};
 use crate::samples::NetworkSamples;
-use crate::support::{check_nodes, compute_deterministic};
+use crate::support::{check_latents, compute_deterministic, node_name, sample_approximation};
 use keanu_distributions::KeanuRng;
-use keanu_graph::{Graph, Model, NodeId, Parameterisation, State, Support, node_support};
+use keanu_graph::{Model, NodeId, Parameterisation, State, Support, node_support};
 use keanu_tensor::{DoubleTensor, TensorError};
 
 /// Laplace approximation settings: the [`Lbfgs`] configuration that finds the mode. The configuration holds no
@@ -97,7 +97,7 @@ impl Laplace {
                     "the Laplace approximation does not support the circular latent {}: its transform's \
                      auxiliary density has its mode at the origin, where the angle is undefined (sample the \
                      posterior with NUTS instead)",
-                    describe(model.graph(), id)
+                    model.graph().describe(id)
                 )));
             }
         }
@@ -110,7 +110,7 @@ impl Laplace {
         let (mut mode, mut log_density, mut converged) =
             self.lbfgs.maximize(&objective, state, start, None)?;
         if let Some(latent) = objective.boundary(state, &mode)? {
-            return Err(AlgorithmError::ModeOnBoundary(describe(
+            return Err(AlgorithmError::ModeOnBoundary(node_name(
                 model.graph(),
                 latent,
             )));
@@ -121,7 +121,7 @@ impl Laplace {
                 .coordinate_latent(i)
                 .map_or_else(
                     || format!("coordinate {i}"),
-                    |id| describe(model.graph(), id),
+                    |id| model.graph().describe(id),
                 )
         };
         let mut hessian = objective.parameterisation().hessian(&mode, true, state)?;
@@ -266,13 +266,6 @@ fn indefinite(negated: &DoubleTensor, n: usize, name: impl Fn(usize) -> String) 
     ))
 }
 
-fn describe(graph: &Graph, id: NodeId) -> String {
-    graph[id]
-        .label()
-        .map(str::to_owned)
-        .unwrap_or_else(|| format!("#{}", id.index()))
-}
-
 /// A fitted Laplace approximation: the Gaussian N(ẑ, (−H)⁻¹) over the unconstrained space of a model's continuous
 /// latents (laid out by [`parameterisation`](Self::parameterisation)), where ẑ is the mode of the Jacobian-adjusted
 /// log density and H its Hessian there.
@@ -373,19 +366,7 @@ impl LaplaceResult<'_> {
         count: usize,
         rng: &mut KeanuRng,
     ) -> Result<NetworkSamples> {
-        if nodes.is_empty() {
-            return Err(AlgorithmError::InvalidArgument("no nodes to sample".into()));
-        }
-        let model = self.param.model();
-        check_nodes(model.graph(), nodes)?;
-        let mut samples = NetworkSamples::new(model.graph(), nodes)?;
-        for _ in 0..count {
-            let z = self.draw(rng);
-            self.param.to_state(&z, state)?;
-            let log_prob = model.log_prob(state)?;
-            samples.record(state, log_prob)?;
-        }
-        Ok(samples)
+        sample_approximation(&self.param, || self.draw(rng), state, nodes, count)
     }
 }
 

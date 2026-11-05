@@ -93,13 +93,13 @@ impl ScanBody {
                 return Err(invalid(format!(
                     "the body's node {} is probabilistic: scan bodies must be deterministic (draw random \
                      variables outside the scan and pass them in as per-step inputs or constants)",
-                    crate::autodiff::describe(&graph, id)
+                    graph.describe(id)
                 )));
             }
             if matches!(node.op, Op::Proxy) && node.parents.is_empty() && !is_input[id.0] {
                 return Err(invalid(format!(
                     "the body's proxy {} is neither connected nor an input",
-                    crate::autodiff::describe(&graph, id)
+                    graph.describe(id)
                 )));
             }
         }

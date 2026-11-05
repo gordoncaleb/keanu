@@ -1,9 +1,59 @@
 //! Small helpers shared by the algorithms.
 
 use crate::error::{AlgorithmError, Result};
+use crate::samples::NetworkSamples;
 use keanu_distributions::KeanuRng;
-use keanu_graph::{Graph, GraphError, NodeId, Parameterisation, Space, State, Value};
+use keanu_graph::{Graph, GraphError, Model, NodeId, Parameterisation, Space, State, Value};
 use keanu_tensor::DoubleTensor;
+
+/// A node's name as an [`AlgorithmError`] carries it (in [`AlgorithmError::DiscreteLatents`] and
+/// [`AlgorithmError::ModeOnBoundary`]): its label, unquoted, or `#` and its index. Messages name nodes with
+/// [`Graph::describe`] instead, which quotes the label.
+pub(crate) fn node_name(graph: &Graph, id: NodeId) -> String {
+    match graph.node(id).and_then(|node| node.label()) {
+        Some(label) => label.to_owned(),
+        None => format!("#{}", id.index()),
+    }
+}
+
+/// Gradient based algorithms need at least one latent, and only continuous ones.
+pub(crate) fn check_latents(model: &Model) -> Result<()> {
+    if model.latents().is_empty() {
+        return Err(AlgorithmError::NoLatents);
+    }
+    let discrete = model.discrete_latents();
+    if !discrete.is_empty() {
+        let graph = model.graph();
+        let names = discrete.iter().map(|&id| node_name(graph, id)).collect();
+        return Err(AlgorithmError::DiscreteLatents(names));
+    }
+    Ok(())
+}
+
+/// `count` independent draws from a fitted approximation (`draw` gives each in unconstrained space), recording
+/// the values of `nodes` at each with the model's log probability there: what `LaplaceResult::sample` and
+/// `AdviResult::sample` do.
+pub(crate) fn sample_approximation(
+    param: &Parameterisation<'_>,
+    mut draw: impl FnMut() -> Vec<f64>,
+    state: &mut State,
+    nodes: &[NodeId],
+    count: usize,
+) -> Result<NetworkSamples> {
+    if nodes.is_empty() {
+        return Err(AlgorithmError::InvalidArgument("no nodes to sample".into()));
+    }
+    let model = param.model();
+    check_nodes(model.graph(), nodes)?;
+    let mut samples = NetworkSamples::new(model.graph(), nodes)?;
+    for _ in 0..count {
+        let z = draw();
+        param.to_state(&z, state)?;
+        let log_prob = model.log_prob(state)?;
+        samples.record(state, log_prob)?;
+    }
+    Ok(samples)
+}
 
 /// [`GraphError::UnknownNode`] for the first of `nodes` that is not a node of the graph.
 pub(crate) fn check_nodes(graph: &Graph, nodes: &[NodeId]) -> Result<()> {

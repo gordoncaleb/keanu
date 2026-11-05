@@ -188,6 +188,28 @@ impl Graph {
     pub fn probabilistic(&self) -> impl Iterator<Item = NodeId> + '_ {
         self.ids().filter(|&id| self[id].is_probabilistic())
     }
+
+    /// How error messages name a node: its label, quoted, or `#` and its index if it has none (or is not a node of
+    /// this graph).
+    ///
+    /// ```
+    /// use keanu_graph::GraphBuilder;
+    ///
+    /// let b = GraphBuilder::new();
+    /// let mu = b.gaussian(0.0, 1.0).label("mu");
+    /// let x = b.gaussian(mu, 1.0);
+    /// let (mu, x) = (mu.id(), x.id());
+    /// let (graph, _state) = b.build()?;
+    /// assert_eq!(graph.describe(mu), "\"mu\"");
+    /// assert_eq!(graph.describe(x), format!("#{}", x.index()));
+    /// # Ok::<(), keanu_graph::GraphError>(())
+    /// ```
+    pub fn describe(&self, id: NodeId) -> String {
+        match self.node(id).and_then(Node::label) {
+            Some(label) => format!("{label:?}"),
+            None => format!("#{}", id.0),
+        }
+    }
 }
 
 /// The node with this id, like slice indexing: for ids known to be nodes of this graph, such as those from

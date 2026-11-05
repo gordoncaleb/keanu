@@ -36,7 +36,9 @@ pub use convergence::{ConvergenceChecker, Norm};
 pub use lbfgs::Lbfgs;
 
 use crate::error::{AlgorithmError, Result};
-use crate::support::{block_shapes, compute_deterministic, concat, split, start_point};
+use crate::support::{
+    block_shapes, check_latents, compute_deterministic, concat, split, start_point,
+};
 use keanu_graph::{Model, NodeId, Parameterisation, Space, State, Support, node_support};
 use keanu_tensor::DoubleTensor;
 use std::cell::Cell;
@@ -261,28 +263,6 @@ pub(crate) fn start_value(
         return Err(AlgorithmError::ImpossibleStart);
     }
     Ok(initial)
-}
-
-/// Optimizers need at least one latent, and only continuous ones.
-pub(crate) fn check_latents(model: &Model) -> Result<()> {
-    if model.latents().is_empty() {
-        return Err(AlgorithmError::NoLatents);
-    }
-    let discrete = model.discrete_latents();
-    if !discrete.is_empty() {
-        let graph = model.graph();
-        let names = discrete
-            .iter()
-            .map(|&id| {
-                graph[id]
-                    .label()
-                    .map(str::to_owned)
-                    .unwrap_or_else(|| format!("node {}", id.index()))
-            })
-            .collect();
-        return Err(AlgorithmError::DiscreteLatents(names));
-    }
-    Ok(())
 }
 
 /// Where a bounded coordinate at `z` is tried to confirm it is heading for a boundary: ±([`BOUNDARY`] + 1) inside
