@@ -391,7 +391,49 @@ macro_rules! distributions {
                 }
             }
 
-            pub(crate) fn name(&self) -> &'static str {
+            /// Every kind's [`name`](Self::name), the custom kind's included.
+            pub const NAMES: &'static [&'static str] = &[
+                $($name,)+
+                "kde",
+                "categorical",
+                "custom",
+                "truncated",
+                "censored",
+                "mixture",
+                "hidden_markov_model",
+            ];
+
+            /// The [names](Self::name) of the kinds with a CDF, which can be truncated or censored.
+            pub const CDF_NAMES: &'static [&'static str] = {
+                const ROWS: &[(&str, bool)] = &[$(($name, has_cdf!([$($cdf)?]))),+];
+                const COUNT: usize = {
+                    let mut count = 0;
+                    let mut i = 0;
+                    while i < ROWS.len() {
+                        if ROWS[i].1 {
+                            count += 1;
+                        }
+                        i += 1;
+                    }
+                    count
+                };
+                const NAMES: [&str; COUNT] = {
+                    let mut names = [""; COUNT];
+                    let (mut i, mut j) = (0, 0);
+                    while i < ROWS.len() {
+                        if ROWS[i].1 {
+                            names[j] = ROWS[i].0;
+                            j += 1;
+                        }
+                        i += 1;
+                    }
+                    names
+                };
+                &NAMES
+            };
+
+            /// The kind's name in snake case, as in error messages (`"gaussian"`, `"truncated"`).
+            pub fn name(&self) -> &'static str {
                 match self {
                     $(DistributionKind::$kind => $name,)+
                     DistributionKind::Kde(_) => "kde",

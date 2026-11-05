@@ -469,69 +469,84 @@ pub enum Op {
     Scan(Arc<ScanBody>),
 }
 
-impl Op {
-    /// A short name for error messages.
-    pub fn name(&self) -> &'static str {
-        match self {
-            Op::Constant(_) => "constant",
-            Op::Unary(_) => "unary",
-            Op::Binary(_) => "binary",
-            Op::Compare(_) => "compare",
-            Op::Mask(_) => "mask",
-            Op::ApproxEq(_) => "approx_eq",
-            Op::Logic(_) => "logic",
-            Op::Not => "not",
-            Op::All => "all",
-            Op::Any => "any",
-            Op::Predicate(_) => "predicate",
-            Op::Reduce { .. } => "reduce",
-            Op::Standardize => "standardize",
-            Op::Cumulative { .. } => "cumulative",
-            Op::ArgReduce { .. } => "arg_reduce",
-            Op::Softmax { .. } => "softmax",
-            Op::LogSoftmax { .. } => "log_softmax",
-            Op::Reshape(_) => "reshape",
-            Op::Permute(_) => "permute",
-            Op::Transpose => "transpose",
-            Op::Broadcast(_) => "broadcast",
-            Op::Slice(_) => "slice",
-            Op::Concat(_) => "concat",
-            Op::Take(_) => "take",
-            Op::Gather { .. } => "gather",
-            Op::ScatterAdd { .. } => "scatter_add",
-            Op::Stack(_) => "stack",
-            Op::Diag => "diag",
-            Op::DiagPart => "diag_part",
-            Op::Tril(_) => "tril",
-            Op::Triu(_) => "triu",
-            Op::FillTriangular { .. } => "fill_triangular",
-            Op::TrianglePart { .. } => "triangle_part",
-            Op::MatMul { .. } => "matmul",
-            Op::TensorMultiply { .. } => "tensor_multiply",
-            Op::Inverse => "inverse",
-            Op::Determinant => "determinant",
-            Op::Cholesky => "cholesky",
-            Op::CholeskyInverse => "cholesky_inverse",
-            Op::SolveTriangular { .. } => "solve_triangular",
-            Op::Solve => "solve",
-            Op::LogAbsDeterminant => "log_abs_determinant",
-            Op::DeterminantSign => "determinant_sign",
-            Op::Eigvalsh => "eigvalsh",
-            Op::EighVectors => "eigh_vectors",
-            Op::Cast(_) => "cast",
-            Op::Where => "where",
-            Op::Multiplexer => "multiplexer",
-            Op::Cpt { .. } => "cpt",
-            Op::SetWithMask => "set_with_mask",
-            Op::ReplaceNan(_) => "replace_nan",
-            Op::Proxy => "proxy",
-            Op::Lambda(_) => "lambda",
-            Op::Assert(_) => "assert",
-            Op::Distribution(_) => "distribution",
-            Op::Scan(_) => "scan",
-        }
-    }
+/// Generates [`Op::name`] and [`Op::NAMES`] from one list of `pattern => "name"` arms, so that the list of names
+/// can't miss a variant (the match in `name` is exhaustive).
+macro_rules! op_names {
+    ($($pattern:pat => $name:literal,)+) => {
+        impl Op {
+            /// Every op's [`name`](Self::name), in declaration order.
+            pub const NAMES: &'static [&'static str] = &[$($name),+];
 
+            /// A short name for error messages.
+            pub fn name(&self) -> &'static str {
+                match self {
+                    $($pattern => $name,)+
+                }
+            }
+        }
+    };
+}
+
+op_names! {
+    Op::Constant(_) => "constant",
+    Op::Unary(_) => "unary",
+    Op::Binary(_) => "binary",
+    Op::Compare(_) => "compare",
+    Op::Mask(_) => "mask",
+    Op::ApproxEq(_) => "approx_eq",
+    Op::Logic(_) => "logic",
+    Op::Not => "not",
+    Op::All => "all",
+    Op::Any => "any",
+    Op::Predicate(_) => "predicate",
+    Op::Reduce { .. } => "reduce",
+    Op::Standardize => "standardize",
+    Op::Cumulative { .. } => "cumulative",
+    Op::ArgReduce { .. } => "arg_reduce",
+    Op::Softmax { .. } => "softmax",
+    Op::LogSoftmax { .. } => "log_softmax",
+    Op::Reshape(_) => "reshape",
+    Op::Permute(_) => "permute",
+    Op::Transpose => "transpose",
+    Op::Broadcast(_) => "broadcast",
+    Op::Slice(_) => "slice",
+    Op::Concat(_) => "concat",
+    Op::Take(_) => "take",
+    Op::Gather { .. } => "gather",
+    Op::ScatterAdd { .. } => "scatter_add",
+    Op::Stack(_) => "stack",
+    Op::Diag => "diag",
+    Op::DiagPart => "diag_part",
+    Op::Tril(_) => "tril",
+    Op::Triu(_) => "triu",
+    Op::FillTriangular { .. } => "fill_triangular",
+    Op::TrianglePart { .. } => "triangle_part",
+    Op::MatMul { .. } => "matmul",
+    Op::TensorMultiply { .. } => "tensor_multiply",
+    Op::Inverse => "inverse",
+    Op::Determinant => "determinant",
+    Op::Cholesky => "cholesky",
+    Op::CholeskyInverse => "cholesky_inverse",
+    Op::SolveTriangular { .. } => "solve_triangular",
+    Op::Solve => "solve",
+    Op::LogAbsDeterminant => "log_abs_determinant",
+    Op::DeterminantSign => "determinant_sign",
+    Op::Eigvalsh => "eigvalsh",
+    Op::EighVectors => "eigh_vectors",
+    Op::Cast(_) => "cast",
+    Op::Where => "where",
+    Op::Multiplexer => "multiplexer",
+    Op::Cpt { .. } => "cpt",
+    Op::SetWithMask => "set_with_mask",
+    Op::ReplaceNan(_) => "replace_nan",
+    Op::Proxy => "proxy",
+    Op::Lambda(_) => "lambda",
+    Op::Assert(_) => "assert",
+    Op::Distribution(_) => "distribution",
+    Op::Scan(_) => "scan",
+}
+
+impl Op {
     /// True for nodes whose value is a random draw (sampled from their distribution, or observed).
     pub fn is_probabilistic(&self) -> bool {
         matches!(self, Op::Distribution(_))

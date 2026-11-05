@@ -554,66 +554,6 @@ fn general_cases() -> Vec<Case> {
     ]
 }
 
-/// Every op of the graph, by [`keanu_graph::op::Op::name`].
-const EVERY_OP: &[&str] = &[
-    "constant",
-    "unary",
-    "binary",
-    "compare",
-    "mask",
-    "approx_eq",
-    "logic",
-    "not",
-    "all",
-    "any",
-    "predicate",
-    "reduce",
-    "standardize",
-    "cumulative",
-    "arg_reduce",
-    "softmax",
-    "log_softmax",
-    "reshape",
-    "permute",
-    "transpose",
-    "broadcast",
-    "slice",
-    "concat",
-    "take",
-    "gather",
-    "scatter_add",
-    "stack",
-    "diag",
-    "diag_part",
-    "tril",
-    "triu",
-    "fill_triangular",
-    "triangle_part",
-    "matmul",
-    "tensor_multiply",
-    "inverse",
-    "determinant",
-    "cholesky",
-    "cholesky_inverse",
-    "solve_triangular",
-    "solve",
-    "log_abs_determinant",
-    "determinant_sign",
-    "eigvalsh",
-    "eigh_vectors",
-    "cast",
-    "where",
-    "multiplexer",
-    "cpt",
-    "set_with_mask",
-    "replace_nan",
-    "proxy",
-    "lambda",
-    "assert",
-    "distribution",
-    "scan",
-];
-
 #[test]
 fn every_op_matches_finite_differences_of_the_gradient() {
     let mut covered = BTreeSet::new();
@@ -650,7 +590,7 @@ fn every_op_matches_finite_differences_of_the_gradient() {
     for case in &general_cases() {
         run(case, &mut covered);
     }
-    let missing: Vec<&str> = EVERY_OP
+    let missing: Vec<&str> = Op::NAMES
         .iter()
         .copied()
         .filter(|op| !covered.contains(op))
@@ -1686,73 +1626,16 @@ fn distribution_cases() -> Vec<DistributionCase> {
     ]
 }
 
-/// Every distribution kind but the custom one, by the name its `Debug` form starts with.
-const EVERY_KIND: &[&str] = &[
-    "Gaussian",
-    "HalfGaussian",
-    "Cauchy",
-    "HalfCauchy",
-    "Beta",
-    "ChiSquared",
-    "Dirichlet",
-    "Exponential",
-    "Gamma",
-    "InverseGamma",
-    "Laplace",
-    "Logistic",
-    "LogNormal",
-    "LkjCholesky",
-    "MultivariateGaussian",
-    "Pareto",
-    "StudentT",
-    "Triangular",
-    "Uniform",
-    "Weibull",
-    "VonMises",
-    "Kde",
-    "Bernoulli",
-    "Binomial",
-    "Categorical",
-    "Geometric",
-    "Multinomial",
-    "Poisson",
-    "NegativeBinomial",
-    "OrderedLogistic",
-    "UniformInt",
-    "Truncated",
-    "Censored",
-    "Mixture",
-    "HiddenMarkovModel",
-    "LinearGaussianStateSpace",
-];
-
-/// The bases with a CDF, each of which a truncated and a censored case must cover.
-const CDF_BASES: &[&str] = &[
-    "Gaussian",
-    "Cauchy",
-    "Beta",
-    "Exponential",
-    "Gamma",
-    "Laplace",
-    "Logistic",
-    "LogNormal",
-    "StudentT",
-    "Uniform",
-    "Weibull",
-    "Binomial",
-    "Poisson",
-    "NegativeBinomial",
-];
-
-/// The distribution kinds of a model's probabilistic nodes, by their `Debug` form ("Truncated(Gaussian)") and the
-/// variant name it starts with ("Truncated").
+/// The distribution kinds of a model's probabilistic nodes, by [`DistributionKind::name`] ("truncated"), and for a
+/// kind built around another one also with the inner kind's name ("truncated(gaussian)").
 fn kinds_of(model: &Model, kinds: &mut BTreeSet<String>) {
     let graph = model.graph();
     for id in graph.ids() {
         if let Op::Distribution(d) = graph[id].op() {
-            let kind = format!("{:?}", d.kind);
-            kinds.insert(kind.split('(').next().unwrap().to_string());
-            kinds.insert(kind);
+            kinds.insert(d.kind.name().to_string());
+            if let Some((_, inner)) = d.kind.nested() {
+                kinds.insert(format!("{}({})", d.kind.name(), inner.name()));
+            }
         }
     }
 }
@@ -1808,17 +1691,19 @@ fn every_distribution_kind_matches_finite_differences_of_the_gradient() {
         let (model, _) = named_model(name, build);
         kinds_of(&model, &mut kinds);
     }
-    let missing: Vec<&str> = EVERY_KIND
+    // every kind but the custom one, which has no second-order rule of its own (see
+    // a_distribution_needs_a_rule_only_where_it_depends_on_the_latents)
+    let missing: Vec<&str> = DistributionKind::NAMES
         .iter()
         .copied()
-        .filter(|k| !kinds.contains(*k))
+        .filter(|&k| k != "custom" && !kinds.contains(k))
         .collect();
     assert!(
         missing.is_empty(),
         "distribution kinds without a case: {missing:?}"
     );
-    for wrapper in ["Truncated", "Censored"] {
-        let missing: Vec<&str> = CDF_BASES
+    for wrapper in ["truncated", "censored"] {
+        let missing: Vec<&str> = DistributionKind::CDF_NAMES
             .iter()
             .copied()
             .filter(|base| !kinds.contains(&format!("{wrapper}({base})")))
