@@ -938,3 +938,177 @@ fn log_sum_exp_gradient_is_softmax_and_never_nan() {
             .all(|v| v.is_finite())
     );
 }
+
+/// Non-symmetric, well-conditioned matrices [batch..., n, n]: smooth values plus a dominant diagonal.
+fn general(batch: &[usize], n: usize, seed: f64) -> DoubleTensor {
+    let shape: Vec<usize> = batch.iter().copied().chain([n, n]).collect();
+    let len: usize = shape.iter().product();
+    let values: Vec<f64> = (0..len).map(|i| (seed + 1.3 * i as f64).sin()).collect();
+    t(&shape, &values)
+        .add(&(DoubleTensor::eye(n).unwrap() * (n as f64 + 1.0)))
+        .unwrap()
+}
+
+#[test]
+fn solve_triangular_matches_the_tensor_function_and_finite_differences() {
+    // the unread triangle is far from zero: the solve must ignore it and give it no gradient
+    let t_matrix = general(&[2], 3, 0.4);
+    let rhs = range(-1.0, 1.5, &[2, 3, 2]);
+    for lower in [true, false] {
+        for transpose in [false, true] {
+            let g = GraphBuilder::new();
+            let x = g
+                .constant(t_matrix.clone())
+                .solve_triangular(rhs.clone(), lower, transpose)
+                .id();
+            let (graph, mut state) = g.build().unwrap();
+            state
+                .lazy_eval(&graph, &[x], &mut KeanuRng::seed_from_u64(1))
+                .unwrap();
+            let expected = t_matrix.solve_triangular(&rhs, lower, transpose).unwrap();
+            assert_eq!(state.f64(x).unwrap(), &expected);
+
+            check(&[t_matrix.clone(), rhs.clone()], |_, v| {
+                v[0].solve_triangular(v[1], lower, transpose)
+            });
+            // a vector right-hand side against a batch of matrices
+            check(&[t_matrix.clone(), range(-0.5, 2.0, &[3])], |_, v| {
+                v[0].solve_triangular(v[1], lower, transpose)
+            });
+            // one matrix against a batch of right-hand sides, and a non-identity cotangent
+            check(&[general(&[], 3, 1.1), rhs.clone()], |_, v| {
+                (v[0].solve_triangular(v[1], lower, transpose) * rhs.clone())
+                    .sin()
+                    .sum()
+            });
+        }
+    }
+}
+
+#[test]
+fn solve_satisfies_the_system_and_its_gradients_match_finite_differences() {
+    let a = general(&[2], 4, 0.2);
+    let rhs = range(-1.0, 1.0, &[2, 4, 3]);
+    let g = GraphBuilder::new();
+    let x = g.constant(a.clone()).solve(rhs.clone()).id();
+    let (graph, mut state) = g.build().unwrap();
+    state
+        .lazy_eval(&graph, &[x], &mut KeanuRng::seed_from_u64(1))
+        .unwrap();
+    let product = a.matmul(state.f64(x).unwrap()).unwrap();
+    for (p, r) in product.as_slice().iter().zip(rhs.as_slice()) {
+        assert!((p - r).abs() < 1e-12);
+    }
+
+    check(&[a.clone(), rhs.clone()], |_, v| v[0].solve(v[1]));
+    check(&[a.clone(), range(-0.5, 2.0, &[4])], |_, v| {
+        v[0].solve(v[1])
+    });
+    check(&[general(&[], 4, 0.9), rhs.clone()], |_, v| {
+        (v[0].solve(v[1]) * rhs.clone()).sin().sum()
+    });
+    // broadcasting a batch of matrices against one right-hand side
+    check(&[a, range(-1.0, 1.0, &[4, 1])], |_, v| {
+        v[0].solve(v[1]).sum()
+    });
+}
+
+#[test]
+fn singular_systems_are_errors_not_panics() {
+    let g = GraphBuilder::new();
+    let a = g.uniform_with_shape(&[2, 2], -10.0, 10.0);
+    g.set_value(a, t(&[2, 2], &[1.0, 2.0, 3.0, 4.0]));
+    let x = a.solve(DoubleTensor::ones(&[2, 1])).id();
+    let lower = a
+        .solve_triangular(DoubleTensor::ones(&[2]), true, false)
+        .id();
+    let a = a.id();
+    let (graph, mut state) = g.build().unwrap();
+    state
+        .lazy_eval(&graph, &[x, lower], &mut KeanuRng::seed_from_u64(1))
+        .unwrap();
+    assert!(state.f64(x).is_some());
+    let singular = state.set_and_cascade(&graph, a, t(&[2, 2], &[1.0, 2.0, 2.0, 4.0]));
+    assert!(singular.is_err(), "a singular solve must fail evaluation");
+    let zero_diagonal = state.set_and_cascade(&graph, a, t(&[2, 2], &[0.0, 0.0, 3.0, 4.0]));
+    assert!(zero_diagonal.is_err());
+}
+
+#[test]
+fn slogdet_values_and_gradients() {
+    // the second matrix has a negative determinant
+    let a = general(&[2], 3, 0.7);
+    let mut data = a.as_slice().to_vec();
+    for value in &mut data[9..12] {
+        *value = -*value;
+    }
+    let a = t(&[2, 3, 3], &data);
+    let g = GraphBuilder::new();
+    let (sign, log_abs) = g.constant(a.clone()).slogdet();
+    let (sign, log_abs) = (sign.id(), log_abs.id());
+    let (graph, mut state) = g.build().unwrap();
+    state
+        .lazy_eval(&graph, &[sign, log_abs], &mut KeanuRng::seed_from_u64(1))
+        .unwrap();
+    let det = a.determinant().unwrap();
+    assert_eq!(state.f64(sign).unwrap().as_slice(), &[1.0, -1.0]);
+    for (l, d) in state
+        .f64(log_abs)
+        .unwrap()
+        .as_slice()
+        .iter()
+        .zip(det.as_slice())
+    {
+        assert!((l - d.abs().ln()).abs() < 1e-12);
+    }
+    check(&[a.clone()], |_, v| v[0].log_abs_determinant());
+    check(&[general(&[], 4, 0.1)], |_, v| v[0].log_abs_determinant());
+    // sign · exp(log |det|) is the determinant, whose gradient is checked elsewhere
+    check(&[a], |_, v| {
+        let (sign, log_abs) = v[0].slogdet();
+        sign * log_abs.exp() - v[0].determinant()
+    });
+}
+
+#[test]
+fn eigh_reconstructs_the_matrix_and_its_gradients_match_finite_differences() {
+    // distinct eigenvalues; the upper triangle is not read
+    let a = general(&[2], 3, 0.3);
+    let g = GraphBuilder::new();
+    let (values, vectors) = g.constant(a.clone()).eigh();
+    let rebuilt = (vectors * values.reshape(&[2, 1, 3])).matmul_transposed(vectors, false, true);
+    let (values, rebuilt) = (values.id(), rebuilt.id());
+    let (graph, mut state) = g.build().unwrap();
+    state
+        .lazy_eval(&graph, &[values, rebuilt], &mut KeanuRng::seed_from_u64(1))
+        .unwrap();
+    for lane in state.f64(values).unwrap().as_slice().chunks(3) {
+        assert!(lane[0] < lane[1] && lane[1] < lane[2]);
+    }
+    let symmetric = a
+        .tril(0)
+        .unwrap()
+        .add(&a.tril(-1).unwrap().transpose().unwrap())
+        .unwrap();
+    for (r, s) in state
+        .f64(rebuilt)
+        .unwrap()
+        .as_slice()
+        .iter()
+        .zip(symmetric.as_slice())
+    {
+        assert!((r - s).abs() < 1e-10);
+    }
+
+    check(&[a.clone()], |_, v| v[0].eigvalsh());
+    check(&[a.clone()], |_, v| v[0].eigh_vectors());
+    check(&[general(&[], 4, 2.0)], |_, v| {
+        let (values, vectors) = v[0].eigh();
+        (vectors.sin() * values.reshape(&[1, 4])).sum()
+    });
+    // Q Λ Qᵀ is the symmetric matrix read from the lower triangle, so its gradient is that triangle's identity map
+    check(&[a], |_, v| {
+        let (values, vectors) = v[0].eigh();
+        (vectors * values.reshape(&[2, 1, 3])).matmul_transposed(vectors, false, true)
+    });
+}

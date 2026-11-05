@@ -65,7 +65,10 @@ Handles (`DoubleVar`, `IntVar`, `BoolVar`) support:
   - stable `log_sum_exp`, `softmax` and `log_softmax` (shifted by the maximum, so large or `-∞` inputs stay exact)
   - shapes (`reshape`, `permute`, `slice`, `broadcast_to`, ...) and indexing (`gather`, `scatter_add`; see
     [Indexing](#indexing))
-  - linear algebra (`matmul`, `inverse`, `cholesky`, `determinant`, `tensor_multiply`)
+  - linear algebra (`matmul`, `inverse`, `cholesky`, `determinant`, `tensor_multiply`, `solve`,
+    `solve_triangular`, `slogdet`, `eigh`). On the graph each node has one value, so `slogdet()` and `eigh()` return
+    two nodes: `determinant_sign` with `log_abs_determinant`, and `eigvalsh` with `eigh_vectors`. Eigenvector
+    gradients assume distinct eigenvalues.
   - casts (`to_double`, `to_int`)
 - **Control flow on the builder:**
   - `where_(predicate, then, otherwise)` (Java's `If`)

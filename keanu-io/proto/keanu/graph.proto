@@ -84,6 +84,12 @@ message Node {
     Stack stack = 55;
     Softmax softmax = 56;
     LogSoftmax log_softmax = 57;
+    SolveTriangular solve_triangular = 58;
+    Empty solve = 59;
+    Empty log_abs_determinant = 60;
+    Empty determinant_sign = 61;
+    Empty eigvalsh = 62;
+    Empty eigh_vectors = 63;
   }
 
   // Reserved for a general scan whose body is a nested `Graph`.
@@ -348,6 +354,12 @@ message TrianglePart {
 message MatMul {
   bool transpose_left = 1;
   bool transpose_right = 2;
+}
+
+// Solves op(T) X = B for a triangular T, reading only its lower or upper triangle.
+message SolveTriangular {
+  bool lower = 1;
+  bool transpose = 2;
 }
 
 message TensorMultiply {

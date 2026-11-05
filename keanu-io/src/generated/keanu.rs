@@ -34,7 +34,7 @@ pub struct Node {
     pub label: ::prost::alloc::string::String,
     #[prost(
         oneof = "node::Op",
-        tags = "10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57"
+        tags = "10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63"
     )]
     pub op: ::core::option::Option<node::Op>,
 }
@@ -138,6 +138,18 @@ pub mod node {
         Softmax(super::Softmax),
         #[prost(message, tag = "57")]
         LogSoftmax(super::LogSoftmax),
+        #[prost(message, tag = "58")]
+        SolveTriangular(super::SolveTriangular),
+        #[prost(message, tag = "59")]
+        Solve(super::Empty),
+        #[prost(message, tag = "60")]
+        LogAbsDeterminant(super::Empty),
+        #[prost(message, tag = "61")]
+        DeterminantSign(super::Empty),
+        #[prost(message, tag = "62")]
+        Eigvalsh(super::Empty),
+        #[prost(message, tag = "63")]
+        EighVectors(super::Empty),
     }
 }
 /// The parameters of an operation that has none.
@@ -315,6 +327,14 @@ pub struct MatMul {
     pub transpose_left: bool,
     #[prost(bool, tag = "2")]
     pub transpose_right: bool,
+}
+/// Solves op(T) X = B for a triangular T, reading only its lower or upper triangle.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct SolveTriangular {
+    #[prost(bool, tag = "1")]
+    pub lower: bool,
+    #[prost(bool, tag = "2")]
+    pub transpose: bool,
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct TensorMultiply {

@@ -34,6 +34,10 @@ enum Step {
     Cholesky,
     Inverse,
     Determinant,
+    SolveTriangular(usize, bool, bool),
+    Solve(usize),
+    Slogdet,
+    Eigh,
     Standardize,
     Gaussian(usize),
 }
@@ -92,6 +96,11 @@ fn step() -> impl Strategy<Value = Step> {
         Just(Step::Cholesky),
         Just(Step::Inverse),
         Just(Step::Determinant),
+        (0usize..8, any::<bool>(), any::<bool>())
+            .prop_map(|(i, l, t)| Step::SolveTriangular(i, l, t)),
+        (0usize..8).prop_map(Step::Solve),
+        Just(Step::Slogdet),
+        Just(Step::Eigh),
         Just(Step::Standardize),
         (0usize..8).prop_map(Step::Gaussian),
     ]
@@ -147,6 +156,16 @@ proptest! {
                 Step::Cholesky => last.cholesky(),
                 Step::Inverse => last.inverse(),
                 Step::Determinant => last.determinant(),
+                Step::SolveTriangular(i, l, t) => last.solve_triangular(pick(*i), *l, *t),
+                Step::Solve(i) => last.solve(pick(*i)),
+                Step::Slogdet => {
+                    let (sign, log_abs) = last.slogdet();
+                    sign * log_abs
+                }
+                Step::Eigh => {
+                    let (values, vectors) = last.eigh();
+                    vectors.matmul(values.reshape(&[-1, 1]))
+                }
                 Step::Standardize => last.standardize(),
                 Step::Gaussian(i) => b.gaussian(last, pick(*i).abs() + 1.0),
             };

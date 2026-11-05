@@ -794,6 +794,59 @@ impl<'b> DoubleVar<'b> {
     pub fn cholesky_inverse(self) -> Self {
         self.same(Op::CholeskyInverse)
     }
+    /// X solving op(T) X = rhs, where T is this triangular matrix (`[..., n, n]`) and op(T) is T, or Tᵀ if
+    /// `transpose`. Only the lower (if `lower`) or upper triangle is read. `rhs` is `[..., n, k]` or a vector `[n]`;
+    /// leading dimensions broadcast. With L = A.cholesky(), `l.solve_triangular(b, true, false)` and then
+    /// `.solve_triangular(.., true, true)` on the result solve A X = B. See [`Op::SolveTriangular`].
+    pub fn solve_triangular(
+        self,
+        rhs: impl IntoDoubleVar<'b>,
+        lower: bool,
+        transpose: bool,
+    ) -> Self {
+        self.with(Op::SolveTriangular { lower, transpose }, rhs)
+    }
+    /// X solving A X = rhs, where A is this square matrix (`[..., n, n]`), by LU factorisation. `rhs` is
+    /// `[..., n, k]` or a vector `[n]`; leading dimensions broadcast. A singular matrix is an evaluation error.
+    pub fn solve(self, rhs: impl IntoDoubleVar<'b>) -> Self {
+        self.with(Op::Solve, rhs)
+    }
+    /// ln |det| of each matrix (the last two dimensions), finite where the determinant itself would overflow or
+    /// underflow; -∞ for a singular matrix.
+    pub fn log_abs_determinant(self) -> Self {
+        self.same(Op::LogAbsDeterminant)
+    }
+    /// The sign of each matrix's determinant: 1, -1, or 0 for a singular matrix. Not differentiable.
+    pub fn determinant_sign(self) -> Self {
+        self.same(Op::DeterminantSign)
+    }
+    /// numpy's `slogdet`: (sign, ln |det|) of each matrix, as two nodes, [`Self::determinant_sign`] and
+    /// [`Self::log_abs_determinant`]. The determinant is their product sign · exp(ln |det|).
+    pub fn slogdet(self) -> (Self, Self) {
+        (self.determinant_sign(), self.log_abs_determinant())
+    }
+    /// The eigenvalues (`[..., n]`, ascending) of each symmetric matrix, reading only its lower triangle.
+    pub fn eigvalsh(self) -> Self {
+        self.same(Op::Eigvalsh)
+    }
+    /// The orthonormal eigenvectors (`[..., n, n]`, one per column, in the order of [`Self::eigvalsh`]) of each
+    /// symmetric matrix, reading only its lower triangle. Each is signed so its largest component is positive.
+    /// Gradients assume distinct eigenvalues; repeated eigenvalues give non-finite gradients.
+    pub fn eigh_vectors(self) -> Self {
+        self.same(Op::EighVectors)
+    }
+    /// The symmetric eigendecomposition A = Q diag(λ) Qᵀ as two nodes, (λ, Q): [`Self::eigvalsh`] and
+    /// [`Self::eigh_vectors`].
+    pub fn eigh(self) -> (Self, Self) {
+        (self.eigvalsh(), self.eigh_vectors())
+    }
+    fn with(self, op: Op, other: impl IntoDoubleVar<'b>) -> Self {
+        let other = other.into_var(self.builder);
+        Self::new(
+            self.builder,
+            self.builder.add(op, &[self.id, other.id()], DType::F64),
+        )
+    }
 
     /// Truncates towards zero.
     pub fn to_int(self) -> IntVar<'b> {

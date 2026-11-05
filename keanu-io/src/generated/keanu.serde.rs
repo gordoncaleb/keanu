@@ -2972,6 +2972,24 @@ impl serde::Serialize for Node {
                 node::Op::LogSoftmax(v) => {
                     struct_ser.serialize_field("logSoftmax", v)?;
                 }
+                node::Op::SolveTriangular(v) => {
+                    struct_ser.serialize_field("solveTriangular", v)?;
+                }
+                node::Op::Solve(v) => {
+                    struct_ser.serialize_field("solve", v)?;
+                }
+                node::Op::LogAbsDeterminant(v) => {
+                    struct_ser.serialize_field("logAbsDeterminant", v)?;
+                }
+                node::Op::DeterminantSign(v) => {
+                    struct_ser.serialize_field("determinantSign", v)?;
+                }
+                node::Op::Eigvalsh(v) => {
+                    struct_ser.serialize_field("eigvalsh", v)?;
+                }
+                node::Op::EighVectors(v) => {
+                    struct_ser.serialize_field("eighVectors", v)?;
+                }
             }
         }
         struct_ser.end()
@@ -3045,6 +3063,16 @@ impl<'de> serde::Deserialize<'de> for Node {
             "softmax",
             "log_softmax",
             "logSoftmax",
+            "solve_triangular",
+            "solveTriangular",
+            "solve",
+            "log_abs_determinant",
+            "logAbsDeterminant",
+            "determinant_sign",
+            "determinantSign",
+            "eigvalsh",
+            "eigh_vectors",
+            "eighVectors",
         ];
 
         #[allow(clippy::enum_variant_names)]
@@ -3099,6 +3127,12 @@ impl<'de> serde::Deserialize<'de> for Node {
             Stack,
             Softmax,
             LogSoftmax,
+            SolveTriangular,
+            Solve,
+            LogAbsDeterminant,
+            DeterminantSign,
+            Eigvalsh,
+            EighVectors,
         }
         impl<'de> serde::Deserialize<'de> for GeneratedField {
             fn deserialize<D>(deserializer: D) -> std::result::Result<GeneratedField, D::Error>
@@ -3170,6 +3204,12 @@ impl<'de> serde::Deserialize<'de> for Node {
                             "stack" => Ok(GeneratedField::Stack),
                             "softmax" => Ok(GeneratedField::Softmax),
                             "logSoftmax" | "log_softmax" => Ok(GeneratedField::LogSoftmax),
+                            "solveTriangular" | "solve_triangular" => Ok(GeneratedField::SolveTriangular),
+                            "solve" => Ok(GeneratedField::Solve),
+                            "logAbsDeterminant" | "log_abs_determinant" => Ok(GeneratedField::LogAbsDeterminant),
+                            "determinantSign" | "determinant_sign" => Ok(GeneratedField::DeterminantSign),
+                            "eigvalsh" => Ok(GeneratedField::Eigvalsh),
+                            "eighVectors" | "eigh_vectors" => Ok(GeneratedField::EighVectors),
                             _ => Err(serde::de::Error::unknown_field(value, FIELDS)),
                         }
                     }
@@ -3536,6 +3576,48 @@ impl<'de> serde::Deserialize<'de> for Node {
                                 return Err(serde::de::Error::duplicate_field("logSoftmax"));
                             }
                             op__ = map_.next_value::<::std::option::Option<_>>()?.map(node::Op::LogSoftmax)
+;
+                        }
+                        GeneratedField::SolveTriangular => {
+                            if op__.is_some() {
+                                return Err(serde::de::Error::duplicate_field("solveTriangular"));
+                            }
+                            op__ = map_.next_value::<::std::option::Option<_>>()?.map(node::Op::SolveTriangular)
+;
+                        }
+                        GeneratedField::Solve => {
+                            if op__.is_some() {
+                                return Err(serde::de::Error::duplicate_field("solve"));
+                            }
+                            op__ = map_.next_value::<::std::option::Option<_>>()?.map(node::Op::Solve)
+;
+                        }
+                        GeneratedField::LogAbsDeterminant => {
+                            if op__.is_some() {
+                                return Err(serde::de::Error::duplicate_field("logAbsDeterminant"));
+                            }
+                            op__ = map_.next_value::<::std::option::Option<_>>()?.map(node::Op::LogAbsDeterminant)
+;
+                        }
+                        GeneratedField::DeterminantSign => {
+                            if op__.is_some() {
+                                return Err(serde::de::Error::duplicate_field("determinantSign"));
+                            }
+                            op__ = map_.next_value::<::std::option::Option<_>>()?.map(node::Op::DeterminantSign)
+;
+                        }
+                        GeneratedField::Eigvalsh => {
+                            if op__.is_some() {
+                                return Err(serde::de::Error::duplicate_field("eigvalsh"));
+                            }
+                            op__ = map_.next_value::<::std::option::Option<_>>()?.map(node::Op::Eigvalsh)
+;
+                        }
+                        GeneratedField::EighVectors => {
+                            if op__.is_some() {
+                                return Err(serde::de::Error::duplicate_field("eighVectors"));
+                            }
+                            op__ = map_.next_value::<::std::option::Option<_>>()?.map(node::Op::EighVectors)
 ;
                         }
                     }
@@ -4529,6 +4611,114 @@ impl<'de> serde::Deserialize<'de> for Softmax {
             }
         }
         deserializer.deserialize_struct("keanu.Softmax", FIELDS, GeneratedVisitor)
+    }
+}
+impl serde::Serialize for SolveTriangular {
+    #[allow(deprecated)]
+    fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        use serde::ser::SerializeStruct;
+        let mut len = 0;
+        if self.lower {
+            len += 1;
+        }
+        if self.transpose {
+            len += 1;
+        }
+        let mut struct_ser = serializer.serialize_struct("keanu.SolveTriangular", len)?;
+        if self.lower {
+            struct_ser.serialize_field("lower", &self.lower)?;
+        }
+        if self.transpose {
+            struct_ser.serialize_field("transpose", &self.transpose)?;
+        }
+        struct_ser.end()
+    }
+}
+impl<'de> serde::Deserialize<'de> for SolveTriangular {
+    #[allow(deprecated)]
+    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        const FIELDS: &[&str] = &[
+            "lower",
+            "transpose",
+        ];
+
+        #[allow(clippy::enum_variant_names)]
+        enum GeneratedField {
+            Lower,
+            Transpose,
+        }
+        impl<'de> serde::Deserialize<'de> for GeneratedField {
+            fn deserialize<D>(deserializer: D) -> std::result::Result<GeneratedField, D::Error>
+            where
+                D: serde::Deserializer<'de>,
+            {
+                struct GeneratedVisitor;
+
+                impl serde::de::Visitor<'_> for GeneratedVisitor {
+                    type Value = GeneratedField;
+
+                    fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                        write!(formatter, "expected one of: {:?}", &FIELDS)
+                    }
+
+                    #[allow(unused_variables)]
+                    fn visit_str<E>(self, value: &str) -> std::result::Result<GeneratedField, E>
+                    where
+                        E: serde::de::Error,
+                    {
+                        match value {
+                            "lower" => Ok(GeneratedField::Lower),
+                            "transpose" => Ok(GeneratedField::Transpose),
+                            _ => Err(serde::de::Error::unknown_field(value, FIELDS)),
+                        }
+                    }
+                }
+                deserializer.deserialize_identifier(GeneratedVisitor)
+            }
+        }
+        struct GeneratedVisitor;
+        impl<'de> serde::de::Visitor<'de> for GeneratedVisitor {
+            type Value = SolveTriangular;
+
+            fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                formatter.write_str("struct keanu.SolveTriangular")
+            }
+
+            fn visit_map<V>(self, mut map_: V) -> std::result::Result<SolveTriangular, V::Error>
+                where
+                    V: serde::de::MapAccess<'de>,
+            {
+                let mut lower__ = None;
+                let mut transpose__ = None;
+                while let Some(k) = map_.next_key()? {
+                    match k {
+                        GeneratedField::Lower => {
+                            if lower__.is_some() {
+                                return Err(serde::de::Error::duplicate_field("lower"));
+                            }
+                            lower__ = Some(map_.next_value()?);
+                        }
+                        GeneratedField::Transpose => {
+                            if transpose__.is_some() {
+                                return Err(serde::de::Error::duplicate_field("transpose"));
+                            }
+                            transpose__ = Some(map_.next_value()?);
+                        }
+                    }
+                }
+                Ok(SolveTriangular {
+                    lower: lower__.unwrap_or_default(),
+                    transpose: transpose__.unwrap_or_default(),
+                })
+            }
+        }
+        deserializer.deserialize_struct("keanu.SolveTriangular", FIELDS, GeneratedVisitor)
     }
 }
 impl serde::Serialize for Stack {

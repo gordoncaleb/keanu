@@ -336,6 +336,25 @@ fn op_cases() -> Vec<(String, Graph, State)> {
         op_case(Op::Determinant, &[square()]),
         op_case(Op::Cholesky, &[square()]),
         op_case(Op::CholeskyInverse, &[lower()]),
+        op_case(
+            Op::SolveTriangular {
+                lower: true,
+                transpose: true,
+            },
+            &[lower(), f64s(&[3], &[1.0, -2.0, 0.5])],
+        ),
+        op_case(
+            Op::SolveTriangular {
+                lower: false,
+                transpose: false,
+            },
+            &[square(), f64s(&[3, 2], &[0.2, 0.5, 0.7, 0.3, 0.9, 0.4])],
+        ),
+        op_case(Op::Solve, &[square(), f64s(&[3, 1], &[1.0, -2.0, 0.5])]),
+        op_case(Op::LogAbsDeterminant, &[square()]),
+        op_case(Op::DeterminantSign, &[square()]),
+        op_case(Op::Eigvalsh, &[square()]),
+        op_case(Op::EighVectors, &[square()]),
         op_case(Op::Where, &[boolean(true), scalar(1.0), scalar(2.0)]),
         op_case(Op::Multiplexer, &[int(1), scalar(1.0), scalar(2.0)]),
         op_case(
@@ -562,6 +581,12 @@ fn every_operation_round_trips() {
         "determinant",
         "cholesky",
         "cholesky_inverse",
+        "solve_triangular",
+        "solve",
+        "log_abs_determinant",
+        "determinant_sign",
+        "eigvalsh",
+        "eigh_vectors",
         "cast",
         "where",
         "multiplexer",

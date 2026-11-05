@@ -69,11 +69,44 @@ pub(crate) fn output_type(op: &Op, parents: &[(DType, &[usize])]) -> Result<(DTy
             square_batch(op, parents[0].1)?;
             Ok((DType::F64, Shape::from_slice(parents[0].1)))
         }
-        Op::Determinant => {
+        Op::Determinant | Op::LogAbsDeterminant | Op::DeterminantSign => {
             f64_parents(1)?;
             let s = parents[0].1;
             square_batch(op, s)?;
             Ok((DType::F64, Shape::from_slice(&s[..s.len() - 2])))
+        }
+        Op::EighVectors => {
+            f64_parents(1)?;
+            square_batch(op, parents[0].1)?;
+            Ok((DType::F64, Shape::from_slice(parents[0].1)))
+        }
+        Op::Eigvalsh => {
+            f64_parents(1)?;
+            let s = parents[0].1;
+            square_batch(op, s)?;
+            Ok((DType::F64, Shape::from_slice(&s[..s.len() - 1])))
+        }
+        Op::SolveTriangular { .. } | Op::Solve => {
+            // explicit, as a dummy matrix of ones is singular
+            f64_parents(2)?;
+            let (a, b) = (parents[0].1, parents[1].1);
+            square_batch(op, a)?;
+            let n = a[a.len() - 1];
+            // a vector right-hand side [n], or matrices [..., n, k]
+            let (b_batch, tail) = match b {
+                [] => return Err(invalid(op, "needs a right-hand side of rank >= 1")),
+                [_] => (&b[..0], b),
+                _ => b.split_at(b.len() - 2),
+            };
+            if tail[0] != n {
+                return Err(invalid(
+                    op,
+                    format!("cannot solve {a:?} against right-hand side {b:?}"),
+                ));
+            }
+            let mut shape = broadcast_shape(&a[..a.len() - 2], b_batch)?;
+            shape.extend_from_slice(tail);
+            Ok((DType::F64, shape))
         }
         Op::Multiplexer => {
             if parents.len() < 2 || parents[0] != (DType::I64, &[][..]) {
@@ -169,6 +202,10 @@ fn check_arity(op: &Op, count: usize) -> Result<()> {
         | Op::Determinant
         | Op::Cholesky
         | Op::CholeskyInverse
+        | Op::LogAbsDeterminant
+        | Op::DeterminantSign
+        | Op::Eigvalsh
+        | Op::EighVectors
         | Op::Cast(_)
         | Op::ReplaceNan(_)
         | Op::Assert(_) => (1, Some(1)),
@@ -179,6 +216,8 @@ fn check_arity(op: &Op, count: usize) -> Result<()> {
         | Op::Logic(_)
         | Op::MatMul { .. }
         | Op::TensorMultiply { .. }
+        | Op::SolveTriangular { .. }
+        | Op::Solve
         | Op::Gather { .. }
         | Op::ScatterAdd { .. } => (2, Some(2)),
         Op::Where | Op::SetWithMask => (3, Some(3)),

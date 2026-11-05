@@ -106,7 +106,12 @@ pub fn is_differentiable(graph: &Graph, id: NodeId) -> bool {
             | Op::Inverse
             | Op::Determinant
             | Op::Cholesky
-            | Op::CholeskyInverse => true,
+            | Op::CholeskyInverse
+            | Op::SolveTriangular { .. }
+            | Op::Solve
+            | Op::LogAbsDeterminant
+            | Op::Eigvalsh
+            | Op::EighVectors => true,
             Op::Where | Op::Cpt { .. } | Op::Multiplexer => true,
             Op::SetWithMask | Op::ReplaceNan(_) => true,
             Op::Lambda(l) => l.jacobian.is_some(),
@@ -1143,6 +1148,67 @@ fn symmetric_from_lower(x: &DoubleTensor) -> Result<DoubleTensor> {
     Ok(x.tril(0)?.add(&tr(&x.tril(-1)?)?)?)
 }
 
+/// The adjoint of [`symmetric_from_lower`]: the cotangent of the lower triangle read by an op, given the cotangent
+/// S of the symmetric matrix it reads, tril(S + Sᵀ) - diag(S).
+fn lower_from_symmetric(s: &DoubleTensor) -> Result<DoubleTensor> {
+    let sum = s.add(&tr(s)?)?;
+    let diag = s.tril(0)?.sub(&s.tril(-1)?)?;
+    Ok(sum.tril(0)?.sub(&diag)?)
+}
+
+/// The triangle of a triangular solve's matrix (or its tangent) that the solve reads.
+fn solve_triangle(t: &DoubleTensor, lower: bool) -> Result<DoubleTensor> {
+    Ok(if lower { t.tril(0)? } else { t.triu(0)? })
+}
+
+/// A solve (A X = B or op(T) X = B) applied to batched right-hand sides `rhs` [B, ..., n, k]: with `adjoint`,
+/// solves with the transposed matrix instead, as reverse mode needs.
+fn apply_solve(
+    op: &Op,
+    a: &DoubleTensor,
+    rhs: &DoubleTensor,
+    adjoint: bool,
+) -> Result<DoubleTensor> {
+    Ok(match *op {
+        Op::SolveTriangular { lower, transpose } => {
+            a.solve_triangular(rhs, lower, transpose != adjoint)?
+        }
+        _ if adjoint => tr(a)?.solve(rhs)?,
+        _ => a.solve(rhs)?,
+    })
+}
+
+/// Appends a unit dimension to a solve's vector right-hand side (or solution, or their batched (co)tangents), so
+/// the rules can treat every right-hand side as matrices [..., n, k].
+fn as_columns(t: &DoubleTensor, vector: bool) -> Result<Cow<'_, DoubleTensor>> {
+    if !vector {
+        return Ok(Cow::Borrowed(t));
+    }
+    let shape: Dims = t
+        .shape()
+        .iter()
+        .map(|&d| d as isize)
+        .chain(std::iter::once(1))
+        .collect();
+    Ok(Cow::Owned(t.reshape(&shape)?))
+}
+
+/// F with F_ij = 1 / (λ_j - λ_i) off the diagonal and 0 on it, for eigenvalues λ [..., n]: the eigenvector
+/// derivative's weights. Repeated eigenvalues give infinite weights.
+fn eigen_gaps(lambda: &DoubleTensor) -> Result<DoubleTensor> {
+    let n = lambda.shape()[lambda.rank() - 1];
+    let mut data = Vec::with_capacity(lambda.len() * n);
+    for l in lambda.as_slice().chunks_exact(n.max(1)) {
+        for i in 0..n {
+            for j in 0..n {
+                data.push(if i == j { 0.0 } else { 1.0 / (l[j] - l[i]) });
+            }
+        }
+    }
+    let shape: Vec<usize> = lambda.shape().iter().copied().chain([n]).collect();
+    Ok(DoubleTensor::new(&shape, data)?)
+}
+
 // ---------------------------------------------------------------------------------------------------------------
 // forward mode rules
 
@@ -1358,6 +1424,72 @@ fn jvp(
             let dl_lt = dl.matmul_transposed(&l, false, true)?;
             let da = dl_lt.add(&tr(&dl_lt)?)?;
             Some(y.matmul(&da)?.matmul(y)?.neg())
+        }
+        Op::SolveTriangular { .. } | Op::Solve => {
+            // A X = B: dX = A⁻¹ (dB - dA X), with A = op(tri(T)) for a triangular solve
+            let (a, rhs) = (f64v(parents[0])?, f64v(parents[1])?);
+            let vector = rhs.rank() == 1;
+            let x = as_columns(y, vector)?;
+            let mut columns = out_shape.clone();
+            if vector {
+                columns.push(1);
+            }
+            let rank = columns.len();
+            let from_rhs = t[1]
+                .map(|tb| {
+                    fit(
+                        lift(&*as_columns(tb, vector)?, rank)?.into_owned(),
+                        b,
+                        &columns,
+                    )
+                })
+                .transpose()?;
+            let from_matrix = t[0]
+                .map(|ta| -> Result<DoubleTensor> {
+                    let da = lift(ta, rank)?;
+                    let da = match *op {
+                        Op::SolveTriangular { lower, transpose } => {
+                            let triangle = solve_triangle(&da, lower)?;
+                            if transpose { tr(&triangle)? } else { triangle }
+                        }
+                        _ => da.into_owned(),
+                    };
+                    fit(da.matmul(&x)?.neg(), b, &columns)
+                })
+                .transpose()?;
+            let Some(rhs_tangent) = add_opt(from_rhs, from_matrix)? else {
+                return Ok(None);
+            };
+            Some(apply_solve(op, a, &rhs_tangent, false)?.into_reshape(&batched(b, &out_shape))?)
+        }
+        Op::LogAbsDeterminant => {
+            let Some(t0) = t[0] else { return Ok(None) };
+            // d ln|det A| = tr(A⁻¹ dA) = sum_ij (A⁻ᵀ)_ij dA_ij
+            let a = f64v(parents[0])?;
+            let inv_t = tr(&a.inverse()?)?;
+            let rank = a.rank();
+            let products = lift(t0, rank)?.mul(&inv_t)?;
+            let summed = products.sum_axes(&[rank as isize - 1, rank as isize])?;
+            Some(summed.reshape(&batched(b, &out_shape))?)
+        }
+        Op::Eigvalsh => {
+            let Some(t0) = t[0] else { return Ok(None) };
+            // dλ_i = q_iᵀ dS q_i, dS the symmetric matrix read from the lower triangle of the tangent
+            let a = f64v(parents[0])?;
+            let (_, q) = a.eigh()?;
+            let rank = a.rank();
+            let ds = symmetric_from_lower(&*lift(t0, rank)?)?;
+            Some(ds.matmul(&q)?.mul(&q)?.sum_axes(&[rank as isize - 1])?)
+        }
+        Op::EighVectors => {
+            let Some(t0) = t[0] else { return Ok(None) };
+            // dQ = Q (F ∘ (Qᵀ dS Q)), F_ij = 1 / (λ_j - λ_i) off the diagonal (assumes distinct eigenvalues)
+            let a = f64v(parents[0])?;
+            let (lambda, _) = a.eigh()?;
+            let q = y;
+            let ds = symmetric_from_lower(&*lift(t0, a.rank())?)?;
+            let rotated = q.matmul_transposed(&ds, true, false)?.matmul(q)?;
+            Some(q.matmul(&rotated.mul(&eigen_gaps(&lambda)?)?)?)
         }
         Op::Where => {
             let m = where_mask(parents)?;
@@ -1629,9 +1761,7 @@ fn vjp(
             let s = l_inv
                 .matmul_transposed(&inner, true, false)?
                 .matmul(&l_inv)?;
-            let sum = s.add(&tr(&s)?)?;
-            let diag = s.tril(0)?.sub(&s.tril(-1)?)?;
-            vec![Some(sum.tril(0)?.sub(&diag)?)]
+            vec![Some(lower_from_symmetric(&s)?)]
         }
         Op::CholeskyInverse => {
             // <G, dX> with dX = -X (dL Lᵀ + L dLᵀ) X: M = -X G X, Lbar = (M + Mᵀ) L, read from tril(input)
@@ -1639,6 +1769,56 @@ fn vjp(
             let m = y.matmul(g)?.matmul(y)?.neg();
             let l_bar = m.add(&tr(&m)?)?.matmul(&l)?;
             vec![Some(l_bar.tril(0)?)]
+        }
+        Op::SolveTriangular { .. } | Op::Solve => {
+            // A X = B: B̄ = A⁻ᵀ X̄ and Ā = -B̄ Xᵀ, with A = op(tri(T)) for a triangular solve
+            let (a, rhs) = (f64v(parents[0])?, f64v(parents[1])?);
+            let vector = rhs.rank() == 1;
+            let x = as_columns(y, vector)?;
+            let rhs_bar = apply_solve(op, a, &*as_columns(g, vector)?, true)?;
+            let op_a_bar = rhs_bar.matmul_transposed(&x, false, true)?.neg();
+            let a_bar = match *op {
+                Op::SolveTriangular { lower, transpose } => {
+                    solve_triangle(&if transpose { tr(&op_a_bar)? } else { op_a_bar }, lower)?
+                }
+                _ => op_a_bar,
+            };
+            let rhs_bar = if vector {
+                rhs_bar.into_reshape(&batched(b, &out_shape))?
+            } else {
+                rhs_bar
+            };
+            vec![
+                Some(reduce_to(a_bar, a.shape())?),
+                Some(reduce_to(rhs_bar, rhs.shape())?),
+            ]
+        }
+        Op::LogAbsDeterminant => {
+            // Ā = ḡ A⁻ᵀ, ḡ [B, batch...] -> [B, batch..., 1, 1]
+            let inv_t = tr(&f64v(parents[0])?.inverse()?)?;
+            let mut shape = batched(b, &out_shape);
+            shape.extend([1, 1]);
+            vec![Some(g.reshape(&shape)?.mul(&inv_t)?)]
+        }
+        Op::Eigvalsh => {
+            // S̄ = Q diag(λ̄) Qᵀ, read back to the lower triangle
+            let (_, q) = f64v(parents[0])?.eigh()?;
+            let mut shape = batched(b, &out_shape);
+            shape.insert(shape.len() - 1, 1);
+            let s_bar = q
+                .mul(&g.reshape(&shape)?)?
+                .matmul_transposed(&q, false, true)?;
+            vec![Some(lower_from_symmetric(&s_bar)?)]
+        }
+        Op::EighVectors => {
+            // S̄ = Q (F ∘ (Qᵀ Q̄)) Qᵀ, F_ij = 1 / (λ_j - λ_i) off the diagonal (assumes distinct eigenvalues)
+            let (lambda, _) = f64v(parents[0])?.eigh()?;
+            let q = y;
+            let inner = q
+                .matmul_transposed(g, true, false)?
+                .mul(&eigen_gaps(&lambda)?)?;
+            let s_bar = q.matmul(&inner)?.matmul_transposed(q, false, true)?;
+            vec![Some(lower_from_symmetric(&s_bar)?)]
         }
         Op::Where => {
             let m = where_mask(parents)?;

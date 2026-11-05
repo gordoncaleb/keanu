@@ -344,6 +344,16 @@ pub(crate) fn eval(op: &Op, inputs: &[&Value]) -> Result<Value> {
         Op::Determinant => Value::F64(inputs[0].f64()?.determinant()?),
         Op::Cholesky => Value::F64(inputs[0].f64()?.cholesky()?),
         Op::CholeskyInverse => Value::F64(inputs[0].f64()?.cholesky_inverse()?),
+        Op::SolveTriangular { lower, transpose } => Value::F64(inputs[0].f64()?.solve_triangular(
+            inputs[1].f64()?,
+            *lower,
+            *transpose,
+        )?),
+        Op::Solve => Value::F64(inputs[0].f64()?.solve(inputs[1].f64()?)?),
+        Op::LogAbsDeterminant => Value::F64(inputs[0].f64()?.slogdet()?.1),
+        Op::DeterminantSign => Value::F64(inputs[0].f64()?.slogdet()?.0),
+        Op::Eigvalsh => Value::F64(inputs[0].f64()?.eigh()?.0),
+        Op::EighVectors => Value::F64(inputs[0].f64()?.eigh()?.1),
 
         Op::Cast(to) => cast(inputs[0], *to),
 

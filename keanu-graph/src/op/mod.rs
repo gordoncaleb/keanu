@@ -401,6 +401,33 @@ pub enum Op {
     Cholesky,
     /// Parents: `input`, f64 (a lower Cholesky factor) -> the full symmetric inverse
     CholeskyInverse,
+    /// Parents: `matrix` (`[..., n, n]`), `rhs` (`[..., n, k]` or `[n]`), f64 -> X solving op(T) X = rhs, where T is
+    /// the triangular matrix and op(T) is T or Tᵀ, as
+    /// [`DoubleTensor::solve_triangular`](keanu_tensor::DoubleTensor::solve_triangular). Only T's lower (if `lower`) or upper triangle, diagonal included, is read, and only it receives gradients.
+    /// Leading dimensions broadcast; an exactly zero diagonal element is an evaluation error.
+    SolveTriangular {
+        /// Whether T is lower (rather than upper) triangular.
+        lower: bool,
+        /// Whether to solve with Tᵀ rather than T.
+        transpose: bool,
+    },
+    /// Parents: `matrix` (`[..., n, n]`), `rhs` (`[..., n, k]` or `[n]`), f64 -> X solving A X = rhs by LU
+    /// factorisation, as [`DoubleTensor::solve`](keanu_tensor::DoubleTensor::solve). Leading dimensions broadcast; a
+    /// singular matrix is an evaluation error.
+    Solve,
+    /// Parents: `input`, f64 -> ln |det| of each matrix (shape `[...]` from `[..., n, n]`), finite where the
+    /// determinant would overflow; -∞ for a singular matrix. With [`Op::DeterminantSign`] it is numpy's `slogdet`.
+    LogAbsDeterminant,
+    /// Parents: `input`, f64 -> the sign of each matrix's determinant: 1, -1, or 0 if singular. Not differentiable
+    /// (its derivative is zero wherever it is defined).
+    DeterminantSign,
+    /// Parents: `input`, f64 -> the eigenvalues (`[..., n]`, ascending) of each symmetric matrix, reading only its
+    /// lower triangle, as [`DoubleTensor::eigh`](keanu_tensor::DoubleTensor::eigh).
+    Eigvalsh,
+    /// Parents: `input`, f64 -> the orthonormal eigenvectors (`[..., n, n]`, one per column, in the order of
+    /// [`Op::Eigvalsh`]) of each symmetric matrix, reading only its lower triangle, each signed so its largest
+    /// component is positive. Gradients assume distinct eigenvalues: repeated eigenvalues give non-finite gradients.
+    EighVectors,
     /// Parents: `input` -> the given type. Numbers to bool are true where equal to 1; bool to numbers is a 0/1 mask;
     /// f64 to i64 truncates.
     Cast(DType),
@@ -473,6 +500,12 @@ impl Op {
             Op::Determinant => "determinant",
             Op::Cholesky => "cholesky",
             Op::CholeskyInverse => "cholesky_inverse",
+            Op::SolveTriangular { .. } => "solve_triangular",
+            Op::Solve => "solve",
+            Op::LogAbsDeterminant => "log_abs_determinant",
+            Op::DeterminantSign => "determinant_sign",
+            Op::Eigvalsh => "eigvalsh",
+            Op::EighVectors => "eigh_vectors",
             Op::Cast(_) => "cast",
             Op::Where => "where",
             Op::Multiplexer => "multiplexer",

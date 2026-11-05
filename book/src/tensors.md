@@ -24,3 +24,11 @@ Some details worth knowing:
 - `argmax` / `argmin` return the first NaN if there is one; `nan_argmax` / `nan_argmin` ignore NaN.
 - Integer arithmetic wraps on overflow, and integer division truncates towards zero.
 - `tril(k)` / `triu(k)` use numpy's convention for `k`.
+- `solve(b)` solves A X = B by LU with partial pivoting, and `solve_triangular(b, lower, transpose)` solves with a
+  triangular matrix (such as a Cholesky factor) reading only that triangle; both take a matrix `[..., n, k]` or a
+  vector `[n]` right-hand side and broadcast leading dimensions. A singular matrix is a `SingularMatrix` error, as
+  for `inverse`.
+- `slogdet()` returns numpy's (sign, ln |det|), which stays finite where `determinant()` would overflow; a singular
+  matrix has sign 0 and ln |det| −∞.
+- `eigh()` returns the eigenvalues (ascending) and eigenvectors (columns, each signed so its largest component is
+  positive) of symmetric matrices, reading only the lower triangle.

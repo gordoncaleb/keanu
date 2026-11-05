@@ -256,6 +256,121 @@ impl DoubleTensor {
         Ok(Tensor::from_parts(self.shape.clone(), data))
     }
 
+    /// Solves A X = B for X, where A is the square matrix in the last two dimensions of self (`[..., n, n]`), by LU
+    /// factorisation with partial pivoting. B is `[..., n, k]`, or a single vector `[n]` (giving `[..., n]`). Leading
+    /// (batch) dimensions broadcast, as in [`Self::matmul`]. A matrix with an exactly zero pivot is singular, which
+    /// is an error ([`TensorError::SingularMatrix`], as in [`Self::inverse`]).
+    pub fn solve(&self, b: &Self) -> Result<Self> {
+        let n = self.square_dims("solve")?;
+        let incompatible = || TensorError::IncompatibleShapes {
+            left: self.shape.to_vec(),
+            right: b.shape.to_vec(),
+        };
+        let vector = b.rank() == 1;
+        let (bn, k) = if vector {
+            (b.shape[0], 1)
+        } else {
+            b.matrix_dims("solve")?
+        };
+        if bn != n {
+            return Err(incompatible());
+        }
+        let b_batch: &[usize] = if vector { &[] } else { b.batch_shape() };
+        let batch = shape::broadcast_shape(self.batch_shape(), b_batch)?;
+        let batch_len = shape::length(&batch);
+        let out_len = shape::checked_length(&[batch_len, n, k]).ok_or_else(incompatible)?;
+        // every matrix is factored once, however many right-hand sides use it
+        let factors: Vec<Lu> = self
+            .data
+            .chunks_exact((n * n).max(1))
+            .take(shape::length(self.batch_shape()))
+            .map(|a| Lu::factor(a, n))
+            .collect();
+        if factors.iter().any(|lu| lu.singular) {
+            return Err(TensorError::SingularMatrix);
+        }
+        let left_strides = shape::broadcast_strides(self.batch_shape(), &batch);
+        let right_strides = shape::broadcast_strides(b_batch, &batch);
+        let batch_strides = shape::row_major_strides(&batch);
+
+        let mut data: Storage<f64> = smallvec::smallvec![0.0; out_len];
+        if n > 0 && k > 0 {
+            for (i, out) in data.chunks_mut(n * k).enumerate().take(batch_len) {
+                let (mut l, mut r) = (0, 0);
+                for d in 0..batch.len() {
+                    let index = (i / batch_strides[d]) % batch[d];
+                    l += index * left_strides[d];
+                    r += index * right_strides[d];
+                }
+                out.copy_from_slice(&b.data[r * n * k..(r + 1) * n * k]);
+                factors[l].solve_in_place(out, k);
+            }
+        }
+        let mut out_shape = batch;
+        out_shape.push(n);
+        if !vector {
+            out_shape.push(k);
+        }
+        Ok(Tensor::from_parts(out_shape, data))
+    }
+
+    /// The sign and natural log of the absolute value of the determinant of each square matrix, as numpy's
+    /// `slogdet`: shape [..., n, n] gives two tensors of shape [...]. The log is summed from the LU factors, so it
+    /// is finite where the determinant itself would overflow or underflow. A singular matrix (an exactly zero
+    /// pivot, as in [`Self::inverse`]) has sign 0 and log|det| -∞; a 0 × 0 matrix has sign 1 and log|det| 0.
+    pub fn slogdet(&self) -> Result<(Self, Self)> {
+        let n = self.square_dims("slogdet")?;
+        let batch: Shape = self.batch_shape().into();
+        let count = shape::length(&batch);
+        let mut signs: Storage<f64> = smallvec::smallvec![1.0; count];
+        let mut logs: Storage<f64> = smallvec::smallvec![0.0; count];
+        if n > 0 {
+            for ((matrix, sign), log) in self
+                .data
+                .chunks_exact(n * n)
+                .zip(signs.iter_mut())
+                .zip(logs.iter_mut())
+            {
+                (*sign, *log) = Lu::factor(matrix, n).sign_and_log_abs_determinant();
+            }
+        }
+        Ok((
+            Tensor::from_parts(batch.clone(), signs),
+            Tensor::from_parts(batch, logs),
+        ))
+    }
+
+    /// The eigendecomposition A = Q diag(λ) Qᵀ of each symmetric matrix, by faer's self-adjoint eigensolver. Only
+    /// the lower triangle of each matrix, diagonal included, is read. Returns the eigenvalues λ (`[..., n]`, in
+    /// ascending order) and the orthonormal eigenvectors Q (`[..., n, n]`, one per column, in the same order). Each
+    /// eigenvector's sign is chosen so that its component of largest magnitude (the first, among equals) is
+    /// positive, so the result is deterministic. Repeated eigenvalues have no unique eigenvectors: any orthonormal
+    /// basis of their eigenspace may be returned. A matrix with a non-finite element in its lower triangle gives
+    /// NaN eigenvalues and eigenvectors.
+    pub fn eigh(&self) -> Result<(Self, Self)> {
+        let n = self.square_dims("eigh")?;
+        let batch = self.batch_shape();
+        let count = shape::length(batch);
+        let mut values: Storage<f64> = smallvec::smallvec![0.0; count * n];
+        let mut vectors: Storage<f64> = smallvec::smallvec![0.0; self.len()];
+        if n > 0 {
+            for ((a, lambda), q) in self
+                .data
+                .chunks_exact(n * n)
+                .zip(values.chunks_exact_mut(n))
+                .zip(vectors.chunks_exact_mut(n * n))
+            {
+                symmetric_eigen_into(a, n, lambda, q)?;
+            }
+        }
+        let mut value_shape: Shape = batch.into();
+        value_shape.push(n);
+        Ok((
+            Tensor::from_parts(value_shape, values),
+            Tensor::from_parts(self.shape.clone(), vectors),
+        ))
+    }
+
     /// Determinant of each square matrix: shape [..., n, n] becomes [...]. Singular matrices give 0.
     pub fn determinant(&self) -> Result<Self> {
         let n = self.square_dims("determinant")?;
@@ -409,6 +524,66 @@ impl Lu {
             pivots,
             singular,
         }
+    }
+
+    /// Solves A X = B in place in `x` (row-major n × k, holding B on entry). The factorisation must not be singular.
+    fn solve_in_place(&self, x: &mut [f64], k: usize) {
+        let n = self.n;
+        let lu: &[f64] = &self.lu;
+        for (row, &p) in self.pivots.iter().enumerate() {
+            if p != row {
+                for j in 0..k {
+                    x.swap(row * k + j, p * k + j);
+                }
+            }
+        }
+        // L (unit diagonal) forward, then U backward, a row of right-hand sides at a time
+        for i in 0..n {
+            let (solved, rest) = x.split_at_mut(i * k);
+            let row = &mut rest[..k];
+            for (j, &l) in lu[i * n..i * n + i].iter().enumerate() {
+                if l != 0.0 {
+                    for (xi, &xj) in row.iter_mut().zip(&solved[j * k..(j + 1) * k]) {
+                        *xi -= l * xj;
+                    }
+                }
+            }
+        }
+        for i in (0..n).rev() {
+            let (head, solved) = x.split_at_mut((i + 1) * k);
+            let row = &mut head[i * k..];
+            for (j, &u) in lu[i * n + i + 1..(i + 1) * n].iter().enumerate() {
+                if u != 0.0 {
+                    for (xi, &xj) in row.iter_mut().zip(&solved[j * k..(j + 1) * k]) {
+                        *xi -= u * xj;
+                    }
+                }
+            }
+            let diagonal = lu[i * n + i];
+            row.iter_mut().for_each(|xi| *xi /= diagonal);
+        }
+    }
+
+    /// The sign (±1, or 0 if singular) and ln |det| (-∞ if singular) of the factored matrix.
+    fn sign_and_log_abs_determinant(&self) -> (f64, f64) {
+        if self.singular {
+            return (0.0, f64::NEG_INFINITY);
+        }
+        let n = self.n;
+        let swaps = self
+            .pivots
+            .iter()
+            .enumerate()
+            .filter(|&(i, &p)| i != p)
+            .count();
+        let mut sign = if swaps % 2 == 0 { 1.0 } else { -1.0 };
+        let mut log = 0.0;
+        for i in 0..n {
+            let u = self.lu[i * n + i];
+            sign *= u.signum();
+            log += u.abs().ln();
+        }
+        (sign, log)
     }
 
     fn inverse_into(&self, out: &mut [f64]) {
@@ -608,6 +783,42 @@ fn cholesky_lower_into(a: &[f64], n: usize, out: &mut [f64]) -> Result<()> {
                 .map(|(x, y)| x * y)
                 .sum();
             out[row_i + j] = (a[row_i + j] - dot) / ljj;
+        }
+    }
+    Ok(())
+}
+
+/// The eigenvalues (ascending, into `values`) and eigenvectors (columns of row-major `vectors`) of one symmetric
+/// n × n matrix, reading only its lower triangle. Each eigenvector's largest-magnitude component is made positive.
+fn symmetric_eigen_into(
+    a: &[f64],
+    n: usize,
+    values: &mut [f64],
+    vectors: &mut [f64],
+) -> Result<()> {
+    if (0..n).any(|i| a[i * n..=i * n + i].iter().any(|x| !x.is_finite())) {
+        values.fill(f64::NAN);
+        vectors.fill(f64::NAN);
+        return Ok(());
+    }
+    let eigen = MatRef::from_row_major_slice(a, n, n)
+        .self_adjoint_eigen(Side::Lower)
+        .map_err(|_| {
+            TensorError::InvalidArgument("the symmetric eigendecomposition did not converge".into())
+        })?;
+    let (s, u) = (eigen.S(), eigen.U());
+    for col in 0..n {
+        values[col] = s[col];
+        let mut largest = 0.0f64;
+        for row in 0..n {
+            let x = u[(row, col)];
+            if x.abs() > largest.abs() {
+                largest = x;
+            }
+        }
+        let flip = if largest < 0.0 { -1.0 } else { 1.0 };
+        for row in 0..n {
+            vectors[row * n + col] = flip * u[(row, col)];
         }
     }
     Ok(())
