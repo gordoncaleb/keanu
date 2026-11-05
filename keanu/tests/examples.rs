@@ -5,6 +5,9 @@
 //! chains 20 times longer than the Java defaults and assert the same tolerances. Where Metropolis–Hastings with
 //! prior proposals can't mix (the Challenger model's strongly correlated parameters), the posterior is checked with
 //! NUTS and the Java-style run is only checked to complete.
+//!
+//! The hierarchical examples with no Java counterpart (eight schools, radon) are checked against published or
+//! independently computed posteriors, with multi-chain R-hat and divergence counts; each passed over seeds 1 to 8.
 
 #![allow(dead_code)]
 
@@ -18,6 +21,10 @@ mod cheating_students;
 mod coal_mining_disasters;
 #[path = "../examples/custom_distribution.rs"]
 mod custom_distribution;
+#[path = "../examples/eight_schools.rs"]
+mod eight_schools;
+#[path = "../examples/radon.rs"]
+mod radon;
 #[path = "../examples/text_messaging.rs"]
 mod text_messaging;
 
@@ -169,4 +176,83 @@ fn custom_node_type_must_match_the_handle() {
     let b = GraphBuilder::new();
     let _wrong: IntVar = b.custom(custom_distribution::HyperPrior, &[2], &[]);
     assert!(b.build().is_err());
+}
+
+#[test]
+fn eight_schools_non_centred_converges_and_centred_diverges() {
+    // AE3, with 4 chains of 1000 draws after 1000 adaptation steps each
+    let r = eight_schools::run(1, 1000).unwrap();
+    assert!(
+        r.centred.divergences > 0,
+        "centred eight schools reported no divergences"
+    );
+    let fit = &r.non_centred;
+    assert_eq!(fit.divergences, 0, "non-centred eight schools diverged");
+    for row in fit.samples.summary().unwrap().rows() {
+        assert!(
+            row.stats.r_hat < 1.01,
+            "R-hat of {:?}{:?} is {}",
+            row.node,
+            row.index,
+            row.stats.r_hat
+        );
+    }
+    // the published posterior mean of mu is 4.4 (Stan and PyMC agree); its posterior sd is about 3.3 and its Monte
+    // Carlo standard error here about 0.06
+    let mu = fit.samples.summarize(fit.mu, &[]).unwrap();
+    assert_close(mu.mean, 4.4, 1.0, "mu");
+}
+
+/// Posterior means of (mu_a, sigma_a, b, sigma_y) and the 85 county intercepts of the radon model, computed
+/// independently: the intercepts integrated out analytically (each county's residuals are jointly Gaussian with
+/// covariance sigma_y² I + sigma_a² J), random-walk Metropolis on (mu_a, b, ln sigma_a, ln sigma_y) for 400,000
+/// steps, and each intercept's mean the average of its conditional posterior mean. Two independent runs agreed to
+/// 0.001. They agree with the PyMC radon notebook; Gelman & Hill's REML fit (`lmer`, flat priors) gives mu_a 1.46,
+/// b −0.69, sigma_a 0.33 and sigma_y 0.76.
+const RADON_HYPERPARAMETER_MEANS: [f64; 4] = [1.4923, 0.3198, -0.6626, 0.7268];
+const RADON_COUNTY_MEANS: [f64; radon::COUNTIES] = [
+    1.227, 0.982, 1.507, 1.537, 1.473, 1.508, 1.874, 1.705, 1.199, 1.524, //
+    1.461, 1.606, 1.275, 1.858, 1.433, 1.276, 1.386, 1.257, 1.38, 1.611, //
+    1.652, 1.11, 1.468, 1.878, 1.831, 1.395, 1.644, 1.379, 1.345, 1.14, //
+    1.757, 1.395, 1.745, 1.531, 1.128, 1.896, 0.858, 1.653, 1.622, 1.849, //
+    1.783, 1.475, 1.575, 1.27, 1.364, 1.372, 1.342, 1.294, 1.655, 1.657, //
+    1.789, 1.657, 1.413, 1.367, 1.575, 1.375, 1.128, 1.656, 1.593, 1.44, //
+    1.237, 1.736, 1.56, 1.741, 1.448, 1.618, 1.72, 1.271, 1.398, 0.945, //
+    1.51, 1.565, 1.58, 1.29, 1.579, 1.718, 1.689, 1.403, 1.148, 1.374, //
+    1.928, 1.615, 1.604, 1.614, 1.415,
+];
+
+#[test]
+fn radon_varying_intercepts_converge_to_the_reference_posterior() {
+    let r = radon::run(1, 1000).unwrap();
+    assert_eq!(r.divergences, 0, "radon diverged");
+    let summary = r.samples.summary().unwrap();
+    // the four hyperparameters and the 85 intercepts
+    assert_eq!(summary.rows().len(), 4 + radon::COUNTIES);
+    for row in summary.rows() {
+        assert!(
+            row.stats.r_hat < 1.01,
+            "R-hat of {:?}{:?} is {}",
+            row.node,
+            row.index,
+            row.stats.r_hat
+        );
+    }
+    // Each mean within a quarter of its posterior sd of the reference. The bulk ESS of every element was above 600
+    // over seeds 1 to 6, so the Monte Carlo standard error is below sd / 24 and the tolerance at least six times it.
+    let check = |node, index: &[usize], expected: f64, what: &str| {
+        let s = summary.get(node, index).unwrap();
+        assert_close(s.mean, expected, 0.25 * s.sd, what);
+    };
+    for (node, expected, what) in [
+        (r.mu_a, RADON_HYPERPARAMETER_MEANS[0], "mu_a"),
+        (r.sigma_a, RADON_HYPERPARAMETER_MEANS[1], "sigma_a"),
+        (r.b, RADON_HYPERPARAMETER_MEANS[2], "b"),
+        (r.sigma_y, RADON_HYPERPARAMETER_MEANS[3], "sigma_y"),
+    ] {
+        check(node, &[], expected, what);
+    }
+    for (j, &expected) in RADON_COUNTY_MEANS.iter().enumerate() {
+        check(r.a, &[j], expected, &format!("county {j} intercept"));
+    }
 }
