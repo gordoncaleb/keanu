@@ -17,6 +17,9 @@
 //! close to Gaussian in unconstrained space, as it is for many models with plenty of data. It cannot represent
 //! skewed or multimodal posteriors there; check important results with NUTS.
 //!
+//! Circular latents (such as a von Mises angle) are not supported: their transform's auxiliary radial density is
+//! largest at the origin of the plane, where the angle is undefined, so there is no mode to approximate around.
+//!
 //! ```
 //! use keanu_algorithms::Laplace;
 //! use keanu_distributions::KeanuRng;
@@ -46,7 +49,7 @@ use crate::optimizer::{Fitness, Lbfgs, Objective, check_latents};
 use crate::samples::NetworkSamples;
 use crate::support::{check_nodes, compute_deterministic};
 use keanu_distributions::KeanuRng;
-use keanu_graph::{Graph, Model, NodeId, Parameterisation, State};
+use keanu_graph::{Graph, Model, NodeId, Parameterisation, State, Support, node_support};
 use keanu_tensor::{DoubleTensor, TensorError};
 
 /// Laplace approximation settings: the [`Lbfgs`] configuration that finds the mode. The configuration holds no
@@ -76,6 +79,8 @@ impl Laplace {
     ///
     /// [`AlgorithmError::InvalidSetting`] for an out-of-range L-BFGS setting; [`AlgorithmError::NoLatents`] or
     /// [`AlgorithmError::DiscreteLatents`] if the model has no latents or discrete ones;
+    /// [`AlgorithmError::InvalidArgument`], naming the latent, for a latent with a [`Support::Circular`] support
+    /// (see the [module documentation](self));
     /// [`AlgorithmError::ImpossibleStart`] if a latent's value is outside its support (or on its boundary), or the
     /// log probability at the start is not finite; an error from [`Parameterisation::new`] if a latent's support has
     /// no transform; [`AlgorithmError::ModeOnBoundary`] if L-BFGS heads for the boundary of a latent's support;
@@ -86,6 +91,16 @@ impl Laplace {
     pub fn fit<'m>(&self, model: &'m Model, state: &mut State) -> Result<LaplaceResult<'m>> {
         check_latents(model)?;
         compute_deterministic(model.graph(), state)?;
+        for &id in model.latents() {
+            if node_support(model.graph(), state, id)? == Support::Circular {
+                return Err(AlgorithmError::InvalidArgument(format!(
+                    "the Laplace approximation does not support the circular latent {}: its transform's \
+                     auxiliary density has its mode at the origin, where the angle is undefined (sample the \
+                     posterior with NUTS instead)",
+                    describe(model.graph(), id)
+                )));
+            }
+        }
         let param = Parameterisation::new(model, state)?;
         if param.dimension() == 0 {
             return Err(AlgorithmError::NoLatents);

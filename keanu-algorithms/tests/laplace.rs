@@ -273,3 +273,20 @@ fn a_huge_starting_gradient_converges() {
     let variance = result.covariance().as_slice()[0];
     assert!((variance / 1e-12 - 1.0).abs() < 1e-6, "{variance}");
 }
+
+/// The circular transform's auxiliary radial density is largest at the origin, where the angle is undefined, so
+/// circular latents have no Laplace approximation: an error naming the latent.
+#[test]
+fn a_circular_latent_is_unsupported() {
+    let b = GraphBuilder::new();
+    let angle = b.von_mises(0.5, 2.0).label("angle");
+    b.set_value(angle, DoubleTensor::scalar(0.1));
+    let (graph, mut state) = b.build().unwrap();
+    let model = Model::new(graph, &state).unwrap();
+    match Laplace::new().fit(&model, &mut state) {
+        Err(AlgorithmError::InvalidArgument(message)) => {
+            assert!(message.contains("angle"), "{message}");
+        }
+        other => panic!("expected an unsupported circular latent, got {other:?}"),
+    }
+}
