@@ -357,6 +357,11 @@ fn add_node(
         P::ReplaceNan(p) => Op::ReplaceNan(p.value),
         P::Assert(p) => Op::Assert(p.message.clone()),
         P::Factor(_) => Op::Factor,
+        P::LogDensity(p) => {
+            Op::LogDensity(distribution_of_type(p.kind.as_ref().ok_or_else(|| {
+                IoError::Decode("a log density has no distribution".into())
+            })?)?)
+        }
         P::Proxy(p) => {
             let dtype: DType = decode(p.dtype)?;
             let proxy = builder.add_proxy(dtype, &shape_of(&p.shape)?)?;

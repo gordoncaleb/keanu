@@ -19,6 +19,7 @@ fn describe(op: &Op) -> String {
         Op::Unary(u) => format!("{u:?}"),
         Op::Binary(b) => format!("{b:?}"),
         Op::Distribution(d) => distribution_name(&d.kind),
+        Op::LogDensity(kind) => format!("log_density({})", distribution_name(kind)),
         other => other.name().to_owned(),
     }
 }

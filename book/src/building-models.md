@@ -90,6 +90,18 @@ likelihoods that no distribution provides. A factor that isn't finite (NaN or ±
 {{#include ../../keanu/tests/book.rs:factor}}
 ```
 
+`log_density(kind, value, parameters)` is the log density of each element of a value under a distribution, as a
+deterministic node: its sum is the log probability a node of that distribution with that value would have, so a
+factor of it gives a likelihood to a value that isn't itself a probabilistic node (such as a transformed
+observation). It works for every distribution with one value per element (the continuous and count distributions,
+and truncated and censored ones; not `dirichlet`, `multivariate_gaussian`, `lkj_cholesky`, `kde`, `categorical`,
+`multinomial`, `ordered_logistic`, `bernoulli` or mixtures), its value has the distribution's type (f64, or i64 for
+counts), and it differentiates, to second order, as the distribution does.
+
+```rust,ignore
+{{#include ../../keanu/tests/book.rs:log_density}}
+```
+
 Factors count in the log likelihood (`Model::log_likelihood`), not in the log prior. Their gradients and Hessians
 are those of the expression, so NUTS, the optimizers, variational inference and the Laplace approximation follow
 them, and Metropolis–Hastings updates them incrementally with the nodes a proposal reaches. A factor is a term of

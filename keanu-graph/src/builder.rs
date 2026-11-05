@@ -546,7 +546,7 @@ impl GraphBuilder {
         self.add(Op::Lambda(lambda), parents, DType::F64)
     }
 
-    // ----- factors -----
+    // ----- factors and log densities -----
 
     /// A factor node: a term of the joint log probability, like PyMC's `Potential` or Stan's `target +=`. The node's
     /// value is the scalar sum of `expr`, and [`Model::log_prob`](crate::Model::log_prob) adds it to the log
@@ -578,6 +578,46 @@ impl GraphBuilder {
     pub fn factor<'b>(&'b self, expr: impl IntoDoubleVar<'b>) -> DoubleVar<'b> {
         let expr = expr.into_var(self);
         DoubleVar::new(self, self.add(Op::Factor, &[expr.id()], DType::F64))
+    }
+
+    /// The log density of each element of `value` under the distribution `kind` with the given parameters (node
+    /// ids in the kind's parameter order), as a deterministic f64 node of the broadcast shape of the value and the
+    /// parameters. Its sum is the log probability a node of `kind` with this value would have, so it can be used in
+    /// a [`factor`](Self::factor), or to evaluate a density at a value that isn't a node of that distribution.
+    ///
+    /// `kind` must be element-wise: a distribution of one value per element with an element-wise density (the
+    /// continuous and count distributions other than `dirichlet`, `multivariate_gaussian`, `lkj_cholesky`, `kde`,
+    /// `categorical`, `multinomial`, `ordered_logistic` and `bernoulli`), or a truncated or censored one; anything
+    /// else is an error, as is a value or parameter of the wrong type. The value has the kind's value type (f64, or
+    /// i64 for a count distribution). The node is differentiable, to second order, in its f64 parents, by the same
+    /// rules as the distribution.
+    ///
+    /// ```
+    /// use keanu_graph::GraphBuilder;
+    /// use keanu_graph::op::DistributionKind;
+    /// use keanu_tensor::IntTensor;
+    ///
+    /// let b = GraphBuilder::new();
+    /// let counts = b.int_constant(IntTensor::vector(vec![0, 2]));
+    /// let rate = b.scalar(1.5);
+    /// let log_p = b.log_density(DistributionKind::Poisson, counts, &[rate.id()]);
+    /// let log_p = log_p.id();
+    /// let (graph, mut state) = b.build()?;
+    /// state.eval(&graph, &[log_p], &mut keanu_distributions::KeanuRng::seed_from_u64(0))?;
+    /// let values = state.f64(log_p).unwrap().as_slice().to_vec();
+    /// assert!((values[0] + 1.5).abs() < 1e-12);
+    /// assert!((values[1] - (2.0 * 1.5f64.ln() - 1.5 - 2f64.ln())).abs() < 1e-12);
+    /// # Ok::<(), keanu_graph::GraphError>(())
+    /// ```
+    pub fn log_density<'b, V: Var<'b>>(
+        &'b self,
+        kind: DistributionKind,
+        value: V,
+        parameters: &[NodeId],
+    ) -> DoubleVar<'b> {
+        let mut parents = vec![self.own(value).id()];
+        parents.extend_from_slice(parameters);
+        DoubleVar::new(self, self.add(Op::LogDensity(kind), &parents, DType::F64))
     }
 
     /// The option chosen by a scalar integer selector. Every option must have the same type and shape.

@@ -183,6 +183,11 @@ fn save_op(graph: &Graph, id: NodeId) -> Result<P> {
             output: index(body.output()),
         }),
         Op::Factor => P::Factor(empty()),
+        Op::LogDensity(kind) => P::LogDensity(proto::LogDensity {
+            kind: Some(
+                distribution_type(kind).ok_or_else(|| unsupported("a custom distribution"))?,
+            ),
+        }),
         Op::Lambda(_) => return Err(unsupported("a lambda")),
         other => return Err(unsupported(other.name())),
     })

@@ -301,6 +301,35 @@ fn factors() -> keanu::Result<()> {
     Ok(())
 }
 
+#[test]
+fn log_densities() -> keanu::Result<()> {
+    // ANCHOR: log_density
+    use keanu::graph::op::DistributionKind;
+
+    let b = GraphBuilder::new();
+    let rate = b.half_gaussian(5.0);
+    // the counts a detector reports, of which only half are real: the real counts are the observations doubled,
+    // which is a deterministic node, so its likelihood is a log density in a factor
+    let reported = b.int_constant(IntTensor::vector(vec![3, 5, 4]));
+    let real = reported * 2;
+    let log_p = b.log_density(DistributionKind::Poisson, real, &[rate.id()]);
+    b.factor(log_p);
+    let rate = rate.id();
+    let (graph, mut state) = b.build()?;
+    let model = Model::new(graph, &state)?;
+    let samples = Nuts::default().sample(
+        &model,
+        &mut state,
+        &[rate],
+        500,
+        &mut KeanuRng::seed_from_u64(3),
+    )?;
+    let mean = samples.f64(rate).unwrap().mean()?.to_scalar().unwrap();
+    assert!((mean - 8.0).abs() < 1.5, "posterior mean rate {mean}");
+    // ANCHOR_END: log_density
+    Ok(())
+}
+
 /// The thermometer example: a room temperature read by two noisy thermometers.
 fn thermometers() -> keanu::Result<(Model, State, NodeId)> {
     // ANCHOR: thermometers

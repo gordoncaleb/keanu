@@ -328,6 +328,7 @@ fn infer(op: &Op, parents: &[(DType, &[usize])]) -> Result<(DType, Shape)> {
             Ok((DType::Bool, Shape::new()))
         }
         Op::Predicate(_) => Ok((DType::Bool, expect(parents[0], DType::F64)?.into())),
+        Op::LogDensity(kind) => log_density::output_type(kind, parents),
         Op::Factor => {
             expect(parents[0], DType::F64)?;
             Ok((DType::F64, Shape::new()))
@@ -732,6 +733,11 @@ fn check_arity(op: &Op, count: usize) -> Result<()> {
             let n = body.parent_count();
             (n, Some(n))
         }
+        // a kind without a fixed parameter list isn't element-wise, which inference reports
+        Op::LogDensity(kind) => match log_density::arity(kind) {
+            Some(n) => (n, Some(n)),
+            None => (1, None),
+        },
         // a lambda takes any parents; proxies and distributions are rejected by the caller
         Op::Lambda(_) | Op::Proxy | Op::Distribution(_) => (0, None),
     };

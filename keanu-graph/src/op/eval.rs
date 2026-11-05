@@ -426,6 +426,7 @@ pub(crate) fn eval(op: &Op, inputs: &[&Value]) -> Result<Value> {
             }
             inputs[0].clone()
         }
+        Op::LogDensity(kind) => log_density::eval(kind, inputs)?,
         Op::Factor => {
             expect_parents(op, inputs, 1)?;
             Value::F64(DoubleTensor::scalar(inputs[0].f64()?.sum()))

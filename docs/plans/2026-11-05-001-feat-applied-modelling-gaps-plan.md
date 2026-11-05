@@ -246,6 +246,7 @@ Phases run in letter order. U18's occupancy example needs U10 and U17. U23 needs
 - **Files:** `keanu-graph/src/op/mod.rs`, `keanu-graph/src/op/eval.rs`, `keanu-graph/src/autodiff/{mod,second_order}.rs`, `keanu-graph/src/vars.rs` or `builder.rs` (`log_density(kind, value, params)`), `keanu-io`, `keanu-graph/tests/log_density.rs`.
 - **Approach:** per KTD1; reject non-element-wise kinds at build. Value may be f64 or i64 (discrete kinds); gradients only flow to f64 parents.
 - **Test scenarios:** summed `LogDensity` equals the distribution node's log prob for Gaussian, Gamma, Poisson, NegativeBinomial, Truncated(Gaussian); VJP/JVP/HVP match finite differences; a multivariate kind is rejected; save round trip.
+- **Implementation note:** the builder method is `GraphBuilder::log_density(kind, value, parameters)` with `value` any handle and `parameters` node ids (as `mixture` takes them); the rules live in `keanu-graph/src/op/log_density.rs`. "Element-wise" is `DistributionKind::is_elementwise`, so the Bernoulli (whose value is bool) and mixtures are rejected along with the multivariate kinds.
 
 ### U3. Pointwise log-likelihood
 

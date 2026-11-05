@@ -4,6 +4,7 @@ mod distribution;
 mod distribution_hvp;
 pub(crate) mod eval;
 mod hmm;
+pub(crate) mod log_density;
 mod mixture;
 mod nested;
 mod scan;
@@ -470,6 +471,12 @@ pub enum Op {
     /// Parents: `expr`, f64 -> the scalar sum of `expr`, which the joint log probability includes as a term (like
     /// PyMC's `Potential` or Stan's `target +=`). See [`GraphBuilder::factor`](crate::GraphBuilder::factor).
     Factor,
+    /// Parents: `value`, then the distribution's parameters -> f64: the log density of each element of `value`
+    /// under the distribution, broadcast with the parameters. Defined for the element-wise kinds only (a
+    /// distribution of one value per element with an element-wise density, or a truncated or censored one); the
+    /// value has the kind's value type (f64 or i64). Differentiable, to second order, in its f64 parents. See
+    /// [`GraphBuilder::log_density`](crate::GraphBuilder::log_density).
+    LogDensity(DistributionKind),
 }
 
 /// Generates [`Op::name`] and [`Op::NAMES`] from one list of `pattern => "name"` arms, so that the list of names
@@ -548,6 +555,7 @@ op_names! {
     Op::Distribution(_) => "distribution",
     Op::Scan(_) => "scan",
     Op::Factor => "factor",
+    Op::LogDensity(_) => "log_density",
 }
 
 impl Op {

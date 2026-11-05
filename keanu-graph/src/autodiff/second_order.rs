@@ -540,6 +540,15 @@ fn vjp_tangent(
             vec![Some(lower_from_symmetric(&s_bar_dot)?)]
         }
         Op::Scan(body) => body.vjp_tangent(parents, y, g, t, yt, b)?,
+        Op::LogDensity(kind) => crate::op::log_density::vjp_tangent(
+            kind, parents, g, t, b, &out_shape,
+        )
+        .map_err(|e| match e {
+            GraphError::NoSecondOrderRule(m) => {
+                GraphError::NoSecondOrderRule(format!("{m} of node {}", graph.describe(id)))
+            }
+            other => other,
+        })?,
         Op::Lambda(lambda) => {
             return Err(GraphError::NoSecondOrderRule(format!(
                 "the lambda {:?} (node {})",

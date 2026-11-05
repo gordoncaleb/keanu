@@ -92,6 +92,7 @@ message Node {
     Empty eigh_vectors = 63;
     // A term of the joint log probability: the scalar sum of its one parent.
     Empty factor = 64;
+    LogDensity log_density = 65;
     Scan scan = 100;
   }
 }
@@ -420,6 +421,12 @@ message Distribution {
   // `DISTRIBUTION_KIND_MIXTURE` and `DISTRIBUTION_KIND_HIDDEN_MARKOV_MODEL` only, for which it is required). The node's parents are the base's parameters
   // followed by the nested kind's own.
   DistributionType base = 4;
+}
+
+// The element-wise log density of the node's first parent under a distribution whose parameters are its other
+// parents.
+message LogDensity {
+  DistributionType kind = 1;
 }
 
 // A distribution without a node: the base of a nested distribution kind, itself possibly nested (a mixture of

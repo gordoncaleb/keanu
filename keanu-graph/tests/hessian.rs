@@ -495,6 +495,20 @@ fn general_cases() -> Vec<Case> {
             Expect::Matches,
         ),
         (
+            "a log density of a continuous and a count kind",
+            |b| {
+                let x = latent_vector(b, &[0.5, -0.5, 2.0]);
+                let m = latent(b, DoubleTensor::scalar(0.3));
+                let sigma = (m * 0.5).exp();
+                let gaussian = b.log_density(DistributionKind::Gaussian, x, &[m.id(), sigma.id()]);
+                let counts = b.int_constant(IntTensor::vector(vec![0, 2, 5]));
+                let rates = (x * m).exp();
+                let poisson = b.log_density(DistributionKind::Poisson, counts, &[rates.id()]);
+                observe(b, gaussian + poisson);
+            },
+            Expect::Matches,
+        ),
+        (
             "a lambda without a second-order rule",
             |b| {
                 let x = latent_vector(b, &[0.5, -0.5, 2.0]);

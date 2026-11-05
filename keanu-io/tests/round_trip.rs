@@ -378,6 +378,16 @@ fn op_cases() -> Vec<(String, Graph, State)> {
         op_case(Op::Assert(Some("must hold".into())), &[boolean(true)]),
         op_case(Op::Assert(None), &[boolean(true)]),
         op_case(Op::Factor, &[matrix()]),
+        op_case(
+            Op::LogDensity(DistributionKind::Gaussian),
+            &[matrix(), scalar(0.5), scalar(2.0)],
+        ),
+        op_case(
+            Op::LogDensity(DistributionKind::Truncated(Arc::new(
+                DistributionKind::Poisson,
+            ))),
+            &[int(3), scalar(2.0), scalar(1.0), scalar(f64::INFINITY)],
+        ),
     ]);
     for (from, to) in [
         (scalar(0.5), DType::I64),
@@ -698,11 +708,47 @@ fn every_operation_round_trips() {
         "assert",
         "scan",
         "factor",
+        "log_density",
     ];
     assert_eq!(names, every_op.into_iter().collect::<BTreeSet<_>>());
     for (name, graph, state) in &cases {
         assert_round_trips(name, graph, state);
     }
+}
+
+/// A model with a factor of log densities keeps its log probability through saving and loading.
+#[test]
+fn factors_and_log_densities_keep_their_log_probability() {
+    let b = GraphBuilder::new();
+    let mu = b.gaussian(0.0, 1.0);
+    b.set_value(mu, DoubleTensor::scalar(0.3));
+    let data = b.constant(DoubleTensor::vector(vec![0.5, -0.2, 1.4]));
+    let log_p = b.log_density(
+        DistributionKind::Gaussian,
+        data,
+        &[mu.id(), b.scalar(0.8).id()],
+    );
+    b.factor(log_p).label("likelihood");
+    let (graph, mut state) = b.build().unwrap();
+    let all: Vec<NodeId> = graph.ids().collect();
+    state
+        .lazy_eval(&graph, &all, &mut KeanuRng::seed_from_u64(1))
+        .unwrap();
+    let expected = Model::new(graph.clone(), &state)
+        .unwrap()
+        .log_prob(&state)
+        .unwrap();
+    assert!(expected.is_finite());
+    let bytes = save_protobuf(&graph, &state, &Metadata::new()).unwrap();
+    let mut loaded = load_protobuf(&bytes).unwrap();
+    let all: Vec<NodeId> = loaded.graph.ids().collect();
+    loaded
+        .state
+        .lazy_eval(&loaded.graph, &all, &mut KeanuRng::seed_from_u64(1))
+        .unwrap();
+    let model = Model::new(loaded.graph, &loaded.state).unwrap();
+    assert_eq!(model.factors().len(), 1);
+    assert_eq!(model.log_prob(&loaded.state).unwrap(), expected);
 }
 
 #[test]
