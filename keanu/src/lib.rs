@@ -76,6 +76,7 @@ pub use error::{Error, Result};
 pub mod prelude {
     pub use crate::algorithms::forward::ForwardSampler;
     pub use crate::algorithms::laplace::{Laplace, LaplaceResult};
+    pub use crate::algorithms::loglik::PointwiseLogLik;
     pub use crate::algorithms::mcmc::annealing::{AnnealingSchedule, SimulatedAnnealing};
     pub use crate::algorithms::mcmc::metropolis::{
         MetropolisHastings, RejectionStrategy, VariableSelector,

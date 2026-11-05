@@ -147,6 +147,23 @@ samples need to hold only the latents the targets depend on; for a prior draw, a
 on must not itself depend on a latent (make it a target too). `with_draws(n)` uses `n` evenly spaced posterior
 samples instead of all of them.
 
+## Pointwise log likelihood
+
+Model comparison by leave-one-out cross-validation or WAIC, and tools such as ArviZ, need the log likelihood of
+each observation at each posterior draw. `PointwiseLogLik::from_chains` (or `from_samples` for one chain, or for the
+draws of the Laplace approximation or ADVI) computes it after sampling, by setting each draw's latents in a copy
+of the state and evaluating the observed nodes, so it works for every sampler. The samples must record every latent
+the observations depend on.
+
+```rust,ignore
+{{#include ../../keanu/tests/book.rs:pointwise_log_likelihood}}
+```
+
+There is one point per element of an observed node whose distribution has one value per element (named `y[3]`,
+or `y[1, 2]` for a matrix), as ArviZ labels them, and one per node for the others (a multivariate Gaussian, a hidden
+Markov model). Factors are not observations, so they have no points. With the `parallel` feature the draws are
+evaluated on rayon's thread pool.
+
 ## Simulated annealing
 
 `SimulatedAnnealing` uses Metropolis–Hastings steps at a decreasing temperature to find the most probable state. It

@@ -220,6 +220,50 @@ pub(crate) fn log_prob(
     Ok((log_prob, Some((dx, gradients))))
 }
 
+/// The log probability of each element of the value (the mixture's batch shape): logsumexp_c(log w_c + log p_c(x)),
+/// as [`log_prob`] sums them; −∞ everywhere for weights off the simplex.
+pub(crate) fn log_prob_terms(
+    component: &DistributionKind,
+    value: &Value,
+    parameters: &[&Value],
+) -> Result<DoubleTensor> {
+    let p = Parameters::unchecked(parameters)?;
+    let x = with_component_axis(value)?;
+    let (densities, _) = component.univariate(Univariate::Density, &x, p.components, false)?;
+    let mut full = broadcast_shape(densities.shape(), p.weights.shape())?;
+    full = broadcast_shape(&full, x.shape())?;
+    let count = p.count;
+    if full.last() != Some(&count) {
+        return invalid_parameter(format!(
+            "the component parameters don't broadcast to the {count} components of the weights"
+        ));
+    }
+    let batch = &full[..full.len() - 1];
+    if p.invalid_weights().is_some() {
+        return Ok(DoubleTensor::full(batch, f64::NEG_INFINITY));
+    }
+    let densities = broadcast(&densities, &full)?;
+    let weights = broadcast(p.weights, &full)?;
+    let terms = densities
+        .chunks(count)
+        .zip(weights.chunks(count))
+        .map(|(densities, weights)| {
+            let terms: Vec<f64> = densities
+                .iter()
+                .zip(weights)
+                .map(|(d, w)| w.ln() + d)
+                .collect();
+            let max = terms.iter().copied().fold(f64::NEG_INFINITY, f64::max);
+            if max == f64::NEG_INFINITY || max.is_nan() {
+                max
+            } else {
+                max + terms.iter().map(|t| (t - max).exp()).sum::<f64>().ln()
+            }
+        })
+        .collect();
+    Ok(DoubleTensor::new(batch, terms)?)
+}
+
 /// The support of a mixture: the component kind's support with each bound reduced over the component axis (the
 /// smallest lower bound, the largest upper bound), so that it holds every component's support. The weights don't
 /// bound the support, so they aren't checked here (the log probability and sampling check them): weights that are

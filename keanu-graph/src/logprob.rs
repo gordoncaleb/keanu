@@ -68,6 +68,35 @@ pub fn node_log_prob_at(graph: &Graph, state: &State, id: NodeId, v: &Value) -> 
     kind.log_prob(v, &parameters(graph, state, id)?)
 }
 
+/// The terms whose sum is a probabilistic node's log probability at its current value ([`node_log_prob`]),
+/// unreduced: the log probability of each element of the node for a distribution of one value per element
+/// (shaped like the node; this includes truncated, censored and mixture distributions, the Bernoulli, the
+/// categorical and the ordered logistic), and a single scalar for the others, whose log probability isn't a sum
+/// over the elements (the multivariate distributions, even for a batch of events, a hidden Markov model, the linear
+/// Gaussian state space model, a custom distribution).
+///
+/// Their sum is [`node_log_prob`] up to rounding. These are the "points" of a pointwise log likelihood.
+///
+/// ```
+/// use keanu_graph::{GraphBuilder, node_log_prob, node_log_prob_terms};
+/// use keanu_tensor::DoubleTensor;
+///
+/// let b = GraphBuilder::new();
+/// let y = b.gaussian_with_shape(&[3], 0.0, 1.0);
+/// b.observe(y, DoubleTensor::vector(vec![0.0, 1.0, -2.0]));
+/// let y = y.id();
+/// let (graph, state) = b.build()?;
+/// let terms = node_log_prob_terms(&graph, &state, y)?;
+/// assert_eq!(terms.shape(), &[3]);
+/// assert!((terms.sum() - node_log_prob(&graph, &state, y)?).abs() < 1e-12);
+/// # Ok::<(), keanu_graph::GraphError>(())
+/// ```
+pub fn node_log_prob_terms(graph: &Graph, state: &State, id: NodeId) -> Result<DoubleTensor> {
+    graph.check_ids([&id])?;
+    let kind = kind(graph, id)?;
+    kind.log_prob_terms(value(state, id)?, &parameters(graph, state, id)?)
+}
+
 /// The support of a probabilistic node's distribution given its parameters' current values (see [`Support`]).
 /// An error if the node is not probabilistic or a parameter has no value.
 pub fn node_support(graph: &Graph, state: &State, id: NodeId) -> Result<Support> {

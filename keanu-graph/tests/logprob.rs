@@ -461,3 +461,50 @@ fn ordered_logistic_with_latent_eta_and_cutpoints_has_finite_difference_gradient
         }
     }
 }
+
+#[test]
+fn log_prob_terms_are_per_element_or_per_node_and_sum_to_the_log_prob() {
+    use keanu_graph::node_log_prob_terms;
+    use keanu_graph::op::DistributionKind;
+
+    let b = GraphBuilder::new();
+    let p = [b.scalar(0.2), b.scalar(0.5), b.scalar(0.3)];
+    let categories = b.categorical(&[4], &p);
+    let ordered = b.ordered_logistic(
+        DoubleTensor::vector(vec![0.0, 0.5, -1.0]),
+        DoubleTensor::vector(vec![-0.5, 0.5]),
+    );
+    let censored: keanu_graph::IntVar =
+        b.censored(DistributionKind::Poisson, &[b.scalar(3.0).id()], 1.0, 5.0);
+    let censored = censored.id();
+    let simplex = b.dirichlet(DoubleTensor::vector(vec![1.0, 2.0, 3.0]));
+    let series: DoubleVar = b.hidden_markov_model(
+        4,
+        DistributionKind::Gaussian,
+        &[
+            b.constant(DoubleTensor::vector(vec![-1.0, 1.0])).id(),
+            b.scalar(1.0).id(),
+        ],
+        DoubleTensor::vector(vec![0.5, 0.5]),
+        DoubleTensor::new(&[2, 2], vec![0.9, 0.1, 0.2, 0.8]).unwrap(),
+    );
+    let nodes = [
+        (categories.id(), vec![4]),
+        (ordered.id(), vec![3]),
+        (censored, vec![]),
+        (simplex.id(), vec![]),
+        (series.id(), vec![]),
+    ];
+    let (graph, mut state) = b.build().unwrap();
+    evaluate(&graph, &mut state, 5);
+    for (id, shape) in nodes {
+        let terms = node_log_prob_terms(&graph, &state, id).unwrap();
+        assert_eq!(terms.shape(), shape.as_slice(), "{}", graph[id].op().name());
+        assert_close_rel(
+            terms.sum(),
+            node_log_prob(&graph, &state, id).unwrap(),
+            1e-12,
+            "the sum of the terms",
+        );
+    }
+}

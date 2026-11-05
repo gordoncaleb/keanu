@@ -212,6 +212,28 @@ impl Nested {
         }
     }
 
+    /// The terms whose sum is [`Self::log_prob`]'s log probability: one per element of the value for a truncated,
+    /// censored or mixture kind, and a scalar for a hidden Markov model.
+    pub(crate) fn log_prob_terms(
+        self,
+        inner: &DistributionKind,
+        value: &Value,
+        parameters: &[&Value],
+    ) -> Result<DoubleTensor> {
+        match self {
+            Nested::Truncated => {
+                Ok(wrappers::elementwise(Wrapper::Truncated, inner, value, parameters, false)?.0)
+            }
+            Nested::Censored => {
+                Ok(wrappers::elementwise(Wrapper::Censored, inner, value, parameters, false)?.0)
+            }
+            Nested::Mixture => mixture::log_prob_terms(inner, value, parameters),
+            Nested::HiddenMarkovModel => Ok(DoubleTensor::scalar(
+                hmm::log_prob(inner, value, parameters, false)?.0,
+            )),
+        }
+    }
+
     /// The log density of each element of `value` and, with `gradient`, its element-wise gradient parts, for an
     /// [element-wise](Self::is_elementwise) wrapper; None for the others.
     pub(crate) fn elementwise(

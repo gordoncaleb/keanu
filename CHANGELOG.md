@@ -140,6 +140,13 @@ Work from `docs/plans/2026-11-05-001-feat-applied-modelling-gaps-plan.md`.
   the kind's type (f64, or i64 for counts); other kinds, types and parameter counts are rejected when the node is
   built. Its first and second derivatives reuse the distributions' element-wise rules. The save schema gained
   `log_density`, holding a `DistributionType`, and the DOT export names the kind.
+- keanu-algorithms: **pointwise log likelihood** (`loglik::PointwiseLogLik`, `LogLikPoint`, also in the `keanu`
+  prelude): the log likelihood of each observation point at each draw of each chain, `[chain][draw][point]`, from
+  `ChainSamples` (`from_chains`) or one `NetworkSamples` (`from_samples`), computed after sampling so it works for
+  every algorithm's draws. Points are the elements of an observed node whose distribution has one value per element
+  (named as ArviZ labels them, `y[3]` or `y[1, 2]`) and whole nodes otherwise; factors have none. The samples must
+  record every latent the observations depend on. With the `parallel` feature the draws are evaluated on rayon's
+  thread pool. keanu-graph gained `node_log_prob_terms`, the unreduced terms of a node's log probability.
 
 ### Code review fixes
 

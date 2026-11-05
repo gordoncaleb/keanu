@@ -255,6 +255,7 @@ Phases run in letter order. U18's occupancy example needs U10 and U17. U23 needs
 - **Files:** `keanu-algorithms/src/loglik.rs`, `keanu-algorithms/src/lib.rs`, `keanu-algorithms/tests/loglik.rs`.
 - **Approach:** per KTD2. `PointwiseLogLik { names: Vec<String>, values: [chains][draws][n] }` from `ChainSamples` (or single `NetworkSamples`) and the model; requires samples recording every latent the observed nodes depend on (error naming missing nodes otherwise). Factor nodes are excluded with a note in the docs. Parallel over draws with the `parallel` feature.
 - **Test scenarios:** sum over points equals `Model::log_likelihood` at each draw; element labels `y[3]`; MVN observed node gives one column; missing latent errors.
+- **Implementation note:** the API is `PointwiseLogLik::from_chains(model, state, &ChainSamples)` and `from_samples(model, state, &NetworkSamples)`, with `points()` (`LogLikPoint { node, index, name }`), `names()`, `values()`, `chain(c)`, `point(i)` (all draws, chain after chain) and `totals()`. "Element-wise" here is wider than `is_elementwise`: the points are the unreduced terms of each node's log probability (the new `keanu_graph::node_log_prob_terms`), so the Bernoulli, categorical, ordered logistic and mixtures have one point per element too. Multivariate kinds reduce over their whole value, so a batch of multivariate Gaussian vectors is one point. At least one draw is required, since the points' shapes are read from the first draw.
 
 ### Phase B: model comparison and export
 

@@ -599,6 +599,34 @@ fn nuts_divergences_and_energy() -> keanu::Result<()> {
 }
 
 #[test]
+fn pointwise_log_likelihood() -> keanu::Result<()> {
+    // ANCHOR: pointwise_log_likelihood
+    use keanu::algorithms::mcmc::chains::sample_chains;
+
+    let b = GraphBuilder::new();
+    let mu = b.gaussian(0.0, 5.0);
+    let sigma = b.half_gaussian(2.0);
+    let y = b.gaussian_with_shape(&[4], mu, sigma).label("y");
+    b.observe(y, DoubleTensor::vector(vec![1.2, 0.4, 2.2, 1.0]));
+    let (mu, sigma) = (mu.id(), sigma.id());
+    let (graph, state) = b.build()?;
+    let model = Model::new(graph, &state)?;
+    let nuts = Nuts::default().with_adapt_count(200);
+    let chains = sample_chains(4, 1, &state, |state, rng| {
+        nuts.sample(&model, state, &[mu, sigma], 250, rng)
+    })?;
+
+    // log p(y[i] | mu, sigma) for each observation at each draw of each chain
+    let loglik = PointwiseLogLik::from_chains(&model, &state, &chains)?;
+    assert_eq!(loglik.names(), &["y[0]", "y[1]", "y[2]", "y[3]"]);
+    assert_eq!((loglik.num_chains(), loglik.draws()), (4, 250));
+    let first: f64 = loglik.chain(0).unwrap()[0].iter().sum(); // the first draw's log likelihood
+    // ANCHOR_END: pointwise_log_likelihood
+    assert!(first.is_finite());
+    Ok(())
+}
+
+#[test]
 fn predictive_sampling() -> keanu::Result<()> {
     // ANCHOR: predictive
     // the rate of a Poisson process, with a Gamma prior, and three observed counts

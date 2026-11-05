@@ -526,6 +526,31 @@ macro_rules! distributions {
                 })
             }
 
+            /// The terms whose sum is [`Self::log_prob`], unreduced: the log probability of each element of the
+            /// value (broadcast with the parameters) for a distribution of one value per element, and a scalar for
+            /// the others (the multivariate kinds, a hidden Markov model, the linear Gaussian state space model, a
+            /// custom distribution).
+            pub(crate) fn log_prob_terms(&self, value: &Value, parameters: &[&Value]) -> Result<DoubleTensor> {
+                Ok(match self {
+                    $(DistributionKind::$kind => {
+                        let &[$($param),+] = parameters else { return Err(self.wrong_parameters()) };
+                        $(let $param = tensor!($ptype, $param);)+
+                        $build.log_prob(tensor!($vtype, value))?.terms()
+                    })+
+                    DistributionKind::Kde(kde) => kde.log_prob(value.f64()?),
+                    DistributionKind::Categorical => {
+                        d::Categorical::new(f64_tensors(parameters)?)?.log_prob(value.i64()?)?
+                    }
+                    DistributionKind::Custom(c) => {
+                        DoubleTensor::scalar(c.log_prob(value, parameters).map_err(GraphError::Custom)?)
+                    }
+                    nested_kinds!() => {
+                        let (nested, inner) = self.nested_parts();
+                        nested.log_prob_terms(inner, value, parameters)?
+                    }
+                })
+            }
+
             /// The gradient of [`Self::log_prob`] with respect to `value` and each parameter.
             pub(crate) fn log_prob_gradient(
                 &self,
@@ -865,17 +890,25 @@ impl DistributionKind {
 /// sum already).
 trait Total {
     fn total(self) -> f64;
+    /// The terms of the sum, unreduced: a scalar for a sum already taken.
+    fn terms(self) -> DoubleTensor;
 }
 
 impl Total for DoubleTensor {
     fn total(self) -> f64 {
         self.sum()
     }
+    fn terms(self) -> DoubleTensor {
+        self
+    }
 }
 
 impl Total for f64 {
     fn total(self) -> f64 {
         self
+    }
+    fn terms(self) -> DoubleTensor {
+        DoubleTensor::scalar(self)
     }
 }
 

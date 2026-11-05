@@ -36,6 +36,7 @@ pub mod diagnostics;
 mod error;
 pub mod forward;
 pub mod laplace;
+pub mod loglik;
 pub mod mcmc;
 pub mod optimizer;
 pub mod particle_filter;
@@ -52,6 +53,7 @@ pub use forward::ForwardSampler;
 /// [`optimizer`].
 pub use keanu_graph::Space;
 pub use laplace::{Laplace, LaplaceResult};
+pub use loglik::{LogLikPoint, PointwiseLogLik};
 pub use predictive::PredictiveSampler;
 pub use samples::{ChainSamples, ChainSummary, NetworkSample, NetworkSamples, Samples, SummaryRow};
 pub use vi::{Advi, AdviResult, VariationalFamily};
