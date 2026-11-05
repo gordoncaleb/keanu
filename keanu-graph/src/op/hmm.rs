@@ -196,10 +196,12 @@ pub(crate) fn log_prob(
 }
 
 /// The support of a hidden Markov model: the emission kind's support with each bound reduced over the state axis
-/// (the smallest lower bound, the largest upper bound), so that it holds every state's support.
+/// (the smallest lower bound, the largest upper bound), so that it holds every state's support. The chain's
+/// probabilities don't bound the support, so they aren't checked here (the log probability and sampling check
+/// them): probabilities that are latent can be perturbed off the simplex without the support appearing to move.
 pub(crate) fn support(emission: &DistributionKind, parameters: &[&Value]) -> Result<Support> {
-    let p = Parameters::new(parameters)?;
-    let support = emission.support(p.emission)?;
+    let (emission_parameters, _) = wrappers::split(parameters, OWN_PARAMETERS)?;
+    let support = emission.support(emission_parameters)?;
     let Some((lower, upper)) = wrappers::support_bounds(support.clone()) else {
         return Ok(support);
     };

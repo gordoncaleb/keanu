@@ -1143,6 +1143,45 @@ fn nuts_reports_a_support_that_depends_on_a_latent() {
         .unwrap();
 }
 
+/// Latent draws of a two-component Gaussian mixture whose weights are a latent Dirichlet, each observed with noise:
+/// the weights don't move the mixture's support, so NUTS runs in unconstrained space and every draw of the weights
+/// is on the simplex.
+#[test]
+fn nuts_samples_latent_mixture_weights() {
+    use keanu_graph::DoubleVar;
+    use keanu_graph::op::DistributionKind;
+    let b = GraphBuilder::new();
+    let w = b.dirichlet(DoubleTensor::vector(vec![1.0, 1.0]));
+    let mu = b.constant(DoubleTensor::vector(vec![-2.0, 2.0]));
+    let sigma = b.scalar(1.0);
+    let data = [1.5, 2.5, -1.8, 2.2];
+    let x: DoubleVar = b.mixture_with_shape(
+        &[data.len()],
+        DistributionKind::Gaussian,
+        &[mu.id(), sigma.id()],
+        w,
+    );
+    let y = b.gaussian(x, 0.3);
+    b.observe(y, DoubleTensor::vector(data.to_vec()));
+    b.set_value(w, DoubleTensor::vector(vec![0.5, 0.5]));
+    b.set_value(x, DoubleTensor::vector(data.to_vec()));
+    let w = w.id();
+    let (graph, mut state) = b.build().unwrap();
+    let model = Model::new(graph, &state).unwrap();
+    let samples = Nuts::default()
+        .with_adapt_count(100)
+        .sample(&model, &mut state, &[w], 400, &mut rng(31))
+        .unwrap();
+    let chain = samples.f64(w).unwrap();
+    for draw in chain.as_slice() {
+        assert!(draw.as_slice().iter().all(|&x| x > 0.0));
+        assert!((draw.sum() - 1.0).abs() < 1e-12);
+    }
+    // three of the four observations favour the second component
+    let second = chain.element(&[1]).unwrap();
+    assert!(mean(&second) > 0.5, "{}", mean(&second));
+}
+
 const SCHOOL_EFFECTS: [f64; 8] = [28.0, 8.0, -3.0, 7.0, -1.0, 1.0, 18.0, 12.0];
 const SCHOOL_SIGMAS: [f64; 8] = [15.0, 10.0, 16.0, 11.0, 9.0, 11.0, 10.0, 18.0];
 

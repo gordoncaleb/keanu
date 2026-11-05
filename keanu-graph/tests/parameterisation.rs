@@ -408,3 +408,43 @@ fn the_likelihood_gradient_pulls_back_through_the_bijectors() {
         assert_close(gradient[i], (f_up - f_down) / (2.0 * h), 1e-6, "likelihood");
     }
 }
+
+#[test]
+fn latent_mixture_weights_do_not_move_the_support() {
+    // a latent two-component Gaussian mixture whose weights are a latent Dirichlet: perturbing the weights takes
+    // them off the simplex, which must not count as moving the (weight-independent) support
+    let (model, state) = model_of(|b| {
+        let w = b.dirichlet(v(&[1.0, 1.0])).label("w");
+        let (mu, sigma) = (b.constant(v(&[-2.0, 2.0])), b.scalar(1.0));
+        let x: keanu_graph::DoubleVar = b.mixture(
+            keanu_graph::op::DistributionKind::Gaussian,
+            &[mu.id(), sigma.id()],
+            w,
+        );
+        let y = b.gaussian(x, 0.5);
+        b.observe(y, DoubleTensor::scalar(1.5));
+    });
+    assert_eq!(
+        Parameterisation::new(&model, &state).unwrap().dimension(),
+        2
+    );
+    // a hidden Markov model's chain probabilities don't move its support either
+    let (model, state) = model_of(|b| {
+        let initial = b.dirichlet(v(&[1.0, 1.0]));
+        let transition = b.constant(DoubleTensor::new(&[2, 2], vec![0.9, 0.1, 0.2, 0.8]).unwrap());
+        let (mu, sigma) = (b.constant(v(&[-1.0, 1.0])), b.scalar(1.0));
+        let x: keanu_graph::DoubleVar = b.hidden_markov_model(
+            3,
+            keanu_graph::op::DistributionKind::Gaussian,
+            &[mu.id(), sigma.id()],
+            initial,
+            transition,
+        );
+        let y = b.gaussian(x, 0.5);
+        b.observe(y, v(&[0.3, -0.2, 1.1]));
+    });
+    assert_eq!(
+        Parameterisation::new(&model, &state).unwrap().dimension(),
+        4
+    );
+}

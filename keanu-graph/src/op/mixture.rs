@@ -216,10 +216,12 @@ pub(crate) fn log_prob(
 }
 
 /// The support of a mixture: the component kind's support with each bound reduced over the component axis (the
-/// smallest lower bound, the largest upper bound), so that it holds every component's support.
+/// smallest lower bound, the largest upper bound), so that it holds every component's support. The weights don't
+/// bound the support, so they aren't checked here (the log probability and sampling check them): weights that are
+/// latent can be perturbed off the simplex without the support appearing to move.
 pub(crate) fn support(component: &DistributionKind, parameters: &[&Value]) -> Result<Support> {
-    let p = Parameters::new(parameters)?;
-    let support = component.support(p.components)?;
+    let (components, _) = wrappers::split(parameters, OWN_PARAMETERS)?;
+    let support = component.support(components)?;
     let Some((lower, upper)) = wrappers::support_bounds(support.clone()) else {
         return Ok(support);
     };
