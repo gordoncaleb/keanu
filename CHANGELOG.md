@@ -30,7 +30,7 @@ some of the "Same model semantics" guarantees above no longer hold where noted.
   log-ratio as in Stan 2.37, correlation Cholesky, circular), and `Parameterisation` / `Space`, which map a flat
   unconstrained vector to a state and evaluate the log probability with or without the log-Jacobian.
 - keanu-algorithms: **NUTS and the gradient optimizers now run in unconstrained space by default**
-  (`Nuts::with_space`, `GradientOptimizer::space`; `Space::Constrained` restores the old behaviour exactly). NUTS
+  (`Nuts::with_space`, `GradientOptimizer::with_space`; `Space::Constrained` restores the old behaviour exactly). NUTS
   includes the log-Jacobian; MAP and maximum likelihood don't, so interior optima are unchanged. A mode on a support
   boundary is reported in the new `OptimizedResult::boundary` instead of running to the iteration cap.
   Metropolis–Hastings stays in constrained space; BOBYQA derives default bounds from scalar supports.
@@ -77,6 +77,21 @@ some of the "Same model semantics" guarantees above no longer hold where noted.
 - keanu-algorithms: mean-field and full-rank `Advi` with Stan's defaults; new `AlgorithmError::NonFiniteElbo`.
 - keanu-algorithms: the optimizers now compute deterministic nodes that depend only on constants before starting
   (they failed with `MissingValue` before).
+- Code review fixes for the above:
+  - keanu-io: malformed CPT nodes and shapes or scan lengths too large to allocate are load errors instead of panics;
+    every node's element count is capped at `isize::MAX / 8`.
+  - keanu-algorithms: constant (frozen) chains get NaN R-hat, ESS and MCSE, so they are never reported converged;
+    draws count as constant only when exactly equal.
+  - keanu-graph: latent mixture weights and HMM chain probabilities no longer read as a moving support; the bounded
+    bijectors accept per-element mixed infinite bounds; far-tail truncated draws are inverted in log space instead of
+    returning the bound.
+  - keanu-tensor, keanu-distributions: incomplete gamma uses Temme's expansion for large shapes and returns NaN on
+    non-convergence; new log-space `log_gamma_p`, `log_gamma_q`, `log_inc_beta` (and shape derivatives) keep far-tail
+    log CDFs finite; public `special::pentagamma` and `special::log_sum_exp` (NaN-propagating, shared).
+  - keanu-algorithms: the line search's minimum step is relative to its initial step (L-BFGS no longer stalls on huge
+    gradients); a boundary is reported only when confirmed, so interior optima far from 1 converge normally; the
+    Laplace approximation rejects circular latents. `Laplace::lbfgs` is now `with_lbfgs`.
+  - keanu-graph: `DistributionKind::nested()` and `Nested` describe wrapped kinds; `Graph::describe` names a node.
 - keanu: new examples `eight_schools`, `radon` (data from the PyMC examples repository, MIT), `gaussian_mixture` and
   `gp_regression`; new book chapters on variational inference and Gaussian processes.
 
