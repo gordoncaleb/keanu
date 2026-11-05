@@ -124,7 +124,8 @@ pub fn is_differentiable(graph: &Graph, id: NodeId) -> bool {
             | Op::Solve
             | Op::LogAbsDeterminant
             | Op::Eigvalsh
-            | Op::EighVectors => true,
+            | Op::EighVectors
+            | Op::MatrixExp => true,
             Op::Where | Op::Cpt { .. } | Op::Multiplexer => true,
             Op::SetWithMask | Op::ReplaceNan(_) => true,
             Op::Lambda(l) => l.jacobian.is_some(),
@@ -1507,6 +1508,11 @@ fn jvp(
             let rotated = q.matmul_transposed(&ds, true, false)?.matmul(q)?;
             Some(q.matmul(&rotated.mul(&eigen_gaps(&lambda)?)?)?)
         }
+        Op::MatrixExp => {
+            let Some(t0) = t[0] else { return Ok(None) };
+            // d exp(A) = L(A, dA), the Fréchet derivative
+            Some(f64v(parents[0])?.matrix_exp_frechet(t0)?)
+        }
         Op::Where => {
             let m = where_mask(parents)?;
             let from_then = t[1].map(|tt| scale(tt, &m)).transpose()?;
@@ -1839,6 +1845,10 @@ fn vjp(
                 .mul(&eigen_gaps(&lambda)?)?;
             let s_bar = q.matmul(&inner)?.matmul_transposed(q, false, true)?;
             vec![Some(lower_from_symmetric(&s_bar)?)]
+        }
+        Op::MatrixExp => {
+            // Ā = L(Aᵀ, G): the adjoint of L(A, ·) in the trace inner product
+            vec![Some(tr(f64v(parents[0])?)?.matrix_exp_frechet(g)?)]
         }
         Op::Where => {
             let m = where_mask(parents)?;

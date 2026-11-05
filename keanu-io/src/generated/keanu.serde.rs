@@ -3258,6 +3258,9 @@ impl serde::Serialize for Node {
                 node::Op::LogDensity(v) => {
                     struct_ser.serialize_field("logDensity", v)?;
                 }
+                node::Op::MatrixExp(v) => {
+                    struct_ser.serialize_field("matrixExp", v)?;
+                }
                 node::Op::Scan(v) => {
                     struct_ser.serialize_field("scan", v)?;
                 }
@@ -3347,6 +3350,8 @@ impl<'de> serde::Deserialize<'de> for Node {
             "factor",
             "log_density",
             "logDensity",
+            "matrix_exp",
+            "matrixExp",
             "scan",
         ];
 
@@ -3410,6 +3415,7 @@ impl<'de> serde::Deserialize<'de> for Node {
             EighVectors,
             Factor,
             LogDensity,
+            MatrixExp,
             Scan,
         }
         impl<'de> serde::Deserialize<'de> for GeneratedField {
@@ -3490,6 +3496,7 @@ impl<'de> serde::Deserialize<'de> for Node {
                             "eighVectors" | "eigh_vectors" => Ok(GeneratedField::EighVectors),
                             "factor" => Ok(GeneratedField::Factor),
                             "logDensity" | "log_density" => Ok(GeneratedField::LogDensity),
+                            "matrixExp" | "matrix_exp" => Ok(GeneratedField::MatrixExp),
                             "scan" => Ok(GeneratedField::Scan),
                             _ => Err(serde::de::Error::unknown_field(value, FIELDS)),
                         }
@@ -3913,6 +3920,13 @@ impl<'de> serde::Deserialize<'de> for Node {
                                 return Err(serde::de::Error::duplicate_field("logDensity"));
                             }
                             op__ = map_.next_value::<::std::option::Option<_>>()?.map(node::Op::LogDensity)
+;
+                        }
+                        GeneratedField::MatrixExp => {
+                            if op__.is_some() {
+                                return Err(serde::de::Error::duplicate_field("matrixExp"));
+                            }
+                            op__ = map_.next_value::<::std::option::Option<_>>()?.map(node::Op::MatrixExp)
 ;
                         }
                         GeneratedField::Scan => {

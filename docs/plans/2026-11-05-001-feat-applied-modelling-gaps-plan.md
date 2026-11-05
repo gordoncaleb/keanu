@@ -317,6 +317,7 @@ Phases run in letter order. U18's occupancy example needs U10 and U17. U23 needs
 - **Requirements:** R11. **Files:** `keanu-tensor/src/ops/linalg.rs`, `keanu-tensor/tests/linalg.rs`, `keanu-graph/src/op/mod.rs`, `keanu-graph/src/autodiff/`, `keanu-graph/src/vars.rs` (`matrix_exp`), `keanu-io`.
 - **Approach:** per KTD6, batched over leading axes like the other linalg ops.
 - **Test scenarios:** exp of diagonal, nilpotent, rotation generator and a 2-state CTMC generator against closed forms to 1e-13; large-norm matrices (scaling path); VJP/JVP/HVP match finite differences; rows of exp(Qt) of a generator sum to 1.
+- **Implementation note:** `DoubleTensor::matrix_exp`, `matrix_exp_frechet(e)` and `matrix_exp_frechet_second(e1, e2)`, broadcasting batches. The 3 × 3 block form's upper right block is one ordering of the two directions, so the second derivative is the sum of it and the same with the directions exchanged (two 3n × 3n exponentials). Directions are rescaled to at most max(‖A‖₁, 1) before the block exponential (L is linear), so a large tangent doesn't force extra squarings.
 
 ### U12. ODE integrators
 

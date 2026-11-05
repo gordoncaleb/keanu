@@ -143,6 +143,7 @@ fn save_op(graph: &Graph, id: NodeId) -> Result<P> {
         Op::DeterminantSign => P::DeterminantSign(empty()),
         Op::Eigvalsh => P::Eigvalsh(empty()),
         Op::EighVectors => P::EighVectors(empty()),
+        Op::MatrixExp => P::MatrixExp(empty()),
         Op::Cast(dtype) => P::Cast(encode(dtype)?),
         Op::Where => P::Where(empty()),
         Op::Multiplexer => P::Multiplexer(empty()),

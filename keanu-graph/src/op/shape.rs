@@ -102,7 +102,7 @@ fn infer(op: &Op, parents: &[(DType, &[usize])]) -> Result<(DType, Shape)> {
             shape.extend([m, n]);
             Ok((DType::F64, shape))
         }
-        Op::Inverse | Op::Cholesky | Op::CholeskyInverse => {
+        Op::Inverse | Op::Cholesky | Op::CholeskyInverse | Op::MatrixExp => {
             f64_parents(1)?;
             square_batch(op, parents[0].1)?;
             Ok((DType::F64, Shape::from_slice(parents[0].1)))
@@ -699,6 +699,7 @@ fn check_arity(op: &Op, count: usize) -> Result<()> {
         | Op::DeterminantSign
         | Op::Eigvalsh
         | Op::EighVectors
+        | Op::MatrixExp
         | Op::Cast(_)
         | Op::ReplaceNan(_)
         | Op::Assert(_)

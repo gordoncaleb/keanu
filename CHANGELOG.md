@@ -237,6 +237,13 @@ Work from `docs/plans/2026-11-05-001-feat-applied-modelling-gaps-plan.md`.
   boolean value), and `Model::new` accepts a graph whose only log-probability terms are factors. The Gaussian
   mixture example gained `run_marginalized` (explicit assignments, marginalised), and the guide's "Building models"
   chapter a section on marginalising discrete latents.
+- keanu-tensor and keanu-graph: **matrix exponential** (`DoubleTensor::matrix_exp`, `Op::MatrixExp`,
+  `DoubleVar::matrix_exp`), batched over leading dimensions, by scaling and squaring with Padé approximants of
+  degree 3, 5, 7, 9 or 13 chosen by the 1-norm (Higham, 2005, as MATLAB's `expm`). Its first derivatives use the
+  Fréchet derivative L(A, E), the upper right block of exp([[A, E], [0, A]]) (`DoubleTensor::matrix_exp_frechet`),
+  with L(Aᵀ, Ḡ) as the vector-Jacobian product, and its Hessian-vector products the second Fréchet derivative from
+  3 × 3 block matrices (`DoubleTensor::matrix_exp_frechet_second`). A matrix with a non-finite element gives NaN.
+  The save schema gained `matrix_exp`.
 
 ### Code review fixes
 

@@ -1,4 +1,4 @@
-//! General linear solves, sign and log-determinants, and symmetric eigendecompositions.
+//! General linear solves, sign and log-determinants, symmetric eigendecompositions and the matrix exponential.
 
 use keanu_tensor::{DoubleTensor, TensorError};
 
@@ -285,5 +285,262 @@ fn eigh_signs_are_stable_when_components_tie_in_magnitude() {
     );
     for e in [1e-14, -1e-14, 3e-15, -3e-15] {
         assert_tensor_close_rel(&vectors(e), &exact, 1e-10);
+    }
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// the matrix exponential
+
+fn matrix(n: usize, data: &[f64]) -> DoubleTensor {
+    DoubleTensor::new(&[n, n], data.to_vec()).unwrap()
+}
+
+/// exp(A) by its Taylor series, summed until the terms vanish (accurate for the moderate norms used here).
+fn taylor_exp(a: &DoubleTensor) -> DoubleTensor {
+    let n = a.shape()[0];
+    let mut sum = DoubleTensor::eye(n).unwrap();
+    let mut term = DoubleTensor::eye(n).unwrap();
+    for k in 1..200 {
+        term = term.matmul(a).unwrap() * (1.0 / k as f64);
+        sum = sum.add(&term).unwrap();
+    }
+    sum
+}
+
+#[test]
+fn matrix_exp_of_diagonal_and_nilpotent_matrices_has_closed_forms() {
+    let d = [1.0, -2.0, 0.5, 3.0];
+    let diagonal = DoubleTensor::vector(d.to_vec()).diag().unwrap();
+    let expected = DoubleTensor::vector(d.iter().map(|x| x.exp()).collect())
+        .diag()
+        .unwrap();
+    assert_tensor_close_rel(&diagonal.matrix_exp().unwrap(), &expected, 1e-13);
+
+    // N strictly upper triangular, N³ = 0: exp(N) = I + N + N² / 2
+    let nilpotent = matrix(3, &[0.0, 2.0, -3.0, 0.0, 0.0, 4.0, 0.0, 0.0, 0.0]);
+    let expected = matrix(3, &[1.0, 2.0, 1.0, 0.0, 1.0, 4.0, 0.0, 0.0, 1.0]);
+    assert_tensor_close_rel(&nilpotent.matrix_exp().unwrap(), &expected, 1e-13);
+}
+
+#[test]
+fn matrix_exp_of_a_rotation_generator_is_a_rotation_at_every_degree_and_scaling() {
+    // norms from below θ₃ to well above θ₁₃, so every Padé degree and the scaling path are used
+    for angle in [0.01, 0.2, 0.9, 2.0, 5.0, 10.0, 100.0] {
+        let generator = matrix(2, &[0.0, -angle, angle, 0.0]);
+        let (c, s) = (f64::cos(angle), f64::sin(angle));
+        let expected = matrix(2, &[c, -s, s, c]);
+        let tolerance = if angle > 50.0 { 1e-11 } else { 1e-13 };
+        assert_tensor_close_rel(&generator.matrix_exp().unwrap(), &expected, tolerance);
+    }
+}
+
+#[test]
+fn matrix_exp_of_a_two_state_generator_has_its_closed_form() {
+    let (a, b) = (0.7, 0.3);
+    for time in [0.01, 0.5, 2.0, 20.0] {
+        let q = matrix(2, &[-a * time, a * time, b * time, -b * time]);
+        let e = (-(a + b) * time).exp();
+        let expected = matrix(
+            2,
+            &[b + a * e, a - a * e, b - b * e, a + b * e].map(|x| x / (a + b)),
+        );
+        assert_tensor_close_rel(&q.matrix_exp().unwrap(), &expected, 1e-13);
+    }
+}
+
+#[test]
+fn matrix_exp_matches_the_taylor_series_and_is_batched() {
+    let mut rng = Lcg(11);
+    // norms around each threshold
+    let mut batch = Vec::new();
+    for scale in [0.003, 0.06, 0.3, 0.6, 1.4, 3.0] {
+        let a = rng.tensor(&[4, 4]) * scale;
+        assert_tensor_close_rel(&a.matrix_exp().unwrap(), &taylor_exp(&a), 1e-13);
+        batch.extend_from_slice(a.as_slice());
+    }
+    let batched = DoubleTensor::new(&[2, 3, 4, 4], batch).unwrap();
+    let exp = batched.matrix_exp().unwrap();
+    assert_eq!(exp.shape(), &[2, 3, 4, 4]);
+    for (k, lane) in exp.as_slice().chunks(16).enumerate() {
+        let single = DoubleTensor::new(&[4, 4], batched.as_slice()[k * 16..(k + 1) * 16].to_vec())
+            .unwrap()
+            .matrix_exp()
+            .unwrap();
+        assert_eq!(lane, single.as_slice());
+    }
+}
+
+#[test]
+fn matrix_exp_of_large_norms_uses_scaling_and_squaring() {
+    let mut rng = Lcg(5);
+    // symmetric: exp(S) = Q diag(exp λ) Qᵀ
+    let s = symmetric(&mut rng, &[], 5) * 8.0;
+    let (lambda, q) = s.eigh().unwrap();
+    let expected = q
+        .mul(&lambda.exp().reshape(&[1, 5]).unwrap())
+        .unwrap()
+        .matmul_transposed(&q, false, true)
+        .unwrap();
+    assert_tensor_close_rel(&s.matrix_exp().unwrap(), &expected, 1e-11);
+
+    // a general matrix: exp(2A) = exp(A)², and exp(A) exp(-A) = I
+    let a = rng.tensor(&[6, 6]) * 6.0;
+    let exp = a.matrix_exp().unwrap();
+    let squared = exp.matmul(&exp).unwrap();
+    assert_tensor_close_rel(&(a.clone() * 2.0).matrix_exp().unwrap(), &squared, 1e-11);
+    // to rounding relative to the sizes of the factors, as products of large matrices cancel
+    let inverse = a.neg().matrix_exp().unwrap();
+    let identity = exp.matmul(&inverse).unwrap();
+    let size = exp.abs().max().unwrap() * inverse.abs().max().unwrap();
+    let error = identity
+        .sub(&DoubleTensor::eye(6).unwrap())
+        .unwrap()
+        .abs()
+        .max()
+        .unwrap();
+    assert!(error < 1e-13 * size, "{error} vs {size}");
+}
+
+#[test]
+fn rows_of_the_exponential_of_a_generator_sum_to_one() {
+    // an illness-death style generator: rows sum to zero, off-diagonal rates non-negative
+    let q = matrix(
+        4,
+        &[
+            -0.9, 0.5, 0.3, 0.1, 0.2, -0.6, 0.3, 0.1, 0.0, 0.4, -0.5, 0.1, 0.0, 0.0, 0.0, 0.0,
+        ],
+    );
+    for time in [0.1, 1.0, 10.0, 100.0] {
+        let p = (q.clone() * time).matrix_exp().unwrap();
+        for row in p.as_slice().chunks(4) {
+            assert!(row.iter().all(|&x| x >= -1e-15), "{row:?}");
+            let sum: f64 = row.iter().sum();
+            assert!((sum - 1.0).abs() < 1e-13, "row sum {sum} at t = {time}");
+        }
+    }
+}
+
+#[test]
+fn matrix_exp_edge_cases_and_errors() {
+    let empty = DoubleTensor::zeros(&[3, 0, 0]);
+    assert_eq!(empty.matrix_exp().unwrap().shape(), &[3, 0, 0]);
+    let zero = DoubleTensor::zeros(&[3, 3]);
+    assert_eq!(
+        zero.matrix_exp().unwrap().as_slice(),
+        DoubleTensor::eye(3).unwrap().as_slice()
+    );
+    let nan = matrix(2, &[1.0, f64::NAN, 0.0, 1.0]).matrix_exp().unwrap();
+    assert!(nan.as_slice().iter().all(|x| x.is_nan()));
+    let infinite = matrix(2, &[1.0, f64::INFINITY, 0.0, 1.0])
+        .matrix_exp()
+        .unwrap();
+    assert!(infinite.as_slice().iter().all(|x| x.is_nan()));
+    assert!(matches!(
+        DoubleTensor::zeros(&[2, 3]).matrix_exp(),
+        Err(TensorError::InvalidArgument(_))
+    ));
+    assert!(DoubleTensor::zeros(&[3]).matrix_exp().is_err());
+    assert!(matches!(
+        DoubleTensor::zeros(&[2, 2]).matrix_exp_frechet(&DoubleTensor::zeros(&[3, 3])),
+        Err(TensorError::IncompatibleShapes { .. })
+    ));
+    assert!(
+        DoubleTensor::zeros(&[2, 2, 2])
+            .matrix_exp_frechet(&DoubleTensor::zeros(&[3, 2, 2]))
+            .is_err()
+    );
+}
+
+/// (exp(A + hE) − exp(A − hE)) / 2h.
+fn exp_difference(a: &DoubleTensor, e: &DoubleTensor, h: f64) -> DoubleTensor {
+    let up = a.add(&(e.clone() * h)).unwrap().matrix_exp().unwrap();
+    let down = a.sub(&(e.clone() * h)).unwrap().matrix_exp().unwrap();
+    up.sub(&down).unwrap() * (0.5 / h)
+}
+
+#[test]
+fn the_frechet_derivative_matches_finite_differences_and_closed_forms() {
+    let mut rng = Lcg(3);
+    for scale in [0.01, 0.5, 2.0, 12.0] {
+        let a = rng.tensor(&[4, 4]) * scale;
+        for e_scale in [1e-6, 1.0, 1e4] {
+            let e = rng.tensor(&[4, 4]) * e_scale;
+            let derivative = a.matrix_exp_frechet(&e).unwrap();
+            let numeric = exp_difference(&a, &(e.clone() * (1.0 / e_scale)), 1e-5) * e_scale;
+            let size = numeric.abs().max().unwrap_or(1.0).max(1e-300);
+            for (x, y) in derivative.as_slice().iter().zip(numeric.as_slice()) {
+                assert!(
+                    (x - y).abs() <= 1e-7 * size,
+                    "‖A‖ ~ {scale}, ‖E‖ ~ {e_scale}: {x} != {y}"
+                );
+            }
+        }
+        // A commutes with itself: L(A, A) = A exp(A)
+        let expected = a.matmul(&a.matrix_exp().unwrap()).unwrap();
+        assert_tensor_close_rel(&a.matrix_exp_frechet(&a).unwrap(), &expected, 1e-12);
+    }
+    // the adjoint: ⟨G, L(A, E)⟩ = ⟨L(Aᵀ, G), E⟩
+    let (a, e, g) = (
+        rng.tensor(&[3, 3]),
+        rng.tensor(&[3, 3]),
+        rng.tensor(&[3, 3]),
+    );
+    let inner = |x: &DoubleTensor, y: &DoubleTensor| x.mul(y).unwrap().sum();
+    let left = inner(&g, &a.matrix_exp_frechet(&e).unwrap());
+    let right = inner(&a.transpose().unwrap().matrix_exp_frechet(&g).unwrap(), &e);
+    assert!((left - right).abs() < 1e-12 * left.abs().max(1.0));
+    // zero directions
+    assert_eq!(
+        a.matrix_exp_frechet(&DoubleTensor::zeros(&[3, 3]))
+            .unwrap()
+            .as_slice(),
+        &[0.0; 9]
+    );
+}
+
+#[test]
+fn the_frechet_derivative_broadcasts_batches() {
+    let mut rng = Lcg(9);
+    let a = rng.tensor(&[2, 3, 3]);
+    let e = rng.tensor(&[4, 1, 3, 3]);
+    let derivative = a.matrix_exp_frechet(&e).unwrap();
+    assert_eq!(derivative.shape(), &[4, 2, 3, 3]);
+    let lane = |t: &DoubleTensor, k: usize| {
+        DoubleTensor::new(&[3, 3], t.as_slice()[k * 9..(k + 1) * 9].to_vec()).unwrap()
+    };
+    for i in 0..4 {
+        for j in 0..2 {
+            let single = lane(&a, j).matrix_exp_frechet(&lane(&e, i)).unwrap();
+            assert_eq!(lane(&derivative, i * 2 + j).as_slice(), single.as_slice());
+        }
+    }
+}
+
+#[test]
+fn the_second_frechet_derivative_matches_finite_differences_of_the_first() {
+    let mut rng = Lcg(21);
+    for scale in [0.05, 1.0, 8.0] {
+        let a = rng.tensor(&[3, 3]) * scale;
+        let (e1, e2) = (rng.tensor(&[3, 3]), rng.tensor(&[3, 3]) * 100.0);
+        let second = a.matrix_exp_frechet_second(&e1, &e2).unwrap();
+        let h = 1e-6;
+        let up = a
+            .add(&(e2.clone() * (h / 100.0)))
+            .unwrap()
+            .matrix_exp_frechet(&e1)
+            .unwrap();
+        let down = a
+            .sub(&(e2.clone() * (h / 100.0)))
+            .unwrap()
+            .matrix_exp_frechet(&e1)
+            .unwrap();
+        let numeric = up.sub(&down).unwrap() * (50.0 / h);
+        let size = numeric.abs().max().unwrap();
+        for (x, y) in second.as_slice().iter().zip(numeric.as_slice()) {
+            assert!((x - y).abs() <= 1e-6 * size, "‖A‖ ~ {scale}: {x} != {y}");
+        }
+        // symmetric in the directions
+        let swapped = a.matrix_exp_frechet_second(&e2, &e1).unwrap();
+        assert_tensor_close_rel(&swapped, &second, 1e-12);
     }
 }

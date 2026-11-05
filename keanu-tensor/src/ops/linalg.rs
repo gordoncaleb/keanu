@@ -833,3 +833,358 @@ fn symmetric_eigen_into(
     }
     Ok(())
 }
+
+// ---------------------------------------------------------------------------------------------------------------
+// the matrix exponential and its Fréchet derivatives
+
+impl DoubleTensor {
+    /// The matrix exponential exp(A) = Σₖ Aᵏ / k! of each square matrix, batched over leading dimensions, by
+    /// scaling and squaring with Padé approximants (Higham, 2005, the algorithm of MATLAB's `expm`): the smallest
+    /// degree m of 3, 5, 7, 9 whose threshold θₘ bounds ‖A‖₁ is used directly; otherwise A is scaled by 2⁻ˢ until
+    /// ‖A / 2ˢ‖₁ ≤ θ₁₃, the degree 13 approximant is evaluated and squared s times. A matrix with a non-finite
+    /// element gives NaN; a 0 × 0 matrix gives itself.
+    pub fn matrix_exp(&self) -> Result<Self> {
+        let n = self.square_dims("matrix_exp")?;
+        let mut data: Storage<f64> = smallvec::smallvec![0.0; self.len()];
+        if n > 0 {
+            for (a, out) in self
+                .data
+                .chunks_exact(n * n)
+                .zip(data.chunks_exact_mut(n * n))
+            {
+                out.copy_from_slice(&expm(a, n)?);
+            }
+        }
+        Ok(Tensor::from_parts(self.shape.clone(), data))
+    }
+
+    /// The Fréchet derivative L(A, E) of the matrix exponential at each matrix A (self, `[..., n, n]`) in the
+    /// direction E (`[..., n, n]`): the derivative of exp(A + εE) at ε = 0, which is the upper right block of
+    /// exp([[A, E], [0, A]]) (Mathias, 1996). Leading (batch) dimensions broadcast. Since L(A, ·) is linear, E is
+    /// scaled so that its norm doesn't exceed A's (or 1) before exponentiating, and the result scaled back. The
+    /// adjoint of L(A, ·) in the trace inner product is L(Aᵀ, ·).
+    pub fn matrix_exp_frechet(&self, direction: &Self) -> Result<Self> {
+        broadcast_square("matrix_exp_frechet", &[self, direction], |m, n, out| {
+            let (a, e) = (m[0], m[1]);
+            let c = direction_scale(a, e, n);
+            if c == 0.0 {
+                out.fill(0.0);
+                return Ok(());
+            }
+            let e: Scratch = e.iter().map(|x| x * c).collect();
+            let block = block_upper_triangular(n, &[a, &e, a], 2);
+            let exp = expm(&block, 2 * n)?;
+            copy_block(&exp, 2 * n, n, 0, 1, out);
+            out.iter_mut().for_each(|x| *x /= c);
+            Ok(())
+        })
+    }
+
+    /// The second Fréchet derivative L²(A; E₁, E₂) of the matrix exponential at each matrix A (self) in the
+    /// directions E₁ and E₂: the mixed derivative of exp(A + αE₁ + βE₂) at α = β = 0, so the derivative of
+    /// L(A, E₁) along E₂. It is the sum of the upper right blocks of exp([[A, E₁, 0], [0, A, E₂], [0, 0, A]]) and of
+    /// the same with E₁ and E₂ exchanged. All three are `[..., n, n]`, with leading dimensions broadcasting; the
+    /// directions are scaled as in [`Self::matrix_exp_frechet`].
+    pub fn matrix_exp_frechet_second(&self, first: &Self, second: &Self) -> Result<Self> {
+        broadcast_square(
+            "matrix_exp_frechet_second",
+            &[self, first, second],
+            |m, n, out| {
+                let a = m[0];
+                let (c1, c2) = (direction_scale(a, m[1], n), direction_scale(a, m[2], n));
+                if c1 == 0.0 || c2 == 0.0 {
+                    out.fill(0.0);
+                    return Ok(());
+                }
+                let e1: Scratch = m[1].iter().map(|x| x * c1).collect();
+                let e2: Scratch = m[2].iter().map(|x| x * c2).collect();
+                let mut ordered: Scratch = smallvec::smallvec![0.0; n * n];
+                for (left, right) in [(&e1, &e2), (&e2, &e1)] {
+                    let block = block_upper_triangular(n, &[a, left, &[], a, right, a], 3);
+                    let exp = expm(&block, 3 * n)?;
+                    copy_block(&exp, 3 * n, n, 0, 2, &mut ordered);
+                    out.iter_mut().zip(&ordered).for_each(|(o, x)| *o += x);
+                }
+                let c = c1 * c2;
+                out.iter_mut().for_each(|x| *x /= c);
+                Ok(())
+            },
+        )
+    }
+}
+
+/// Applies `f` to the matrices at each broadcast batch index of square tensors `[..., n, n]` of the same n,
+/// giving one `[batch..., n, n]` tensor. `f` gets the matrices (row-major n × n) and a zeroed output matrix.
+fn broadcast_square(
+    name: &str,
+    tensors: &[&DoubleTensor],
+    mut f: impl FnMut(&[&[f64]], usize, &mut [f64]) -> Result<()>,
+) -> Result<DoubleTensor> {
+    let n = tensors[0].square_dims(name)?;
+    let mut batch: Shape = tensors[0].batch_shape().into();
+    for t in &tensors[1..] {
+        if t.square_dims(name)? != n {
+            return Err(TensorError::IncompatibleShapes {
+                left: tensors[0].shape.to_vec(),
+                right: t.shape.to_vec(),
+            });
+        }
+        batch = shape::broadcast_shape(&batch, t.batch_shape())?;
+    }
+    let batch_len = shape::length(&batch);
+    let strides: Vec<Shape> = tensors
+        .iter()
+        .map(|t| shape::broadcast_strides(t.batch_shape(), &batch))
+        .collect();
+    let batch_strides = shape::row_major_strides(&batch);
+    let mut out_shape = batch.clone();
+    out_shape.extend([n, n]);
+    let mut data: Storage<f64> = smallvec::smallvec![0.0; batch_len * n * n];
+    if n > 0 {
+        let mut matrices: smallvec::SmallVec<[&[f64]; 3]> = smallvec::SmallVec::new();
+        for (i, out) in data.chunks_exact_mut(n * n).enumerate() {
+            matrices.clear();
+            for (t, s) in tensors.iter().zip(&strides) {
+                let offset: usize = (0..batch.len())
+                    .map(|d| ((i / batch_strides[d]) % batch[d]) * s[d])
+                    .sum();
+                matrices.push(&t.data[offset * n * n..(offset + 1) * n * n]);
+            }
+            f(&matrices, n, out)?;
+        }
+    }
+    Ok(Tensor::from_parts(out_shape, data))
+}
+
+/// The factor c scaling a direction E so that ‖cE‖₁ is at most max(‖A‖₁, 1): 0 for a zero direction, NaN for a
+/// non-finite one.
+fn direction_scale(a: &[f64], e: &[f64], n: usize) -> f64 {
+    let ne = one_norm(e, n);
+    if !ne.is_finite() {
+        return f64::NAN;
+    }
+    let bound = one_norm(a, n).max(1.0);
+    if ne == 0.0 {
+        0.0
+    } else if ne > bound {
+        bound / ne
+    } else {
+        1.0
+    }
+}
+
+/// The block upper triangular (k n) × (k n) matrix whose upper triangle of blocks, row by row, is `blocks` (an
+/// empty slice is a zero block).
+fn block_upper_triangular(n: usize, blocks: &[&[f64]], k: usize) -> Vec<f64> {
+    let size = k * n;
+    let mut out = vec![0.0; size * size];
+    let mut next = blocks.iter();
+    for block_row in 0..k {
+        for block_col in block_row..k {
+            let block = next.next().copied().unwrap_or(&[]);
+            if block.is_empty() {
+                continue;
+            }
+            for r in 0..n {
+                let start = (block_row * n + r) * size + block_col * n;
+                out[start..start + n].copy_from_slice(&block[r * n..(r + 1) * n]);
+            }
+        }
+    }
+    out
+}
+
+/// Copies block (`block_row`, `block_col`) of n × n blocks of a row-major `size` × `size` matrix into `out`.
+fn copy_block(
+    matrix: &[f64],
+    size: usize,
+    n: usize,
+    block_row: usize,
+    block_col: usize,
+    out: &mut [f64],
+) {
+    for r in 0..n {
+        let start = (block_row * n + r) * size + block_col * n;
+        out[r * n..(r + 1) * n].copy_from_slice(&matrix[start..start + n]);
+    }
+}
+
+/// The 1-norm (largest absolute column sum) of a row-major n × n matrix; NaN if an element is NaN.
+fn one_norm(a: &[f64], n: usize) -> f64 {
+    if a.iter().any(|x| x.is_nan()) {
+        return f64::NAN;
+    }
+    (0..n)
+        .map(|col| (0..n).map(|row| a[row * n + col].abs()).sum::<f64>())
+        .fold(0.0, f64::max)
+}
+
+/// θₘ for m = 3, 5, 7, 9 and 13: the largest ‖A‖₁ for which the degree m Padé approximant has backward error at
+/// most the unit roundoff 2⁻⁵³ (Higham, 2005, Table 2.3).
+const PADE_THETAS: [(usize, f64); 4] = [
+    (3, 1.495585217958292e-2),
+    (5, 2.53939833006323e-1),
+    (7, 9.504178996162932e-1),
+    (9, 2.097847961257068e0),
+];
+const THETA_13: f64 = 5.371920351148152e0;
+
+/// The coefficients b₀, …, bₘ of the degree m diagonal Padé approximant to exp (Higham, 2005, Algorithm 2.3).
+fn pade_coefficients(m: usize) -> &'static [f64] {
+    match m {
+        3 => &[120.0, 60.0, 12.0, 1.0],
+        5 => &[30240.0, 15120.0, 3360.0, 420.0, 30.0, 1.0],
+        7 => &[
+            17297280.0, 8648640.0, 1995840.0, 277200.0, 25200.0, 1512.0, 56.0, 1.0,
+        ],
+        9 => &[
+            17643225600.0,
+            8821612800.0,
+            2075673600.0,
+            302702400.0,
+            30270240.0,
+            2162160.0,
+            110880.0,
+            3960.0,
+            90.0,
+            1.0,
+        ],
+        _ => &[
+            64764752532480000.0,
+            32382376266240000.0,
+            7771770303897600.0,
+            1187353796428800.0,
+            129060195264000.0,
+            10559470521600.0,
+            670442572800.0,
+            33522128640.0,
+            1323241920.0,
+            40840800.0,
+            960960.0,
+            16380.0,
+            182.0,
+            1.0,
+        ],
+    }
+}
+
+/// The product of two row-major n × n matrices.
+fn square_product(a: &[f64], b: &[f64], n: usize) -> Vec<f64> {
+    let mut out = vec![0.0; n * n];
+    matmul_into(a, (n, n, false), b, (n, n, false), &mut out, (n, n, n));
+    out
+}
+
+/// Σᵢ cᵢ Mᵢ (+ c I if `identity` is given) of row-major n × n matrices.
+fn combination(terms: &[(f64, &[f64])], identity: f64, n: usize) -> Vec<f64> {
+    let mut out = vec![0.0; n * n];
+    for &(c, m) in terms {
+        out.iter_mut().zip(m).for_each(|(o, x)| *o += c * x);
+    }
+    for i in 0..n {
+        out[i * n + i] += identity;
+    }
+    out
+}
+
+/// exp(A) of one row-major n × n matrix (n > 0) by scaling and squaring; NaN if an element is not finite.
+fn expm(a: &[f64], n: usize) -> Result<Vec<f64>> {
+    if a.iter().any(|x| !x.is_finite()) {
+        return Ok(vec![f64::NAN; n * n]);
+    }
+    let norm = one_norm(a, n);
+    let a2 = square_product(a, a, n);
+    for &(m, theta) in &PADE_THETAS {
+        if norm <= theta {
+            return pade_low(a, &a2, n, m);
+        }
+    }
+    let s = if norm > THETA_13 {
+        (norm / THETA_13).log2().ceil().max(0.0) as i32
+    } else {
+        0
+    };
+    let mut x = if s == 0 {
+        pade_13(a, &a2, n)?
+    } else {
+        let scale = 2f64.powi(-s);
+        let scaled: Vec<f64> = a.iter().map(|x| x * scale).collect();
+        let scaled2: Vec<f64> = a2.iter().map(|x| x * scale * scale).collect();
+        pade_13(&scaled, &scaled2, n)?
+    };
+    for _ in 0..s {
+        x = square_product(&x, &x, n);
+    }
+    Ok(x)
+}
+
+/// The degree m (3, 5, 7 or 9) Padé approximant r(A) = (V − U)⁻¹ (V + U), with U = A Σ b₂ⱼ₊₁ A²ʲ and
+/// V = Σ b₂ⱼ A²ʲ. `a2` is A².
+fn pade_low(a: &[f64], a2: &[f64], n: usize, m: usize) -> Result<Vec<f64>> {
+    let b = pade_coefficients(m);
+    // the even powers A², A⁴, ..., A^(m - 1)
+    let mut powers: Vec<Vec<f64>> = vec![a2.to_vec()];
+    while 2 * (powers.len() + 1) < m {
+        let next = square_product(powers.last().expect("A² is first"), a2, n);
+        powers.push(next);
+    }
+    let odd: Vec<(f64, &[f64])> = powers
+        .iter()
+        .enumerate()
+        .map(|(j, p)| (b[2 * j + 3], p.as_slice()))
+        .collect();
+    let even: Vec<(f64, &[f64])> = powers
+        .iter()
+        .enumerate()
+        .map(|(j, p)| (b[2 * j + 2], p.as_slice()))
+        .collect();
+    let u = square_product(a, &combination(&odd, b[1], n), n);
+    let v = combination(&even, b[0], n);
+    pade_quotient(&u, &v, n)
+}
+
+/// The degree 13 Padé approximant, evaluated with A², A⁴ and A⁶ only (Higham, 2005, equation 2.9). `a2` is A².
+fn pade_13(a: &[f64], a2: &[f64], n: usize) -> Result<Vec<f64>> {
+    let b = pade_coefficients(13);
+    let a4 = square_product(a2, a2, n);
+    let a6 = square_product(a4.as_slice(), a2, n);
+    let inner_u = combination(&[(b[13], &a6), (b[11], &a4), (b[9], a2)], 0.0, n);
+    let u = square_product(
+        a,
+        &combination(
+            &[
+                (1.0, &square_product(&a6, &inner_u, n)),
+                (b[7], &a6),
+                (b[5], &a4),
+                (b[3], a2),
+            ],
+            b[1],
+            n,
+        ),
+        n,
+    );
+    let inner_v = combination(&[(b[12], &a6), (b[10], &a4), (b[8], a2)], 0.0, n);
+    let v = combination(
+        &[
+            (1.0, &square_product(&a6, &inner_v, n)),
+            (b[6], &a6),
+            (b[4], &a4),
+            (b[2], a2),
+        ],
+        b[0],
+        n,
+    );
+    pade_quotient(&u, &v, n)
+}
+
+/// (V − U)⁻¹ (V + U) by LU factorisation.
+fn pade_quotient(u: &[f64], v: &[f64], n: usize) -> Result<Vec<f64>> {
+    let denominator: Vec<f64> = v.iter().zip(u).map(|(v, u)| v - u).collect();
+    let mut x: Vec<f64> = v.iter().zip(u).map(|(v, u)| v + u).collect();
+    let lu = Lu::factor(&denominator, n);
+    if lu.singular {
+        return Err(TensorError::SingularMatrix);
+    }
+    lu.solve_in_place(&mut x, n);
+    Ok(x)
+}

@@ -838,6 +838,12 @@ impl<'b> DoubleVar<'b> {
     pub fn eigh_vectors(self) -> Self {
         self.same(Op::EighVectors)
     }
+    /// The matrix exponential exp(A) = Σₖ Aᵏ / k! of each square matrix (the last two dimensions), by scaling and
+    /// squaring with Padé approximants. With a transition-rate matrix Q of a continuous-time Markov chain,
+    /// `(q * t).matrix_exp()` holds the transition probabilities over time t. See [`Op::MatrixExp`].
+    pub fn matrix_exp(self) -> Self {
+        self.same(Op::MatrixExp)
+    }
     /// The symmetric eigendecomposition A = Q diag(λ) Qᵀ as two nodes, (λ, Q): [`Self::eigvalsh`] and
     /// [`Self::eigh_vectors`].
     pub fn eigh(self) -> (Self, Self) {

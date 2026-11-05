@@ -539,6 +539,12 @@ fn vjp_tangent(
                 .add(&q.matmul(&inner)?.matmul_transposed(q_dot, false, true)?)?;
             vec![Some(lower_from_symmetric(&s_bar_dot)?)]
         }
+        Op::MatrixExp => {
+            // Ā = L(Aᵀ, G): its derivative along Ȧ is the second Fréchet derivative L²(Aᵀ; G, Ȧᵀ)
+            let Some(t0) = t[0] else { return Ok(none()) };
+            let at = tr(f64v(parents[0])?)?;
+            vec![Some(at.matrix_exp_frechet_second(g, &tr(t0)?)?)]
+        }
         Op::Scan(body) => body.vjp_tangent(parents, y, g, t, yt, b)?,
         Op::LogDensity(kind) => crate::op::log_density::vjp_tangent(
             kind, parents, g, t, b, &out_shape,

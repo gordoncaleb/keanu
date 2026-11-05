@@ -438,6 +438,10 @@ pub enum Op {
     /// are discontinuous where that sign convention switches and at repeated eigenvalues, which give non-finite
     /// gradients.
     EighVectors,
+    /// Parents: `input`, f64 -> the matrix exponential (`[..., n, n]`) of each square matrix, by scaling and
+    /// squaring with Padé approximants, as [`DoubleTensor::matrix_exp`](keanu_tensor::DoubleTensor::matrix_exp).
+    /// Its derivatives are the exponential's first and second Fréchet derivatives.
+    MatrixExp,
     /// Parents: `input` -> the given type. Numbers to bool are true where equal to 1; bool to numbers is a 0/1 mask;
     /// f64 to i64 truncates.
     Cast(DType),
@@ -545,6 +549,7 @@ op_names! {
     Op::DeterminantSign => "determinant_sign",
     Op::Eigvalsh => "eigvalsh",
     Op::EighVectors => "eigh_vectors",
+    Op::MatrixExp => "matrix_exp",
     Op::Cast(_) => "cast",
     Op::Where => "where",
     Op::Multiplexer => "multiplexer",

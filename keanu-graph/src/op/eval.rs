@@ -354,6 +354,7 @@ pub(crate) fn eval(op: &Op, inputs: &[&Value]) -> Result<Value> {
         Op::DeterminantSign => Value::F64(inputs[0].f64()?.slogdet()?.0),
         Op::Eigvalsh => Value::F64(inputs[0].f64()?.eigh()?.0),
         Op::EighVectors => Value::F64(inputs[0].f64()?.eigh()?.1),
+        Op::MatrixExp => Value::F64(inputs[0].f64()?.matrix_exp()?),
 
         Op::Cast(to) => cast(inputs[0], *to),
 

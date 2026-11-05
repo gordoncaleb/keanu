@@ -93,6 +93,8 @@ message Node {
     // A term of the joint log probability: the scalar sum of its one parent.
     Empty factor = 64;
     LogDensity log_density = 65;
+    // The matrix exponential of each square matrix.
+    Empty matrix_exp = 66;
     Scan scan = 100;
   }
 }

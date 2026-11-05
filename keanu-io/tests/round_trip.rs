@@ -356,6 +356,7 @@ fn op_cases() -> Vec<(String, Graph, State)> {
         op_case(Op::DeterminantSign, &[square()]),
         op_case(Op::Eigvalsh, &[square()]),
         op_case(Op::EighVectors, &[square()]),
+        op_case(Op::MatrixExp, &[square()]),
         op_case(Op::Where, &[boolean(true), scalar(1.0), scalar(2.0)]),
         op_case(Op::Multiplexer, &[int(1), scalar(1.0), scalar(2.0)]),
         op_case(
@@ -698,6 +699,7 @@ fn every_operation_round_trips() {
         "determinant_sign",
         "eigvalsh",
         "eigh_vectors",
+        "matrix_exp",
         "cast",
         "where",
         "multiplexer",

@@ -466,6 +466,23 @@ fn general_cases() -> Vec<Case> {
             Expect::Matches,
         ),
         (
+            "matrix exponentials",
+            |b| {
+                let m = latent(
+                    b,
+                    t(&[3, 3], &[1.4, -0.7, 0.3, 0.9, 1.6, -0.2, 0.3, 0.8, 1.2]),
+                );
+                observe(b, m.matrix_exp());
+                // a large norm (the scaling path), batched
+                let batch = latent(
+                    b,
+                    t(&[2, 2, 2], &[0.5, -4.0, 6.0, 1.0, -0.2, 0.1, 0.3, -0.4]),
+                );
+                observe(b, (batch * 2.0).matrix_exp());
+            },
+            Expect::Matches,
+        ),
+        (
             "selections, masks, proxies and assertions",
             |b| {
                 let x = latent_vector(b, &[0.5, -0.5, 2.0]);

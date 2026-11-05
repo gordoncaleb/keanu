@@ -331,6 +331,7 @@ fn add_node(
         P::DeterminantSign(_) => Op::DeterminantSign,
         P::Eigvalsh(_) => Op::Eigvalsh,
         P::EighVectors(_) => Op::EighVectors,
+        P::MatrixExp(_) => Op::MatrixExp,
         P::Cast(code) => Op::Cast(decode(*code)?),
         P::Where(_) => Op::Where,
         P::Multiplexer(_) => Op::Multiplexer,

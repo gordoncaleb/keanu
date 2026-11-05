@@ -1111,3 +1111,37 @@ fn eigh_reconstructs_the_matrix_and_its_gradients_match_finite_differences() {
         (vectors * values.reshape(&[2, 1, 3])).matmul_transposed(vectors, false, true)
     });
 }
+
+#[test]
+fn matrix_exp_values_and_gradients() {
+    // a rotation generator exponentiates to a rotation
+    let g = GraphBuilder::new();
+    let rotation = g
+        .constant(t(&[2, 2], &[0.0, -0.4, 0.4, 0.0]))
+        .matrix_exp()
+        .id();
+    let (graph, mut state) = g.build().unwrap();
+    state
+        .lazy_eval(&graph, &[rotation], &mut KeanuRng::seed_from_u64(1))
+        .unwrap();
+    let (c, s) = (0.4f64.cos(), 0.4f64.sin());
+    for (x, e) in state
+        .f64(rotation)
+        .unwrap()
+        .as_slice()
+        .iter()
+        .zip([c, -s, s, c])
+    {
+        assert!((x - e).abs() < 1e-14);
+    }
+
+    // small and large norms, batched, and composed
+    check(&[general(&[2], 3, 0.4) * 0.2], |_, v| v[0].matrix_exp());
+    check_with_tolerance(&[general(&[], 3, 1.1) * 2.0], 1e-5, |_, v| {
+        v[0].matrix_exp()
+    });
+    check(
+        &[general(&[], 2, 0.7) * 0.5, range(0.1, 2.0, &[])],
+        |_, v| (v[0] * v[1]).matrix_exp().sum(),
+    );
+}
