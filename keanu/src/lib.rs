@@ -47,7 +47,7 @@
 //! | [`tensor`] | N-dimensional tensors of `f64`, `i64` and `bool` with numpy-style broadcasting and slicing |
 //! | [`distributions`] | Probability distributions: log probability, gradients and sampling, and [`KeanuRng`](distributions::KeanuRng) |
 //! | [`graph`] | Building graphs ([`GraphBuilder`](graph::GraphBuilder)), their [`State`](graph::State), auto diff, log probabilities, [`Model`](graph::Model) and sequences (plates) |
-//! | [`algorithms`] | Optimizers, MCMC (Metropolis–Hastings, NUTS, simulated annealing), forward sampling, the particle filter and sample statistics |
+//! | [`algorithms`] | Optimizers, MCMC (Metropolis–Hastings, NUTS, Gibbs, simulated annealing), forward sampling, the particle filter and sample statistics |
 //! | [`io`] | Saving and loading models (JSON, protobuf) and Graphviz export |
 //!
 //! ## Features
@@ -80,6 +80,7 @@ pub mod prelude {
     pub use crate::algorithms::loglik::PointwiseLogLik;
     pub use crate::algorithms::loo::{Comparison, Loo, Waic, loo, waic};
     pub use crate::algorithms::mcmc::annealing::{AnnealingSchedule, SimulatedAnnealing};
+    pub use crate::algorithms::mcmc::gibbs::{DiscreteMetropolis, Gibbs};
     pub use crate::algorithms::mcmc::metropolis::{
         MetropolisHastings, RejectionStrategy, VariableSelector,
     };

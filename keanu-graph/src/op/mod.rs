@@ -2,6 +2,7 @@
 
 mod distribution;
 mod distribution_hvp;
+mod enumerate;
 pub(crate) mod eval;
 mod hmm;
 pub(crate) mod log_density;

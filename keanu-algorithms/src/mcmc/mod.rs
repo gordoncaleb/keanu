@@ -1,8 +1,10 @@
-//! Markov chain Monte Carlo: Metropolis–Hastings, simulated annealing and the No-U-Turn sampler, plus the
+//! Markov chain Monte Carlo: Metropolis–Hastings, simulated annealing, the No-U-Turn sampler, and Gibbs and
+//! random-walk steps for discrete latents, plus the
 //! machinery they share for turning a chain into [`NetworkSamples`].
 
 pub mod annealing;
 pub mod chains;
+pub mod gibbs;
 pub mod metropolis;
 pub mod nuts;
 pub mod proposal;

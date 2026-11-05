@@ -179,6 +179,17 @@ Work from `docs/plans/2026-11-05-001-feat-applied-modelling-gaps-plan.md`.
   keanu-graph gained `Parameterisation::for_latents`, `Model::log_prob_and_gradient_wrt` (the gradient with respect
   to some continuous latents) and `Model::local_log_prob` (the log probability of some nodes only). Plain NUTS
   takes exactly the same trajectories as before.
+- keanu-algorithms: **Gibbs and discrete Metropolis steps** (`mcmc::gibbs::Gibbs` and `DiscreteMetropolis`, with
+  their `GibbsSampler` and `DiscreteMetropolisSampler`; both also in the `keanu` prelude), sampling algorithms for
+  discrete latents that update one element at a time from its Markov blanket's log probability. `Gibbs` draws each
+  element from its exact conditional distribution by evaluating every value it can take: Bernoulli, binomial,
+  categorical, ordered logistic and discrete uniform latents, and truncated binomial, Poisson and negative binomial
+  latents with a finite upper bound, with the supports read from the current parameter values at every step. An
+  element with more than `max_support_size` values (default 1000) is an error that points to `DiscreteMetropolis`.
+  `DiscreteMetropolis` is random-walk Metropolis–Hastings with steps drawn uniformly from ±1, …, ±`max_step` (default
+  2), for integer latents with infinitely many values (Poisson, negative binomial, geometric) or any other integer
+  latent except a multinomial. keanu-graph gained `DistributionKind::finite_support` (the values each element can
+  take, given the parameters) and `DistributionKind::has_finite_support`.
 
 ### Code review fixes
 
