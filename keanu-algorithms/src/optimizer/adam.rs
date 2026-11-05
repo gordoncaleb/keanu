@@ -98,7 +98,8 @@ impl Adam {
     }
 
     /// Returns the final position and whether it converged. `initial_gradient`, if known, is the gradient at
-    /// `start`, so the first step needn't evaluate it.
+    /// `start`, so the first step needn't evaluate it. Stops, without converging, once a step passes the
+    /// objective's boundary threshold.
     pub(crate) fn maximize(
         &self,
         objective: &Objective<'_>,
@@ -135,6 +136,10 @@ impl Adam {
             converged = self.convergence.has_converged(&theta, &next);
             theta = next;
             t += 1;
+            if objective.boundary_of(&theta).is_some() {
+                // heading for the boundary of a support, where the optimum is at infinity: the caller reports it
+                return Ok((theta, false));
+            }
         }
         Ok((theta, converged))
     }

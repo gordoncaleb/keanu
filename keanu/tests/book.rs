@@ -187,6 +187,44 @@ fn maximum_a_posteriori() -> keanu::Result<()> {
 }
 
 #[test]
+fn map_in_unconstrained_space() -> keanu::Result<()> {
+    // ANCHOR: map_transforms
+    // sigma > 0 is optimized as log(sigma), but without the Jacobian: the MAP is the mode of the Gamma density,
+    // (k - 1) theta = 0.5
+    let b = GraphBuilder::new();
+    let sigma = b.gamma(0.5, 2.0); // theta (scale) 0.5, k (shape) 2
+    b.set_value(sigma, DoubleTensor::scalar(2.0));
+    let sigma = sigma.id();
+    let (graph, mut state) = b.build()?;
+    let model = Model::new(graph, &state)?;
+    let result = GradientOptimizer::new(&model).max_a_posteriori(&mut state)?;
+    let mode = result.get(sigma).unwrap().to_scalar().unwrap();
+    assert!((mode - 0.5).abs() < 1e-3);
+
+    // the opt-out: optimize the latents' own values
+    let result = GradientOptimizer::new(&model)
+        .space(Space::Constrained)
+        .max_a_posteriori(&mut state)?;
+    assert!((result.get(sigma).unwrap().to_scalar().unwrap() - 0.5).abs() < 1e-3);
+    // ANCHOR_END: map_transforms
+
+    // ANCHOR: map_boundary
+    // with no data the mode of HalfGaussian(1) is 0, on the boundary of its support
+    let b = GraphBuilder::new();
+    let scale = b.half_gaussian(1.0).label("scale");
+    b.set_value(scale, DoubleTensor::scalar(1.0));
+    let scale = scale.id();
+    let (graph, mut state) = b.build()?;
+    let model = Model::new(graph, &state)?;
+    let result = GradientOptimizer::new(&model).max_a_posteriori(&mut state)?;
+    assert_eq!(result.boundary, Some(scale));
+    assert!(!result.converged);
+    assert!(result.get(scale).unwrap().to_scalar().unwrap() < 1e-12);
+    // ANCHOR_END: map_boundary
+    Ok(())
+}
+
+#[test]
 fn posterior_sampling() -> keanu::Result<()> {
     // ANCHOR: sampling_model
     // A and B are around 20; a noisy measurement says A + B is 43. The posterior mean of each is 21.
@@ -226,6 +264,31 @@ fn posterior_sampling() -> keanu::Result<()> {
     let mean_a = samples.f64(a).unwrap().mean()?.to_scalar().unwrap();
     assert!((mean_a - 21.0).abs() < 0.2);
     // ANCHOR_END: nuts
+
+    // ANCHOR: nuts_transforms
+    // sigma ~ HalfGaussian(1), observed through y ~ N(0, sigma): NUTS moves log(sigma), so every draw is positive
+    let b = GraphBuilder::new();
+    let sigma = b.half_gaussian(1.0);
+    let y = b.gaussian_with_shape(&[3], 0.0, sigma);
+    b.observe(y, DoubleTensor::vector(vec![0.4, -1.1, 0.7]));
+    b.set_value(sigma, DoubleTensor::scalar(1.0));
+    let sigma = sigma.id();
+    let (graph, mut scale_state) = b.build()?;
+    let scale_model = Model::new(graph, &scale_state)?;
+    let nuts = Nuts::default().with_adapt_count(200);
+    let samples = nuts.sample(&scale_model, &mut scale_state, &[sigma], 500, &mut rng)?;
+    let draws = samples.f64(sigma).unwrap();
+    assert!(
+        draws
+            .as_slice()
+            .iter()
+            .all(|s| s.to_scalar().unwrap() > 0.0)
+    );
+
+    // the opt-out: NUTS on the latents' own values
+    let constrained = nuts.with_space(Space::Constrained);
+    constrained.sample(&scale_model, &mut scale_state, &[sigma], 500, &mut rng)?;
+    // ANCHOR_END: nuts_transforms
 
     // ANCHOR: choose_sampler
     // NUTS if every latent is continuous and differentiable, otherwise Metropolis–Hastings

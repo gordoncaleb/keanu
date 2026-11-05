@@ -1,11 +1,12 @@
 //! Optimizer behaviour that has a closed form answer or a specific failure mode.
 
 use keanu_algorithms::AlgorithmError;
+use keanu_algorithms::Space;
 use keanu_algorithms::optimizer::{
     Adam, ConjugateGradient, ConvergenceChecker, GradientOptimizer, Norm, UpdateFormula,
 };
 use keanu_graph::{GraphBuilder, Model, State};
-use keanu_tensor::DoubleTensor;
+use keanu_tensor::{DoubleTensor, IntTensor};
 
 /// mu ~ N(prior_mu, prior_sigma), x_i ~ N(mu, sigma) observed. The posterior mode is the precision weighted mean.
 fn conjugate_gaussian(observations: &[f64]) -> (Model, State, keanu_graph::NodeId) {
@@ -295,13 +296,138 @@ fn conjugate_gradient_stops_at_an_impossible_start() {
             .unwrap_err(),
         AlgorithmError::ImpossibleStart
     );
+    // a value on the boundary of the support has no unconstrained point, so even without the check it is an
+    // impossible start
+    assert_eq!(
+        GradientOptimizer::new(&model)
+            .check_initial_conditions(false)
+            .max_a_posteriori(&mut state.clone())
+            .unwrap_err(),
+        AlgorithmError::ImpossibleStart
+    );
+    // in constrained space the optimizer starts there, and stops at once
     let result = GradientOptimizer::new(&model)
+        .space(Space::Constrained)
         .check_initial_conditions(false)
         .max_a_posteriori(&mut state)
         .unwrap();
     assert!(!result.converged);
     assert_eq!(result.get(sigma).unwrap().to_scalar(), Some(0.0));
     assert_eq!(state.f64(sigma).unwrap().to_scalar(), Some(0.0));
+}
+
+fn both_algorithms() -> Vec<keanu_algorithms::optimizer::Algorithm> {
+    vec![
+        Adam::default().with_max_evaluations(100_000).into(),
+        ConjugateGradient::default().into(),
+    ]
+}
+
+/// AE2: MAP in unconstrained space optimises without the Jacobian, so it finds the mode of the Gamma density,
+/// (k − 1)θ = 0.5, not the mode of the density of log σ (kθ = 1).
+#[test]
+fn map_of_a_positive_latent_is_the_mode_of_its_density() {
+    for algorithm in both_algorithms() {
+        let b = GraphBuilder::new();
+        let sigma = b.gamma(0.5, 2.0);
+        b.set_value(sigma, DoubleTensor::scalar(2.0));
+        let sigma = sigma.id();
+        let (graph, mut state) = b.build().unwrap();
+        let model = Model::new(graph, &state).unwrap();
+        let result = GradientOptimizer::new(&model)
+            .algorithm(algorithm.clone())
+            .max_a_posteriori(&mut state)
+            .unwrap();
+        let mode = result.get(sigma).unwrap().to_scalar().unwrap();
+        assert!(result.converged, "{algorithm:?}");
+        assert!(result.boundary.is_none(), "{algorithm:?}");
+        assert!((mode - 0.5).abs() < 2e-3, "{algorithm:?}: {mode}");
+        assert_eq!(state.f64(sigma).unwrap().to_scalar(), Some(mode));
+    }
+}
+
+/// AE5: with no data the mode of HalfGaussian(1) is on the boundary, 0, which is at −∞ in unconstrained space: the
+/// optimizer stops and names the latent rather than running on.
+#[test]
+fn map_on_the_boundary_of_the_support_is_reported() {
+    for algorithm in both_algorithms() {
+        let b = GraphBuilder::new();
+        let sigma = b.half_gaussian(1.0).label("sigma");
+        b.set_value(sigma, DoubleTensor::scalar(1.0));
+        let sigma = sigma.id();
+        let (graph, mut state) = b.build().unwrap();
+        let model = Model::new(graph, &state).unwrap();
+        let result = GradientOptimizer::new(&model)
+            .algorithm(algorithm.clone())
+            .max_a_posteriori(&mut state)
+            .unwrap();
+        assert_eq!(result.boundary, Some(sigma), "{algorithm:?}");
+        assert!(!result.converged, "{algorithm:?}");
+        assert!(result.evaluations < 100_000, "{algorithm:?}");
+        let value = result.get(sigma).unwrap().to_scalar().unwrap();
+        assert!((0.0..1e-12).contains(&value), "{algorithm:?}: {value}");
+    }
+}
+
+/// Maximum likelihood of a scale: the likelihood's gradient is pulled back through the transform, and the prior
+/// plays no part. The estimate of sigma for y_i ~ N(0, sigma) is the root mean square of the data.
+#[test]
+fn maximum_likelihood_of_a_scale() {
+    let data = [0.5, -1.5, 2.0, -0.5];
+    for algorithm in both_algorithms() {
+        let b = GraphBuilder::new();
+        let sigma = b.half_gaussian(1.0);
+        b.set_value(sigma, DoubleTensor::scalar(3.0));
+        let y = b.gaussian_with_shape(&[data.len()], 0.0, sigma);
+        b.observe(y, DoubleTensor::vector(data.to_vec()));
+        let sigma = sigma.id();
+        let (graph, mut state) = b.build().unwrap();
+        let model = Model::new(graph, &state).unwrap();
+        let result = GradientOptimizer::new(&model)
+            .algorithm(algorithm.clone())
+            .max_likelihood(&mut state)
+            .unwrap();
+        let expected = (data.iter().map(|y| y * y).sum::<f64>() / data.len() as f64).sqrt();
+        let estimate = result.get(sigma).unwrap().to_scalar().unwrap();
+        assert!(result.converged, "{algorithm:?}");
+        assert!(
+            (estimate - expected).abs() < 2e-3,
+            "{algorithm:?}: {estimate} vs {expected}"
+        );
+    }
+}
+
+/// A probability on a simplex: in unconstrained space the optimizer stays on the simplex and finds the
+/// Dirichlet–Multinomial posterior mode, (α + k − 1) / (Σα + n − K).
+#[test]
+fn map_of_a_simplex() {
+    let alpha = [2.0, 3.0, 4.0];
+    let counts = [5i64, 1, 8];
+    for algorithm in both_algorithms() {
+        let b = GraphBuilder::new();
+        let p = b.dirichlet(DoubleTensor::vector(alpha.to_vec()));
+        b.set_value(p, DoubleTensor::vector(vec![1.0 / 3.0; 3]));
+        let k = b.multinomial(counts.iter().sum::<i64>(), p);
+        b.observe(k, IntTensor::vector(counts.to_vec()));
+        let p = p.id();
+        let (graph, mut state) = b.build().unwrap();
+        let model = Model::new(graph, &state).unwrap();
+        let result = GradientOptimizer::new(&model)
+            .algorithm(algorithm.clone())
+            .max_a_posteriori(&mut state)
+            .unwrap();
+        let mode = result.get(p).unwrap();
+        let denominator = alpha.iter().sum::<f64>() + counts.iter().sum::<i64>() as f64 - 3.0;
+        for (i, (&a, &k)) in alpha.iter().zip(&counts).enumerate() {
+            let expected = (a + k as f64 - 1.0) / denominator;
+            let actual = mode.as_slice()[i];
+            assert!(
+                (actual - expected).abs() < 2e-3,
+                "{algorithm:?} p[{i}]: {actual} vs {expected}"
+            );
+        }
+        assert!((mode.sum() - 1.0).abs() < 1e-12);
+    }
 }
 
 /// a ~ N(0, 1) at 0 and z ~ N(sqrt(a), 1) observed at 0: a finite fitness whose gradient is 0 · ∞ = NaN.

@@ -2,8 +2,9 @@
 
 use keanu_algorithms::AlgorithmError;
 use keanu_algorithms::optimizer::{Bobyqa, NonGradientOptimizer, OptimizerBounds};
-use keanu_graph::{GraphBuilder, Model, NodeId, State};
+use keanu_graph::{CustomDistribution, GraphBuilder, Model, NodeId, State, Value};
 use keanu_tensor::DoubleTensor;
+use std::sync::{Arc, Mutex};
 
 /// mu ~ N(2, 3), x_i ~ N(mu, 0.5) observed; also an unrelated latent `other` ~ N(0, 1) so there are two
 /// dimensions, as Java's BOBYQA required.
@@ -278,9 +279,13 @@ fn infinite_bounds_on_the_wrong_side_and_nan_bounds_are_errors() {
 /// Regression: with the initial-condition check off, an optimum with zero probability was reported as converged.
 #[test]
 fn an_impossible_optimum_is_not_converged() {
+    // a ~ Uniform(0, 10) within its support, but y ~ Uniform(a, a + 1) observed at 0.5 is impossible for a in
+    // [4, 6]
     let b = GraphBuilder::new();
-    let a = b.uniform(0.0, 1.0);
+    let a = b.uniform(0.0, 10.0);
     b.set_value(a, DoubleTensor::scalar(5.0));
+    let y = b.uniform(a, a + 1.0);
+    b.observe(y, DoubleTensor::scalar(0.5));
     let a = a.id();
     let (graph, mut state) = b.build().unwrap();
     let model = Model::new(graph, &state).unwrap();
@@ -292,6 +297,102 @@ fn an_impossible_optimum_is_not_converged() {
         .unwrap();
     assert_eq!(result.fitness, f64::NEG_INFINITY);
     assert!(!result.converged);
+}
+
+/// A recorder of every value of its parameter the log probability is evaluated at (its own value is ignored).
+#[derive(Debug, Default)]
+struct Recorder(Arc<Mutex<Vec<f64>>>);
+
+impl CustomDistribution for Recorder {
+    fn log_prob(&self, _value: &Value, parameters: &[&Value]) -> Result<f64, String> {
+        let Value::F64(sigma) = parameters[0] else {
+            return Err("f64 parameter expected".into());
+        };
+        let sigma = sigma.to_scalar().unwrap();
+        self.0.lock().unwrap().push(sigma);
+        // the log density of N(0, sigma) at 1.2
+        Ok(-(1.2f64 * 1.2) / (2.0 * sigma * sigma) - sigma.ln())
+    }
+}
+
+/// Without explicit bounds BOBYQA is bounded by the latents' supports: a scale is never evaluated below 0, even from
+/// a start close to it with a large trust region.
+#[test]
+fn bobyqa_keeps_a_scale_inside_its_support() {
+    let evaluated = Arc::new(Mutex::new(Vec::new()));
+    let b = GraphBuilder::new();
+    let sigma = b.half_gaussian(1.0);
+    b.set_value(sigma, DoubleTensor::scalar(0.2));
+    let other = b.gaussian(0.0, 1.0);
+    b.set_value(other, DoubleTensor::scalar(0.5));
+    let y: keanu_graph::DoubleVar = b.custom(Recorder(Arc::clone(&evaluated)), &[], &[sigma.id()]);
+    b.observe(y, DoubleTensor::scalar(0.0));
+    let sigma = sigma.id();
+    let (graph, mut state) = b.build().unwrap();
+    let model = Model::new(graph, &state).unwrap();
+    let result = NonGradientOptimizer::new(&model)
+        .max_a_posteriori(&mut state)
+        .unwrap();
+    let evaluated = evaluated.lock().unwrap();
+    assert!(evaluated.len() > 10);
+    assert!(evaluated.iter().all(|&s| s >= 0.0), "{evaluated:?}");
+    // the mode of exp(−σ²/2) σ⁻¹ exp(−1.44 / 2σ²): σ⁴ + σ² − 1.44 = 0
+    let expected = ((-1.0 + (1.0f64 + 4.0 * 1.44).sqrt()) / 2.0).sqrt();
+    let found = result.get(sigma).unwrap().to_scalar().unwrap();
+    assert!((found - expected).abs() < 1e-5, "{found} vs {expected}");
+}
+
+/// A support that moves with another latent can't be a fixed box, so it doesn't bound BOBYQA: x ~ Uniform(0, hi),
+/// hi ~ N(3, 0.1), y ~ N(x, 0.1) observed at 2.5 has its mode near x = 2.5, beyond the starting hi = 1.5.
+#[test]
+fn a_support_that_depends_on_a_latent_does_not_bound_bobyqa() {
+    let b = GraphBuilder::new();
+    let hi = b.gaussian(3.0, 0.1);
+    b.set_value(hi, DoubleTensor::scalar(1.5));
+    let x = b.uniform(0.0, hi);
+    b.set_value(x, DoubleTensor::scalar(1.2));
+    let y = b.gaussian(x, 0.1);
+    b.observe(y, DoubleTensor::scalar(2.5));
+    let x = x.id();
+    let (graph, mut state) = b.build().unwrap();
+    let model = Model::new(graph, &state).unwrap();
+    let result = NonGradientOptimizer::new(&model)
+        .algorithm(Bobyqa::default().with_initial_trust_region_radius(0.5))
+        .max_a_posteriori(&mut state)
+        .unwrap();
+    let found = result.get(x).unwrap().to_scalar().unwrap();
+    assert!(found > 2.0, "{found}");
+}
+
+/// Explicit bounds are intersected with the support; bounds that miss the support altogether are an error.
+#[test]
+fn explicit_bounds_are_intersected_with_the_support() {
+    let b = GraphBuilder::new();
+    let p = b.uniform(0.0, 1.0);
+    b.set_value(p, DoubleTensor::scalar(0.5));
+    let x = b.gaussian(p, 0.1);
+    b.observe(x, DoubleTensor::scalar(-3.0));
+    let other = b.gaussian(0.0, 1.0);
+    b.set_value(other, DoubleTensor::scalar(0.5));
+    let p = p.id();
+    let (graph, state) = b.build().unwrap();
+    let model = Model::new(graph, &state).unwrap();
+    // the posterior mode is at the support's lower bound, inside the explicit bounds
+    let result = NonGradientOptimizer::new(&model)
+        .bounds(OptimizerBounds::new().add_scalar(p, -5.0, 0.8))
+        .max_a_posteriori(&mut state.clone())
+        .unwrap();
+    let found = result.get(p).unwrap().to_scalar().unwrap();
+    assert!((0.0..1e-6).contains(&found), "{found}");
+
+    let error = NonGradientOptimizer::new(&model)
+        .bounds(OptimizerBounds::new().add_scalar(p, 2.0, 3.0))
+        .max_a_posteriori(&mut state.clone())
+        .unwrap_err();
+    assert!(
+        matches!(&error, AlgorithmError::InvalidArgument(m) if m.contains("support")),
+        "{error:?}"
+    );
 }
 
 /// Regression: a huge number of interpolation points overflowed (2 · npt) instead of falling back to the default.

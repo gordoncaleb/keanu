@@ -29,6 +29,34 @@ Conjugate gradient also stops with `converged: false`, at the best point found, 
 impossible or the gradient NaN or infinite. Unless the initial-condition check is turned off, an impossible start
 or a NaN or infinite starting gradient is an error.
 
+## Constrained latents
+
+As [NUTS](inference-sampling.md#constrained-latents) does, the gradient optimizers work in **unconstrained space** by
+default: each latent is mapped to the real line through a transform chosen from its support (log for a positive
+scale, logit for a probability, and so on), so every point they try is inside the support. Unlike sampling, MAP and
+maximum likelihood maximize the model's log probability at the latents' own values, *without* the log-Jacobian of
+the transforms, so an optimum inside the support is exactly the one you would get without transforms:
+
+```rust,ignore
+{{#include ../../keanu/tests/book.rs:map_transforms}}
+```
+
+(With the Jacobian, the optimum would be the mode of the density of log σ, kθ = 1.)
+
+When the optimum is on the boundary of a support, such as a scale whose most probable value is 0, it is at
+infinity in unconstrained space. The optimizer stops once a bounded latent's unconstrained coordinate passes ±30
+(also when it stalls on the way, with the coordinate past ±5 and the log probability no better than at ±31), and
+reports the latent in `OptimizedResult::boundary`, with `converged: false` and the latent's value left next to the
+boundary:
+
+```rust,ignore
+{{#include ../../keanu/tests/book.rs:map_boundary}}
+```
+
+`space(Space::Constrained)` opts out and optimizes the latents' own values, where a step can leave the support (the
+log probability there is −∞) and Adam follows exactly Java Keanu's trajectory. In unconstrained space a starting
+value outside its support, or on its boundary, is an impossible start even with the initial-condition check off.
+
 ## Without gradients: BOBYQA
 
 `NonGradientOptimizer` finds the same optima without gradients, using BOBYQA (Powell's bound optimisation by
@@ -51,7 +79,12 @@ radius shrinks to fit the bounds. If evaluating the model fails, the optimizatio
 ```
 
 A lower bound of −∞ or an upper bound of +∞ means no bound on that side. A NaN bound, or a lower bound that is
-not below its upper bound (including a lower bound of +∞ or an upper bound of −∞), is an error. An optimum with
+not below its upper bound (including a lower bound of +∞ or an upper bound of −∞), is an error.
+
+BOBYQA always works on the latents' own values, but it keeps them inside their supports: each element of a latent
+with a lower-bounded or interval support (a scale, a probability) is bounded by that support, intersected with any
+explicit bounds and with `bounds_range` around the start. Explicit bounds that don't overlap the support at all are
+an error. An optimum with
 zero probability (possible only with the initial-condition check off) is never reported as converged.
 
 Unlike Java's, it also works when there is only one latent dimension.

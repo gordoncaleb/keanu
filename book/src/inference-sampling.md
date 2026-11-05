@@ -52,7 +52,34 @@ Settings on `Nuts`:
 - **Diagnostics:** `save_statistics`, used with `sample_with_statistics` for per-step step sizes, tree sizes and
   divergences.
 
+- **Space:** `space` (see below).
+
 A `Nuts` value holds settings only, so it can be reused and shared between threads.
+
+### Constrained latents
+
+Many latents can only take some values: a scale is positive, a probability is between 0 and 1, a Dirichlet draw is
+on the simplex. By default NUTS samples each latent in **unconstrained space**: it maps the latent to the real line
+through a transform chosen from its distribution's support (log for a lower bound, logit for an interval, the
+isometric log-ratio for a simplex, and so on), moves there, and maps every draw back. The log-Jacobian of the
+transforms is added to the log probability, so the draws still follow the posterior. Every point of a trajectory is
+inside the support, so trajectories never diverge by stepping out of it, and latents near a boundary (a small
+scale) mix well.
+
+Draws, the state the sampler leaves and the recorded log probabilities are all in terms of the latents' own values;
+the transforms only change how NUTS moves.
+
+```rust,ignore
+{{#include ../../keanu/tests/book.rs:nuts_transforms}}
+```
+
+`with_space(Space::Constrained)` opts out, moving in the latents' own values as earlier versions of Keanu did (and
+giving the same draws for the same seed). Opting out is needed when a latent's bounds depend on another latent, for
+example `x ~ Uniform(0, hi)` with a latent `hi`: a fixed transform can't follow a moving bound, so the default fails
+with an error suggesting a reparameterisation (`u ~ Uniform(0, 1)` and `x = hi · u`) or `Space::Constrained`. A
+starting value outside its support, or on its boundary, is an impossible start in either space.
+
+Metropolis–Hastings always works on the latents' own values: its proposals are defined on them.
 
 ## Choosing automatically
 

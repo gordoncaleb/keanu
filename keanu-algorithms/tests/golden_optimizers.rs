@@ -1,10 +1,12 @@
 //! MAP and maximum likelihood on the golden models agree with Java's results (golden-vectors/algorithms.json).
 //!
 //! Optimizers reach the optimum by different paths, so results are compared with optimization tolerances. Adam is
-//! an exact port of Java's update rule, so it is held to a tighter tolerance than conjugate gradient, whose line
-//! search is independent of Java's.
+//! an exact port of Java's update rule, so in constrained space (Java's) it is held to a tighter tolerance than
+//! conjugate gradient, whose line search is independent of Java's; in unconstrained space (the default) Adam is held
+//! to conjugate gradient's tolerance.
 
-use keanu_algorithms::optimizer::{Adam, ConjugateGradient, GradientOptimizer};
+use keanu_algorithms::Space;
+use keanu_algorithms::optimizer::{Adam, ConjugateGradient, Fitness, GradientOptimizer};
 use keanu_distributions::KeanuRng;
 use keanu_graph::{Model, NodeId};
 use keanu_parity::{golden_dir, parse_tensor};
@@ -61,6 +63,34 @@ fn optimizers_match_java() {
             "Adam" => {
                 let max = case["algorithm"]["maxEvaluations"].as_u64().unwrap() as usize;
                 optimizer = optimizer.algorithm(Adam::default().with_max_evaluations(max));
+                // the unconstrained trajectory differs from Java's: it must reach the same optimum, at least as
+                // well, to conjugate gradient's tolerance
+                if case["result"].get("error").is_none() {
+                    let fitness = match case["fitness"].as_str().unwrap() {
+                        "MAP" => Fitness::LogProb,
+                        _ => Fitness::LogLikelihood,
+                    };
+                    let result = optimizer.optimize(&mut state.clone(), fitness).unwrap();
+                    let java_fitness = number(&case["result"]["fitness"]);
+                    if result.fitness < java_fitness - 1e-7 * java_fitness.abs().max(1.0) {
+                        failures.push(format!(
+                            "{name} unconstrained: fitness {} vs Java {java_fitness}",
+                            result.fitness
+                        ));
+                    }
+                    for (label, value) in case["result"]["values"].as_object().unwrap() {
+                        let java = parse_tensor(value).unwrap();
+                        let rust = result.get(model.find(label).unwrap()).unwrap();
+                        for (r, j) in rust.as_slice().iter().zip(&java.data) {
+                            if (r - j).abs() > 2e-3 * j.abs().max(1.0) {
+                                failures
+                                    .push(format!("{name} unconstrained {label}: {r} vs Java {j}"));
+                            }
+                        }
+                    }
+                }
+                // Adam is an exact port of Java's update rule, in the latents' own values
+                optimizer = optimizer.space(Space::Constrained);
                 (1e-6, 1e-9)
             }
             "ConjugateGradient" => {

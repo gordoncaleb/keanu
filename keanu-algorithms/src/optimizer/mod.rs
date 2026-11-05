@@ -1,5 +1,23 @@
 //! Gradient based optimizers for finding the maximum a posteriori (MAP) or maximum likelihood (MLE) values of a
 //! model's continuous latents.
+//!
+//! # Unconstrained space
+//!
+//! By default the gradient optimizers move in unconstrained space ([`Space::Unconstrained`]): each latent is mapped
+//! to ℝⁿ through the transform of its support (see [`Parameterisation`]), so every point they try is inside the
+//! support. The fitness is the model's log probability (or log likelihood) at the constrained values, *without* the
+//! log-Jacobian of the transforms, so an optimum inside the support is exactly the constrained optimum: the MAP of
+//! `Gamma(theta = 0.5, k = 2)` is its mode, 0.5.
+//!
+//! A mode on the boundary of a support (a scale whose mode is 0) is at infinity in unconstrained space. Once a
+//! coordinate of a bounded latent passes ±30 (where `exp` of it is below 10⁻¹³ or above 10¹³) the optimizer stops
+//! and reports the latent in [`OptimizedResult::boundary`], with `converged` false and the values left where it
+//! stopped, close to the boundary. Optimizers can also stall in the flat tail on the way there, so when one stops
+//! with a bounded coordinate beyond ±5 whose gradient still points outwards, that coordinate is tried at ±31: if the
+//! fitness there is no worse, the result is the same boundary result.
+//!
+//! [`GradientOptimizer::space`]`(Space::Constrained)` optimizes the latents' own values instead, as Keanu did before
+//! transforms existed. [`NonGradientOptimizer`] always works on the constrained values, bounded by the supports.
 
 mod adam;
 pub mod bobyqa;
@@ -12,8 +30,8 @@ pub use conjugate_gradient::{ConjugateGradient, UpdateFormula};
 pub use convergence::{ConvergenceChecker, Norm};
 
 use crate::error::{AlgorithmError, Result};
-use crate::support::f64_values;
-use keanu_graph::{Model, NodeId, State};
+use crate::support::{block_shapes, concat, split, start_point};
+use keanu_graph::{Model, NodeId, Parameterisation, Space, State, Support, node_support};
 use keanu_tensor::DoubleTensor;
 use std::cell::Cell;
 
@@ -63,10 +81,15 @@ pub struct OptimizedResult {
     pub values: Vec<(NodeId, DoubleTensor)>,
     /// The fitness (log probability or log likelihood) at the optimum.
     pub fitness: f64,
-    /// Whether the algorithm's convergence criterion was met (rather than running out of evaluations).
+    /// Whether the algorithm's convergence criterion was met (rather than running out of evaluations, or stopping
+    /// at a [`boundary`](Self::boundary)).
     pub converged: bool,
     /// The number of fitness and gradient evaluations used.
     pub evaluations: usize,
+    /// The latent whose optimum is on the boundary of its support, if the optimizer stopped because of one (see the
+    /// [module documentation](self)). Its value is then close to the boundary rather than an interior optimum, and
+    /// `converged` is false. Always `None` in [`Space::Constrained`] and for the [`NonGradientOptimizer`].
+    pub boundary: Option<NodeId>,
 }
 
 impl OptimizedResult {
@@ -77,24 +100,35 @@ impl OptimizedResult {
 }
 
 /// Finds the latent values that maximize the log probability or log likelihood of a model by gradient ascent
-/// (Java's `GradientOptimizer`). The default algorithm is conjugate gradient.
+/// (Java's `GradientOptimizer`). The default algorithm is conjugate gradient, in unconstrained space (see the
+/// [module documentation](self)).
 #[derive(Debug, Clone)]
 pub struct GradientOptimizer<'m> {
     model: &'m Model,
     algorithm: Algorithm,
     check_initial_conditions: bool,
+    space: Space,
 }
 
 /// Starting points whose largest absolute gradient element is at most this are considered flat.
 const FLAT_GRADIENT: f64 = 1e-16;
 
+/// An unconstrained coordinate of a bounded latent beyond ± this is taken to be heading for the boundary of its
+/// support.
+const BOUNDARY: f64 = 30.0;
+
+/// A bounded coordinate the optimizer stopped beyond ± this is checked for a boundary optimum (see
+/// [`Objective::probe_boundary`]).
+const PROBE: f64 = 5.0;
+
 impl<'m> GradientOptimizer<'m> {
-    /// An optimizer for `model`, using conjugate gradient by default.
+    /// An optimizer for `model`, using conjugate gradient in unconstrained space by default.
     pub fn new(model: &'m Model) -> Self {
         Self {
             model,
             algorithm: ConjugateGradient::default().into(),
             check_initial_conditions: true,
+            space: Space::Unconstrained,
         }
     }
 
@@ -105,8 +139,16 @@ impl<'m> GradientOptimizer<'m> {
     }
 
     /// Whether to fail if the starting point is impossible or its gradient is flat or not finite (default true).
+    /// In unconstrained space a start outside a latent's support, or on its boundary, has no point to start from,
+    /// so it is an [`AlgorithmError::ImpossibleStart`] either way.
     pub fn check_initial_conditions(mut self, check: bool) -> Self {
         self.check_initial_conditions = check;
+        self
+    }
+
+    /// Sets the space to optimize in (default [`Space::Unconstrained`]; see the [module documentation](self)).
+    pub fn space(mut self, space: Space) -> Self {
+        self.space = space;
         self
     }
 
@@ -121,11 +163,20 @@ impl<'m> GradientOptimizer<'m> {
     }
 
     /// Optimizes the given fitness, leaving the state at the optimum.
+    ///
+    /// # Errors
+    ///
+    /// [`AlgorithmError::ImpossibleStart`], [`AlgorithmError::FlatGradient`] and
+    /// [`AlgorithmError::NonFiniteGradient`] for a bad starting point (see
+    /// [`check_initial_conditions`](Self::check_initial_conditions)), errors for models without continuous latents
+    /// or with discrete ones, and, in unconstrained space, an error from [`Parameterisation::new`] if a latent's
+    /// support has no transform.
     pub fn optimize(&self, state: &mut State, fitness: Fitness) -> Result<OptimizedResult> {
         let model = self.model;
         check_latents(model)?;
 
-        let objective = Objective::new(model, fitness);
+        let param = Parameterisation::with_space(model, state, self.space)?;
+        let objective = Objective::new(param, state, fitness, false)?;
         let start = objective.flat_point(state)?;
         // the initial-condition check's fitness and gradient are where the algorithm starts, so are passed on
         let known_start = if self.check_initial_conditions {
@@ -155,19 +206,24 @@ impl<'m> GradientOptimizer<'m> {
                 )?;
                 // Adam's last gradient was taken before its last step, so the fitness at the end is unknown
                 let fitness = objective.value(state, &point)?;
-                (point, fitness, converged)
+                (concat(&point), fitness, converged)
             }
             Algorithm::ConjugateGradient(cg) => {
                 let (x, fitness, converged) = cg.maximize(&objective, state, start, known_start)?;
                 objective.apply_flat(state, &x)?;
-                (objective.unflatten(&x), fitness, converged)
+                (x, fitness, converged)
             }
         };
+        let (point, fitness, boundary) = match objective.boundary(&point) {
+            Some(latent) => (point, fitness, Some(latent)),
+            None => objective.probe_boundary(state, point, fitness)?,
+        };
         Ok(OptimizedResult {
-            values: objective.latents.iter().copied().zip(point).collect(),
+            values: objective.constrained_values(&point)?,
             fitness,
-            converged,
+            converged: converged && boundary.is_none(),
             evaluations: objective.evaluations(),
+            boundary,
         })
     }
 }
@@ -208,30 +264,65 @@ pub(crate) fn check_latents(model: &Model) -> Result<()> {
     Ok(())
 }
 
-/// The fitness of a model as a function of its continuous latents' values, either as one tensor per latent or as
-/// one flat vector of every latent's elements (in latent order, each row-major).
+/// The coordinates of the flat vector that go to ±∞ as their latent approaches the boundary of its support: every
+/// coordinate of a bounded latent except those of an identity (a real support, an angle, or the first element of an
+/// ordered vector). None in constrained space.
+fn boundary_coordinates(param: &Parameterisation<'_>, state: &State) -> Result<Vec<usize>> {
+    if param.space() == Space::Constrained {
+        return Ok(Vec::new());
+    }
+    let graph = param.model().graph();
+    let mut coordinates = Vec::new();
+    for &id in param.latents() {
+        let range = param.range(id).unwrap_or_default();
+        match node_support(graph, state, id)? {
+            Support::Real | Support::Circular | Support::Discrete => {}
+            Support::Ordered => {
+                let row = graph[id].shape().last().copied().unwrap_or(1).max(1);
+                coordinates.extend(range.clone().filter(|i| (i - range.start) % row != 0));
+            }
+            _ => coordinates.extend(range),
+        }
+    }
+    Ok(coordinates)
+}
+
+/// The fitness of a model as a function of a point in a [`Parameterisation`]'s flat vector, either as that vector
+/// or as one tensor per latent (see [`block_shapes`]).
+///
+/// With `jacobian` the log probability is that of the point, including the log-Jacobian of the transforms; MAP and
+/// maximum likelihood use it without, so that interior optima are the constrained optima. The Jacobian applies to
+/// the log probability only.
 pub(crate) struct Objective<'m> {
-    model: &'m Model,
+    param: Parameterisation<'m>,
     fitness: Fitness,
-    latents: Vec<NodeId>,
+    jacobian: bool,
     shapes: Vec<Vec<usize>>,
+    boundary_coordinates: Vec<usize>,
     evaluations: Cell<usize>,
 }
 
 impl<'m> Objective<'m> {
-    pub(crate) fn new(model: &'m Model, fitness: Fitness) -> Self {
-        let latents = model.continuous_latents();
-        let shapes = latents
-            .iter()
-            .map(|&id| model.graph()[id].shape().to_vec())
-            .collect();
-        Self {
-            model,
-            fitness,
-            latents,
-            shapes,
-            evaluations: Cell::new(0),
+    /// The objective for `fitness` over `param`, whose supports are read from `state`.
+    pub(crate) fn new(
+        param: Parameterisation<'m>,
+        state: &State,
+        fitness: Fitness,
+        jacobian: bool,
+    ) -> Result<Self> {
+        if jacobian && fitness != Fitness::LogProb {
+            return Err(AlgorithmError::InvalidArgument(
+                "the Jacobian applies to the log probability only".into(),
+            ));
         }
+        Ok(Self {
+            shapes: block_shapes(&param),
+            boundary_coordinates: boundary_coordinates(&param, state)?,
+            param,
+            fitness,
+            jacobian,
+            evaluations: Cell::new(0),
+        })
     }
 
     /// The number of fitness and gradient evaluations so far.
@@ -240,63 +331,96 @@ impl<'m> Objective<'m> {
     }
 
     pub(crate) fn latents(&self) -> &[NodeId] {
-        &self.latents
+        self.param.latents()
     }
 
-    /// The latents' current values as one flat vector.
+    /// The point of the latents' current values: an impossible start if a value has none.
     pub(crate) fn flat_point(&self, state: &State) -> Result<Vec<f64>> {
-        let len = self
-            .shapes
-            .iter()
-            .map(|s| s.iter().product::<usize>())
-            .sum();
-        let mut x = Vec::with_capacity(len);
-        for &id in &self.latents {
-            let value = state.f64(id).ok_or(AlgorithmError::Graph(
-                keanu_graph::GraphError::MissingValue(id),
-            ))?;
-            x.extend_from_slice(value.as_slice());
-        }
-        Ok(x)
+        start_point(&self.param, state)
     }
 
     /// The flat vector `x` as one tensor per latent.
     pub(crate) fn unflatten(&self, x: &[f64]) -> Vec<DoubleTensor> {
-        let mut offset = 0;
-        self.shapes
+        split(x, &self.shapes)
+    }
+
+    /// Each latent's constrained value at `x`.
+    pub(crate) fn constrained_values(&self, x: &[f64]) -> Result<Vec<(NodeId, DoubleTensor)>> {
+        Ok(self
+            .latents()
             .iter()
-            .map(|shape| {
-                let len: usize = shape.iter().product();
-                let tensor = DoubleTensor::new(shape, x[offset..offset + len].to_vec())
-                    .expect("a latent's shape matches its length");
-                offset += len;
-                tensor
-            })
-            .collect()
+            .copied()
+            .zip(self.param.to_constrained(x)?)
+            .collect())
     }
 
-    fn set(&self, state: &mut State, point: impl IntoIterator<Item = DoubleTensor>) -> Result<()> {
-        self.model
-            .set_and_cascade(state, f64_values(&self.latents, point))?;
-        Ok(())
+    /// The latent of the first coordinate of `x` that is past the boundary threshold, if any.
+    pub(crate) fn boundary(&self, x: &[f64]) -> Option<NodeId> {
+        self.boundary_coordinates
+            .iter()
+            .find(|&&i| x[i].abs() > BOUNDARY)
+            .and_then(|&i| self.param.coordinate_latent(i))
     }
 
-    /// Sets the latents to the flat vector `x` and recomputes their deterministic descendants.
+    /// Checks whether the point `x` (with fitness `f`) an algorithm stopped at is really heading for a boundary:
+    /// optimizers can stall in the flat tail on the way, where steps shrink or the fitness stops changing. Each
+    /// bounded coordinate already beyond ±[`PROBE`] whose gradient points further out is tried at
+    /// ±([`BOUNDARY`] + 1); if the fitness there is no worse, the optimum is on the boundary and the optimizer moves
+    /// there. Returns the final point, its fitness and the first latent found on a boundary, leaving the state at
+    /// the point.
+    fn probe_boundary(
+        &self,
+        state: &mut State,
+        mut x: Vec<f64>,
+        mut f: f64,
+    ) -> Result<(Vec<f64>, f64, Option<NodeId>)> {
+        let far: Vec<usize> = self
+            .boundary_coordinates
+            .iter()
+            .copied()
+            .filter(|&i| x[i].abs() > PROBE)
+            .collect();
+        if far.is_empty() {
+            return Ok((x, f, None));
+        }
+        let gradient = self.gradient_flat(state, &x)?;
+        let mut boundary = None;
+        for i in far {
+            if x[i] * gradient[i] <= 0.0 {
+                continue;
+            }
+            let mut y = x.clone();
+            y[i] = (BOUNDARY + 1.0).copysign(x[i]);
+            let fy = self.value_flat(state, &y)?;
+            if fy >= f {
+                (x, f) = (y, fy);
+                boundary = boundary.or_else(|| self.param.coordinate_latent(i));
+            }
+        }
+        self.apply_flat(state, &x)?;
+        Ok((x, f, boundary))
+    }
+
+    /// As [`boundary`](Self::boundary), for a point given as one tensor per latent.
+    pub(crate) fn boundary_of(&self, point: &[DoubleTensor]) -> Option<NodeId> {
+        if self.boundary_coordinates.is_empty() {
+            return None;
+        }
+        self.boundary(&concat(point))
+    }
+
+    /// Sets the latents to their values at the flat vector `x` and recomputes their deterministic descendants.
     pub(crate) fn apply_flat(&self, state: &mut State, x: &[f64]) -> Result<()> {
-        self.set(state, self.unflatten(x))
+        Ok(self.param.to_state(x, state)?)
     }
 
-    fn fitness_of(&self, state: &State) -> Result<f64> {
+    fn fitness_of(&self, state: &State, x: &[f64]) -> Result<f64> {
         Ok(match self.fitness {
-            Fitness::LogProb => self.model.log_prob(state)?,
-            Fitness::LogLikelihood => self.model.log_likelihood(state)?,
-        })
-    }
-
-    fn gradient_of(&self, state: &State) -> Result<keanu_graph::LogProbGradient> {
-        Ok(match self.fitness {
-            Fitness::LogProb => self.model.log_prob_gradient(state)?,
-            Fitness::LogLikelihood => self.model.log_likelihood_gradient(state)?,
+            Fitness::LogProb if self.jacobian => {
+                self.param.model().log_prob(state)? + self.param.log_det_jacobian(x)?
+            }
+            Fitness::LogProb => self.param.model().log_prob(state)?,
+            Fitness::LogLikelihood => self.param.model().log_likelihood(state)?,
         })
     }
 
@@ -306,16 +430,14 @@ impl<'m> Objective<'m> {
 
     /// The fitness at a point, one tensor per latent (which is applied to the state).
     pub(crate) fn value(&self, state: &mut State, point: &[DoubleTensor]) -> Result<f64> {
-        self.count();
-        self.set(state, point.iter().cloned())?;
-        self.fitness_of(state)
+        self.value_flat(state, &concat(point))
     }
 
     /// The fitness at the flat vector `x` (which is applied to the state).
     pub(crate) fn value_flat(&self, state: &mut State, x: &[f64]) -> Result<f64> {
         self.count();
         self.apply_flat(state, x)?;
-        self.fitness_of(state)
+        self.fitness_of(state, x)
     }
 
     /// The gradient of the fitness at a point (which is applied to the state), one tensor per latent. A latent the
@@ -325,35 +447,69 @@ impl<'m> Objective<'m> {
         state: &mut State,
         point: &[DoubleTensor],
     ) -> Result<Vec<DoubleTensor>> {
-        self.count();
-        self.set(state, point.iter().cloned())?;
-        let gradient = self.gradient_of(state)?;
-        Ok(self
-            .latents
-            .iter()
-            .zip(&self.shapes)
-            .map(|(&id, shape)| {
-                gradient
-                    .get(id)
-                    .cloned()
-                    .unwrap_or_else(|| DoubleTensor::zeros(shape))
-            })
-            .collect())
+        Ok(self.unflatten(&self.gradient_flat(state, &concat(point))?))
     }
 
     /// The gradient of the fitness at the flat vector `x` (which is applied to the state), flattened like `x`. A
     /// latent the fitness doesn't depend on has a zero gradient.
     pub(crate) fn gradient_flat(&self, state: &mut State, x: &[f64]) -> Result<Vec<f64>> {
         self.count();
-        self.apply_flat(state, x)?;
-        let gradient = self.gradient_of(state)?;
-        let mut flat = Vec::with_capacity(x.len());
-        for (&id, shape) in self.latents.iter().zip(&self.shapes) {
-            match gradient.get(id) {
-                Some(g) => flat.extend_from_slice(g.as_slice()),
-                None => flat.extend(std::iter::repeat_n(0.0, shape.iter().product())),
-            }
+        if self.jacobian {
+            // only the log probability takes the Jacobian; where it is impossible there is no gradient
+            let (_, gradient) = self.param.log_prob_and_gradient(x, true, state)?;
+            return Ok(gradient.unwrap_or_else(|| vec![f64::NAN; x.len()]));
         }
-        Ok(flat)
+        self.apply_flat(state, x)?;
+        let model = self.param.model();
+        let gradient = match self.fitness {
+            Fitness::LogProb => model.log_prob_gradient(state)?,
+            Fitness::LogLikelihood => model.log_likelihood_gradient(state)?,
+        };
+        Ok(self.param.pull_back(x, &gradient)?)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use keanu_graph::GraphBuilder;
+
+    /// With the Jacobian, the objective is the log density of the unconstrained point, and its gradient agrees with
+    /// finite differences of it.
+    #[test]
+    fn the_jacobian_objective_is_the_density_of_the_point() {
+        let b = GraphBuilder::new();
+        let sigma = b.gamma(0.5, 2.0);
+        b.set_value(sigma, DoubleTensor::scalar(2.0));
+        let y = b.gaussian(0.0, sigma);
+        b.observe(y, DoubleTensor::scalar(0.7));
+        let sigma = sigma.id();
+        let (graph, mut state) = b.build().unwrap();
+        let model = Model::new(graph, &state).unwrap();
+        let param = Parameterisation::new(&model, &state).unwrap();
+        let objective = Objective::new(param, &state, Fitness::LogProb, true).unwrap();
+
+        let z = [0.3];
+        let sigma_value = 0.3f64.exp();
+        let value = objective.value_flat(&mut state, &z).unwrap();
+        let without = model.log_prob(&state).unwrap();
+        assert!((value - (without + 0.3)).abs() < 1e-12, "log σ = z adds z");
+        assert_eq!(state.f64(sigma).unwrap().to_scalar(), Some(sigma_value));
+
+        let gradient = objective.gradient_flat(&mut state, &z).unwrap();
+        let h = 1e-6;
+        let numeric = (objective.value_flat(&mut state, &[z[0] + h]).unwrap()
+            - objective.value_flat(&mut state, &[z[0] - h]).unwrap())
+            / (2.0 * h);
+        assert!(
+            (gradient[0] - numeric).abs() < 1e-6,
+            "{gradient:?} vs {numeric}"
+        );
+
+        let param = Parameterisation::new(&model, &state).unwrap();
+        assert!(matches!(
+            Objective::new(param, &state, Fitness::LogLikelihood, true),
+            Err(AlgorithmError::InvalidArgument(_))
+        ));
     }
 }

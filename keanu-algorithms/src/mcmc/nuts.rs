@@ -1,12 +1,20 @@
 //! The No-U-Turn sampler (NUTS): Hamiltonian Monte Carlo that chooses its own trajectory length, with dual
 //! averaging step size adaptation and an adaptive diagonal mass matrix (Java's `NUTS`).
+//!
+//! By default NUTS moves in unconstrained space ([`Space::Unconstrained`]): each latent is mapped to ℝⁿ through the
+//! transform of its support (see [`Parameterisation`]), and the positions, the mass matrix and the leapfrog steps
+//! are all in those coordinates, with the log-Jacobian of the transforms added to the log probability so that the
+//! draws have the right distribution. Every point is inside the support, so trajectories never diverge by leaving
+//! it. Draws are recorded, and the state left, at the constrained values, and the recorded log probabilities are the
+//! model's (without the Jacobian). [`Nuts::with_space`]`(Space::Constrained)` moves in the latents' own values
+//! instead, as NUTS did before transforms existed.
 
 use crate::error::{AlgorithmError, Result};
 use crate::mcmc::{SamplingAlgorithm, SamplingOptions, generate, is_impossible};
 use crate::samples::NetworkSamples;
-use crate::support::{check_nodes, evaluate_all, f64_values};
+use crate::support::{block_shapes, check_nodes, concat, evaluate_all, split, start_point};
 use keanu_distributions::KeanuRng;
-use keanu_graph::{Graph, Model, NodeId, State};
+use keanu_graph::{Graph, Model, NodeId, Parameterisation, Space, State};
 use keanu_tensor::DoubleTensor;
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -94,6 +102,8 @@ pub struct Nuts {
     pub max_tree_height: usize,
     /// Record step sizes, log probs, mean tree acceptance and tree sizes for every step.
     pub save_statistics: bool,
+    /// The space the sampler moves in (default [`Space::Unconstrained`]; see the [module documentation](self)).
+    pub space: Space,
 }
 
 /// Setters for each setting, for use as `Nuts::default().with_...(...)`.
@@ -160,6 +170,13 @@ impl Nuts {
         self.save_statistics = save_statistics;
         self
     }
+
+    /// Sets [`space`](Self::space).
+    #[must_use]
+    pub fn with_space(mut self, space: Space) -> Self {
+        self.space = space;
+        self
+    }
 }
 
 impl Default for Nuts {
@@ -174,6 +191,7 @@ impl Default for Nuts {
             max_energy_change: 1000.0,
             max_tree_height: 10,
             save_statistics: false,
+            space: Space::Unconstrained,
         }
     }
 }
@@ -189,7 +207,7 @@ pub struct NutsStatistics {
     /// acceptance of step i - 1's tree (0 at step 0). Once adaptation ends (after `adapt_count` steps) it stays at
     /// the last adapted tree's value, and without step size adaptation it is always 0.
     pub mean_tree_accept: Vec<f64>,
-    /// The log probability of each step's sample.
+    /// The log probability of each step's sample (the model's, without the Jacobian of any transform).
     pub log_prob: Vec<f64>,
     /// The number of leapfrog steps in each step's tree.
     pub tree_size: Vec<usize>,
@@ -232,6 +250,13 @@ impl Nuts {
     }
 
     /// A chain starting from the current state, recording the values of `nodes`. Every latent must be continuous.
+    ///
+    /// # Errors
+    ///
+    /// [`AlgorithmError::ImpossibleStart`] if the starting point has zero probability or, in unconstrained space,
+    /// a latent's value is outside its support or on its boundary; and, in unconstrained space, an error from
+    /// [`Parameterisation::new`] if a latent's support has no transform (for instance a bound that depends on another
+    /// latent, which [`Space::Constrained`] can sample).
     pub fn sampler<'m>(
         &self,
         model: &'m Model,
@@ -256,17 +281,17 @@ impl Nuts {
                     .collect(),
             ));
         }
-        let latents = model.continuous_latents();
         evaluate_all(model.graph(), state, rng)?;
 
-        let position: Vec<DoubleTensor> = latents
-            .iter()
-            .map(|&id| state.f64(id).cloned().ok_or_else(|| missing(id)))
-            .collect::<Result<_>>()?;
-        let (log_prob, gradient) = log_prob_and_gradient_at(model, state, &latents)?;
+        let param = Parameterisation::with_space(model, state, self.space)?;
+        let shapes = block_shapes(&param);
+        let z = start_point(&param, state)?;
+        let (log_prob, gradient) = log_prob_and_gradient_at(&param, &shapes, state, &z)?;
         if is_impossible(log_prob) {
             return Err(AlgorithmError::ImpossibleStart);
         }
+        let sample_log_prob = log_prob - param.log_det_jacobian(&z)?;
+        let position = split(&z, &shapes);
 
         let step_size = self.initial_step_size.unwrap_or_else(|| {
             let n: usize = position.iter().map(DoubleTensor::len).sum();
@@ -274,7 +299,8 @@ impl Nuts {
         });
 
         Ok(NutsSampler {
-            model,
+            param,
+            shapes,
             config: *self,
             potential: PotentialState::new(&self.potential, &position),
             step_size: AdaptiveStepSize::new(
@@ -282,13 +308,13 @@ impl Nuts {
                 self.target_acceptance_prob,
                 self.adapt_count,
             ),
-            latents,
             nodes: nodes.to_vec(),
             proposal: Candidate {
                 position: Rc::new(position),
                 gradient: Rc::new(gradient),
                 log_prob,
             },
+            sample_log_prob,
             step_count: 0,
             statistics: NutsStatistics::default(),
         })
@@ -331,26 +357,19 @@ fn describe(graph: &Graph, id: NodeId) -> String {
         .unwrap_or_else(|| format!("#{}", id.index()))
 }
 
-fn missing(id: NodeId) -> AlgorithmError {
-    keanu_graph::GraphError::MissingValue(id).into()
-}
-
-/// The joint log probability and its gradient with respect to each latent, in latent order, in one pass. Where
-/// the log probability is not finite the gradient is meaningless (the trajectory diverges anyway), so zeros are used.
+/// Sets the state to the point `z` and returns the log probability of `z` (with the Jacobian of the transforms) and
+/// its gradient, one tensor per block of `shapes`, in one pass. Where the log probability is not finite the gradient
+/// is meaningless (the trajectory diverges anyway), so zeros are used.
 fn log_prob_and_gradient_at(
-    model: &Model,
-    state: &State,
-    latents: &[NodeId],
+    param: &Parameterisation<'_>,
+    shapes: &[Vec<usize>],
+    state: &mut State,
+    z: &[f64],
 ) -> Result<(f64, Vec<DoubleTensor>)> {
-    let zeros = |id: NodeId| DoubleTensor::zeros(model.graph()[id].shape());
-    let (log_prob, gradient) = model.log_prob_and_gradient(state)?;
+    let (log_prob, gradient) = param.log_prob_and_gradient(z, true, state)?;
     let gradient = match gradient {
-        // the latents are distinct, so each gradient is moved out exactly once
-        Some(mut gradient) if log_prob.is_finite() => latents
-            .iter()
-            .map(|&id| gradient.take(id).unwrap_or_else(|| zeros(id)))
-            .collect(),
-        _ => latents.iter().map(|&id| zeros(id)).collect(),
+        Some(gradient) if log_prob.is_finite() => split(&gradient, shapes),
+        _ => shapes.iter().map(|s| DoubleTensor::zeros(s)).collect(),
     };
     Ok((log_prob, gradient))
 }
@@ -574,8 +593,8 @@ impl AdaptiveStepSize {
 
 /// What a step of NUTS needs to build trajectories.
 struct Integrator<'a, 'm> {
-    model: &'m Model,
-    latents: &'a [NodeId],
+    param: &'a Parameterisation<'m>,
+    shapes: &'a [Vec<usize>],
     potential: &'a PotentialState,
     start_energy: f64,
     max_energy_change: f64,
@@ -591,11 +610,9 @@ impl Integrator<'_, '_> {
         let velocity = self.potential.velocity(&momentum)?;
         let position = Rc::new(axpy(&from.position, dt, &velocity)?);
 
-        // the state needs its own copy of the position: the trajectory keeps this one
-        self.model
-            .set_and_cascade(state, f64_values(self.latents, position.iter().cloned()))?;
+        let (log_prob, gradient) =
+            log_prob_and_gradient_at(self.param, self.shapes, state, &concat(&position))?;
         *self.in_state.borrow_mut() = Some(Rc::clone(&position));
-        let (log_prob, gradient) = log_prob_and_gradient_at(self.model, state, self.latents)?;
 
         let momentum = axpy(&momentum, half, &gradient)?;
         LeapfrogState::new(
@@ -786,13 +803,16 @@ impl Integrator<'_, '_> {
 /// A running NUTS chain (Java's `NUTSSampler`). It owns its adapted step size and potential.
 #[derive(Debug)]
 pub struct NutsSampler<'m> {
-    model: &'m Model,
+    param: Parameterisation<'m>,
+    /// The shape of each latent's block of the position.
+    shapes: Vec<Vec<usize>>,
     config: Nuts,
     potential: PotentialState,
     step_size: AdaptiveStepSize,
-    latents: Vec<NodeId>,
     nodes: Vec<NodeId>,
     proposal: Candidate,
+    /// The model's log probability at the proposal (without the Jacobian), as recorded.
+    sample_log_prob: f64,
     step_count: usize,
     statistics: NutsStatistics,
 }
@@ -820,8 +840,8 @@ impl SamplingAlgorithm for NutsSampler<'_> {
             &self.potential,
         )?);
         let integrator = Integrator {
-            model: self.model,
-            latents: &self.latents,
+            param: &self.param,
+            shapes: &self.shapes,
             potential: &self.potential,
             start_energy: start.energy,
             max_energy_change: self.config.max_energy_change,
@@ -851,17 +871,18 @@ impl SamplingAlgorithm for NutsSampler<'_> {
         // is the chosen one (the same allocation, so the same values, and setting them again would cascade to the
         // same results) there is nothing to do.
         let in_state = integrator.in_state.into_inner();
+        let z = concat(&self.proposal.position);
         if !in_state.is_some_and(|p| Rc::ptr_eq(&p, &self.proposal.position)) {
-            let values = f64_values(&self.latents, self.proposal.position.iter().cloned());
-            self.model.set_and_cascade(state, values)?;
+            self.param.to_state(&z, state)?;
         }
+        self.sample_log_prob = self.proposal.log_prob - self.param.log_det_jacobian(&z)?;
 
         if self.config.save_statistics {
             self.statistics.step_size.push(self.step_size.step_size);
             self.statistics
                 .mean_tree_accept
                 .push(self.step_size.accept_rate);
-            self.statistics.log_prob.push(self.proposal.log_prob);
+            self.statistics.log_prob.push(self.sample_log_prob);
             self.statistics.tree_size.push(tree.size);
         }
         if self.config.adapt_step_size {
@@ -878,11 +899,11 @@ impl SamplingAlgorithm for NutsSampler<'_> {
     }
 
     fn record(&self, state: &State, samples: &mut NetworkSamples) -> Result<()> {
-        samples.record(state, self.proposal.log_prob)
+        samples.record(state, self.sample_log_prob)
     }
 
     fn graph(&self) -> &Graph {
-        self.model.graph()
+        self.param.model().graph()
     }
 
     fn sampled_nodes(&self) -> &[NodeId] {

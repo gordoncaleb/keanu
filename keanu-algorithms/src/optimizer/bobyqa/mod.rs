@@ -7,7 +7,7 @@ pub mod prima;
 
 use super::{Fitness, Objective, OptimizedResult, start_value};
 use crate::error::{AlgorithmError, Result};
-use keanu_graph::{Model, NodeId, State};
+use keanu_graph::{Model, NodeId, Parameterisation, Space, State, Support, node_support};
 use keanu_tensor::DoubleTensor;
 use std::collections::HashMap;
 use std::ops::ControlFlow;
@@ -129,8 +129,8 @@ impl OptimizerBounds {
     }
 
     /// Bounds a latent between `min` and `max`. A lower bound of -infinity or an upper bound of +infinity means
-    /// no bound on that side; a NaN bound, or a lower bound that is not below its upper bound, makes the
-    /// optimization fail.
+    /// no bound on that side; a NaN bound, a lower bound that is not below its upper bound, or bounds that don't
+    /// overlap the latent's support make the optimization fail.
     pub fn add(mut self, latent: NodeId, min: DoubleTensor, max: DoubleTensor) -> Self {
         self.bounds.insert(latent, (min, max));
         self
@@ -149,6 +149,13 @@ impl OptimizerBounds {
 
 /// Finds the latent values that maximize the log probability or log likelihood of a model without using
 /// gradients (Java's `NonGradientOptimizer`), with BOBYQA.
+///
+/// BOBYQA works on the latents' constrained values ([`Space::Constrained`]): it is a bounded optimizer, so instead
+/// of transforming the latents it bounds each element of a latent with a lower or interval support (a scale, a
+/// probability) to that support, intersected with any explicit [`OptimizerBounds`] and with the
+/// [`bounds_range`](Bobyqa::bounds_range) around the start. It can still evaluate a support's bound itself, where
+/// the log probability may be impossible. If any latent's support moves with another latent (`x ~ Uniform(0, hi)`
+/// with a latent `hi`) no box can follow it, so no latent is bounded by its support.
 #[derive(Debug, Clone)]
 pub struct NonGradientOptimizer<'m> {
     model: &'m Model,
@@ -200,7 +207,8 @@ impl<'m> NonGradientOptimizer<'m> {
     pub fn optimize(&self, state: &mut State, fitness: Fitness) -> Result<OptimizedResult> {
         self.algorithm.validate()?;
         super::check_latents(self.model)?;
-        let objective = Objective::new(self.model, fitness);
+        let param = Parameterisation::with_space(self.model, state, Space::Constrained)?;
+        let objective = Objective::new(param, state, fitness, false)?;
         let x0 = objective.flat_point(state)?;
         // the initial-condition check's value is reused for the solver's first evaluation, which is at x0
         let mut known_start = if self.check_initial_conditions {
@@ -208,7 +216,7 @@ impl<'m> NonGradientOptimizer<'m> {
         } else {
             None
         };
-        let (xl, xu) = self.flat_bounds(objective.latents(), &objective.unflatten(&x0))?;
+        let (xl, xu) = self.flat_bounds(state, objective.latents(), &objective.unflatten(&x0))?;
 
         let mut failure: Option<AlgorithmError> = None;
         // the last and the best points evaluated, with their fitness, so the fitness of the point the solver
@@ -284,18 +292,24 @@ impl<'m> NonGradientOptimizer<'m> {
                     prima::ExitStatus::SmallTrustRegionRadius | prima::ExitStatus::TargetReached
                 ),
             evaluations: objective.evaluations(),
+            boundary: None,
         })
     }
 
-    /// Flattened lower and upper bounds: explicit bounds where given, otherwise start ± bounds_range.
+    /// Flattened lower and upper bounds: explicit bounds where given, otherwise start ± bounds_range, each
+    /// intersected with the latent's support. Supports are only used if none of them moves with another latent
+    /// (exactly when an unconstrained [`Parameterisation`] exists): a moving bound can't be a fixed box.
     fn flat_bounds(
         &self,
+        state: &State,
         latents: &[NodeId],
         start: &[DoubleTensor],
     ) -> Result<(Vec<f64>, Vec<f64>)> {
+        let fixed_supports = Parameterisation::new(self.model, state).is_ok();
         let mut xl = Vec::new();
         let mut xu = Vec::new();
         for (&id, value) in latents.iter().zip(start) {
+            let offset = xl.len();
             match self.bounds.get(id) {
                 Some((min, max)) => {
                     for (bound, out, name) in [(min, &mut xl, "lower"), (max, &mut xu, "upper")] {
@@ -332,7 +346,69 @@ impl<'m> NonGradientOptimizer<'m> {
                     );
                 }
             }
+            if !fixed_supports {
+                continue;
+            }
+            let (lower, upper) = support_bounds(self.model, state, id, value)?;
+            let explicit = self.bounds.get(id).is_some();
+            for (i, (lo, hi)) in lower.into_iter().zip(upper).enumerate() {
+                let (l, u) = (&mut xl[offset + i], &mut xu[offset + i]);
+                // explicit bounds the wrong way round are reported as such, below
+                if explicit && *l < *u && (*l).max(lo) >= (*u).min(hi) {
+                    return Err(AlgorithmError::InvalidArgument(format!(
+                        "the bounds [{l}, {u}] of {} do not overlap its support [{lo}, {hi}]",
+                        describe(self.model, id)
+                    )));
+                }
+                *l = l.max(lo);
+                *u = u.min(hi);
+            }
         }
         Ok((xl, xu))
     }
+}
+
+/// A latent's label, or its index.
+fn describe(model: &Model, id: NodeId) -> String {
+    match model.graph()[id].label() {
+        Some(label) => format!("latent {label:?}"),
+        None => format!("latent #{}", id.index()),
+    }
+}
+
+/// The lower and upper bound of each element of a latent (shaped like `value`) from its support: finite for a lower
+/// or interval support, infinite otherwise.
+fn support_bounds(
+    model: &Model,
+    state: &State,
+    id: NodeId,
+    value: &DoubleTensor,
+) -> Result<(Vec<f64>, Vec<f64>)> {
+    let n = value.len();
+    let unbounded = || vec![f64::INFINITY; n];
+    let elements = |bound: &DoubleTensor| -> Vec<f64> {
+        match bound.to_scalar() {
+            Some(b) => vec![b; n],
+            None => match bound.broadcast_to(value.shape()) {
+                Ok(b) => b.as_slice().to_vec(),
+                // a support whose bounds don't fit the value can't bound it
+                Err(_) => vec![f64::NAN; n],
+            },
+        }
+    };
+    let (lower, upper) = match node_support(model.graph(), state, id)? {
+        Support::GreaterThan(lo) => (elements(&lo), unbounded()),
+        Support::Interval(lo, hi) => (elements(&lo), elements(&hi)),
+        _ => (vec![f64::NEG_INFINITY; n], unbounded()),
+    };
+    // NaN bounds (from a support that doesn't fit) impose nothing
+    let lower = lower
+        .into_iter()
+        .map(|b| if b.is_nan() { f64::NEG_INFINITY } else { b })
+        .collect();
+    let upper = upper
+        .into_iter()
+        .map(|b| if b.is_nan() { f64::INFINITY } else { b })
+        .collect();
+    Ok((lower, upper))
 }

@@ -19,7 +19,8 @@ pub enum UpdateFormula {
 /// It stops when the fitness changes by no more than `relative_threshold` times its magnitude, or by no more than
 /// `absolute_threshold`, between iterations, or when `max_evaluations` fitness and gradient evaluations are used
 /// (counting any made by the initial-condition check). It also stops, without converging, at the best point found
-/// so far if the fitness becomes impossible or the gradient NaN or infinite.
+/// so far if the fitness becomes impossible or the gradient NaN or infinite, and at the first point past the
+/// boundary threshold of a bounded latent in unconstrained space (see the [module documentation](super)).
 #[derive(Debug, Clone, Copy, PartialEq)]
 #[non_exhaustive]
 pub struct ConjugateGradient {
@@ -177,6 +178,10 @@ impl ConjugateGradient {
                 });
             }
             iteration += 1;
+            if objective.boundary(&next).is_some() {
+                // heading for the boundary of a support, where the optimum is at infinity: the caller reports it
+                return Ok((next, f_step, false));
+            }
             if self.converged(f, f_step) {
                 return Ok((next, f_step, true));
             }

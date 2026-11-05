@@ -46,5 +46,8 @@ mod support;
 
 pub use error::{AlgorithmError, Result};
 pub use forward::ForwardSampler;
+/// The space NUTS and the gradient optimizers move in (unconstrained by default); see [`mcmc::nuts`] and
+/// [`optimizer`].
+pub use keanu_graph::Space;
 pub use predictive::PredictiveSampler;
 pub use samples::{ChainSamples, ChainSummary, NetworkSample, NetworkSamples, Samples, SummaryRow};
