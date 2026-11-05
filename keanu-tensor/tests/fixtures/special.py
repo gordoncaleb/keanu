@@ -8,9 +8,10 @@ Regenerate with mpmath (pip install mpmath) from the repository root:
 Every value is computed with 50 significant digits and rounded once to the nearest f64. Each case carries the
 relative tolerance the test applies: 1e-12 on a function's normal range, 1e-9 in its tails and for the
 shape-parameter derivatives of the incomplete gamma and beta functions (taken by mpmath's numerical
-differentiation at high precision, or by quadrature for large shapes), and 1e-9 (1e-8 for the derivatives) for the
-incomplete beta function with shapes of 1e6 and more. The second shape derivatives (of the functions and of their
-logs) are taken the same way, with a tolerance of 1e-9, and are left out where they are zero or nearly (below 1e-6
+differentiation at high precision, or by quadrature for large shapes), and 1e-13 (1e-12 for the first derivatives)
+for the incomplete beta function with shapes from 300 to 1e14 near the mean, by quadrature. The second shape
+derivatives (of the functions and of their logs) are taken the same way, with a tolerance of 1e-9, and are left out
+where they are zero or nearly (below 1e-6
 of the products of first derivatives they are compared with in the log's second derivative), where a relative
 tolerance means nothing. Values that are zero or outside the f64 range are left out; the test checks those by
 hand.
@@ -24,10 +25,10 @@ mp.mp.dps = 50
 
 NORMAL = 1e-12
 TAIL = 1e-9
-LARGE_SHAPE = 1e-9
-LARGE_SHAPE_DERIVATIVE = 1e-8
+LARGE_SHAPE = 1e-13
+LARGE_SHAPE_DERIVATIVE = 1e-12
 SECOND = 1e-9
-LARGE_SHAPE_SECOND = 1e-6
+LARGE_SHAPE_SECOND = 1e-9
 cases = []
 
 
@@ -174,16 +175,16 @@ for a in [0.1, 0.5, 1.0, 2.5, 10.0, 100.0, 1000.0]:
 # hypergeometric series don't converge there either, so these come from quadrature of the density (and of its
 # derivatives in the shapes) over the smaller tail: in steps of `step` (the standard deviation, or the decay length
 # of the density at x if shorter) from x out to 60 steps beyond x or the mean.
-def tail_quad(log_density, weights, x, mean, step, lower):
+def tail_quad(log_density, weights, x, mean, step, lower, support=(0, mp.inf)):
     """(the smaller tail's integral, and the derivatives of the lower tail's: the integrals of each weight times
-    the density, negated over the upper tail)."""
+    the density, negated over the upper tail), stopping at the ends of the support."""
     f = lambda t: mp.exp(log_density(t))
     if lower:
-        lo = min(mean, x) - 60 * step
+        lo = max(min(mean, x) - 60 * step, support[0])
         pts = [lo + k * step for k in range(int((x - lo) / step) + 1)] + [x]
         sign = 1
     else:
-        hi = max(mean, x) + 60 * step
+        hi = min(max(mean, x) + 60 * step, support[1])
         pts = [x] + [x + k * step for k in range(1, int((hi - x) / step) + 1)] + [hi]
         sign = -1
     return mp.quad(f, pts), [sign * mp.quad(lambda t: w(t) * f(t), pts) for w in weights]
@@ -220,13 +221,13 @@ for a in [1e6, 1e8, 1e11, 1e12]:
         add("gamma_p_da", [a, x], dp, TAIL)
         add_gamma_logs(a, x, p, q, dp, d2p)
 
-for a, b in [(1e6, 1e6), (1e8, 3e8), (1e10, 1e10), (3e10, 1e10)]:
+for a, b in [(300.0, 500.0), (1e6, 1e6), (1e8, 3e8), (1e10, 1e10), (3e10, 1e10), (1e14, 1e14), (1e14, 3e13)]:
     A, B = mpf(a), mpf(b)
     lb, psi_a, psi_b, psi_ab = mp.log(mp.beta(A, B)), mp.digamma(A), mp.digamma(B), mp.digamma(A + B)
     psi1_a, psi1_b, psi1_ab = mp.psi(1, A), mp.psi(1, B), mp.psi(1, A + B)
     mean = A / (A + B)
     sd = mp.sqrt(A * B / ((A + B) ** 2 * (A + B + 1)))
-    for c in [-8.0, -1.0, 0.0, 0.5, 3.0]:
+    for c in [-8.0, -3.0, -1.0, 0.0, 0.5, 3.0, 8.0]:
         x = float(mean + c * sd)
         X = mpf(x)
         lower = X <= mean
@@ -238,17 +239,16 @@ for a, b in [(1e6, 1e6), (1e8, 3e8), (1e10, 1e10), (3e10, 1e10)]:
             log_density,
             [fa, fb, lambda t: fa(t) ** 2 + psi1_ab - psi1_a, lambda t: fa(t) * fb(t) + psi1_ab,
              lambda t: fb(t) ** 2 + psi1_ab - psi1_b],
-            X, mean, sd, lower)
+            X, mean, sd, lower, (0, 1))
         i = small if lower else 1 - small
-        # the continued fraction takes ~sqrt(shape) steps here, and its rounding errors accumulate
+        # near the mean, from the asymptotic expansion for large shapes
         add("inc_beta", [a, b, x], i, LARGE_SHAPE)
         add("log_inc_beta", [a, b, x], mp.log(i), LARGE_SHAPE)
         add("inc_beta_da", [a, b, x], da, LARGE_SHAPE_DERIVATIVE)
         add("inc_beta_db", [a, b, x], db, LARGE_SHAPE_DERIVATIVE)
         add("log_inc_beta_da", [a, b, x], da / i, LARGE_SHAPE_DERIVATIVE)
         add("log_inc_beta_db", [a, b, x], db / i, LARGE_SHAPE_DERIVATIVE)
-        if a <= 1e6:
-            add_beta_second(a, b, x, i, da, db, daa, dab, dbb, LARGE_SHAPE_SECOND)
+        add_beta_second(a, b, x, i, da, db, daa, dab, dbb, LARGE_SHAPE_SECOND)
 
 # logs in the far tails, where the functions themselves underflow (or nearly), and the derivatives of the logs
 for a, x in [(201.0, 1.0), (2.0, 800.0), (0.5, 1e4), (10.0, 1e3), (1e3, 10.0), (1e3, 3e3), (50.0, 1e-5),

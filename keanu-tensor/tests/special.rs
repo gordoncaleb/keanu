@@ -396,6 +396,47 @@ fn logs_of_the_incomplete_functions_in_the_far_tails() {
 }
 
 #[test]
+fn incomplete_beta_is_accurate_for_large_shapes() {
+    // I_½(a, a) = ½ and, by symmetry, ∂I/∂a = -∂I/∂b and ∂²I/∂a² = -∂²I/∂b² there (the second derivatives
+    // relative to (∂I/∂a)² / I, the size of the terms they are compared with in ln I's). The continued fraction gave
+    // I_½(10¹⁰, 10¹⁰) with a relative error of 3e-11 and ∂²I/∂a² with one of 7%.
+    for a in [150.0, 1e4, 1e8, 1e10, 1e14] {
+        assert!((inc_beta(a, a, 0.5) - 0.5).abs() < 1e-15, "{a}");
+        let (da, db) = (inc_beta_da(a, a, 0.5), inc_beta_db(a, a, 0.5));
+        assert!((da + db).abs() <= 1e-13 * da.abs(), "{a}: {da} {db}");
+        let (daa, dbb) = (inc_beta_da2(a, a, 0.5), inc_beta_db2(a, a, 0.5));
+        assert!(
+            (daa + dbb).abs() <= 1e-12 * da * da / 0.5,
+            "{a}: {daa} {dbb}"
+        );
+    }
+    // continuous across the switches to and from the asymptotic expansion (|a - (a + b) x| = 0.03 min(a, b)), in
+    // value and in the first and second derivatives
+    for (a, b) in [(100.0, 100.0), (300.0, 500.0), (1e6, 3e6)] {
+        let total: f64 = a + b;
+        for side in [-1.0, 1.0] {
+            let x = (a + side * 0.03 * f64::min(a, b)) / total;
+            let (below, above) = (x * (1.0 - 1e-15), x * (1.0 + 1e-15));
+            for f in [
+                inc_beta,
+                log_inc_beta,
+                inc_beta_da,
+                inc_beta_db,
+                inc_beta_da2,
+                inc_beta_dadb,
+                inc_beta_db2,
+            ] {
+                let (u, v) = (f(a, b, below), f(a, b, above));
+                assert!(
+                    (u - v).abs() <= 1e-9 * u.abs(),
+                    "({a}, {b}, {x}): {u:e} vs {v:e}"
+                );
+            }
+        }
+    }
+}
+
+#[test]
 fn incomplete_beta_bounds_and_monotonicity() {
     for (a, b) in [
         (0.3, 0.3),

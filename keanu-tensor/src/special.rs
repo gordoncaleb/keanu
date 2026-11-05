@@ -214,6 +214,25 @@ fn stirling_correction(z: f64) -> f64 {
         / z
 }
 
+/// [`stirling_correction`] of a jet: δ(z) = Σₖ B₂ₖ / (2k (2k - 1) z^(2k-1)).
+fn stirling_correction_jet<const K: usize>(z: Jet<K>) -> Jet<K> {
+    const COEFFICIENTS: [f64; 7] = [
+        1.0 / 12.0,
+        -1.0 / 360.0,
+        1.0 / 1260.0,
+        -1.0 / 1680.0,
+        1.0 / 1188.0,
+        -691.0 / 360_360.0,
+        1.0 / 156.0,
+    ];
+    let r = (z * z).recip();
+    let sum = COEFFICIENTS
+        .iter()
+        .rev()
+        .fold(Jet::constant(0.0), |sum, &c| sum * r + c);
+    sum / z
+}
+
 /// ln(1 + d) - d for |d| <= 1/4, from its series -d²/2 + d³/3 - d⁴/4 + ... to avoid cancellation.
 fn ln_1p_minus(d: f64) -> f64 {
     let mut power = d * d;
@@ -1302,6 +1321,168 @@ fn inc_beta_cf<const K: usize>(
     }
 }
 
+/// The smallest shapes for which the incomplete beta function uses its asymptotic expansion near the mean.
+const BASYM_MIN_SHAPE: f64 = 100.0;
+/// The largest |λ| / min(a, b), with λ = a - (a + b) x, for which it does.
+const BASYM_MAX_DEVIATION: f64 = 0.03;
+
+/// a - (a + b) x, to the rounding error of the result: a + b and its product with x are split into their rounded
+/// values and exact rounding errors (Knuth's two-sum and a fused multiply-add), so the cancellation near the mean
+/// x = a/(a + b) leaves no larger error. (Rounded naively, its error of about (a + b) × 10⁻¹⁶ would be 3 × 10⁻¹¹ of
+/// λ a few standard deviations from the mean at shapes of 10¹⁰.)
+fn mean_offset(a: f64, b: f64, x: f64) -> f64 {
+    let sum = a + b;
+    let b_part = sum - a;
+    let sum_error = (a - (sum - b_part)) + (b - b_part);
+    let product = sum * x;
+    let product_error = sum.mul_add(x, -product);
+    ((a - product) - product_error) - sum_error * x
+}
+
+/// ρ(t) = (t - ln(1 + t)) / t² = ½ - t/3 + t²/4 - ... and its first two derivatives, from the series, for
+/// |t| <= [`BASYM_MAX_DEVIATION`] (where it converges in a dozen terms).
+fn rlog1_over_square(t: f64) -> (f64, f64, f64) {
+    let (mut r0, mut r1, mut r2) = (0.0, 0.0, 0.0);
+    // the terms (-1)ʲ tʲ / (j + 2) and their derivatives
+    let mut power = 1.0;
+    for j in 0..200 {
+        let jf = j as f64;
+        let c = if j % 2 == 0 { 1.0 } else { -1.0 } / (jf + 2.0);
+        r0 += c * power;
+        if j >= 1 {
+            r1 += c * jf * power / t;
+        }
+        if j >= 2 {
+            let term = c * jf * (jf - 1.0) * power / (t * t);
+            r2 += term;
+            if term.abs() <= 1e-17 * r2.abs() {
+                break;
+            }
+        }
+        power *= t;
+        if power == 0.0 {
+            // t = 0: the series is its first terms
+            r1 = -1.0 / 3.0;
+            r2 = 0.5;
+            break;
+        }
+    }
+    (r0, r1, r2)
+}
+
+/// I_x(a, b) and its log for large a and b with x at or below the mean, given λ = a - (a + b) x >= 0 (from
+/// [`mean_offset`]) with λ <= [`BASYM_MAX_DEVIATION`] min(a, b), and y = 1 - x, from the asymptotic expansion of DiDonato and Morris (1992,
+/// "Algorithm 708", routine BASYM; Temme's uniform expansion in terms of erfc, with up to 20 terms in powers of
+/// 1/√min(a, b)), as jets in the shapes `a` and `b`. It replaces the continued fraction there, whose ~√(a + b)
+/// steps near the mean accumulate rounding errors (1e-10 relative at shapes of 10¹⁰, 1e-8 at 10¹⁴).
+///
+/// The expansion's exponent f = a φ(-λ/a) + b φ(λ/b), with φ(t) = t - ln(1 + t), is formed as λ² (ρ(-λ/a)/a +
+/// ρ(λ/b)/b) with ρ(t) = φ(t)/t² from its series, so that its square root λ √(ρ(-λ/a)/a + ρ(λ/b)/b) has
+/// derivatives without the cancellation of differentiating √f near λ = 0.
+fn inc_beta_basym<const K: usize>(
+    (a, b): (Jet<K>, Jet<K>),
+    (x, y): (f64, f64),
+    lambda: f64,
+) -> IncBeta<K> {
+    /// 2/√π.
+    const E0: f64 = std::f64::consts::FRAC_2_SQRT_PI;
+    /// 2^(-3/2).
+    const E1: f64 = 0.353_553_390_593_273_8;
+    /// ln(2/√π).
+    const LN_E0: f64 = 0.120_782_237_635_245_22;
+    /// The most terms (an even number).
+    const NUM: usize = 20;
+    // ∂λ/∂a = 1 - x = y and ∂λ/∂b = -x
+    let lambda = Jet::bivariate(lambda, (a, b), (y, -x), (0.0, 0.0, 0.0));
+    let rho = |t: Jet<K>| {
+        let (r0, r1, r2) = rlog1_over_square(t.v);
+        t.chain(r0, r1, r2)
+    };
+    let phi = rho(-lambda / a) / a + rho(lambda / b) / b;
+    let f = lambda * lambda * phi;
+    let z0 = lambda * phi.sqrt();
+    let z = z0 * std::f64::consts::SQRT_2;
+    let z2 = f * 2.0;
+    let (h, r0, r1, w0) = if a.v < b.v {
+        let h = a / b;
+        (
+            h,
+            (h + 1.0).recip(),
+            (b - a) / b,
+            (a * (h + 1.0)).sqrt().recip(),
+        )
+    } else {
+        let h = b / a;
+        (
+            h,
+            (h + 1.0).recip(),
+            (b - a) / a,
+            (b * (h + 1.0)).sqrt().recip(),
+        )
+    };
+    let zero = Jet::constant(0.0);
+    let (mut a0, mut b0, mut c, mut d) = (
+        [zero; NUM + 1],
+        [zero; NUM + 1],
+        [zero; NUM + 1],
+        [zero; NUM + 1],
+    );
+    a0[0] = r1 * (2.0 / 3.0);
+    c[0] = a0[0] * -0.5;
+    d[0] = -c[0];
+    let mut j0 = erfcx_jet(z0) * (0.5 / E0);
+    let mut j1 = Jet::constant(E1);
+    let mut sum = j0 + d[0] * w0 * j1;
+    let mut s = Jet::constant(1.0);
+    let h2 = h * h;
+    let mut hn = Jet::constant(1.0);
+    let (mut w, mut znm1, mut zn) = (w0, z, z2);
+    for n in (2..=NUM).step_by(2) {
+        let nf = n as f64;
+        hn = hn * h2;
+        a0[n - 1] = r0 * 2.0 * (h * hn + 1.0) / (nf + 2.0);
+        s = s + hn;
+        a0[n] = r1 * 2.0 * s / (nf + 3.0);
+        for i in n..=n + 1 {
+            let r = -0.5 * (i as f64 + 1.0);
+            b0[0] = a0[0] * r;
+            for m in 2..=i {
+                let mut bsum = zero;
+                for j in 1..m {
+                    bsum = bsum + a0[j - 1] * b0[m - j - 1] * (j as f64 * r - (m - j) as f64);
+                }
+                b0[m - 1] = a0[m - 1] * r + bsum / m as f64;
+            }
+            c[i - 1] = b0[i - 1] / (i as f64 + 1.0);
+            let mut dsum = zero;
+            for j in 1..i {
+                dsum = dsum + d[i - j - 1] * c[j - 1];
+            }
+            d[i - 1] = -(dsum + c[i - 1]);
+        }
+        j0 = znm1 * E1 + j0 * (nf - 1.0);
+        j1 = zn * E1 + j1 * nf;
+        znm1 = znm1 * z2;
+        zn = zn * z2;
+        w = w * w0;
+        let t0 = d[n - 1] * w * j0;
+        w = w * w0;
+        let t1 = d[n] * w * j1;
+        sum = sum + t0 + t1;
+        if t0.v.abs() + t1.v.abs() <= 1e-17 * sum.v.abs() {
+            break;
+        }
+    }
+    // ln Γ(a + b) - ln Γ(a) - ln Γ(b) beyond Stirling's formula
+    let correction =
+        stirling_correction_jet(a) + stirling_correction_jet(b) - stirling_correction_jet(a + b);
+    let log_value = sum.ln() - f - correction + LN_E0;
+    IncBeta {
+        value: log_value.exp_with(E0 * (-f.v).exp() * (-correction.v).exp() * sum.v),
+        log_value,
+    }
+}
+
 /// I_x(a, b) and its log, as jets in the shapes (with their first and second derivatives with respect to a and b
 /// for K = 2).
 ///
@@ -1309,9 +1490,10 @@ fn inc_beta_cf<const K: usize>(
 /// the continued fraction converges quickly. The shape derivatives come from differentiating the continued fraction
 /// step by step, an exact alternative to the hypergeometric series of Stan's `inc_beta_dda` / `inc_beta_ddb`
 /// (Stan Math, BSD-3), which converges slowly for x near 1 and large b. For large shapes the prefactor is formed
-/// without cancellation ([`log_beta_prefix`]), and the rounding errors of the continued fraction's many steps
-/// near the mean then limit the relative accuracy to about 1e-11 at shapes of 10¹⁰ (1e-8 at 10¹⁴). Everything is
-/// NaN if the continued fraction fails to converge within [`MAX_ITERATIONS`] steps.
+/// without cancellation ([`log_beta_prefix`]). For a, b >= 100 with x near the mean (|a - (a + b) x| <= 0.03
+/// min(a, b)), where the continued fraction would take ~√(a + b) steps and accumulate their rounding errors, the
+/// asymptotic expansion [`inc_beta_basym`] is used instead, on the smaller tail. Everything is NaN if the continued
+/// fraction fails to converge within [`MAX_ITERATIONS`] steps.
 fn inc_beta_all<const K: usize>(a: f64, b: f64, x: f64) -> IncBeta<K> {
     if a.is_nan()
         || b.is_nan()
@@ -1338,6 +1520,17 @@ fn inc_beta_all<const K: usize>(a: f64, b: f64, x: f64) -> IncBeta<K> {
     }
     let shapes = (Jet::var(a, 0), Jet::var(b, 1));
     let y = 1.0 - x;
+    if a.min(b) >= BASYM_MIN_SHAPE {
+        // λ = (a + b)(mean - x)
+        let lambda = mean_offset(a, b, x);
+        if lambda.abs() <= BASYM_MAX_DEVIATION * a.min(b) {
+            return if lambda >= 0.0 {
+                inc_beta_basym(shapes, (x, y), lambda)
+            } else {
+                inc_beta_basym((shapes.1, shapes.0), (y, x), -lambda).complement()
+            };
+        }
+    }
     let ln_x = x.ln();
     let ln_y = if x < 0.5 { (-x).ln_1p() } else { y.ln() };
     if x > (a + 1.0) / (a + b + 2.0) {
@@ -1350,8 +1543,9 @@ fn inc_beta_all<const K: usize>(a: f64, b: f64, x: f64) -> IncBeta<K> {
 /// The regularised incomplete beta function I_x(a, b) = B(x; a, b) / B(a, b) for a, b > 0 and 0 <= x <= 1 (NaN
 /// otherwise): the CDF at x of a beta distribution.
 ///
-/// Accurate to about 1e-11 relative for shapes up to 10¹⁰, degrading slowly beyond (1e-8 at 10¹⁴). NaN in the
-/// (not expected to be reachable) case that its continued fraction fails to converge.
+/// Accurate to about 1e-13 relative for large shapes too (checked up to 10¹⁴), through an asymptotic expansion near
+/// the mean for a, b >= 100. NaN in the (not expected to be reachable) case that its continued fraction fails to
+/// converge.
 pub fn inc_beta(a: f64, b: f64, x: f64) -> f64 {
     inc_beta_all::<0>(a, b, x).value.v
 }
