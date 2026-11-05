@@ -384,6 +384,7 @@ enum DistributionKind {
   DISTRIBUTION_KIND_MULTINOMIAL = 24;
   DISTRIBUTION_KIND_POISSON = 25;
   DISTRIBUTION_KIND_UNIFORM_INT = 26;
+  DISTRIBUTION_KIND_LKJ_CHOLESKY = 27;
 }
 
 // A kernel density estimate's fixed samples and bandwidth.

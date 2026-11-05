@@ -119,6 +119,32 @@ impl GraphBuilder {
         )
     }
 
+    /// An LKJ(eta) prior over the lower triangular Cholesky factor of a `dimension` × `dimension` correlation matrix
+    /// (see [`keanu_distributions::LkjCholesky`]): the value has shape [dimension, dimension], and its support is
+    /// [`Support::CorrelationCholesky`](crate::Support::CorrelationCholesky). `eta` = 1 is uniform over correlation
+    /// matrices and larger `eta` favours weaker correlations. The correlation matrix is `L Lᵀ`.
+    pub fn lkj_cholesky<'b>(
+        &'b self,
+        dimension: usize,
+        eta: impl IntoDoubleVar<'b>,
+    ) -> DoubleVar<'b> {
+        self.lkj_cholesky_with_shape(&[dimension, dimension], eta)
+    }
+
+    /// Like [`Self::lkj_cholesky`], with a batch of factors: `shape` is [..., K, K] and `eta` broadcasts to the batch
+    /// shape [...].
+    pub fn lkj_cholesky_with_shape<'b>(
+        &'b self,
+        shape: &[usize],
+        eta: impl IntoDoubleVar<'b>,
+    ) -> DoubleVar<'b> {
+        let eta = eta.into_var(self).id();
+        DoubleVar::new(
+            self,
+            self.distribution(DistributionKind::LkjCholesky, Some(shape), &[eta]),
+        )
+    }
+
     /// A kernel density estimate from fixed samples, with values of the given shape.
     pub fn kde(&self, kde: Kde, shape: &[usize]) -> DoubleVar<'_> {
         DoubleVar::new(

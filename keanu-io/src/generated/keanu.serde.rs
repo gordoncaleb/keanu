@@ -1578,6 +1578,7 @@ impl serde::Serialize for DistributionKind {
             Self::Multinomial => "DISTRIBUTION_KIND_MULTINOMIAL",
             Self::Poisson => "DISTRIBUTION_KIND_POISSON",
             Self::UniformInt => "DISTRIBUTION_KIND_UNIFORM_INT",
+            Self::LkjCholesky => "DISTRIBUTION_KIND_LKJ_CHOLESKY",
         };
         serializer.serialize_str(variant)
     }
@@ -1616,6 +1617,7 @@ impl<'de> serde::Deserialize<'de> for DistributionKind {
             "DISTRIBUTION_KIND_MULTINOMIAL",
             "DISTRIBUTION_KIND_POISSON",
             "DISTRIBUTION_KIND_UNIFORM_INT",
+            "DISTRIBUTION_KIND_LKJ_CHOLESKY",
         ];
 
         struct GeneratedVisitor;
@@ -1683,6 +1685,7 @@ impl<'de> serde::Deserialize<'de> for DistributionKind {
                     "DISTRIBUTION_KIND_MULTINOMIAL" => Ok(DistributionKind::Multinomial),
                     "DISTRIBUTION_KIND_POISSON" => Ok(DistributionKind::Poisson),
                     "DISTRIBUTION_KIND_UNIFORM_INT" => Ok(DistributionKind::UniformInt),
+                    "DISTRIBUTION_KIND_LKJ_CHOLESKY" => Ok(DistributionKind::LkjCholesky),
                     _ => Err(serde::de::Error::unknown_variant(value, FIELDS)),
                 }
             }

@@ -421,6 +421,7 @@ const DISTRIBUTIONS: &[&str] = &[
     "Multinomial",
     "Poisson",
     "UniformInt",
+    "LkjCholesky",
 ];
 
 fn distribution_kinds() -> Vec<DistributionKind> {
@@ -454,6 +455,7 @@ fn distribution_kinds() -> Vec<DistributionKind> {
         Multinomial,
         Poisson,
         UniformInt,
+        LkjCholesky,
     ]
 }
 
@@ -469,12 +471,16 @@ fn distribution_cases() -> Vec<(String, Graph, State)> {
                 .into_iter()
                 .map(|v| constant(&b, v))
                 .collect();
+            // an LKJ node needs a [K, K] shape
+            let lkj = matches!(kind, DistributionKind::LkjCholesky);
             let latent = b
-                .add_distribution(kind.clone(), None, &parents)
+                .add_distribution(kind.clone(), lkj.then_some(&[3, 3][..]), &parents)
                 .unwrap_or_else(|e| panic!("can't build {name}: {e}"));
             b.set_label_of(latent, "latent").unwrap();
             let batch = b.shape(latent).unwrap();
-            let shape: Vec<usize> = if parents.is_empty() || batch.is_empty() {
+            let shape: Vec<usize> = if lkj {
+                vec![2, 3, 3]
+            } else if parents.is_empty() || batch.is_empty() {
                 vec![2]
             } else {
                 batch.clone()

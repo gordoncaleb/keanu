@@ -12,6 +12,7 @@ Each distribution has a builder method taking its parameters, which can be other
 | Kind | Distributions |
 |---|---|
 | Continuous | `gaussian`, `half_gaussian`, `cauchy`, `half_cauchy`, `beta`, `chi_squared`, `dirichlet`, `exponential` (takes a rate), `gamma` (scale θ, shape k), `inverse_gamma`, `laplace`, `logistic`, `log_normal`, `multivariate_gaussian`, `pareto`, `student_t`, `triangular`, `uniform`, `kde` |
+| Correlation matrices | `lkj_cholesky(k, eta)`: the k × k lower triangular Cholesky factor `L` of a correlation matrix `L Lᵀ` under the LKJ(η) prior (`lkj_cholesky_with_shape(&[.., k, k], eta)` for a batch) |
 | Discrete | `bernoulli` (bool), `binomial`, `categorical`, `geometric`, `multinomial`, `poisson`, `uniform_int` |
 | Your own | `custom` (see [Custom distributions](custom-distributions.md)) |
 

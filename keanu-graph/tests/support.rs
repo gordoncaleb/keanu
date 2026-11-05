@@ -59,6 +59,11 @@ fn every_built_in_reports_its_documented_support() {
         ("logistic", |b| b.logistic(0.0, 1.0).id(), Support::Real),
         ("log_normal", |b| b.log_normal(0.0, 1.0).id(), positive()),
         (
+            "lkj_cholesky",
+            |b| b.lkj_cholesky(3, 2.0).id(),
+            Support::CorrelationCholesky,
+        ),
+        (
             "multivariate_gaussian",
             |b| {
                 b.multivariate_gaussian(v(&[0.0, 0.0]), DoubleTensor::eye(2).unwrap())

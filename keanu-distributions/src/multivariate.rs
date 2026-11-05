@@ -5,8 +5,9 @@ use crate::error::{DistributionError, Result, invalid_parameter};
 use crate::param::{IntoParam, Param};
 use crate::rng::KeanuRng;
 use crate::util::{digamma, ln_gamma, map, safe_ln_times};
+use keanu_tensor::special::log_beta;
 use keanu_tensor::{DoubleTensor, IntTensor, TensorError, broadcast_shape};
-use std::f64::consts::PI;
+use std::f64::consts::{LN_2, PI};
 
 /// Multivariate normal distribution over the last dimension. Leading dimensions of x, mu and covariance are
 /// batch dimensions and broadcast.
@@ -214,6 +215,203 @@ impl<'a> Dirichlet<'a> {
         let total = gammas.sum();
         Ok(&gammas / total)
     }
+}
+
+/// The LKJ distribution of Lewandowski, Kurowicka & Joe (2009) over lower triangular Cholesky factors `L` of
+/// correlation matrices `Ω = L Lᵀ`, over the value's last two dimensions (K × K). Leading dimensions are a batch,
+/// with `eta` broadcasting to the batch shape.
+///
+/// `LKJ(η)` gives a correlation matrix a density proportional to `det(Ω)^(η − 1)`: η = 1 is uniform over
+/// correlation matrices, larger η concentrates on the identity and η < 1 favours strong correlations. As a density
+/// over the strictly lower triangle of `L` (the factor's free elements; the diagonal follows from the unit row
+/// lengths) it is, as Stan's `lkj_corr_cholesky`,
+///
+/// `p(L | η) = Π_{k=2}^{K} L_kk^(K − k + 2η − 2) / c_K(η)`  (one-based k),
+///
+/// normalised by Lewandowski et al.'s constant (their equation 16, written over the levels of the C-vine)
+///
+/// `c_K(η) = Π_{k=1}^{K−1} [2^(2η − 2 + K − k) B(η + (K − k − 1) / 2, η + (K − k − 1) / 2)]^(K − k)`,
+///
+/// so that `eta` can be a latent variable. For K = 2 this is the density of the correlation `r = L₁₀`,
+/// `(1 − r²)^(η − 1) / (2^(2η − 1) B(η, η))` on (−1, 1).
+#[derive(Debug, Clone, PartialEq)]
+pub struct LkjCholesky<'a> {
+    /// The concentration η > 0, a scalar or one per matrix of the batch.
+    pub eta: Param<'a>,
+}
+
+/// Derivatives of [`LkjCholesky::log_prob`].
+#[derive(Debug, Clone, PartialEq)]
+pub struct LkjCholeskyGradient {
+    /// With respect to x (non-zero only on the diagonal below the first row).
+    pub x: DoubleTensor,
+    /// With respect to `eta`, shaped like it.
+    pub eta: DoubleTensor,
+}
+
+/// How far a row's squared length may be from 1 for [`LkjCholesky::log_prob`] to treat the value as in the
+/// support.
+const LKJ_ROW_TOLERANCE: f64 = 1e-5;
+
+impl<'a> LkjCholesky<'a> {
+    /// Creates the distribution from its parameter.
+    pub fn new(eta: impl IntoParam<'a, f64>) -> Self {
+        Self {
+            eta: eta.into_param(),
+        }
+    }
+
+    /// Checks a value shape [..., K, K] (K ≥ 1) against `eta`, returning K and `eta` broadcast to the batch shape.
+    fn validate(&self, shape: &[usize]) -> Result<(usize, DoubleTensor)> {
+        let k = match shape {
+            [.., rows, cols] if rows == cols && *rows > 0 => *rows,
+            _ => {
+                return Err(DistributionError::InvalidValue(format!(
+                    "an LKJ Cholesky factor must have a shape ending in two equal, non-zero dimensions, \
+                     not {shape:?}"
+                )));
+            }
+        };
+        let batch = batch(shape, 2);
+        if broadcast_shape(batch, self.eta.shape())?.as_slice() != batch {
+            return invalid_parameter(format!(
+                "eta of shape {:?} does not broadcast to the batch shape {batch:?}",
+                self.eta.shape()
+            ));
+        }
+        Ok((k, self.eta.broadcast_to(batch)?))
+    }
+
+    /// The total log density of every factor in x (summed over the batch). -infinity for a factor outside the
+    /// support: a non-positive diagonal, a non-zero upper triangle, or a row whose squared length is not within
+    /// 1e-5 of 1. NaN where `eta` is not positive. An error if x is not a (batch of) non-empty square matrices or
+    /// `eta` does not broadcast to its batch shape.
+    pub fn log_prob(&self, x: &DoubleTensor) -> Result<f64> {
+        let (k, eta) = self.validate(x.shape())?;
+        let mut total = 0.0;
+        for (l, &eta) in x.as_slice().chunks(k * k).zip(eta.as_slice()) {
+            if eta.is_nan() || eta <= 0.0 {
+                return Ok(f64::NAN);
+            }
+            if !in_correlation_cholesky_support(l, k) {
+                return Ok(f64::NEG_INFINITY);
+            }
+            total += (1..k)
+                .map(|i| lkj_diagonal_power(k, i, eta) * l[i * k + i].ln())
+                .sum::<f64>()
+                - lkj_log_normaliser(k, eta);
+        }
+        Ok(total)
+    }
+
+    /// The derivatives of [`Self::log_prob`] with respect to x and `eta` (the support is not checked).
+    pub fn d_log_prob(&self, x: &DoubleTensor) -> Result<LkjCholeskyGradient> {
+        let (k, eta) = self.validate(x.shape())?;
+        let mut dx = vec![0.0; x.len()];
+        let mut d_eta = Vec::with_capacity(eta.len());
+        for ((l, dl), &eta) in x
+            .as_slice()
+            .chunks(k * k)
+            .zip(dx.chunks_mut(k * k))
+            .zip(eta.as_slice())
+        {
+            let mut d = -lkj_log_normaliser_d_eta(k, eta);
+            for i in 1..k {
+                let diagonal = l[i * k + i];
+                dl[i * k + i] = lkj_diagonal_power(k, i, eta) / diagonal;
+                d += 2.0 * diagonal.ln();
+            }
+            d_eta.push(d);
+        }
+        Ok(LkjCholeskyGradient {
+            x: DoubleTensor::new(x.shape(), dx)?,
+            eta: sum_over_batch(&DoubleTensor::new(eta.shape(), d_eta)?, self.eta.shape())?,
+        })
+    }
+
+    /// Samples factors of the given shape ([..., K, K]) by the onion method (Lewandowski et al. 2009, section 3.2,
+    /// written for the Cholesky factor directly as in TensorFlow Probability): the first correlation is
+    /// `2 Beta(β, β) − 1` with `β = η + (K − 2) / 2`, and each later zero-based row i ≥ 2 is `√y · u` with
+    /// `y ~ Beta(i / 2, β − (i − 1) / 2)` and `u` uniform on the unit sphere in i dimensions, and diagonal `√(1 − y)`.
+    /// An error unless `eta` is positive and finite.
+    pub fn sample(&self, shape: &[usize], rng: &mut KeanuRng) -> Result<DoubleTensor> {
+        let (k, eta) = self.validate(shape)?;
+        let mut samples = vec![0.0; eta.len() * k * k];
+        for (l, &eta) in samples.chunks_mut(k * k).zip(eta.as_slice()) {
+            if !eta.is_finite() || eta <= 0.0 {
+                return invalid_parameter(format!("eta must be positive, got {eta}"));
+            }
+            l[0] = 1.0;
+            let mut beta = eta + (k as f64 - 2.0) / 2.0;
+            for i in 1..k {
+                let row = &mut l[i * k..i * k + i + 1];
+                if i == 1 {
+                    let r = 2.0 * sample_beta(beta, beta, rng)? - 1.0;
+                    row[0] = r;
+                    row[1] = (1.0 - r * r).sqrt();
+                    continue;
+                }
+                beta -= 0.5;
+                let y = sample_beta(i as f64 / 2.0, beta, rng)?;
+                for u in &mut row[..i] {
+                    *u = rng.next_gaussian();
+                }
+                let scale = (y / row[..i].iter().map(|u| u * u).sum::<f64>()).sqrt();
+                for u in &mut row[..i] {
+                    *u *= scale;
+                }
+                row[i] = (1.0 - y).sqrt();
+            }
+        }
+        Ok(DoubleTensor::new(shape, samples)?)
+    }
+}
+
+/// The exponent of the zero-based diagonal element `L_ii` (i ≥ 1) in the LKJ density: `K − k + 2η − 2` with
+/// one-based k = i + 1.
+fn lkj_diagonal_power(k: usize, i: usize, eta: f64) -> f64 {
+    (k - i - 1) as f64 + 2.0 * eta - 2.0
+}
+
+/// `ln c_K(η)` (see [`LkjCholesky`]): `Σ_{k=1}^{K−1} (K − k) [(2η − 2 + K − k) ln 2 + ln B(b_k, b_k)]` with
+/// `b_k = η + (K − k − 1) / 2`.
+fn lkj_log_normaliser(k: usize, eta: f64) -> f64 {
+    (1..k)
+        .map(|level| {
+            let m = (k - level) as f64;
+            let b = eta + (m - 1.0) / 2.0;
+            m * ((2.0 * eta - 2.0 + m) * LN_2 + log_beta(b, b))
+        })
+        .sum()
+}
+
+/// The derivative of [`lkj_log_normaliser`] in η: `Σ (K − k) [2 ln 2 + 2 ψ(b_k) − 2 ψ(2 b_k)]`.
+fn lkj_log_normaliser_d_eta(k: usize, eta: f64) -> f64 {
+    (1..k)
+        .map(|level| {
+            let m = (k - level) as f64;
+            let b = eta + (m - 1.0) / 2.0;
+            2.0 * m * (LN_2 + digamma(b) - digamma(2.0 * b))
+        })
+        .sum()
+}
+
+/// Whether the row-major K × K matrix `l` is lower triangular with a positive diagonal and rows of unit length
+/// (within [`LKJ_ROW_TOLERANCE`]).
+fn in_correlation_cholesky_support(l: &[f64], k: usize) -> bool {
+    l.chunks(k).enumerate().all(|(i, row)| {
+        let length: f64 = row.iter().map(|x| x * x).sum();
+        row[i] > 0.0
+            && row[i + 1..].iter().all(|&x| x == 0.0)
+            && (length - 1.0).abs() <= LKJ_ROW_TOLERANCE
+    })
+}
+
+/// A Beta(a, b) draw, as the ratio of Gamma draws.
+fn sample_beta(a: f64, b: f64, rng: &mut KeanuRng) -> Result<f64> {
+    let x = sample_gamma(1.0, a, rng)?;
+    let y = sample_gamma(1.0, b, rng)?;
+    Ok(x / (x + y))
 }
 
 /// Multinomial distribution: counts of `n` draws over the categories in the last dimension of `p`.

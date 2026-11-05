@@ -145,6 +145,7 @@ distribution_codes!(
     Multinomial,
     Poisson,
     UniformInt,
+    LkjCholesky,
 );
 
 #[cfg(test)]
@@ -172,7 +173,7 @@ mod tests {
         every_code_has_a_variant::<ScanOp>(2);
         every_code_has_a_variant::<ArgOp>(4);
         every_code_has_a_variant::<DType>(3);
-        for code in 1..=26 {
+        for code in 1..=27 {
             let kde = (code == proto::DistributionKind::Kde as i32).then(|| proto::Kde {
                 samples: vec![1.0],
                 bandwidth: 1.0,
@@ -181,6 +182,6 @@ mod tests {
             assert_eq!(distribution_code(&kind).map(|k| k as i32), Some(code));
         }
         assert!(distribution_of_code(0, None).is_err());
-        assert!(distribution_of_code(27, None).is_err());
+        assert!(distribution_of_code(28, None).is_err());
     }
 }

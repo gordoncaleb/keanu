@@ -821,6 +821,7 @@ pub enum DistributionKind {
     Multinomial = 24,
     Poisson = 25,
     UniformInt = 26,
+    LkjCholesky = 27,
 }
 impl DistributionKind {
     /// String value of the enum field names used in the ProtoBuf definition.
@@ -856,6 +857,7 @@ impl DistributionKind {
             Self::Multinomial => "DISTRIBUTION_KIND_MULTINOMIAL",
             Self::Poisson => "DISTRIBUTION_KIND_POISSON",
             Self::UniformInt => "DISTRIBUTION_KIND_UNIFORM_INT",
+            Self::LkjCholesky => "DISTRIBUTION_KIND_LKJ_CHOLESKY",
         }
     }
     /// Creates an enum from field names used in the ProtoBuf definition.
@@ -888,6 +890,7 @@ impl DistributionKind {
             "DISTRIBUTION_KIND_MULTINOMIAL" => Some(Self::Multinomial),
             "DISTRIBUTION_KIND_POISSON" => Some(Self::Poisson),
             "DISTRIBUTION_KIND_UNIFORM_INT" => Some(Self::UniformInt),
+            "DISTRIBUTION_KIND_LKJ_CHOLESKY" => Some(Self::LkjCholesky),
             _ => None,
         }
     }

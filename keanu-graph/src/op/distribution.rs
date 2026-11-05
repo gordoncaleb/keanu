@@ -80,6 +80,10 @@ pub enum DistributionKind {
     Logistic,
     /// Parameters: `mu`, `sigma`. Support: greater than 0.
     LogNormal,
+    /// Parameters: `eta`; the value is a K × K lower triangular Cholesky factor of a correlation matrix (or a batch
+    /// of them, shape [..., K, K], with `eta` broadcasting to the batch shape), K set by the node's shape. Support:
+    /// correlation Cholesky factors. See [`keanu_distributions::LkjCholesky`].
+    LkjCholesky,
     /// Parameters: `mu`, `covariance`; the value's last dimension is the event dimension. Support: real.
     MultivariateGaussian,
     /// Parameters: `location` (the minimum value), `scale` (the shape). Support: greater than `location`.
@@ -463,6 +467,8 @@ distributions! {
         support = Support::Real;
     LogNormal "log_normal" (mu: F64, sigma: F64) -> F64 => d::LogNormal::new(mu, sigma),
         support = Support::greater_than(0.0);
+    LkjCholesky "lkj_cholesky" (eta: F64) -> F64 => d::LkjCholesky::new(eta),
+        support = Support::CorrelationCholesky;
     MultivariateGaussian "multivariate_gaussian" (mu: F64, covariance: F64) -> F64 =>
         d::MultivariateGaussian::new(mu, covariance),
         support = Support::Real;
@@ -622,6 +628,26 @@ impl DistributionOp {
                     Some(r) => keanu_tensor::broadcast_shape(r, &shape)?,
                     None => shape,
                 })
+            }
+            DistributionKind::LkjCholesky => {
+                let shape = requested.unwrap_or(&[]);
+                let [batch @ .., rows, cols] = shape else {
+                    return Err(invalid(format!(
+                        "needs a shape [..., K, K] for its K × K Cholesky factors, not {shape:?}"
+                    )));
+                };
+                if rows != cols || *rows == 0 {
+                    return Err(invalid(format!(
+                        "needs a shape [..., K, K] for its K × K Cholesky factors, with K > 0, not {shape:?}"
+                    )));
+                }
+                let eta = parameters[0].1;
+                if keanu_tensor::broadcast_shape(batch, eta)?.as_slice() != batch {
+                    return Err(invalid(format!(
+                        "eta of shape {eta:?} does not broadcast to the batch shape {batch:?}"
+                    )));
+                }
+                Ok(Shape::from_slice(shape))
             }
             DistributionKind::Kde(_) => Ok(Shape::from_slice(requested.unwrap_or(&[]))),
             _ => {
