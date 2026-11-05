@@ -10,6 +10,7 @@
 - [Most probable values (MAP)](inference-map.md)
 - [Posterior sampling (MCMC)](inference-sampling.md)
 - [Autocorrelation and effective sample size](autocorrelation.md)
+- [Model comparison (LOO and WAIC)](model-comparison.md)
 - [Variational inference (ADVI)](inference-vi.md)
 - [Sequences (plates)](sequences.md)
 - [Saving and loading](save-and-load.md)

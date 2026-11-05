@@ -1,7 +1,7 @@
 //! Inference algorithms for [Keanu](https://github.com/gordoncaleb/keanu) models: gradient optimizers and a
 //! non-gradient optimizer (BOBYQA) for MAP and maximum likelihood, MCMC samplers (Metropolis–Hastings, NUTS) and simulated annealing, variational inference (ADVI), the Laplace approximation, a particle filter,
 //! forward sampling from the prior, prior- and posterior-predictive sampling, sample containers, chain statistics,
-//! multi-chain convergence diagnostics, the pointwise log likelihood and Pareto-smoothed importance sampling.
+//! multi-chain convergence diagnostics, the pointwise log likelihood, Pareto-smoothed importance sampling, and model comparison by PSIS-LOO and WAIC.
 //!
 //! ```
 //! use keanu_algorithms::optimizer::{Adam, GradientOptimizer};
@@ -37,6 +37,7 @@ mod error;
 pub mod forward;
 pub mod laplace;
 pub mod loglik;
+pub mod loo;
 pub mod mcmc;
 pub mod optimizer;
 pub mod particle_filter;
@@ -55,6 +56,7 @@ pub use forward::ForwardSampler;
 pub use keanu_graph::Space;
 pub use laplace::{Laplace, LaplaceResult};
 pub use loglik::{LogLikPoint, PointwiseLogLik};
+pub use loo::{Comparison, Loo, Waic};
 pub use predictive::PredictiveSampler;
 pub use psis::Psis;
 pub use samples::{ChainSamples, ChainSummary, NetworkSample, NetworkSamples, Samples, SummaryRow};

@@ -228,6 +228,22 @@ impl Lbfgs {
         Ok((x, -f, converged))
     }
 
+    /// Minimizes a function of a point from `start`, where `evaluate` returns the function and its gradient. Returns
+    /// the final point, the function there and whether it converged; a start where the function is not finite is an
+    /// [`AlgorithmError::ImpossibleStart`].
+    pub(crate) fn minimize_function(
+        &self,
+        start: Vec<f64>,
+        mut evaluate: impl FnMut(&[f64]) -> Result<(f64, Vec<f64>)>,
+    ) -> Result<(Vec<f64>, f64, bool)> {
+        self.validate()?;
+        let (f, g) = evaluate(&start)?;
+        if !f.is_finite() {
+            return Err(AlgorithmError::ImpossibleStart);
+        }
+        self.minimize(&mut (), start, f, g, |_, x| evaluate(x), |_, _| Ok(false))
+    }
+
     /// Minimizes f from `x` (where f is `f` and its gradient `g`, both finite in f's case). `evaluate` returns f
     /// and its gradient at a point; `stop` says whether to stop (without converging) at a point the line search
     /// accepted. Both are given `context` (such as the state they evaluate in). Returns the final point, f there,

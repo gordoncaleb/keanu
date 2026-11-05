@@ -213,6 +213,27 @@ fn eight_schools_non_centred_converges_and_centred_diverges() {
     assert_close(mu.mean, 4.4, 1.0, "mu");
 }
 
+/// AE3 of the applied modelling gaps plan: the PSIS-LOO elpd of the centred eight schools model agrees with
+/// ArviZ's. ArviZ's `centered_eight` example data (the same model and priors, 4 chains of 500 draws from PyMC) gives
+/// `az.loo` elpd_loo −30.76 with standard error 1.43 (arviz-stats 1.3.3; ArviZ's documentation shows about −30.7,
+/// se 1.3, for older versions of the data). The estimate is asserted within one of those standard errors, and every
+/// school has a k̂.
+#[test]
+fn eight_schools_loo_agrees_with_arviz() {
+    let r = eight_schools::run(2, 1000).unwrap();
+    for (name, fit) in [("centred", &r.centred), ("non-centred", &r.non_centred)] {
+        let loo = &fit.loo;
+        assert_eq!(loo.points.len(), 8);
+        assert_eq!(loo.points[7].name, "y[7]");
+        assert!(
+            loo.pareto_k().iter().all(|k| k.is_finite()),
+            "{name}: {loo}"
+        );
+        assert_close(loo.elpd, -30.76, 1.43, &format!("{name} elpd_loo"));
+        assert_close(loo.se, 1.43, 0.3, &format!("{name} se"));
+    }
+}
+
 /// Posterior means of (mu_a, sigma_a, b, sigma_y) and the 85 county intercepts of the radon model, computed
 /// independently: the intercepts integrated out analytically (each county's residuals are jointly Gaussian with
 /// covariance sigma_y² I + sigma_a² J), random-walk Metropolis on (mu_a, b, ln sigma_a, ln sigma_y) for 400,000

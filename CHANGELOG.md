@@ -153,6 +153,15 @@ Work from `docs/plans/2026-11-05-001-feat-applied-modelling-gaps-plan.md`.
   prior worth 10 observations, and replaced by the fit's expected order statistics; weights are truncated at the
   largest raw weight. k̂ is reliable up to min(1 − 1 / log₁₀(S), 0.7). Tails too short to fit give k̂ = +∞, as in
   `loo`, and tails of equal ratios k̂ = −∞ (where `loo` reports +∞). Matches arviz-stats' `psislw` on fixed vectors.
+- keanu-algorithms: **PSIS-LOO, WAIC and model comparison** (`loo::loo`, `waic`, `loo_from_values`,
+  `waic_from_values`, `relative_efficiency`, `compare`, `stacking_weights`, `pseudo_bma_weights`, the `Loo`, `Waic`
+  and `Comparison` results and the `ElpdEstimate` trait; `Loo`, `Waic`, `loo` and `waic` also in the `keanu`
+  prelude), following Vehtari, Gelman and Gabry (2017) and R's `loo`: totals with standard errors, pointwise
+  values, each point's Pareto k̂ and relative efficiency (from its chains' effective sample size), the Monte Carlo
+  standard error of the LOO elpd, and warnings naming unreliable points. `compare` ranks models with `loo`'s
+  negative `elpd_diff` and its paired standard error, and stacking weights (Yao et al., 2018, by L-BFGS on the
+  softmax parameterisation); pseudo-BMA+ weights use a 1000-draw Bayesian bootstrap. The eight schools example
+  reports LOO (elpd about −30.8, as ArviZ), and the guide has a new chapter, "Model comparison (LOO and WAIC)".
 
 ### Code review fixes
 

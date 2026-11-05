@@ -162,6 +162,18 @@ pub fn mcse_mean<S: AsRef<[f64]>>(chains: &[S]) -> Result<f64> {
     Ok(Draws::new(chains)?.mcse_mean())
 }
 
+/// The effective sample size of the chains as they are, neither split nor rank-normalised (as `loo`'s `ess_rfun`,
+/// for its relative efficiencies): NaN for fewer than four draws per chain or any NaN or infinite draw, and the
+/// number of draws when they are all the same.
+pub(crate) fn ess_unsplit<S: AsRef<[f64]>>(chains: &[S]) -> Result<f64> {
+    let draws = Draws::new(chains)?;
+    Ok(if draws.valid(1) {
+        draws.basic_ess()
+    } else {
+        f64::NAN
+    })
+}
+
 /// The summary statistics and diagnostics of one scalar quantity.
 ///
 /// Fails if there are no chains or they have different lengths.

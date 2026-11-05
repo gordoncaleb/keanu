@@ -12,11 +12,14 @@
 //! together, and NUTS cannot pick one step size that works in both the neck and the mouth, so its trajectories
 //! diverge. The non-centred form samples standardised offsets eta_j ~ N(0, 1) and sets theta_j = mu + tau·eta_j,
 //! which has the same posterior without the funnel. Both run four NUTS chains; the example reports each form's
-//! divergences and the non-centred form's R-hat and effective sample size summary.
+//! divergences, the non-centred form's R-hat and effective sample size summary, and each form's PSIS-LOO estimate
+//! of the expected log predictive density with the Pareto k̂ of each school. The two forms are the same model, so
+//! their LOO estimates agree (ArviZ reports about −30.7 for both).
 //!
 //! Run with `cargo run --release --example eight_schools`.
 
 use keanu::algorithms::ChainSamples;
+use keanu::algorithms::loo::compare;
 use keanu::algorithms::mcmc::chains::run_chains;
 use keanu::prelude::*;
 
@@ -41,6 +44,8 @@ pub struct Fit {
     pub tau: NodeId,
     /// The latent per-school variable: theta in the centred form, eta in the non-centred form.
     pub schools: NodeId,
+    /// The PSIS-LOO estimate of the expected log predictive density, with a point (and a Pareto k̂) per school.
+    pub loo: Loo,
 }
 
 /// Both forms of the model, sampled with the same settings.
@@ -70,7 +75,7 @@ pub fn fit(centred: bool, seed: u64, draws: usize) -> keanu::Result<Fit> {
         (mu + tau * eta, eta.id())
     };
     let sigma = b.constant(DoubleTensor::vector(STANDARD_ERRORS.to_vec()));
-    let y = b.gaussian_with_shape(&[schools], theta, sigma);
+    let y = b.gaussian_with_shape(&[schools], theta, sigma).label("y");
     b.observe(y, DoubleTensor::vector(EFFECTS.to_vec()));
     let (mu, tau) = (mu.id(), tau.id());
 
@@ -96,12 +101,14 @@ pub fn fit(centred: bool, seed: u64, draws: usize) -> keanu::Result<Fit> {
     })?;
     let divergences = chains.iter().map(|(_, s)| s.divergence_count()).sum();
     let samples = ChainSamples::new(chains.into_iter().map(|(samples, _)| samples).collect())?;
+    let loo = loo(&PointwiseLogLik::from_chains(&model, &state, &samples)?)?;
     Ok(Fit {
         samples,
         divergences,
         mu,
         tau,
         schools: latent,
+        loo,
     })
 }
 
@@ -136,5 +143,22 @@ fn main() -> keanu::Result<()> {
         fit.mu, fit.tau, fit.schools
     );
     println!("{}", fit.samples.summary()?);
+    for (name, fit) in [
+        ("centred", &result.centred),
+        ("non-centred", &result.non_centred),
+    ] {
+        let k: Vec<String> = fit
+            .loo
+            .pareto_k()
+            .iter()
+            .map(|k| format!("{k:.2}"))
+            .collect();
+        println!("\n{name}: {}\nPareto k̂ by school: {}", fit.loo, k.join(" "));
+    }
+    let table = compare(&[
+        ("centred", &result.centred.loo),
+        ("non-centred", &result.non_centred.loo),
+    ])?;
+    println!("\n{table}");
     Ok(())
 }

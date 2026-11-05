@@ -1120,3 +1120,72 @@ fn gaussian_processes() -> keanu::Result<()> {
     }
     Ok(())
 }
+
+#[test]
+fn model_comparison() -> keanu::Result<()> {
+    // ANCHOR: loo_fit
+    use keanu::algorithms::mcmc::chains::sample_chains;
+
+    let x = vec![-1.0, -0.6, -0.2, 0.2, 0.6, 1.0, 1.4, 1.8];
+    let y = vec![-1.9, -1.2, -0.1, 0.3, 1.4, 1.7, 2.9, 3.4];
+    // y[i] ~ N(a + slope·x[i], sigma), or, with `with_slope` false, y[i] ~ N(a, sigma)
+    let fit = |with_slope: bool| -> keanu::Result<Loo> {
+        let b = GraphBuilder::new();
+        let a = b.gaussian(0.0, 5.0);
+        let sigma = b.half_gaussian(2.0);
+        b.set_value(sigma, DoubleTensor::scalar(1.0));
+        let mut latents = vec![a.id(), sigma.id()];
+        let mean = if with_slope {
+            let slope = b.gaussian(0.0, 5.0);
+            latents.push(slope.id());
+            a + slope * b.constant(DoubleTensor::vector(x.clone()))
+        } else {
+            a * b.constant(DoubleTensor::vector(vec![1.0; x.len()]))
+        };
+        let observed = b.gaussian(mean, sigma).label("y");
+        b.observe(observed, DoubleTensor::vector(y.clone()));
+        let (graph, state) = b.build()?;
+        let model = Model::new(graph, &state)?;
+        let nuts = Nuts::default().with_adapt_count(500);
+        let chains = sample_chains(4, 7, &state, |state, rng| {
+            nuts.sample(&model, state, &latents, 1000, rng)?.drop(500)
+        })?;
+        // the log likelihood of each observation at each draw: points y[0] to y[7]
+        let loglik = PointwiseLogLik::from_chains(&model, &state, &chains)?;
+        let estimate = loo(&loglik)?;
+        println!("{estimate}"); // elpd_loo, p_loo and looic with standard errors, and the k̂ summary
+        Ok(estimate)
+    };
+    let (line, flat) = (fit(true)?, fit(false)?);
+    assert!(line.warnings.is_empty(), "{:?}", line.warnings);
+    for point in &line.points {
+        println!(
+            "{}: elpd {:.2}, k̂ {:.2}",
+            point.name, point.elpd, point.pareto_k
+        );
+    }
+    // ANCHOR_END: loo_fit
+
+    // ANCHOR: loo_compare
+    use keanu::algorithms::loo::compare;
+
+    let table = compare(&[("flat", &flat), ("line", &line)])?;
+    println!("{table}");
+    let best = table.best();
+    assert_eq!(best.name, "line");
+    let other = table.get("flat").unwrap();
+    // the flat model predicts much worse, by more than a few standard errors of the difference
+    assert!(other.elpd_diff < -4.0 * other.se_diff);
+    assert!(best.weight > 0.9);
+    // ANCHOR_END: loo_compare
+
+    // ANCHOR: loo_weights
+    use keanu::algorithms::loo::{pseudo_bma_weights, stacking_weights};
+
+    let stacking = stacking_weights(&[&line, &flat])?;
+    let pseudo_bma = pseudo_bma_weights(&[&line, &flat], &mut KeanuRng::seed_from_u64(1))?;
+    assert!((stacking.iter().sum::<f64>() - 1.0).abs() < 1e-12);
+    assert!(pseudo_bma[0] > 0.9);
+    // ANCHOR_END: loo_weights
+    Ok(())
+}

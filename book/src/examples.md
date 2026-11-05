@@ -14,7 +14,7 @@ functions or parameters their synthetic data were generated from.
 | `cheating_students` | What proportion of students cheated, from a privacy-preserving survey? |
 | `challenger_disaster` | Does temperature predict O-ring failure? |
 | `custom_distribution` | A hierarchical model with user-defined distributions, reparameterised to sample well |
-| `eight_schools` | How much do coaching effects differ between schools? Centred and non-centred forms |
+| `eight_schools` | How much do coaching effects differ between schools? Centred and non-centred forms, compared by PSIS-LOO |
 | `radon` | How much does indoor radon vary between Minnesota counties? A varying-intercept model |
 | `gaussian_mixture` | Which of two groups does each measurement come from, and what are the groups like? |
 | `gp_regression` | What smooth function produced noisy measurements? Gaussian process hyperparameters by NUTS |

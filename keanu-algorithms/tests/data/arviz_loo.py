@@ -35,12 +35,12 @@ for name, lr in psis_cases.items():
         "normalized_log_weights": {str(j): float(lw[j]) for j in idx},
     })
 
-# LOO: two models of six observations, 1000 draws; r_eff = 1
-S = 1000
+# LOO: two models of six observations, 1600 draws (again so that the tail lengths agree); r_eff = 1
+S = 1600
 y = np.array([-0.4, 0.1, 0.3, 0.8, 1.2, 4.0])
 s = np.arange(S)
-m = 0.2 + 0.8 * (u(s, 7919, 1009) - 0.5)
-sd = 0.8 + 0.4 * u(s, 104729, 1013)
+m = 0.2 + 0.8 * (u(s, 7919, 1601) - 0.5)
+sd = 0.8 + 0.4 * u(s, 104729, 1607)
 models = {
     "narrow": -0.5 * np.log(2 * np.pi) - np.log(sd)[:, None]
     - 0.5 * ((y[None, :] - m[:, None]) / sd[:, None]) ** 2,
