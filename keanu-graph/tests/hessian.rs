@@ -549,7 +549,7 @@ const EVERY_OP: &[&str] = &[
     "predicate",
     "reduce",
     "standardize",
-    "scan",
+    "cumulative",
     "arg_reduce",
     "softmax",
     "log_softmax",

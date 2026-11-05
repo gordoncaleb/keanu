@@ -215,7 +215,7 @@ pub enum ReduceOp {
 /// Running accumulations along an axis.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[non_exhaustive]
-pub enum ScanOp {
+pub enum CumulativeOp {
     /// Cumulative sum.
     CumSum,
     /// Cumulative product.
@@ -301,11 +301,10 @@ pub enum Op {
     },
     /// Parents: `input`, f64: (x - mean) / std_dev over every element
     Standardize,
-    /// Parents: `input`
-    /// Scan.
-    Scan {
+    /// Parents: `input` -> the running sum or product along an axis (numpy's `cumsum` / `cumprod`)
+    Cumulative {
         /// The accumulation.
-        kind: ScanOp,
+        kind: CumulativeOp,
         /// The axis to accumulate along.
         axis: isize,
     },
@@ -477,7 +476,7 @@ impl Op {
             Op::Predicate(_) => "predicate",
             Op::Reduce { .. } => "reduce",
             Op::Standardize => "standardize",
-            Op::Scan { .. } => "scan",
+            Op::Cumulative { .. } => "cumulative",
             Op::ArgReduce { .. } => "arg_reduce",
             Op::Softmax { .. } => "softmax",
             Op::LogSoftmax { .. } => "log_softmax",

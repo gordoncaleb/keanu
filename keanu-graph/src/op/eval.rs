@@ -236,12 +236,12 @@ pub(crate) fn eval(op: &Op, inputs: &[&Value]) -> Result<Value> {
         Op::Standardize => Value::F64(inputs[0].f64()?.standardize()),
         Op::Softmax { axis } => Value::F64(inputs[0].f64()?.softmax(*axis)?),
         Op::LogSoftmax { axis } => Value::F64(inputs[0].f64()?.log_softmax(*axis)?),
-        Op::Scan { kind, axis } => match (inputs[0], kind) {
-            (Value::F64(x), ScanOp::CumSum) => Value::F64(x.cumsum(*axis)?),
-            (Value::F64(x), ScanOp::CumProd) => Value::F64(x.cumprod(*axis)?),
-            (Value::I64(x), ScanOp::CumSum) => Value::I64(x.cumsum(*axis)?),
-            (Value::I64(x), ScanOp::CumProd) => Value::I64(x.cumprod(*axis)?),
-            _ => return Err(invalid(op, "scans apply to numbers")),
+        Op::Cumulative { kind, axis } => match (inputs[0], kind) {
+            (Value::F64(x), CumulativeOp::CumSum) => Value::F64(x.cumsum(*axis)?),
+            (Value::F64(x), CumulativeOp::CumProd) => Value::F64(x.cumprod(*axis)?),
+            (Value::I64(x), CumulativeOp::CumSum) => Value::I64(x.cumsum(*axis)?),
+            (Value::I64(x), CumulativeOp::CumProd) => Value::I64(x.cumprod(*axis)?),
+            _ => return Err(invalid(op, "cumulative sums and products apply to numbers")),
         },
         Op::ArgReduce { kind, axis } => arg_reduce(op, *kind, *axis, inputs[0])?,
 

@@ -166,7 +166,7 @@ fn add_node(builder: &GraphBuilder, op: &P, parents: &[NodeId]) -> Result<NodeId
         P::LogSoftmax(p) => Op::LogSoftmax {
             axis: isize_of(p.axis)?,
         },
-        P::Cumulative(p) => Op::Scan {
+        P::Cumulative(p) => Op::Cumulative {
             kind: decode(p.kind)?,
             axis: isize_of(p.axis)?,
         },

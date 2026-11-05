@@ -11,7 +11,7 @@ first release, with idiomatic Rust names and no Java idioms.
 - **Enums that will gain variants are `#[non_exhaustive]`.** Users matching on them need a `_` arm:
   - errors (already): `TensorError`, `DistributionError`, `GraphError`, `AlgorithmError`, `IoError`, `keanu::Error`
   - values and types: `Value`, `DType`
-  - op families: `UnaryOp`, `BinaryOp`, `CompareOp`, `LogicOp`, `Predicate`, `ReduceOp`, `ScanOp`, `ArgOp`, `Op`,
+  - op families: `UnaryOp`, `BinaryOp`, `CompareOp`, `LogicOp`, `Predicate`, `ReduceOp`, `CumulativeOp`, `ArgOp`, `Op`,
     `DistributionKind`
   - algorithm choices: `Algorithm`, `Sampler`, `Fitter`, `Regularization`, `UpdateFormula`, `ConvergenceChecker`,
     `AnnealingSchedule`, `VariableSelector`, `RejectionStrategy`, the PRIMA `ExitStatus`

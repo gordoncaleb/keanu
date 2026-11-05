@@ -28,7 +28,7 @@
 use crate::error::{GraphError, Result};
 use crate::graph::{Graph, Node, NodeId};
 use crate::op::eval::{cpt_selected, multiplexer_selected};
-use crate::op::{BinaryOp, Op, ReduceOp, ScanOp, UnaryOp, eval};
+use crate::op::{BinaryOp, CumulativeOp, Op, ReduceOp, UnaryOp, eval};
 use crate::state::State;
 use crate::value::{DType, Value};
 use keanu_tensor::{DoubleTensor, special};
@@ -90,7 +90,7 @@ pub fn is_differentiable(graph: &Graph, id: NodeId) -> bool {
             | Op::Standardize
             | Op::Softmax { .. }
             | Op::LogSoftmax { .. }
-            | Op::Scan { .. } => true,
+            | Op::Cumulative { .. } => true,
             Op::Reshape(_)
             | Op::Permute(_)
             | Op::Transpose
@@ -1480,13 +1480,13 @@ fn jvp(
                 &out_shape,
             )?)
         }
-        Op::Scan { kind, axis } => {
+        Op::Cumulative { kind, axis } => {
             let Some(t0) = t[0] else { return Ok(None) };
             let x = f64v(parents[0])?;
             let axis = resolve_axis(*axis, x.rank())?;
             match kind {
-                ScanOp::CumSum => Some(t0.cumsum(axis as isize + 1)?),
-                ScanOp::CumProd => Some(cumprod_forward(t0, x, y, axis)?),
+                CumulativeOp::CumSum => Some(t0.cumsum(axis as isize + 1)?),
+                CumulativeOp::CumProd => Some(cumprod_forward(t0, x, y, axis)?),
             }
         }
         Op::Reshape(_)
@@ -1835,12 +1835,12 @@ fn vjp(
                 x.shape(),
             )?)]
         }
-        Op::Scan { kind, axis } => {
+        Op::Cumulative { kind, axis } => {
             let x = f64v(parents[0])?;
             let axis = resolve_axis(*axis, x.rank())?;
             vec![Some(match kind {
-                ScanOp::CumSum => reverse_cumsum(g, axis)?,
-                ScanOp::CumProd => cumprod_reverse(g, x, y, axis)?,
+                CumulativeOp::CumSum => reverse_cumsum(g, axis)?,
+                CumulativeOp::CumProd => cumprod_reverse(g, x, y, axis)?,
             })]
         }
         Op::Reshape(_)
@@ -2176,13 +2176,13 @@ fn vjp_tangent(
             let Some(t0) = t[0] else { return Ok(none()) };
             vec![Some(standardize_vjp_tangent(f64v(parents[0])?, t0, g)?)]
         }
-        Op::Scan { kind, axis } => {
+        Op::Cumulative { kind, axis } => {
             let Some(t0) = t[0] else { return Ok(none()) };
             let x = f64v(parents[0])?;
             let axis = resolve_axis(*axis, x.rank())?;
             match kind {
-                ScanOp::CumSum => none(),
-                ScanOp::CumProd => vec![Some(cumprod_reverse_tangent(
+                CumulativeOp::CumSum => none(),
+                CumulativeOp::CumProd => vec![Some(cumprod_reverse_tangent(
                     g,
                     x,
                     y,

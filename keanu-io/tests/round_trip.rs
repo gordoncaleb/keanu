@@ -7,7 +7,8 @@
 
 use keanu_distributions::{Kde, KeanuRng};
 use keanu_graph::op::{
-    ArgOp, BinaryOp, CompareOp, DistributionKind, LogicOp, Op, Predicate, ReduceOp, ScanOp, UnaryOp,
+    ArgOp, BinaryOp, CompareOp, CumulativeOp, DistributionKind, LogicOp, Op, Predicate, ReduceOp,
+    UnaryOp,
 };
 use keanu_graph::{CustomDistribution, DType, Graph, GraphBuilder, Model, NodeId, State, Value};
 use keanu_io::{IoError, Loaded, Metadata, load_json, load_protobuf, save_json, save_protobuf};
@@ -256,8 +257,8 @@ fn op_cases() -> Vec<(String, Graph, State)> {
     cases.push(op_case(Op::Standardize, &[matrix()]));
     cases.push(op_case(Op::Softmax { axis: -1 }, &[matrix()]));
     cases.push(op_case(Op::LogSoftmax { axis: 0 }, &[matrix()]));
-    for kind in [ScanOp::CumSum, ScanOp::CumProd] {
-        cases.push(op_case(Op::Scan { kind, axis: -1 }, &[matrix()]));
+    for kind in [CumulativeOp::CumSum, CumulativeOp::CumProd] {
+        cases.push(op_case(Op::Cumulative { kind, axis: -1 }, &[matrix()]));
     }
     for kind in [
         ArgOp::ArgMax,
@@ -634,7 +635,7 @@ fn every_operation_round_trips() {
         "standardize",
         "softmax",
         "log_softmax",
-        "scan",
+        "cumulative",
         "arg_reduce",
         "reshape",
         "permute",

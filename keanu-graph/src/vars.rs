@@ -2,7 +2,9 @@
 
 use crate::builder::GraphBuilder;
 use crate::graph::NodeId;
-use crate::op::{ArgOp, BinaryOp, CompareOp, LogicOp, Op, Predicate, ReduceOp, ScanOp, UnaryOp};
+use crate::op::{
+    ArgOp, BinaryOp, CompareOp, CumulativeOp, LogicOp, Op, Predicate, ReduceOp, UnaryOp,
+};
 use crate::value::DType;
 use keanu_tensor::{BoolTensor, DoubleTensor, IntTensor};
 use std::fmt;
@@ -337,15 +339,15 @@ macro_rules! numeric_methods {
             }
             /// The cumulative sum along an axis.
             pub fn cumsum(self, axis: isize) -> Self {
-                self.same(Op::Scan {
-                    kind: ScanOp::CumSum,
+                self.same(Op::Cumulative {
+                    kind: CumulativeOp::CumSum,
                     axis,
                 })
             }
             /// The cumulative product along an axis.
             pub fn cumprod(self, axis: isize) -> Self {
-                self.same(Op::Scan {
-                    kind: ScanOp::CumProd,
+                self.same(Op::Cumulative {
+                    kind: CumulativeOp::CumProd,
                     axis,
                 })
             }

@@ -7,7 +7,8 @@ use crate::proto;
 use keanu_distributions::Kde;
 use keanu_graph::DType;
 use keanu_graph::op::{
-    ArgOp, BinaryOp, CompareOp, DistributionKind, LogicOp, Predicate, ReduceOp, ScanOp, UnaryOp,
+    ArgOp, BinaryOp, CompareOp, CumulativeOp, DistributionKind, LogicOp, Predicate, ReduceOp,
+    UnaryOp,
 };
 use std::sync::Arc;
 
@@ -75,7 +76,7 @@ codes! {
         IsNan, NotNan, IsFinite, IsInfinite, IsPositiveInfinity, IsNegativeInfinity,
     }
     "reduction": ReduceOp => ReduceOp { Sum, Product, Mean, Max, Min, StdDev, LogSumExp }
-    "cumulative op": ScanOp => CumulativeOp { CumSum => Sum, CumProd => Product }
+    "cumulative op": CumulativeOp => CumulativeOp { CumSum => Sum, CumProd => Product }
     "arg reduction": ArgOp => ArgOp { ArgMax, ArgMin, NanArgMax, NanArgMin }
     "type": DType => DType { F64, I64, Bool }
 }
@@ -236,7 +237,7 @@ mod tests {
         every_code_has_a_variant::<LogicOp>(3);
         every_code_has_a_variant::<Predicate>(6);
         every_code_has_a_variant::<ReduceOp>(7);
-        every_code_has_a_variant::<ScanOp>(2);
+        every_code_has_a_variant::<CumulativeOp>(2);
         every_code_has_a_variant::<ArgOp>(4);
         every_code_has_a_variant::<DType>(3);
         let saved = |kind: i32, kde: Option<proto::Kde>, base: Option<proto::DistributionType>| {

@@ -60,7 +60,7 @@ let (graph, state) = b.build()?;     // the first construction error, if any, su
 - `Constant`
 - `Unary(UnaryOp)` and `Binary(BinaryOp)`, element-wise
 - `Compare`, `Mask` and `Logic` (bool ops)
-- `Reduce { kind, axes }` and `Scan { kind, axis }`
+- `Reduce { kind, axes }` and `Cumulative { kind, axis }`
 - `ArgReduce`
 - `Reshape`, `Permute`, `Broadcast`, `Slice`, `Concat`, `Take`, `Diag`, `DiagPart`, `Triangle`, `FillTriangular`
 - `MatMul`, `TensorMultiply`, `Inverse`, `Determinant`, `Cholesky`, `CholeskyInverse`
