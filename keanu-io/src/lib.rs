@@ -1,19 +1,19 @@
 //! Saving and loading [Keanu](https://github.com/gordoncaleb/keanu) models.
 //!
-//! The format is Keanu's protobuf schema (`proto/io/improbable/mir/*.proto`), shared with the Java implementation:
-//! binary protobuf ([`load_protobuf`], [`save_protobuf`], feature `protobuf`) or its JSON mapping ([`load_json`],
-//! [`save_json`], feature `json`). Vertex types are identified by their Java class names and parameters by the
-//! Java parameter names, so files round-trip between the two implementations. [`to_dot`] (feature `dot`) exports a
-//! Graphviz description of a graph.
+//! The format is Keanu's versioned protobuf schema (`proto/keanu/graph.proto`): binary protobuf ([`load_protobuf`],
+//! [`save_protobuf`], feature `protobuf`) or its JSON mapping ([`load_json`], [`save_json`], feature `json`). Each
+//! node is saved with its typed operation, in graph order, with its label; the state's values and observations and
+//! a metadata map are saved alongside. [`to_dot`] (feature `dot`) exports a Graphviz description of a graph.
 //!
-//! Not supported: `PrintVertex`, `GetBooleanIndexVertex`, lambda / CPT / categorical nodes (which Java can't save
-//! either), and files written by older Java versions.
+//! Every operation and distribution can be saved except lambda nodes and custom distributions, which return
+//! [`IoError::NotSaveable`]. Files written by a newer version of the format return
+//! [`IoError::UnsupportedVersion`].
 
 #![deny(missing_docs)]
 #![cfg_attr(docsrs, feature(doc_cfg))]
 
-#[cfg(any(feature = "protobuf", feature = "json", feature = "dot"))]
-mod classes;
+#[cfg(any(feature = "protobuf", feature = "json"))]
+mod codes;
 mod error;
 #[cfg(any(feature = "protobuf", feature = "json"))]
 mod load;
@@ -34,9 +34,9 @@ mod dot;
     unreachable_pub
 )]
 pub(crate) mod proto {
-    include!("generated/mir.rs");
+    include!("generated/keanu.rs");
     #[cfg(feature = "json")]
-    include!("generated/mir.serde.rs");
+    include!("generated/keanu.serde.rs");
 }
 
 #[cfg(feature = "dot")]
@@ -57,7 +57,7 @@ pub type Metadata = BTreeMap<String, String>;
 /// Loads a model saved as binary protobuf.
 #[cfg(feature = "protobuf")]
 pub fn load_protobuf(bytes: &[u8]) -> Result<Loaded> {
-    let model = <proto::ProtoModel as prost::Message>::decode(bytes)
+    let model = <proto::Model as prost::Message>::decode(bytes)
         .map_err(|e| IoError::Decode(e.to_string()))?;
     load_model(&model)
 }
@@ -77,7 +77,7 @@ pub fn save_protobuf(
 /// Loads a model saved as JSON.
 #[cfg(feature = "json")]
 pub fn load_json(text: &str) -> Result<Loaded> {
-    let model: proto::ProtoModel =
+    let model: proto::Model =
         serde_json::from_str(text).map_err(|e| IoError::Decode(e.to_string()))?;
     load_model(&model)
 }
@@ -101,12 +101,13 @@ fn encode_error(e: serde_json::Error) -> IoError {
     IoError::Encode(e.to_string())
 }
 
-/// serde_json writes non-finite doubles as `null`, but the protobuf JSON mapping (and Java) write the strings
-/// `"NaN"`, `"Infinity"` and `"-Infinity"`. The schema's only doubles are tensor values and double parameters, so
-/// those positions are patched from the model after serialising.
+/// serde_json writes non-finite doubles as `null`, but the protobuf JSON mapping writes the strings `"NaN"`,
+/// `"Infinity"` and `"-Infinity"`. The doubles of the schema are patched from the model after serialising: tensor
+/// values, the parameters of `approxEq` and `replaceNan` nodes, and KDE samples and bandwidths.
 #[cfg(feature = "json")]
 mod json_non_finite {
     use crate::proto;
+    use crate::proto::node::Op;
     use serde_json::Value;
 
     fn number(v: f64) -> Value {
@@ -121,9 +122,17 @@ mod json_non_finite {
         }
     }
 
-    fn tensor(t: &proto::DoubleTensor, json: Option<&mut Value>) {
-        if let Some(Value::Array(values)) = json.and_then(|j| j.get_mut("values")) {
-            for (slot, &v) in values.iter_mut().zip(&t.values) {
+    /// Patches a double field.
+    fn double(v: f64, json: Option<&mut Value>) {
+        if let Some(slot) = json.filter(|_| !v.is_finite()) {
+            *slot = number(v);
+        }
+    }
+
+    /// Patches a repeated double field.
+    fn doubles(values: &[f64], json: Option<&mut Value>) {
+        if let Some(Value::Array(slots)) = json {
+            for (slot, &v) in slots.iter_mut().zip(values) {
                 if !v.is_finite() {
                     *slot = number(v);
                 }
@@ -131,40 +140,54 @@ mod json_non_finite {
         }
     }
 
-    pub(crate) fn restore(model: &proto::ProtoModel, json: &mut Value) {
+    fn tensor(t: &proto::Tensor, json: Option<&mut Value>) {
+        if let Some(proto::tensor::Values::F64(v)) = &t.values {
+            doubles(
+                &v.values,
+                json.and_then(|j| j.get_mut("f64"))
+                    .and_then(|j| j.get_mut("values")),
+            );
+        }
+    }
+
+    pub(crate) fn restore(model: &proto::Model, json: &mut Value) {
         let Some(graph) = &model.graph else { return };
         let Some(json_graph) = json.get_mut("graph") else {
             return;
         };
-        if let Some(Value::Array(vertices)) = json_graph.get_mut("vertices") {
-            for (vertex, json_vertex) in graph.vertices.iter().zip(vertices.iter_mut()) {
-                let Some(Value::Array(params)) = json_vertex.get_mut("parameters") else {
-                    continue;
-                };
-                for (param, json_param) in vertex.parameters.iter().zip(params.iter_mut()) {
-                    match &param.param {
-                        Some(proto::named_param::Param::DoubleTensorParam(t)) => {
-                            tensor(t, json_param.get_mut("doubleTensorParam"))
+        if let Some(Value::Array(nodes)) = json_graph.get_mut("nodes") {
+            for (node, json_node) in graph.nodes.iter().zip(nodes.iter_mut()) {
+                match &node.op {
+                    Some(Op::Constant(t)) => tensor(t, json_node.get_mut("constant")),
+                    Some(Op::ApproxEq(p)) => double(
+                        p.epsilon,
+                        json_node
+                            .get_mut("approxEq")
+                            .and_then(|j| j.get_mut("epsilon")),
+                    ),
+                    Some(Op::ReplaceNan(p)) => double(
+                        p.value,
+                        json_node
+                            .get_mut("replaceNan")
+                            .and_then(|j| j.get_mut("value")),
+                    ),
+                    Some(Op::Distribution(proto::Distribution { kde: Some(kde), .. })) => {
+                        let json_kde = json_node
+                            .get_mut("distribution")
+                            .and_then(|j| j.get_mut("kde"));
+                        if let Some(json_kde) = json_kde {
+                            doubles(&kde.samples, json_kde.get_mut("samples"));
+                            double(kde.bandwidth, json_kde.get_mut("bandwidth"));
                         }
-                        Some(proto::named_param::Param::DoubleParam(v)) if !v.is_finite() => {
-                            json_param["doubleParam"] = number(*v);
-                        }
-                        _ => {}
                     }
+                    _ => {}
                 }
             }
         }
-        if let Some(Value::Array(stored)) = json_graph.get_mut("defaultState") {
-            for (value, json_value) in graph.default_state.iter().zip(stored.iter_mut()) {
-                if let Some(proto::vertex_value::ValueType::DoubleVal(t)) =
-                    value.value.as_ref().and_then(|v| v.value_type.as_ref())
-                {
-                    tensor(
-                        t,
-                        json_value
-                            .get_mut("value")
-                            .and_then(|v| v.get_mut("doubleVal")),
-                    );
+        if let Some(Value::Array(stored)) = json_graph.get_mut("values") {
+            for (value, json_value) in graph.values.iter().zip(stored.iter_mut()) {
+                if let Some(t) = &value.value {
+                    tensor(t, json_value.get_mut("value"));
                 }
             }
         }

@@ -17,7 +17,7 @@ publish.workspace = true
 default = ["protobuf", "json", "dot"]
 # binary protobuf files (.pb)
 protobuf = ["dep:prost"]
-# JSON files (the protobuf JSON mapping, as Java's JsonSaver writes)
+# JSON files (the protobuf JSON mapping)
 json = ["dep:prost", "dep:pbjson", "dep:serde", "dep:serde_json"]
 # Graphviz DOT export
 dot = []
@@ -38,10 +38,6 @@ prost = "0.14"
 prost-build = "0.14"
 protox = "0.10"
 serde_json = { version = "1", features = ["float_roundtrip"] }
-
-[[test]]
-name = "golden_models"
-required-features = ["protobuf", "json"]
 
 [[test]]
 name = "round_trip"

@@ -27,7 +27,7 @@ To see how a case was produced, or to rerun the Java implementation, check out t
 | `tensors.json` | Tensor operations on f64 / i32 / i64 / bool tensors: element-wise unary and binary ops (with broadcasting), reductions and scans, shape manipulation, numpy-style slicing, linear algebra, integer arithmetic, boolean logic, and their error cases |
 | `distributions.json` | For each distribution and several parameter settings: element-wise `logProb` over a grid of x values, inside and outside the support, and the element-wise derivatives of the log prob with respect to x and each parameter |
 | `vertices.json` | Small vertex graphs: the output value, plus forward-mode and reverse-mode partial derivatives of the output with respect to each input |
-| `models.json`, `models/` | Whole models saved in Keanu's protobuf (`.pb`) and JSON formats, with the expected log prob, log likelihood, their gradients with respect to each latent, and the value of every labelled vertex. `catalog` contains one labelled instance of every saveable vertex type, recording each type's Java class name and parameter names |
+| `models.json`, `models/` | Whole models, as binary protobuf (`.pb`) and JSON files in Keanu's native save format (see below), with the expected log prob, log likelihood, their gradients with respect to each latent, and the value of every labelled vertex. `catalog` contains one labelled instance of every vertex type Java could save |
 | `samplers.json` | Posterior summaries from fixed-seed Java runs of NUTS (adapt 500, drop 500 of 3000) and Metropolis–Hastings (Keanu's defaults, drop 2000 of 20,000) on each golden model: per latent element, the posterior mean, standard deviation and effective sample size (Geyer's initial monotone sequence). Random streams differ between implementations, so compare within the combined Monte Carlo error sd · sqrt(1 / ess_java + 1 / ess_rust) |
 | `algorithms.json` | MAP and maximum likelihood results for each golden model, with Adam (Keanu's defaults, at most 200,000 iterations), conjugate gradient (Keanu's defaults) and BOBYQA (Keanu's defaults, and an initial trust region radius of 0.5 with a bounds range of 5): the optimized value of each latent (by label), the fitness, and whether Adam converged. Optimizers reach the optimum by different paths, so compare with optimization tolerances. The hierarchical model's MAP is unbounded (sigma → 0), so it has no meaningful optimum. Java's BOBYQA needs at least two latent dimensions (an error otherwise), and with Keanu's defaults it stops short of the optimum on the linear regression model |
 | `regression.json` | Fitted regression models (Java's `model` package): for linear and logistic regression with each regularization (none, ridge, lasso), default and custom priors, and one and three features, on data generated from fixed formulas: the fitted weights and intercept, predictions on held out inputs, and R² or accuracy; plus `ModelScoring` cases. Optimizers stop at slightly different points, so compare fitness and then parameters with optimization tolerances. Lasso optima on the Laplace prior's kink at 0 are approached but not reached exactly by gradient optimizers |
@@ -95,13 +95,13 @@ Each case is `{"name", "protobuf", "json", "expected"}`, where the two paths are
 - `dLogProb` and `dLogLikelihood`: gradients keyed by latent label
 - `nodeValues`: the value of every labelled vertex, so deterministic vertices are checked too
 
-Every model is reloaded from both formats in Java during export and must reproduce `expected` (to 1e-12, because
-gradient contributions are summed in an order that depends on vertex ids). A model whose save and load round trip
-breaks therefore fails the export.
-
-The reverse direction was checked too while Java existed: Rust writes files
-(`keanu-io/tests/fixtures/rust-written`), which a Java test loaded and compared with the values Rust computed. Those
-files remain as a format-stability check in `keanu-io`.
+Java exported the models in its own (Java-compatible) protobuf schema, reloading each from both formats during
+export to check it reproduced `expected` (to 1e-12, because gradient contributions are summed in an order that
+depends on vertex ids). The files were then converted once to Keanu's native schema (`keanu-io/proto/keanu/graph.proto`)
+by loading them with the Java-format loader and saving them again; the conversion checked that every converted
+model has exactly the same operations, values, log prob and gradients as the Java-format file, and `expected` is
+unchanged. The Java files and loader are at the `java-final` tag. `keanu-io`'s `round_trip` test checks the
+converted files against `expected` and that saving a loaded model reproduces its file byte for byte.
 
 ## Comparing
 
@@ -138,9 +138,9 @@ Agreed on 2026-11-03. These features are not ported to Rust:
 |---|---|---|
 | Runtime-compiled computable graph (jOOR) | `backend/keanu/compiled` | **Not ported** (Java-specific). Rust evaluates graphs directly |
 | CSV POJO reader (reflection-based binding) | `util/csv/pojo` | **Dropped** |
-| MIR save/load | `util/io/MIRSaver`, `MIRLoader` | **Deferred.** The protobuf and JSON formats are the parity boundary |
+| MIR save/load | `util/io/MIRSaver`, `MIRLoader` | **Deferred** |
 | Lambda model vertex (runs an external process) | `vertices/model/LambdaModelVertex` | **Deferred** |
-| Models saved by older Java versions | | **Not supported.** Only files written by the final Java version need to load |
+| Loading Java's saved model files | `util/io` | **Dropped** (2026-11-05). Rust saves models in its own versioned schema |
 
 These are kept and ported:
 

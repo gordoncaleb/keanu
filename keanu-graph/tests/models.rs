@@ -12,7 +12,7 @@ use serde_json::Value as Json;
 /// Models that can't be rebuilt, with the reason. Empty: every golden model is checked.
 const SKIPPED: &[(&str, &str)] = &[(
     "catalog",
-    "one instance of every saved vertex type; checked by keanu-io's golden_models test, which loads it from the Java-saved file",
+    "one instance of every vertex type Java could save; checked by keanu-io's round_trip test, which loads it from its saved file",
 )];
 
 const TOLERANCE: f64 = 1e-10;

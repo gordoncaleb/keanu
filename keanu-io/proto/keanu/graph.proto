@@ -1,0 +1,393 @@
+// Keanu's saved model schema.
+//
+// A model is a graph of nodes in topological order (every parent comes before its children), each with one typed
+// operation, plus the values stored with it. A node is identified by its index in `Graph.nodes`, which is also its
+// index in the loaded graph.
+//
+// Compatibility: adding an operation, an enum value or a field is backwards compatible (older files still load)
+// and keeps the format version. `Model.format_version` is bumped when a reader of the previous version would
+// misread files of the new one, and readers reject files with a newer version than they know. Field numbers and
+// enum values are never reused.
+syntax = "proto3";
+
+package keanu;
+
+// A saved model: a graph, its stored values and metadata.
+message Model {
+  // The schema version the file was written with. 0 (unset) is invalid.
+  uint32 format_version = 1;
+  Graph graph = 2;
+  map<string, string> metadata = 3;
+}
+
+// A graph and the values stored with it.
+message Graph {
+  // The nodes, in topological order.
+  repeated Node nodes = 1;
+  // Stored values: observations, and the values of other nodes.
+  repeated StoredValue values = 2;
+}
+
+// A node: its parents (indices of earlier nodes, in the order its operation documents), an optional label and its
+// operation.
+message Node {
+  repeated uint32 parents = 1;
+  // Empty for an unlabelled node.
+  string label = 2;
+
+  oneof op {
+    Tensor constant = 10;
+    UnaryOp unary = 11;
+    BinaryOp binary = 12;
+    CompareOp compare = 13;
+    CompareOp mask = 14;
+    ApproxEq approx_eq = 15;
+    LogicOp logic = 16;
+    Empty not = 17;
+    Empty all = 18;
+    Empty any = 19;
+    Predicate predicate = 20;
+    Reduce reduce = 21;
+    Empty standardize = 22;
+    Cumulative cumulative = 23;
+    ArgReduce arg_reduce = 24;
+    Reshape reshape = 25;
+    Permute permute = 26;
+    Empty transpose = 27;
+    Broadcast broadcast = 28;
+    Slice slice = 29;
+    Concat concat = 30;
+    Take take = 31;
+    Empty diag = 32;
+    Empty diag_part = 33;
+    Triangle tril = 34;
+    Triangle triu = 35;
+    FillTriangular fill_triangular = 36;
+    TrianglePart triangle_part = 37;
+    MatMul matmul = 38;
+    TensorMultiply tensor_multiply = 39;
+    Empty inverse = 40;
+    Empty determinant = 41;
+    Empty cholesky = 42;
+    Empty cholesky_inverse = 43;
+    DType cast = 44;
+    Empty where = 45;
+    Empty multiplexer = 46;
+    Cpt cpt = 47;
+    Empty set_with_mask = 48;
+    ReplaceNan replace_nan = 49;
+    Proxy proxy = 50;
+    Assert assert = 51;
+    Distribution distribution = 52;
+  }
+
+  // Reserved for a general scan whose body is a nested `Graph`.
+  reserved 100;
+  reserved "scan";
+}
+
+// The parameters of an operation that has none.
+message Empty {}
+
+// The element type of a tensor.
+enum DType {
+  D_TYPE_UNSPECIFIED = 0;
+  D_TYPE_F64 = 1;
+  D_TYPE_I64 = 2;
+  D_TYPE_BOOL = 3;
+}
+
+// A tensor: its shape and its elements in row-major order.
+message Tensor {
+  repeated uint64 shape = 1;
+  oneof values {
+    DoubleValues f64 = 2;
+    IntValues i64 = 3;
+    BoolValues bool = 4;
+  }
+}
+
+message DoubleValues {
+  repeated double values = 1;
+}
+
+message IntValues {
+  repeated sint64 values = 1;
+}
+
+message BoolValues {
+  repeated bool values = 1;
+}
+
+// A node's stored value.
+message StoredValue {
+  // The node's index.
+  uint32 node = 1;
+  Tensor value = 2;
+  // Whether the value is an observation.
+  bool observed = 3;
+}
+
+// Element-wise unary operations.
+enum UnaryOp {
+  UNARY_OP_UNSPECIFIED = 0;
+  UNARY_OP_ABS = 1;
+  UNARY_OP_NEG = 2;
+  UNARY_OP_SIGN = 3;
+  UNARY_OP_RECIPROCAL = 4;
+  UNARY_OP_EXP = 5;
+  UNARY_OP_EXP2 = 6;
+  UNARY_OP_EXP_M1 = 7;
+  UNARY_OP_LN = 8;
+  UNARY_OP_LN1P = 9;
+  UNARY_OP_LOG2 = 10;
+  UNARY_OP_LOG10 = 11;
+  UNARY_OP_SQRT = 12;
+  UNARY_OP_SIN = 13;
+  UNARY_OP_COS = 14;
+  UNARY_OP_TAN = 15;
+  UNARY_OP_ASIN = 16;
+  UNARY_OP_ACOS = 17;
+  UNARY_OP_ATAN = 18;
+  UNARY_OP_SINH = 19;
+  UNARY_OP_COSH = 20;
+  UNARY_OP_TANH = 21;
+  UNARY_OP_ASINH = 22;
+  UNARY_OP_ACOSH = 23;
+  UNARY_OP_ATANH = 24;
+  UNARY_OP_SIGMOID = 25;
+  UNARY_OP_FLOOR = 26;
+  UNARY_OP_CEIL = 27;
+  UNARY_OP_ROUND = 28;
+  UNARY_OP_LN_GAMMA = 29;
+  UNARY_OP_DIGAMMA = 30;
+  UNARY_OP_TRIGAMMA = 31;
+  UNARY_OP_ERF = 32;
+  UNARY_OP_ERFC = 33;
+  UNARY_OP_ERF_INV = 34;
+  UNARY_OP_LOG_NDTR = 35;
+  UNARY_OP_NDTRI = 36;
+  UNARY_OP_SOFTPLUS = 37;
+  UNARY_OP_LOGIT = 38;
+  UNARY_OP_LOG1M_EXP = 39;
+}
+
+// Element-wise binary operations.
+enum BinaryOp {
+  BINARY_OP_UNSPECIFIED = 0;
+  BINARY_OP_ADD = 1;
+  BINARY_OP_SUB = 2;
+  BINARY_OP_MUL = 3;
+  BINARY_OP_DIV = 4;
+  BINARY_OP_POW = 5;
+  BINARY_OP_MAX = 6;
+  BINARY_OP_MIN = 7;
+  BINARY_OP_REM = 8;
+  BINARY_OP_ATAN2 = 9;
+  BINARY_OP_LOG_ADD_EXP = 10;
+  BINARY_OP_LOG_ADD_EXP2 = 11;
+  BINARY_OP_SAFE_LN_TIMES = 12;
+  BINARY_OP_LOG_BETA = 13;
+}
+
+// Element-wise comparisons: `compare` gives bool, `mask` gives f64 (1.0 where the comparison holds).
+enum CompareOp {
+  COMPARE_OP_UNSPECIFIED = 0;
+  COMPARE_OP_GT = 1;
+  COMPARE_OP_GE = 2;
+  COMPARE_OP_LT = 3;
+  COMPARE_OP_LE = 4;
+  COMPARE_OP_EQ = 5;
+  COMPARE_OP_NE = 6;
+}
+
+// Element-wise boolean logic.
+enum LogicOp {
+  LOGIC_OP_UNSPECIFIED = 0;
+  LOGIC_OP_AND = 1;
+  LOGIC_OP_OR = 2;
+  LOGIC_OP_XOR = 3;
+}
+
+// Element-wise tests of f64 values.
+enum Predicate {
+  PREDICATE_UNSPECIFIED = 0;
+  PREDICATE_IS_NAN = 1;
+  PREDICATE_NOT_NAN = 2;
+  PREDICATE_IS_FINITE = 3;
+  PREDICATE_IS_INFINITE = 4;
+  PREDICATE_IS_POSITIVE_INFINITY = 5;
+  PREDICATE_IS_NEGATIVE_INFINITY = 6;
+}
+
+// |left - right| <= epsilon.
+message ApproxEq {
+  double epsilon = 1;
+}
+
+enum ReduceOp {
+  REDUCE_OP_UNSPECIFIED = 0;
+  REDUCE_OP_SUM = 1;
+  REDUCE_OP_PRODUCT = 2;
+  REDUCE_OP_MEAN = 3;
+  REDUCE_OP_MAX = 4;
+  REDUCE_OP_MIN = 5;
+  REDUCE_OP_STD_DEV = 6;
+}
+
+// A reduction over some axes, or over every axis when `axes` is absent.
+message Reduce {
+  ReduceOp kind = 1;
+  Axes axes = 2;
+}
+
+message Axes {
+  repeated sint64 values = 1;
+}
+
+enum CumulativeOp {
+  CUMULATIVE_OP_UNSPECIFIED = 0;
+  CUMULATIVE_OP_SUM = 1;
+  CUMULATIVE_OP_PRODUCT = 2;
+}
+
+// A running accumulation along an axis.
+message Cumulative {
+  CumulativeOp kind = 1;
+  sint64 axis = 2;
+}
+
+enum ArgOp {
+  ARG_OP_UNSPECIFIED = 0;
+  ARG_OP_ARG_MAX = 1;
+  ARG_OP_ARG_MIN = 2;
+  ARG_OP_NAN_ARG_MAX = 3;
+  ARG_OP_NAN_ARG_MIN = 4;
+}
+
+// The index of the largest or smallest element along an axis, or the flat index when `axis` is absent.
+message ArgReduce {
+  ArgOp kind = 1;
+  optional sint64 axis = 2;
+}
+
+// The new shape; one dimension may be -1.
+message Reshape {
+  repeated sint64 shape = 1;
+}
+
+message Permute {
+  repeated uint64 axes = 1;
+}
+
+message Broadcast {
+  repeated uint64 shape = 1;
+}
+
+// numpy slice syntax, e.g. "1:, ..., ::-1".
+message Slice {
+  string spec = 1;
+}
+
+message Concat {
+  sint64 axis = 1;
+}
+
+// The element at an index, as a scalar.
+message Take {
+  repeated uint64 index = 1;
+}
+
+// numpy's tril / triu diagonal offset.
+message Triangle {
+  sint64 k = 1;
+}
+
+message FillTriangular {
+  bool upper = 1;
+  bool lower = 2;
+}
+
+message TrianglePart {
+  bool upper = 1;
+}
+
+message MatMul {
+  bool transpose_left = 1;
+  bool transpose_right = 2;
+}
+
+message TensorMultiply {
+  repeated sint64 left_axes = 1;
+  repeated sint64 right_axes = 2;
+}
+
+// A conditional probability table. Parents: the conditions, one outcome per key, then the default.
+message Cpt {
+  uint64 conditions = 1;
+  repeated CptKey keys = 2;
+}
+
+// The condition values (booleans as 0 / 1) that select an outcome.
+message CptKey {
+  repeated sint64 values = 1;
+}
+
+message ReplaceNan {
+  double value = 1;
+}
+
+// A proxy of the given type and shape, connected to its parent if it has one.
+message Proxy {
+  DType dtype = 1;
+  repeated uint64 shape = 2;
+}
+
+message Assert {
+  optional string message = 1;
+}
+
+// A probabilistic node. Its parents are the distribution's parameters, in the order the distribution documents.
+message Distribution {
+  DistributionKind kind = 1;
+  // The value's shape.
+  repeated uint64 shape = 2;
+  // The samples and bandwidth of a kernel density estimate (`DISTRIBUTION_KIND_KDE` only).
+  Kde kde = 3;
+}
+
+enum DistributionKind {
+  DISTRIBUTION_KIND_UNSPECIFIED = 0;
+  DISTRIBUTION_KIND_GAUSSIAN = 1;
+  DISTRIBUTION_KIND_HALF_GAUSSIAN = 2;
+  DISTRIBUTION_KIND_CAUCHY = 3;
+  DISTRIBUTION_KIND_HALF_CAUCHY = 4;
+  DISTRIBUTION_KIND_BETA = 5;
+  DISTRIBUTION_KIND_CHI_SQUARED = 6;
+  DISTRIBUTION_KIND_DIRICHLET = 7;
+  DISTRIBUTION_KIND_EXPONENTIAL = 8;
+  DISTRIBUTION_KIND_GAMMA = 9;
+  DISTRIBUTION_KIND_INVERSE_GAMMA = 10;
+  DISTRIBUTION_KIND_LAPLACE = 11;
+  DISTRIBUTION_KIND_LOGISTIC = 12;
+  DISTRIBUTION_KIND_LOG_NORMAL = 13;
+  DISTRIBUTION_KIND_MULTIVARIATE_GAUSSIAN = 14;
+  DISTRIBUTION_KIND_PARETO = 15;
+  DISTRIBUTION_KIND_STUDENT_T = 16;
+  DISTRIBUTION_KIND_TRIANGULAR = 17;
+  DISTRIBUTION_KIND_UNIFORM = 18;
+  DISTRIBUTION_KIND_KDE = 19;
+  DISTRIBUTION_KIND_BERNOULLI = 20;
+  DISTRIBUTION_KIND_BINOMIAL = 21;
+  DISTRIBUTION_KIND_CATEGORICAL = 22;
+  DISTRIBUTION_KIND_GEOMETRIC = 23;
+  DISTRIBUTION_KIND_MULTINOMIAL = 24;
+  DISTRIBUTION_KIND_POISSON = 25;
+  DISTRIBUTION_KIND_UNIFORM_INT = 26;
+}
+
+// A kernel density estimate's fixed samples and bandwidth.
+message Kde {
+  repeated double samples = 1;
+  double bandwidth = 2;
+}

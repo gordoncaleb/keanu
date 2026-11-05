@@ -1,220 +1,188 @@
 {
+  "formatVersion": 1,
   "graph": {
-    "vertices": [{
-      "id": {
-        "id": "[0]"
-      },
-      "vertexType": "io.improbable.keanu.vertices.tensor.number.floating.dbl.nonprobabilistic.ConstantDoubleVertex",
-      "parameters": [{
-        "name": "constant",
-        "doubleTensorParam": {
-          "values": [0.0]
-        }
-      }]
-    }, {
-      "id": {
-        "id": "[1]"
-      },
-      "vertexType": "io.improbable.keanu.vertices.tensor.number.floating.dbl.nonprobabilistic.ConstantDoubleVertex",
-      "parameters": [{
-        "name": "constant",
-        "doubleTensorParam": {
-          "values": [10.0]
-        }
-      }]
-    }, {
-      "id": {
-        "id": "[2]"
-      },
-      "label": "mu",
-      "vertexType": "io.improbable.keanu.vertices.tensor.number.floating.dbl.probabilistic.GaussianVertex",
-      "parameters": [{
-        "name": "mu",
-        "parentVertex": {
-          "id": "[0]"
-        }
-      }, {
-        "name": "sigma",
-        "parentVertex": {
-          "id": "[1]"
-        }
-      }]
-    }, {
-      "id": {
-        "id": "[3]"
-      },
-      "vertexType": "io.improbable.keanu.vertices.tensor.number.floating.dbl.nonprobabilistic.ConstantDoubleVertex",
-      "parameters": [{
-        "name": "constant",
-        "doubleTensorParam": {
-          "values": [2.0]
-        }
-      }]
-    }, {
-      "id": {
-        "id": "[4]"
-      },
-      "vertexType": "io.improbable.keanu.vertices.tensor.number.floating.dbl.nonprobabilistic.ConstantDoubleVertex",
-      "parameters": [{
-        "name": "constant",
-        "doubleTensorParam": {
-          "values": [0.0]
-        }
-      }]
-    }, {
-      "id": {
-        "id": "[5]"
-      },
-      "label": "sigma",
-      "vertexType": "io.improbable.keanu.vertices.tensor.number.floating.dbl.probabilistic.HalfGaussianVertex",
-      "parameters": [{
-        "name": "mu",
-        "parentVertex": {
-          "id": "[4]"
-        }
-      }, {
-        "name": "sigma",
-        "parentVertex": {
-          "id": "[3]"
-        }
-      }]
-    }, {
-      "id": {
-        "id": "[6]"
-      },
-      "label": "groupMeans",
-      "vertexType": "io.improbable.keanu.vertices.tensor.number.floating.dbl.probabilistic.GaussianVertex",
-      "parameters": [{
-        "name": "mu",
-        "parentVertex": {
-          "id": "[2]"
-        }
-      }, {
-        "name": "sigma",
-        "parentVertex": {
-          "id": "[5]"
-        }
-      }],
-      "shape": ["3"]
-    }, {
-      "id": {
-        "id": "[7]"
-      },
-      "vertexType": "io.improbable.keanu.vertices.tensor.number.floating.dbl.nonprobabilistic.ConstantDoubleVertex",
-      "parameters": [{
-        "name": "constant",
-        "doubleTensorParam": {
-          "values": [1.0]
-        }
-      }]
-    }, {
-      "id": {
-        "id": "[8]"
-      },
-      "label": "observations",
-      "vertexType": "io.improbable.keanu.vertices.tensor.number.floating.dbl.probabilistic.GaussianVertex",
-      "parameters": [{
-        "name": "mu",
-        "parentVertex": {
-          "id": "[6]"
-        }
-      }, {
-        "name": "sigma",
-        "parentVertex": {
-          "id": "[7]"
-        }
-      }],
-      "shape": ["2", "3"]
-    }],
-    "defaultState": [{
-      "value": {
-        "doubleVal": {
-          "values": [0.0]
+    "nodes": [
+      {
+        "constant": {
+          "f64": {
+            "values": [
+              0.0
+            ]
+          }
         }
       },
-      "id": {
-        "id": "[0]"
+      {
+        "constant": {
+          "f64": {
+            "values": [
+              10.0
+            ]
+          }
+        }
+      },
+      {
+        "distribution": {
+          "kind": "DISTRIBUTION_KIND_GAUSSIAN"
+        },
+        "label": "mu",
+        "parents": [
+          0,
+          1
+        ]
+      },
+      {
+        "constant": {
+          "f64": {
+            "values": [
+              2.0
+            ]
+          }
+        }
+      },
+      {
+        "distribution": {
+          "kind": "DISTRIBUTION_KIND_HALF_GAUSSIAN"
+        },
+        "label": "sigma",
+        "parents": [
+          3
+        ]
+      },
+      {
+        "distribution": {
+          "kind": "DISTRIBUTION_KIND_GAUSSIAN",
+          "shape": [
+            "3"
+          ]
+        },
+        "label": "groupMeans",
+        "parents": [
+          2,
+          4
+        ]
+      },
+      {
+        "constant": {
+          "f64": {
+            "values": [
+              1.0
+            ]
+          }
+        }
+      },
+      {
+        "distribution": {
+          "kind": "DISTRIBUTION_KIND_GAUSSIAN",
+          "shape": [
+            "2",
+            "3"
+          ]
+        },
+        "label": "observations",
+        "parents": [
+          5,
+          6
+        ]
       }
-    }, {
-      "value": {
-        "doubleVal": {
-          "values": [10.0]
+    ],
+    "values": [
+      {
+        "value": {
+          "f64": {
+            "values": [
+              0.0
+            ]
+          }
         }
       },
-      "id": {
-        "id": "[1]"
+      {
+        "node": 1,
+        "value": {
+          "f64": {
+            "values": [
+              10.0
+            ]
+          }
+        }
+      },
+      {
+        "node": 2,
+        "value": {
+          "f64": {
+            "values": [
+              1.2
+            ]
+          }
+        }
+      },
+      {
+        "node": 3,
+        "value": {
+          "f64": {
+            "values": [
+              2.0
+            ]
+          }
+        }
+      },
+      {
+        "node": 4,
+        "value": {
+          "f64": {
+            "values": [
+              0.8
+            ]
+          }
+        }
+      },
+      {
+        "node": 5,
+        "value": {
+          "f64": {
+            "values": [
+              0.5,
+              1.5,
+              2.0
+            ]
+          },
+          "shape": [
+            "3"
+          ]
+        }
+      },
+      {
+        "node": 6,
+        "value": {
+          "f64": {
+            "values": [
+              1.0
+            ]
+          }
+        }
+      },
+      {
+        "node": 7,
+        "observed": true,
+        "value": {
+          "f64": {
+            "values": [
+              0.4,
+              1.9,
+              2.2,
+              0.7,
+              1.1,
+              2.6
+            ]
+          },
+          "shape": [
+            "2",
+            "3"
+          ]
+        }
       }
-    }, {
-      "value": {
-        "doubleVal": {
-          "values": [1.2]
-        }
-      },
-      "id": {
-        "id": "[2]"
-      }
-    }, {
-      "value": {
-        "doubleVal": {
-          "values": [2.0]
-        }
-      },
-      "id": {
-        "id": "[3]"
-      }
-    }, {
-      "value": {
-        "doubleVal": {
-          "values": [0.0]
-        }
-      },
-      "id": {
-        "id": "[4]"
-      }
-    }, {
-      "value": {
-        "doubleVal": {
-          "values": [0.8]
-        }
-      },
-      "id": {
-        "id": "[5]"
-      }
-    }, {
-      "value": {
-        "doubleVal": {
-          "shape": ["3"],
-          "values": [0.5, 1.5, 2.0]
-        }
-      },
-      "id": {
-        "id": "[6]"
-      }
-    }, {
-      "value": {
-        "doubleVal": {
-          "values": [1.0]
-        }
-      },
-      "id": {
-        "id": "[7]"
-      }
-    }, {
-      "value": {
-        "doubleVal": {
-          "shape": ["2", "3"],
-          "values": [0.4, 1.9, 2.2, 0.7, 1.1, 2.6]
-        }
-      },
-      "id": {
-        "id": "[8]"
-      },
-      "isObserved": true
-    }]
+    ]
   },
   "metadata": {
-    "metadataInfo": {
-      "name": "hierarchicalGaussian"
-    }
+    "name": "hierarchicalGaussian"
   }
 }

@@ -7,9 +7,19 @@ or binary protobuf (feature `protobuf`), with some metadata.
 {{#include ../../keanu/tests/book.rs:save_load}}
 ```
 
-`load_json` / `load_protobuf` return the graph, the saved state, the metadata, and a map from saved ids to nodes.
+`load_json` / `load_protobuf` return the graph, the saved state and the metadata. Saved nodes keep their order, so
+a node has the same `NodeId` after loading as it had when it was saved, and keep their labels.
 
-The format is the one Java Keanu uses, so models round-trip between the two. Nodes that can't be saved return an
-error: lambdas, custom distributions, CPTs, categorical nodes (Java can't save these either), and printing nodes.
+## The format
+
+Files use Keanu's own protobuf schema, `keanu-io/proto/keanu/graph.proto`; the JSON form is its standard protobuf
+JSON mapping. Each node is saved with its parents and a typed operation: a unary or binary operation, a reduction,
+a shape operation and so on, each with its own parameters, or a distribution identified by its kind with its
+parameters as the node's parents. Every operation and distribution can be saved except lambda nodes and custom
+distributions, which return `IoError::NotSaveable`.
+
+Every file records the format version it was written with. Adding operations or distributions keeps the version,
+so older files keep loading; a file written with a newer version than this one reads returns
+`IoError::UnsupportedVersion`.
 
 With the `dot` feature, `keanu::io::to_dot(&graph, Some(&state), &metadata)` writes a Graphviz description of a graph.

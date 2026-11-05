@@ -1,463 +1,382 @@
 {
+  "formatVersion": 1,
   "graph": {
-    "vertices": [{
-      "id": {
-        "id": "[0]"
-      },
-      "vertexType": "io.improbable.keanu.vertices.tensor.number.floating.dbl.nonprobabilistic.ConstantDoubleVertex",
-      "parameters": [{
-        "name": "constant",
-        "doubleTensorParam": {
-          "values": [0.0]
-        }
-      }]
-    }, {
-      "id": {
-        "id": "[1]"
-      },
-      "label": "Sequence_Item_0.1.proxy_for.x",
-      "vertexType": "io.improbable.keanu.vertices.tensor.number.floating.dbl.nonprobabilistic.DoubleProxyVertex",
-      "parameters": [{
-        "name": "label",
-        "stringParam": "Sequence_Item_0.1.proxy_for.x"
-      }, {
-        "name": "parent",
-        "parentVertex": {
-          "id": "[0]"
-        }
-      }]
-    }, {
-      "id": {
-        "id": "[2]"
-      },
-      "vertexType": "io.improbable.keanu.vertices.tensor.number.floating.dbl.nonprobabilistic.ConstantDoubleVertex",
-      "parameters": [{
-        "name": "constant",
-        "doubleTensorParam": {
-          "values": [0.5]
-        }
-      }]
-    }, {
-      "id": {
-        "id": "[3]"
-      },
-      "label": "Sequence_Item_0.1.x",
-      "vertexType": "io.improbable.keanu.vertices.tensor.number.floating.dbl.probabilistic.GaussianVertex",
-      "parameters": [{
-        "name": "mu",
-        "parentVertex": {
-          "id": "[1]"
-        }
-      }, {
-        "name": "sigma",
-        "parentVertex": {
-          "id": "[2]"
-        }
-      }]
-    }, {
-      "id": {
-        "id": "[4]"
-      },
-      "vertexType": "io.improbable.keanu.vertices.tensor.number.floating.dbl.nonprobabilistic.ConstantDoubleVertex",
-      "parameters": [{
-        "name": "constant",
-        "doubleTensorParam": {
-          "values": [1.0]
-        }
-      }]
-    }, {
-      "id": {
-        "id": "[5]"
-      },
-      "label": "Sequence_Item_0.1.y",
-      "vertexType": "io.improbable.keanu.vertices.tensor.number.floating.dbl.probabilistic.GaussianVertex",
-      "parameters": [{
-        "name": "mu",
-        "parentVertex": {
-          "id": "[3]"
-        }
-      }, {
-        "name": "sigma",
-        "parentVertex": {
-          "id": "[4]"
-        }
-      }]
-    }, {
-      "id": {
-        "id": "[6]"
-      },
-      "label": "Sequence_Item_1.1.proxy_for.x",
-      "vertexType": "io.improbable.keanu.vertices.tensor.number.floating.dbl.nonprobabilistic.DoubleProxyVertex",
-      "parameters": [{
-        "name": "label",
-        "stringParam": "Sequence_Item_1.1.proxy_for.x"
-      }, {
-        "name": "parent",
-        "parentVertex": {
-          "id": "[3]"
-        }
-      }]
-    }, {
-      "id": {
-        "id": "[7]"
-      },
-      "vertexType": "io.improbable.keanu.vertices.tensor.number.floating.dbl.nonprobabilistic.ConstantDoubleVertex",
-      "parameters": [{
-        "name": "constant",
-        "doubleTensorParam": {
-          "values": [0.5]
-        }
-      }]
-    }, {
-      "id": {
-        "id": "[8]"
-      },
-      "label": "Sequence_Item_1.1.x",
-      "vertexType": "io.improbable.keanu.vertices.tensor.number.floating.dbl.probabilistic.GaussianVertex",
-      "parameters": [{
-        "name": "mu",
-        "parentVertex": {
-          "id": "[6]"
-        }
-      }, {
-        "name": "sigma",
-        "parentVertex": {
-          "id": "[7]"
-        }
-      }]
-    }, {
-      "id": {
-        "id": "[9]"
-      },
-      "vertexType": "io.improbable.keanu.vertices.tensor.number.floating.dbl.nonprobabilistic.ConstantDoubleVertex",
-      "parameters": [{
-        "name": "constant",
-        "doubleTensorParam": {
-          "values": [1.0]
-        }
-      }]
-    }, {
-      "id": {
-        "id": "[10]"
-      },
-      "label": "Sequence_Item_1.1.y",
-      "vertexType": "io.improbable.keanu.vertices.tensor.number.floating.dbl.probabilistic.GaussianVertex",
-      "parameters": [{
-        "name": "mu",
-        "parentVertex": {
-          "id": "[8]"
-        }
-      }, {
-        "name": "sigma",
-        "parentVertex": {
-          "id": "[9]"
-        }
-      }]
-    }, {
-      "id": {
-        "id": "[11]"
-      },
-      "label": "Sequence_Item_2.1.proxy_for.x",
-      "vertexType": "io.improbable.keanu.vertices.tensor.number.floating.dbl.nonprobabilistic.DoubleProxyVertex",
-      "parameters": [{
-        "name": "label",
-        "stringParam": "Sequence_Item_2.1.proxy_for.x"
-      }, {
-        "name": "parent",
-        "parentVertex": {
-          "id": "[8]"
-        }
-      }]
-    }, {
-      "id": {
-        "id": "[12]"
-      },
-      "vertexType": "io.improbable.keanu.vertices.tensor.number.floating.dbl.nonprobabilistic.ConstantDoubleVertex",
-      "parameters": [{
-        "name": "constant",
-        "doubleTensorParam": {
-          "values": [0.5]
-        }
-      }]
-    }, {
-      "id": {
-        "id": "[13]"
-      },
-      "label": "Sequence_Item_2.1.x",
-      "vertexType": "io.improbable.keanu.vertices.tensor.number.floating.dbl.probabilistic.GaussianVertex",
-      "parameters": [{
-        "name": "mu",
-        "parentVertex": {
-          "id": "[11]"
-        }
-      }, {
-        "name": "sigma",
-        "parentVertex": {
-          "id": "[12]"
-        }
-      }]
-    }, {
-      "id": {
-        "id": "[14]"
-      },
-      "vertexType": "io.improbable.keanu.vertices.tensor.number.floating.dbl.nonprobabilistic.ConstantDoubleVertex",
-      "parameters": [{
-        "name": "constant",
-        "doubleTensorParam": {
-          "values": [1.0]
-        }
-      }]
-    }, {
-      "id": {
-        "id": "[15]"
-      },
-      "label": "Sequence_Item_2.1.y",
-      "vertexType": "io.improbable.keanu.vertices.tensor.number.floating.dbl.probabilistic.GaussianVertex",
-      "parameters": [{
-        "name": "mu",
-        "parentVertex": {
-          "id": "[13]"
-        }
-      }, {
-        "name": "sigma",
-        "parentVertex": {
-          "id": "[14]"
-        }
-      }]
-    }, {
-      "id": {
-        "id": "[16]"
-      },
-      "label": "Sequence_Item_3.1.proxy_for.x",
-      "vertexType": "io.improbable.keanu.vertices.tensor.number.floating.dbl.nonprobabilistic.DoubleProxyVertex",
-      "parameters": [{
-        "name": "label",
-        "stringParam": "Sequence_Item_3.1.proxy_for.x"
-      }, {
-        "name": "parent",
-        "parentVertex": {
-          "id": "[13]"
-        }
-      }]
-    }, {
-      "id": {
-        "id": "[17]"
-      },
-      "vertexType": "io.improbable.keanu.vertices.tensor.number.floating.dbl.nonprobabilistic.ConstantDoubleVertex",
-      "parameters": [{
-        "name": "constant",
-        "doubleTensorParam": {
-          "values": [0.5]
-        }
-      }]
-    }, {
-      "id": {
-        "id": "[18]"
-      },
-      "label": "Sequence_Item_3.1.x",
-      "vertexType": "io.improbable.keanu.vertices.tensor.number.floating.dbl.probabilistic.GaussianVertex",
-      "parameters": [{
-        "name": "mu",
-        "parentVertex": {
-          "id": "[16]"
-        }
-      }, {
-        "name": "sigma",
-        "parentVertex": {
-          "id": "[17]"
-        }
-      }]
-    }, {
-      "id": {
-        "id": "[19]"
-      },
-      "vertexType": "io.improbable.keanu.vertices.tensor.number.floating.dbl.nonprobabilistic.ConstantDoubleVertex",
-      "parameters": [{
-        "name": "constant",
-        "doubleTensorParam": {
-          "values": [1.0]
-        }
-      }]
-    }, {
-      "id": {
-        "id": "[20]"
-      },
-      "label": "Sequence_Item_3.1.y",
-      "vertexType": "io.improbable.keanu.vertices.tensor.number.floating.dbl.probabilistic.GaussianVertex",
-      "parameters": [{
-        "name": "mu",
-        "parentVertex": {
-          "id": "[18]"
-        }
-      }, {
-        "name": "sigma",
-        "parentVertex": {
-          "id": "[19]"
-        }
-      }]
-    }],
-    "defaultState": [{
-      "value": {
-        "doubleVal": {
-          "values": [0.0]
+    "nodes": [
+      {
+        "constant": {
+          "f64": {
+            "values": [
+              0.0
+            ]
+          }
         }
       },
-      "id": {
-        "id": "[0]"
+      {
+        "label": "Sequence_Item_0.1.proxy_for.x",
+        "parents": [
+          0
+        ],
+        "proxy": {
+          "dtype": "D_TYPE_F64"
+        }
+      },
+      {
+        "constant": {
+          "f64": {
+            "values": [
+              0.5
+            ]
+          }
+        }
+      },
+      {
+        "distribution": {
+          "kind": "DISTRIBUTION_KIND_GAUSSIAN"
+        },
+        "label": "Sequence_Item_0.1.x",
+        "parents": [
+          1,
+          2
+        ]
+      },
+      {
+        "constant": {
+          "f64": {
+            "values": [
+              1.0
+            ]
+          }
+        }
+      },
+      {
+        "distribution": {
+          "kind": "DISTRIBUTION_KIND_GAUSSIAN"
+        },
+        "label": "Sequence_Item_0.1.y",
+        "parents": [
+          3,
+          4
+        ]
+      },
+      {
+        "label": "Sequence_Item_1.1.proxy_for.x",
+        "parents": [
+          3
+        ],
+        "proxy": {
+          "dtype": "D_TYPE_F64"
+        }
+      },
+      {
+        "constant": {
+          "f64": {
+            "values": [
+              0.5
+            ]
+          }
+        }
+      },
+      {
+        "distribution": {
+          "kind": "DISTRIBUTION_KIND_GAUSSIAN"
+        },
+        "label": "Sequence_Item_1.1.x",
+        "parents": [
+          6,
+          7
+        ]
+      },
+      {
+        "constant": {
+          "f64": {
+            "values": [
+              1.0
+            ]
+          }
+        }
+      },
+      {
+        "distribution": {
+          "kind": "DISTRIBUTION_KIND_GAUSSIAN"
+        },
+        "label": "Sequence_Item_1.1.y",
+        "parents": [
+          8,
+          9
+        ]
+      },
+      {
+        "label": "Sequence_Item_2.1.proxy_for.x",
+        "parents": [
+          8
+        ],
+        "proxy": {
+          "dtype": "D_TYPE_F64"
+        }
+      },
+      {
+        "constant": {
+          "f64": {
+            "values": [
+              0.5
+            ]
+          }
+        }
+      },
+      {
+        "distribution": {
+          "kind": "DISTRIBUTION_KIND_GAUSSIAN"
+        },
+        "label": "Sequence_Item_2.1.x",
+        "parents": [
+          11,
+          12
+        ]
+      },
+      {
+        "constant": {
+          "f64": {
+            "values": [
+              1.0
+            ]
+          }
+        }
+      },
+      {
+        "distribution": {
+          "kind": "DISTRIBUTION_KIND_GAUSSIAN"
+        },
+        "label": "Sequence_Item_2.1.y",
+        "parents": [
+          13,
+          14
+        ]
+      },
+      {
+        "label": "Sequence_Item_3.1.proxy_for.x",
+        "parents": [
+          13
+        ],
+        "proxy": {
+          "dtype": "D_TYPE_F64"
+        }
+      },
+      {
+        "constant": {
+          "f64": {
+            "values": [
+              0.5
+            ]
+          }
+        }
+      },
+      {
+        "distribution": {
+          "kind": "DISTRIBUTION_KIND_GAUSSIAN"
+        },
+        "label": "Sequence_Item_3.1.x",
+        "parents": [
+          16,
+          17
+        ]
+      },
+      {
+        "constant": {
+          "f64": {
+            "values": [
+              1.0
+            ]
+          }
+        }
+      },
+      {
+        "distribution": {
+          "kind": "DISTRIBUTION_KIND_GAUSSIAN"
+        },
+        "label": "Sequence_Item_3.1.y",
+        "parents": [
+          18,
+          19
+        ]
       }
-    }, {
-      "value": {
-        "doubleVal": {
-          "values": [0.5]
+    ],
+    "values": [
+      {
+        "value": {
+          "f64": {
+            "values": [
+              0.0
+            ]
+          }
         }
       },
-      "id": {
-        "id": "[2]"
+      {
+        "node": 2,
+        "value": {
+          "f64": {
+            "values": [
+              0.5
+            ]
+          }
+        }
+      },
+      {
+        "node": 3,
+        "value": {
+          "f64": {
+            "values": [
+              0.2
+            ]
+          }
+        }
+      },
+      {
+        "node": 4,
+        "value": {
+          "f64": {
+            "values": [
+              1.0
+            ]
+          }
+        }
+      },
+      {
+        "node": 5,
+        "observed": true,
+        "value": {
+          "f64": {
+            "values": [
+              0.3
+            ]
+          }
+        }
+      },
+      {
+        "node": 7,
+        "value": {
+          "f64": {
+            "values": [
+              0.5
+            ]
+          }
+        }
+      },
+      {
+        "node": 8,
+        "value": {
+          "f64": {
+            "values": [
+              0.7
+            ]
+          }
+        }
+      },
+      {
+        "node": 9,
+        "value": {
+          "f64": {
+            "values": [
+              1.0
+            ]
+          }
+        }
+      },
+      {
+        "node": 10,
+        "observed": true,
+        "value": {
+          "f64": {
+            "values": [
+              0.9
+            ]
+          }
+        }
+      },
+      {
+        "node": 12,
+        "value": {
+          "f64": {
+            "values": [
+              0.5
+            ]
+          }
+        }
+      },
+      {
+        "node": 13,
+        "value": {
+          "f64": {
+            "values": [
+              0.6
+            ]
+          }
+        }
+      },
+      {
+        "node": 14,
+        "value": {
+          "f64": {
+            "values": [
+              1.0
+            ]
+          }
+        }
+      },
+      {
+        "node": 15,
+        "observed": true,
+        "value": {
+          "f64": {
+            "values": [
+              0.4
+            ]
+          }
+        }
+      },
+      {
+        "node": 17,
+        "value": {
+          "f64": {
+            "values": [
+              0.5
+            ]
+          }
+        }
+      },
+      {
+        "node": 18,
+        "value": {
+          "f64": {
+            "values": [
+              1.4
+            ]
+          }
+        }
+      },
+      {
+        "node": 19,
+        "value": {
+          "f64": {
+            "values": [
+              1.0
+            ]
+          }
+        }
+      },
+      {
+        "node": 20,
+        "observed": true,
+        "value": {
+          "f64": {
+            "values": [
+              1.6
+            ]
+          }
+        }
       }
-    }, {
-      "value": {
-        "doubleVal": {
-          "values": [0.2]
-        }
-      },
-      "id": {
-        "id": "[3]"
-      }
-    }, {
-      "value": {
-        "doubleVal": {
-          "values": [1.0]
-        }
-      },
-      "id": {
-        "id": "[4]"
-      }
-    }, {
-      "value": {
-        "doubleVal": {
-          "values": [0.3]
-        }
-      },
-      "id": {
-        "id": "[5]"
-      },
-      "isObserved": true
-    }, {
-      "value": {
-        "doubleVal": {
-          "values": [0.5]
-        }
-      },
-      "id": {
-        "id": "[7]"
-      }
-    }, {
-      "value": {
-        "doubleVal": {
-          "values": [0.7]
-        }
-      },
-      "id": {
-        "id": "[8]"
-      }
-    }, {
-      "value": {
-        "doubleVal": {
-          "values": [1.0]
-        }
-      },
-      "id": {
-        "id": "[9]"
-      }
-    }, {
-      "value": {
-        "doubleVal": {
-          "values": [0.9]
-        }
-      },
-      "id": {
-        "id": "[10]"
-      },
-      "isObserved": true
-    }, {
-      "value": {
-        "doubleVal": {
-          "values": [0.5]
-        }
-      },
-      "id": {
-        "id": "[12]"
-      }
-    }, {
-      "value": {
-        "doubleVal": {
-          "values": [0.6]
-        }
-      },
-      "id": {
-        "id": "[13]"
-      }
-    }, {
-      "value": {
-        "doubleVal": {
-          "values": [1.0]
-        }
-      },
-      "id": {
-        "id": "[14]"
-      }
-    }, {
-      "value": {
-        "doubleVal": {
-          "values": [0.4]
-        }
-      },
-      "id": {
-        "id": "[15]"
-      },
-      "isObserved": true
-    }, {
-      "value": {
-        "doubleVal": {
-          "values": [0.5]
-        }
-      },
-      "id": {
-        "id": "[17]"
-      }
-    }, {
-      "value": {
-        "doubleVal": {
-          "values": [1.4]
-        }
-      },
-      "id": {
-        "id": "[18]"
-      }
-    }, {
-      "value": {
-        "doubleVal": {
-          "values": [1.0]
-        }
-      },
-      "id": {
-        "id": "[19]"
-      }
-    }, {
-      "value": {
-        "doubleVal": {
-          "values": [1.6]
-        }
-      },
-      "id": {
-        "id": "[20]"
-      },
-      "isObserved": true
-    }]
+    ]
   },
   "metadata": {
-    "metadataInfo": {
-      "name": "randomWalkSequence"
-    }
+    "name": "randomWalkSequence"
   }
 }

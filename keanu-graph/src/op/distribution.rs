@@ -234,6 +234,16 @@ macro_rules! distributions {
                 }
             }
 
+            /// The parameter names, in parent order (e.g. `["mu", "sigma"]` for a Gaussian), or None for a variable
+            /// number of parameters (Categorical, Custom).
+            pub fn parameter_names(&self) -> Option<&'static [&'static str]> {
+                match self {
+                    $(DistributionKind::$kind => Some(&[$(stringify!($param)),+]),)+
+                    DistributionKind::Kde(_) => Some(&[]),
+                    DistributionKind::Categorical | DistributionKind::Custom(_) => None,
+                }
+            }
+
             /// The type of the node's value.
             pub fn value_type(&self) -> DType {
                 match self {

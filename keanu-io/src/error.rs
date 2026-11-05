@@ -9,22 +9,21 @@ pub enum IoError {
     Decode(String),
     /// The model could not be written in the requested format.
     Encode(String),
-    /// A vertex type that can't be loaded.
-    UnsupportedVertex(String),
-    /// A stored value of a type that can't be loaded (e.g. a generic object value).
-    UnsupportedValue(String),
-    /// A vertex is missing a parameter, or has one of the wrong kind.
-    InvalidParameter {
-        /// The vertex type.
-        vertex: String,
-        /// The parameter name.
-        parameter: String,
+    /// The file was written with a newer version of the format than this version of Keanu reads.
+    UnsupportedVersion {
+        /// The file's format version.
+        found: u32,
+        /// The newest format version this version of Keanu reads.
+        supported: u32,
+    },
+    /// A saved node is invalid (e.g. it refers to a later node, or has an unknown operation).
+    InvalidNode {
+        /// The node's index in the file.
+        index: usize,
         /// What is wrong.
         message: String,
     },
-    /// A parameter or value refers to a vertex that hasn't been defined (earlier in the file).
-    UnknownVertex(String),
-    /// A node that can't be saved (e.g. a lambda), or a value that doesn't fit the format.
+    /// A node that can't be saved (a lambda or a custom distribution), or a value that doesn't fit the format.
     NotSaveable(String),
     /// The loaded graph is invalid.
     Graph(GraphError),
@@ -35,14 +34,11 @@ impl fmt::Display for IoError {
         match self {
             Self::Decode(m) => write!(f, "cannot decode the model: {m}"),
             Self::Encode(m) => write!(f, "cannot encode the model: {m}"),
-            Self::UnsupportedVertex(t) => write!(f, "vertex type {t} is not supported"),
-            Self::UnsupportedValue(t) => write!(f, "stored values of type {t} are not supported"),
-            Self::InvalidParameter {
-                vertex,
-                parameter,
-                message,
-            } => write!(f, "{vertex}: parameter {parameter}: {message}"),
-            Self::UnknownVertex(id) => write!(f, "unknown vertex {id}"),
+            Self::UnsupportedVersion { found, supported } => write!(
+                f,
+                "the model has format version {found}, but this version of Keanu reads versions up to {supported}"
+            ),
+            Self::InvalidNode { index, message } => write!(f, "node {index}: {message}"),
             Self::NotSaveable(m) => write!(f, "cannot save: {m}"),
             Self::Graph(e) => write!(f, "{e}"),
         }

@@ -1,279 +1,262 @@
 {
+  "formatVersion": 1,
   "graph": {
-    "vertices": [{
-      "id": {
-        "id": "[0]"
+    "nodes": [
+      {
+        "constant": {
+          "f64": {
+            "values": [
+              1.0,
+              0.5,
+              2.0,
+              -1.0,
+              3.0,
+              0.2,
+              -0.5,
+              1.5
+            ]
+          },
+          "shape": [
+            "4",
+            "2"
+          ]
+        },
+        "label": "x"
       },
-      "label": "x",
-      "vertexType": "io.improbable.keanu.vertices.tensor.number.floating.dbl.nonprobabilistic.ConstantDoubleVertex",
-      "parameters": [{
-        "name": "constant",
-        "doubleTensorParam": {
-          "shape": ["4", "2"],
-          "values": [1.0, 0.5, 2.0, -1.0, 3.0, 0.2, -0.5, 1.5]
-        }
-      }],
-      "shape": ["4", "2"]
-    }, {
-      "id": {
-        "id": "[1]"
-      },
-      "vertexType": "io.improbable.keanu.vertices.tensor.number.floating.dbl.nonprobabilistic.ConstantDoubleVertex",
-      "parameters": [{
-        "name": "constant",
-        "doubleTensorParam": {
-          "values": [0.0]
-        }
-      }]
-    }, {
-      "id": {
-        "id": "[2]"
-      },
-      "vertexType": "io.improbable.keanu.vertices.tensor.number.floating.dbl.nonprobabilistic.ConstantDoubleVertex",
-      "parameters": [{
-        "name": "constant",
-        "doubleTensorParam": {
-          "values": [1.0]
-        }
-      }]
-    }, {
-      "id": {
-        "id": "[3]"
-      },
-      "label": "weights",
-      "vertexType": "io.improbable.keanu.vertices.tensor.number.floating.dbl.probabilistic.GaussianVertex",
-      "parameters": [{
-        "name": "mu",
-        "parentVertex": {
-          "id": "[1]"
-        }
-      }, {
-        "name": "sigma",
-        "parentVertex": {
-          "id": "[2]"
-        }
-      }],
-      "shape": ["2", "1"]
-    }, {
-      "id": {
-        "id": "[4]"
-      },
-      "vertexType": "io.improbable.keanu.vertices.tensor.number.floating.dbl.nonprobabilistic.ConstantDoubleVertex",
-      "parameters": [{
-        "name": "constant",
-        "doubleTensorParam": {
-          "values": [0.0]
-        }
-      }]
-    }, {
-      "id": {
-        "id": "[5]"
-      },
-      "vertexType": "io.improbable.keanu.vertices.tensor.number.floating.dbl.nonprobabilistic.ConstantDoubleVertex",
-      "parameters": [{
-        "name": "constant",
-        "doubleTensorParam": {
-          "values": [5.0]
-        }
-      }]
-    }, {
-      "id": {
-        "id": "[6]"
-      },
-      "label": "intercept",
-      "vertexType": "io.improbable.keanu.vertices.tensor.number.floating.dbl.probabilistic.GaussianVertex",
-      "parameters": [{
-        "name": "mu",
-        "parentVertex": {
-          "id": "[4]"
-        }
-      }, {
-        "name": "sigma",
-        "parentVertex": {
-          "id": "[5]"
-        }
-      }]
-    }, {
-      "id": {
-        "id": "[7]"
-      },
-      "vertexType": "io.improbable.keanu.vertices.tensor.number.floating.dbl.nonprobabilistic.ConstantDoubleVertex",
-      "parameters": [{
-        "name": "constant",
-        "doubleTensorParam": {
-          "values": [2.0]
-        }
-      }]
-    }, {
-      "id": {
-        "id": "[8]"
-      },
-      "label": "noise",
-      "vertexType": "io.improbable.keanu.vertices.tensor.number.floating.dbl.probabilistic.ExponentialVertex",
-      "parameters": [{
-        "name": "rate",
-        "parentVertex": {
-          "id": "[7]"
-        }
-      }]
-    }, {
-      "id": {
-        "id": "[9]"
-      },
-      "vertexType": "io.improbable.keanu.vertices.tensor.number.operators.binary.MatrixMultiplicationVertex",
-      "parameters": [{
-        "name": "left",
-        "parentVertex": {
-          "id": "[0]"
-        }
-      }, {
-        "name": "right",
-        "parentVertex": {
-          "id": "[3]"
-        }
-      }, {
-        "name": "transposeLeft",
-        "boolParam": false
-      }, {
-        "name": "transposeRight",
-        "boolParam": false
-      }],
-      "shape": ["4", "1"]
-    }, {
-      "id": {
-        "id": "[10]"
-      },
-      "vertexType": "io.improbable.keanu.vertices.tensor.number.operators.binary.AdditionVertex",
-      "parameters": [{
-        "name": "left",
-        "parentVertex": {
-          "id": "[9]"
-        }
-      }, {
-        "name": "right",
-        "parentVertex": {
-          "id": "[6]"
-        }
-      }],
-      "shape": ["4", "1"]
-    }, {
-      "id": {
-        "id": "[11]"
-      },
-      "label": "y",
-      "vertexType": "io.improbable.keanu.vertices.tensor.number.floating.dbl.probabilistic.GaussianVertex",
-      "parameters": [{
-        "name": "mu",
-        "parentVertex": {
-          "id": "[10]"
-        }
-      }, {
-        "name": "sigma",
-        "parentVertex": {
-          "id": "[8]"
-        }
-      }],
-      "shape": ["4", "1"]
-    }],
-    "defaultState": [{
-      "value": {
-        "doubleVal": {
-          "shape": ["4", "2"],
-          "values": [1.0, 0.5, 2.0, -1.0, 3.0, 0.2, -0.5, 1.5]
+      {
+        "constant": {
+          "f64": {
+            "values": [
+              0.0
+            ]
+          }
         }
       },
-      "id": {
-        "id": "[0]"
+      {
+        "constant": {
+          "f64": {
+            "values": [
+              1.0
+            ]
+          }
+        }
+      },
+      {
+        "distribution": {
+          "kind": "DISTRIBUTION_KIND_GAUSSIAN",
+          "shape": [
+            "2",
+            "1"
+          ]
+        },
+        "label": "weights",
+        "parents": [
+          1,
+          2
+        ]
+      },
+      {
+        "constant": {
+          "f64": {
+            "values": [
+              0.0
+            ]
+          }
+        }
+      },
+      {
+        "constant": {
+          "f64": {
+            "values": [
+              5.0
+            ]
+          }
+        }
+      },
+      {
+        "distribution": {
+          "kind": "DISTRIBUTION_KIND_GAUSSIAN"
+        },
+        "label": "intercept",
+        "parents": [
+          4,
+          5
+        ]
+      },
+      {
+        "constant": {
+          "f64": {
+            "values": [
+              2.0
+            ]
+          }
+        }
+      },
+      {
+        "distribution": {
+          "kind": "DISTRIBUTION_KIND_EXPONENTIAL"
+        },
+        "label": "noise",
+        "parents": [
+          7
+        ]
+      },
+      {
+        "matmul": {},
+        "parents": [
+          0,
+          3
+        ]
+      },
+      {
+        "binary": "BINARY_OP_ADD",
+        "parents": [
+          9,
+          6
+        ]
+      },
+      {
+        "distribution": {
+          "kind": "DISTRIBUTION_KIND_GAUSSIAN",
+          "shape": [
+            "4",
+            "1"
+          ]
+        },
+        "label": "y",
+        "parents": [
+          10,
+          8
+        ]
       }
-    }, {
-      "value": {
-        "doubleVal": {
-          "values": [0.0]
+    ],
+    "values": [
+      {
+        "value": {
+          "f64": {
+            "values": [
+              1.0,
+              0.5,
+              2.0,
+              -1.0,
+              3.0,
+              0.2,
+              -0.5,
+              1.5
+            ]
+          },
+          "shape": [
+            "4",
+            "2"
+          ]
         }
       },
-      "id": {
-        "id": "[1]"
+      {
+        "node": 1,
+        "value": {
+          "f64": {
+            "values": [
+              0.0
+            ]
+          }
+        }
+      },
+      {
+        "node": 2,
+        "value": {
+          "f64": {
+            "values": [
+              1.0
+            ]
+          }
+        }
+      },
+      {
+        "node": 3,
+        "value": {
+          "f64": {
+            "values": [
+              0.7,
+              -1.1
+            ]
+          },
+          "shape": [
+            "2",
+            "1"
+          ]
+        }
+      },
+      {
+        "node": 4,
+        "value": {
+          "f64": {
+            "values": [
+              0.0
+            ]
+          }
+        }
+      },
+      {
+        "node": 5,
+        "value": {
+          "f64": {
+            "values": [
+              5.0
+            ]
+          }
+        }
+      },
+      {
+        "node": 6,
+        "value": {
+          "f64": {
+            "values": [
+              0.3
+            ]
+          }
+        }
+      },
+      {
+        "node": 7,
+        "value": {
+          "f64": {
+            "values": [
+              2.0
+            ]
+          }
+        }
+      },
+      {
+        "node": 8,
+        "value": {
+          "f64": {
+            "values": [
+              0.6
+            ]
+          }
+        }
+      },
+      {
+        "node": 11,
+        "observed": true,
+        "value": {
+          "f64": {
+            "values": [
+              0.1,
+              3.2,
+              1.5,
+              -1.0
+            ]
+          },
+          "shape": [
+            "4",
+            "1"
+          ]
+        }
       }
-    }, {
-      "value": {
-        "doubleVal": {
-          "values": [1.0]
-        }
-      },
-      "id": {
-        "id": "[2]"
-      }
-    }, {
-      "value": {
-        "doubleVal": {
-          "shape": ["2", "1"],
-          "values": [0.7, -1.1]
-        }
-      },
-      "id": {
-        "id": "[3]"
-      }
-    }, {
-      "value": {
-        "doubleVal": {
-          "values": [0.0]
-        }
-      },
-      "id": {
-        "id": "[4]"
-      }
-    }, {
-      "value": {
-        "doubleVal": {
-          "values": [5.0]
-        }
-      },
-      "id": {
-        "id": "[5]"
-      }
-    }, {
-      "value": {
-        "doubleVal": {
-          "values": [0.3]
-        }
-      },
-      "id": {
-        "id": "[6]"
-      }
-    }, {
-      "value": {
-        "doubleVal": {
-          "values": [2.0]
-        }
-      },
-      "id": {
-        "id": "[7]"
-      }
-    }, {
-      "value": {
-        "doubleVal": {
-          "values": [0.6]
-        }
-      },
-      "id": {
-        "id": "[8]"
-      }
-    }, {
-      "value": {
-        "doubleVal": {
-          "shape": ["4", "1"],
-          "values": [0.1, 3.2, 1.5, -1.0]
-        }
-      },
-      "id": {
-        "id": "[11]"
-      },
-      "isObserved": true
-    }]
+    ]
   },
   "metadata": {
-    "metadataInfo": {
-      "name": "linearRegression"
-    }
+    "name": "linearRegression"
   }
 }

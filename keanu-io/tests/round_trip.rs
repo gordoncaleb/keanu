@@ -1,20 +1,21 @@
 //! Saving and loading round trips.
 //!
-//! - Rust save -> Rust load reproduces every golden model and a model built in Rust with operations that have no
-//!   single Java vertex (and so are saved as small Java subgraphs).
-//! - Format stability: the Rust-written files and the values Rust computes for them are committed as fixtures in
-//!   `tests/fixtures/rust-written`, and the test fails if saving produces different files. (Until the Java
-//!   implementation was removed, a Java test also loaded these files; see the `java-final` tag.)
-//!   This test fails if the fixtures are stale; run with `KEANU_REGENERATE=1` to update them.
+//! - Every operation and distribution kind saves and loads back as the same node, through protobuf and JSON.
+//! - The golden models (converted from the files the Java implementation saved) load and reproduce the values Java
+//!   computed, and saving a loaded golden model reproduces its file byte for byte (the format is stable).
+//! - Values, observations, labels and metadata survive; invalid and newer files are rejected.
 
 use keanu_distributions::{Kde, KeanuRng};
-use keanu_graph::op::Op;
-use keanu_graph::{Graph, GraphBuilder, Model, State, Value};
-use keanu_io::{Metadata, load_json, load_protobuf, save_json, save_protobuf};
-use keanu_parity::{close, golden_dir};
-use keanu_tensor::{DoubleTensor, IntTensor};
-use std::collections::BTreeMap;
-use std::path::PathBuf;
+use keanu_graph::op::{
+    ArgOp, BinaryOp, CompareOp, DistributionKind, LogicOp, Op, Predicate, ReduceOp, ScanOp, UnaryOp,
+};
+use keanu_graph::{CustomDistribution, DType, Graph, GraphBuilder, Model, NodeId, State, Value};
+use keanu_io::{IoError, Loaded, Metadata, load_json, load_protobuf, save_json, save_protobuf};
+use keanu_parity::{close, golden_dir, number, parse_tensor};
+use keanu_tensor::{BoolTensor, DoubleTensor, IntTensor};
+use serde_json::Value as Json;
+use std::collections::{BTreeMap, BTreeSet};
+use std::sync::Arc;
 
 fn recompute(graph: &Graph, state: &State) -> State {
     let mut state = state.clone();
@@ -32,13 +33,6 @@ fn recompute(graph: &Graph, state: &State) -> State {
         .lazy_eval(graph, &all, &mut KeanuRng::seed_from_u64(0))
         .unwrap();
     state
-}
-
-/// The log prob and the value of every labelled node, the facts a round trip must preserve.
-#[derive(Debug, PartialEq)]
-struct Summary {
-    log_prob: f64,
-    values: BTreeMap<String, (Vec<usize>, Vec<f64>)>,
 }
 
 fn flatten(value: &Value) -> (Vec<usize>, Vec<f64>) {
@@ -59,269 +53,898 @@ fn flatten(value: &Value) -> (Vec<usize>, Vec<f64>) {
     }
 }
 
-fn summarise(graph: &Graph, state: &State) -> Summary {
-    let state = recompute(graph, state);
-    let model = Model::new(graph.clone(), &state).unwrap();
-    let values = graph
+/// Everything a round trip must preserve about a graph and state, exactly: each node's operation, parents, label,
+/// type and shape, and its stored value and whether it is observed.
+fn describe(graph: &Graph, state: &State) -> Vec<String> {
+    graph
         .ids()
-        .filter_map(|id| {
-            graph[id]
-                .label()
-                .map(|l| (l.to_owned(), flatten(state.value(id).unwrap())))
-        })
-        .collect();
-    Summary {
-        log_prob: model.log_prob(&state).unwrap(),
-        values,
-    }
-}
-
-fn assert_same(context: &str, actual: &Summary, expected: &Summary) {
-    close(&[actual.log_prob], &[expected.log_prob], 1e-12)
-        .unwrap_or_else(|e| panic!("{context} log prob: {e}"));
-    assert_eq!(
-        actual.values.keys().collect::<Vec<_>>(),
-        expected.values.keys().collect::<Vec<_>>(),
-        "{context} labels"
-    );
-    for (label, (shape, data)) in &actual.values {
-        let (expected_shape, expected_data) = &expected.values[label];
-        assert_eq!(shape, expected_shape, "{context} {label} shape");
-        close(data, expected_data, 1e-12).unwrap_or_else(|e| panic!("{context} {label}: {e}"));
-    }
-}
-
-/// A model using operations without a single Java vertex type, and Rust-only conveniences.
-fn rust_built_model() -> (Graph, State) {
-    let b = GraphBuilder::new();
-    let a = b
-        .constant(DoubleTensor::new(&[2, 3], vec![0.2, 0.5, 0.7, 0.3, 0.9, 0.4]).unwrap())
-        .label("a");
-    let row = b
-        .constant(DoubleTensor::vector(vec![0.3, 0.6, 0.9]))
-        .label("row");
-    let square = b
-        .constant(
-            DoubleTensor::new(&[3, 3], vec![4.0, 1.0, 0.5, 1.0, 3.0, 0.2, 0.5, 0.2, 2.0]).unwrap(),
-        )
-        .label("square");
-    (-a).label("neg");
-    a.reciprocal().label("reciprocal");
-    a.sqrt().label("sqrt");
-    a.transpose().label("transpose");
-    a.maximum(row).label("broadcastMax");
-    a.minimum(row).label("broadcastMin");
-    a.slice("::-1, -1::-2").label("slice");
-    a.slice("..., 1").label("sliceEllipsis");
-    square
-        .cholesky()
-        .cholesky_inverse()
-        .label("fullCholeskyInverse");
-    a.tril(1).label("tril");
-    a.sum_axes(&[-1]).label("sumAxes");
-    let i = b.int_constant(IntTensor::vector(vec![-7, 3, 5])).label("i");
-    (-i).label("intNeg");
-    a.gt(row).to_double_mask().label("mask");
-
-    let mu = b.gaussian(0.0, 1.0).label("mu");
-    b.set_value(mu, DoubleTensor::scalar(0.3));
-    let sigma = b.half_gaussian(1.5).label("sigma");
-    b.set_value(sigma, DoubleTensor::scalar(0.8));
-    let scale = b.half_cauchy(2.0).label("scale");
-    b.set_value(scale, DoubleTensor::scalar(1.1));
-    let kde = b
-        .kde(Kde::new(vec![0.1, 0.4, 0.5, 1.2], 0.3).unwrap(), &[])
-        .label("kde");
-    b.set_value(kde, DoubleTensor::scalar(0.45));
-    let y = b
-        .gaussian_with_shape(&[2, 3], a * mu + 1.0, sigma)
-        .label("y");
-    b.observe(
-        y,
-        DoubleTensor::new(&[2, 3], vec![1.1, 1.4, 1.0, 1.3, 1.5, 0.9]).unwrap(),
-    );
-    let counts = b
-        .poisson_with_shape(&[3], (row * scale).exp())
-        .label("counts");
-    b.observe(counts, IntTensor::vector(vec![1, 2, 4]));
-    b.build().unwrap()
-}
-
-fn fixtures() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/rust-written")
-}
-
-/// (name, graph, state) of every model to round trip: the golden models (loaded from Java's files) and the
-/// Rust-built model.
-fn cases() -> Vec<(String, Graph, State)> {
-    let text = std::fs::read_to_string(golden_dir().join("models.json")).unwrap();
-    let root: serde_json::Value = serde_json::from_str(&text).unwrap();
-    let mut cases: Vec<(String, Graph, State)> = root["cases"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .map(|case| {
-            let pb = std::fs::read(golden_dir().join(case["protobuf"].as_str().unwrap())).unwrap();
-            let loaded = load_protobuf(&pb).unwrap();
-            (
-                case["name"].as_str().unwrap().to_owned(),
-                loaded.graph,
-                loaded.state,
+        .map(|id| {
+            let node = &graph[id];
+            format!(
+                "{} {:?} parents {:?} label {:?} {:?}{:?} value {:?} observed {}",
+                id.index(),
+                node.op(),
+                node.parents(),
+                node.label(),
+                node.dtype(),
+                node.shape(),
+                state.value(id),
+                state.is_observed(id)
             )
         })
-        .collect();
-    let (graph, state) = rust_built_model();
-    cases.push(("rustBuilt".to_owned(), graph, state));
+        .collect()
+}
+
+/// Saves and loads through protobuf and JSON, checking the loaded graph and state are the same as the saved ones.
+fn assert_round_trips(context: &str, graph: &Graph, state: &State) {
+    let metadata: Metadata = [("name".to_owned(), context.to_owned())].into();
+    let expected = describe(graph, state);
+    let pb = save_protobuf(graph, state, &metadata).unwrap_or_else(|e| panic!("{context}: {e}"));
+    let json = save_json(graph, state, &metadata).unwrap_or_else(|e| panic!("{context}: {e}"));
+    for (format, loaded) in [("protobuf", load_protobuf(&pb)), ("json", load_json(&json))] {
+        let loaded = loaded.unwrap_or_else(|e| panic!("{context} ({format}): {e}"));
+        assert_eq!(loaded.metadata, metadata, "{context} ({format})");
+        assert_eq!(
+            describe(&loaded.graph, &loaded.state),
+            expected,
+            "{context} ({format})"
+        );
+    }
+}
+
+// ----- every operation and distribution -----
+
+fn constant(b: &GraphBuilder, value: Value) -> NodeId {
+    b.add_node(Op::Constant(value), &[]).unwrap()
+}
+
+fn f64s(shape: &[usize], values: &[f64]) -> Value {
+    Value::F64(DoubleTensor::new(shape, values.to_vec()).unwrap())
+}
+
+fn scalar(v: f64) -> Value {
+    Value::F64(DoubleTensor::scalar(v))
+}
+
+fn int(v: i64) -> Value {
+    Value::I64(IntTensor::scalar(v))
+}
+
+fn boolean(v: bool) -> Value {
+    Value::Bool(BoolTensor::scalar(v))
+}
+
+fn matrix() -> Value {
+    f64s(&[2, 3], &[0.2, 0.5, 0.7, 0.3, 0.9, 0.4])
+}
+
+fn square() -> Value {
+    f64s(&[3, 3], &[4.0, 1.0, 0.5, 1.0, 3.0, 0.2, 0.5, 0.2, 2.0])
+}
+
+fn lower() -> Value {
+    f64s(&[3, 3], &[2.0, 0.0, 0.0, 0.5, 1.5, 0.0, 0.2, 0.1, 1.2])
+}
+
+/// A graph whose last node applies `op` to constant parents with the given values.
+fn op_case(op: Op, parents: &[Value]) -> (String, Graph, State) {
+    let b = GraphBuilder::new();
+    let ids: Vec<NodeId> = parents.iter().map(|v| constant(&b, v.clone())).collect();
+    let name = format!("{op:?}");
+    let id = b
+        .add_node(op, &ids)
+        .unwrap_or_else(|e| panic!("can't build {name}: {e}"));
+    b.set_label_of(id, "x").unwrap();
+    let (graph, state) = b.build().unwrap();
+    (name, graph, state)
+}
+
+const UNARY: &[UnaryOp] = {
+    use UnaryOp::*;
+    &[
+        Abs, Neg, Sign, Reciprocal, Exp, Exp2, ExpM1, Ln, Ln1p, Log2, Log10, Sqrt, Sin, Cos, Tan,
+        Asin, Acos, Atan, Sinh, Cosh, Tanh, Asinh, Acosh, Atanh, Sigmoid, Floor, Ceil, Round,
+        LnGamma, Digamma, Trigamma, Erf, Erfc, ErfInv, LogNdtr, Ndtri, Softplus, Logit, Log1mExp,
+    ]
+};
+
+const BINARY: &[BinaryOp] = {
+    use BinaryOp::*;
+    &[
+        Add,
+        Sub,
+        Mul,
+        Div,
+        Pow,
+        Max,
+        Min,
+        Rem,
+        Atan2,
+        LogAddExp,
+        LogAddExp2,
+        SafeLnTimes,
+        LogBeta,
+    ]
+};
+
+const COMPARE: &[CompareOp] = {
+    use CompareOp::*;
+    &[Gt, Ge, Lt, Le, Eq, Ne]
+};
+
+const PREDICATES: &[Predicate] = {
+    use Predicate::*;
+    &[
+        IsNan,
+        NotNan,
+        IsFinite,
+        IsInfinite,
+        IsPositiveInfinity,
+        IsNegativeInfinity,
+    ]
+};
+
+/// One case per variant of every deterministic operation (and per variant of their kinds).
+fn op_cases() -> Vec<(String, Graph, State)> {
+    let mut cases = vec![
+        op_case(Op::Constant(matrix()), &[]),
+        op_case(
+            Op::Constant(f64s(&[3], &[f64::NAN, f64::INFINITY, f64::NEG_INFINITY])),
+            &[],
+        ),
+        op_case(
+            Op::Constant(Value::F64(DoubleTensor::full(&[0, 2], 0.0))),
+            &[],
+        ),
+        op_case(
+            Op::Constant(Value::I64(IntTensor::vector(vec![i64::MIN, -1, i64::MAX]))),
+            &[],
+        ),
+        op_case(
+            Op::Constant(Value::Bool(BoolTensor::vector(vec![true, false]))),
+            &[],
+        ),
+    ];
+    for &op in UNARY {
+        cases.push(op_case(Op::Unary(op), &[scalar(0.5)]));
+    }
+    for &op in BINARY {
+        let parents = if op == BinaryOp::Rem {
+            [int(7), int(3)]
+        } else {
+            [scalar(0.5), scalar(2.0)]
+        };
+        cases.push(op_case(Op::Binary(op), &parents));
+    }
+    for &op in COMPARE {
+        cases.push(op_case(Op::Compare(op), &[scalar(0.5), scalar(2.0)]));
+        cases.push(op_case(Op::Mask(op), &[scalar(0.5), scalar(2.0)]));
+    }
+    cases.push(op_case(Op::ApproxEq(1e-3), &[scalar(0.5), scalar(0.5)]));
+    cases.push(op_case(
+        Op::ApproxEq(f64::INFINITY),
+        &[scalar(0.5), scalar(0.5)],
+    ));
+    for op in [LogicOp::And, LogicOp::Or, LogicOp::Xor] {
+        cases.push(op_case(Op::Logic(op), &[boolean(true), boolean(false)]));
+    }
+    let bools = Value::Bool(BoolTensor::vector(vec![true, false]));
+    for op in [Op::Not, Op::All, Op::Any] {
+        cases.push(op_case(op, std::slice::from_ref(&bools)));
+    }
+    for &p in PREDICATES {
+        cases.push(op_case(Op::Predicate(p), &[scalar(f64::NAN)]));
+    }
+    use ReduceOp::*;
+    for kind in [Sum, Product, Mean, Max, Min, StdDev] {
+        cases.push(op_case(Op::Reduce { kind, axes: None }, &[matrix()]));
+    }
+    for (kind, axes) in [(Sum, vec![-1]), (Product, vec![0, 1]), (Mean, vec![])] {
+        cases.push(op_case(
+            Op::Reduce {
+                kind,
+                axes: Some(axes),
+            },
+            &[matrix()],
+        ));
+    }
+    cases.push(op_case(Op::Standardize, &[matrix()]));
+    for kind in [ScanOp::CumSum, ScanOp::CumProd] {
+        cases.push(op_case(Op::Scan { kind, axis: -1 }, &[matrix()]));
+    }
+    for kind in [
+        ArgOp::ArgMax,
+        ArgOp::ArgMin,
+        ArgOp::NanArgMax,
+        ArgOp::NanArgMin,
+    ] {
+        cases.push(op_case(Op::ArgReduce { kind, axis: None }, &[matrix()]));
+    }
+    cases.push(op_case(
+        Op::ArgReduce {
+            kind: ArgOp::ArgMax,
+            axis: Some(-1),
+        },
+        &[matrix()],
+    ));
+    let vector = f64s(&[6], &[1.0, 2.0, 3.0, 4.0, 5.0, 6.0]);
+    cases.extend([
+        op_case(Op::Reshape(vec![3, -1]), &[matrix()]),
+        op_case(Op::Permute(vec![1, 0]), &[matrix()]),
+        op_case(Op::Transpose, &[matrix()]),
+        op_case(Op::Broadcast(vec![4, 2, 3]), &[matrix()]),
+        op_case(Op::Slice("::-1, ..., 1:".into()), &[matrix()]),
+        op_case(Op::Concat(-1), &[matrix(), matrix()]),
+        op_case(
+            Op::Concat(0),
+            &[
+                Value::I64(IntTensor::vector(vec![1])),
+                Value::I64(IntTensor::vector(vec![2, 3])),
+            ],
+        ),
+        op_case(Op::Take(vec![1, 2]), &[matrix()]),
+        op_case(Op::Diag, &[f64s(&[3], &[1.0, 2.0, 3.0])]),
+        op_case(Op::DiagPart, &[square()]),
+        op_case(Op::Tril(-1), &[square()]),
+        op_case(Op::Triu(1), &[square()]),
+        op_case(
+            Op::FillTriangular {
+                upper: false,
+                lower: true,
+            },
+            std::slice::from_ref(&vector),
+        ),
+        op_case(
+            Op::FillTriangular {
+                upper: true,
+                lower: true,
+            },
+            std::slice::from_ref(&vector),
+        ),
+        op_case(Op::TrianglePart { upper: true }, &[square()]),
+        op_case(
+            Op::MatMul {
+                transpose_left: true,
+                transpose_right: false,
+            },
+            &[matrix(), matrix()],
+        ),
+        op_case(
+            Op::TensorMultiply {
+                left_axes: vec![1],
+                right_axes: vec![0],
+            },
+            &[matrix(), square()],
+        ),
+        op_case(Op::Inverse, &[square()]),
+        op_case(Op::Determinant, &[square()]),
+        op_case(Op::Cholesky, &[square()]),
+        op_case(Op::CholeskyInverse, &[lower()]),
+        op_case(Op::Where, &[boolean(true), scalar(1.0), scalar(2.0)]),
+        op_case(Op::Multiplexer, &[int(1), scalar(1.0), scalar(2.0)]),
+        op_case(
+            Op::Cpt {
+                conditions: 2,
+                keys: vec![vec![0, 1], vec![1, i64::MAX]],
+            },
+            &[boolean(true), int(3), scalar(1.0), scalar(2.0), scalar(3.0)],
+        ),
+        op_case(
+            Op::SetWithMask,
+            &[
+                f64s(&[2], &[1.0, 2.0]),
+                f64s(&[2], &[1.0, 0.0]),
+                scalar(5.0),
+            ],
+        ),
+        op_case(Op::ReplaceNan(0.5), &[scalar(f64::NAN)]),
+        op_case(Op::ReplaceNan(f64::NEG_INFINITY), &[scalar(f64::NAN)]),
+        op_case(Op::Assert(Some("must hold".into())), &[boolean(true)]),
+        op_case(Op::Assert(None), &[boolean(true)]),
+    ]);
+    for (from, to) in [
+        (scalar(0.5), DType::I64),
+        (scalar(1.0), DType::Bool),
+        (int(2), DType::F64),
+        (boolean(true), DType::F64),
+        (boolean(true), DType::I64),
+        (boolean(true), DType::Bool),
+    ] {
+        cases.push(op_case(Op::Cast(to), &[from]));
+    }
+    // proxies: connected, and unconnected
+    let b = GraphBuilder::new();
+    let x = constant(&b, matrix());
+    let proxy = b.add_proxy(DType::F64, &[2, 3]);
+    b.connect_ids(proxy, x).unwrap();
+    b.add_proxy(DType::I64, &[4]);
+    let (graph, state) = b.build().unwrap();
+    cases.push(("Proxy".into(), graph, state));
     cases
 }
 
-#[test]
-fn rust_save_then_rust_load_preserves_every_model() {
-    for (name, graph, state) in cases() {
-        let expected = summarise(&graph, &state);
-        let metadata: Metadata = [("name".to_owned(), name.clone())].into_iter().collect();
-
-        let pb = save_protobuf(&graph, &state, &metadata).unwrap();
-        let reloaded = load_protobuf(&pb).unwrap();
-        assert_eq!(reloaded.metadata, metadata);
-        assert_same(
-            &format!("{name} protobuf"),
-            &summarise(&reloaded.graph, &reloaded.state),
-            &expected,
-        );
-
-        let json = save_json(&graph, &state, &metadata).unwrap();
-        let reloaded = load_json(&json).unwrap();
-        assert_same(
-            &format!("{name} json"),
-            &summarise(&reloaded.graph, &reloaded.state),
-            &expected,
-        );
-
-        // saving a loaded model gives the same file again (the format is stable)
-        assert_eq!(
-            save_protobuf(&reloaded.graph, &reloaded.state, &metadata).unwrap(),
-            save_protobuf(
-                &load_protobuf(&pb).unwrap().graph,
-                &load_protobuf(&pb).unwrap().state,
-                &metadata
-            )
+/// The parameter values a distribution is built with in [`distribution_cases`]: scalars (or, for the multivariate
+/// Gaussian, a vector mean and a matrix covariance), i64 where the distribution needs it.
+fn distribution_parameters(kind: &DistributionKind) -> Vec<Value> {
+    use DistributionKind::*;
+    match kind {
+        MultivariateGaussian => vec![
+            f64s(&[2], &[0.0, 1.0]),
+            f64s(&[2, 2], &[1.0, 0.2, 0.2, 2.0]),
+        ],
+        Dirichlet => vec![f64s(&[3], &[1.0, 2.0, 3.0])],
+        Multinomial => vec![int(5), f64s(&[3], &[0.2, 0.3, 0.5])],
+        Categorical => vec![scalar(0.2), scalar(0.3), scalar(0.5)],
+        Kde(_) => vec![],
+        kind => kind
+            .parameter_names()
             .unwrap()
-        );
+            .iter()
+            .map(|&name| match name {
+                "k" if matches!(kind, ChiSquared) => int(3),
+                "v" | "n" => int(3),
+                "x_min" if matches!(kind, UniformInt) => int(1),
+                "x_max" if matches!(kind, UniformInt) => int(5),
+                "x_max" => scalar(2.0),
+                "c" => scalar(1.0),
+                "p" | "prob_true" => scalar(0.4),
+                _ => scalar(0.5),
+            })
+            .collect(),
     }
 }
 
-/// Writes (or checks) the Rust-written files and the values Rust computes for them, for the Java side to load.
+const DISTRIBUTIONS: &[&str] = &[
+    "Gaussian",
+    "HalfGaussian",
+    "Cauchy",
+    "HalfCauchy",
+    "Beta",
+    "ChiSquared",
+    "Dirichlet",
+    "Exponential",
+    "Gamma",
+    "InverseGamma",
+    "Laplace",
+    "Logistic",
+    "LogNormal",
+    "MultivariateGaussian",
+    "Pareto",
+    "StudentT",
+    "Triangular",
+    "Uniform",
+    "Kde",
+    "Bernoulli",
+    "Binomial",
+    "Categorical",
+    "Geometric",
+    "Multinomial",
+    "Poisson",
+    "UniformInt",
+];
+
+fn distribution_kinds() -> Vec<DistributionKind> {
+    use DistributionKind::*;
+    vec![
+        Gaussian,
+        HalfGaussian,
+        Cauchy,
+        HalfCauchy,
+        Beta,
+        ChiSquared,
+        Dirichlet,
+        Exponential,
+        Gamma,
+        InverseGamma,
+        Laplace,
+        Logistic,
+        LogNormal,
+        MultivariateGaussian,
+        Pareto,
+        StudentT,
+        Triangular,
+        Uniform,
+        Kde(Arc::new(
+            keanu_distributions::Kde::new(vec![0.1, 0.4, f64::MAX], 0.3).unwrap(),
+        )),
+        Bernoulli,
+        Binomial,
+        Categorical,
+        Geometric,
+        Multinomial,
+        Poisson,
+        UniformInt,
+    ]
+}
+
+/// One case per distribution kind: a labelled node with a drawn value, and the same node observed with a larger
+/// shape.
+fn distribution_cases() -> Vec<(String, Graph, State)> {
+    distribution_kinds()
+        .into_iter()
+        .map(|kind| {
+            let name = format!("{kind:?}").split('(').next().unwrap().to_owned();
+            let b = GraphBuilder::new();
+            let parents: Vec<NodeId> = distribution_parameters(&kind)
+                .into_iter()
+                .map(|v| constant(&b, v))
+                .collect();
+            let latent = b
+                .add_distribution(kind.clone(), None, &parents)
+                .unwrap_or_else(|e| panic!("can't build {name}: {e}"));
+            b.set_label_of(latent, "latent").unwrap();
+            let batch = b.shape(latent).unwrap();
+            let shape: Vec<usize> = if parents.is_empty() || batch.is_empty() {
+                vec![2]
+            } else {
+                batch.clone()
+            };
+            let observed = b.add_distribution(kind, Some(&shape), &parents).unwrap();
+            let (graph, mut state) = b.build().unwrap();
+            let mut rng = KeanuRng::seed_from_u64(1);
+            state
+                .lazy_eval(&graph, &[latent, observed], &mut rng)
+                .unwrap();
+            let value = state.value(observed).unwrap().clone();
+            state.observe(&graph, observed, value).unwrap();
+            (name, graph, state)
+        })
+        .collect()
+}
+
 #[test]
-fn rust_written_fixtures_for_java_are_up_to_date() {
-    let regenerate = std::env::var_os("KEANU_REGENERATE").is_some();
-    let dir = fixtures();
-    std::fs::create_dir_all(&dir).unwrap();
-    let mut stale = Vec::new();
-    let mut expected = serde_json::Map::new();
-    for (name, graph, state) in cases() {
-        let metadata: Metadata = [("name".to_owned(), name.clone())].into_iter().collect();
-        let summary = summarise(&graph, &state);
-        let mut values = serde_json::Map::new();
-        for (label, (shape, data)) in &summary.values {
-            values.insert(label.clone(), serde_json::json!({ "shape": shape, "data": data.iter().map(|d| if d.is_finite() { serde_json::json!(d) } else { serde_json::json!(d.to_string()) }).collect::<Vec<_>>() }));
-        }
-        expected.insert(
-            name.clone(),
-            serde_json::json!({ "logProb": summary.log_prob, "values": values }),
-        );
-        let files = [
-            (
-                format!("{name}.pb"),
-                save_protobuf(&graph, &state, &metadata).unwrap(),
-            ),
-            (
-                format!("{name}.json"),
-                save_json(&graph, &state, &metadata).unwrap().into_bytes(),
-            ),
-        ];
-        for (file, bytes) in files {
-            let path = dir.join(&file);
-            if std::fs::read(&path).ok().as_deref() != Some(bytes.as_slice()) {
-                if regenerate {
-                    std::fs::write(&path, &bytes).unwrap();
-                } else {
-                    stale.push(file);
-                }
-            }
-        }
+fn every_operation_round_trips() {
+    let cases = op_cases();
+    // every op except lambdas, and every variant of the op kinds
+    let names: BTreeSet<&str> = cases
+        .iter()
+        .flat_map(|(_, graph, _)| graph.ids().map(|id| graph[id].op().name()))
+        .collect();
+    let every_op = [
+        "constant",
+        "unary",
+        "binary",
+        "compare",
+        "mask",
+        "approx_eq",
+        "logic",
+        "not",
+        "all",
+        "any",
+        "predicate",
+        "reduce",
+        "standardize",
+        "scan",
+        "arg_reduce",
+        "reshape",
+        "permute",
+        "transpose",
+        "broadcast",
+        "slice",
+        "concat",
+        "take",
+        "diag",
+        "diag_part",
+        "tril",
+        "triu",
+        "fill_triangular",
+        "triangle_part",
+        "matmul",
+        "tensor_multiply",
+        "inverse",
+        "determinant",
+        "cholesky",
+        "cholesky_inverse",
+        "cast",
+        "where",
+        "multiplexer",
+        "cpt",
+        "set_with_mask",
+        "replace_nan",
+        "proxy",
+        "assert",
+    ];
+    assert_eq!(names, every_op.into_iter().collect::<BTreeSet<_>>());
+    for (name, graph, state) in &cases {
+        assert_round_trips(name, graph, state);
     }
-    let expected_text =
-        serde_json::to_string_pretty(&serde_json::Value::Object(expected)).unwrap() + "\n";
-    let expected_path = dir.join("expected.json");
-    if std::fs::read_to_string(&expected_path).ok().as_deref() != Some(expected_text.as_str()) {
-        if regenerate {
-            std::fs::write(&expected_path, expected_text).unwrap();
-        } else {
-            stale.push("expected.json".into());
-        }
+}
+
+#[test]
+fn every_distribution_kind_round_trips() {
+    let cases = distribution_cases();
+    let names: Vec<&str> = cases.iter().map(|(name, ..)| name.as_str()).collect();
+    assert_eq!(names, DISTRIBUTIONS);
+    for (name, graph, state) in &cases {
+        assert_round_trips(name, graph, state);
     }
-    assert!(
-        stale.is_empty(),
-        "stale fixtures {stale:?}: run KEANU_REGENERATE=1 cargo test -p keanu-io --test round_trip"
-    );
 }
 
 #[test]
 fn nodes_without_a_saved_form_are_reported() {
     let b = GraphBuilder::new();
     let x = b.scalar(1.0);
-    b.lambda(
-        "double it",
-        &[x.id()],
-        keanu_graph::DType::F64,
-        &[],
-        |v: &[&Value]| Ok(v[0].clone()),
-    );
+    b.lambda("double it", &[x.id()], DType::F64, &[], |v: &[&Value]| {
+        Ok(v[0].clone())
+    });
     let (graph, state) = b.build().unwrap();
-    assert!(matches!(
-        save_protobuf(&graph, &state, &Metadata::new()),
-        Err(keanu_io::IoError::NotSaveable(_))
-    ));
-}
+    let error = save_protobuf(&graph, &state, &Metadata::new()).unwrap_err();
+    assert!(
+        matches!(&error, IoError::NotSaveable(m) if m.contains("lambda")),
+        "{error}"
+    );
 
-#[test]
-fn special_function_ops_are_not_saveable_yet() {
-    // the Java format has no vertices for these; native schema in U5
-    type Build = for<'b> fn(keanu_graph::DoubleVar<'b>) -> keanu_graph::DoubleVar<'b>;
-    let builds: [Build; 9] = [
-        |x| x.erf(),
-        |x| x.erfc(),
-        |x| x.erf_inv(),
-        |x| x.log_ndtr(),
-        |x| x.ndtri(),
-        |x| x.softplus(),
-        |x| x.logit(),
-        |x| x.log1mexp(),
-        |x| x.log_beta(2.0),
-    ];
-    for build in builds {
-        let b = GraphBuilder::new();
-        build(b.scalar(0.5));
-        let (graph, state) = b.build().unwrap();
-        assert!(matches!(
-            save_protobuf(&graph, &state, &Metadata::new()),
-            Err(keanu_io::IoError::NotSaveable(_))
-        ));
-        assert!(matches!(
-            save_json(&graph, &state, &Metadata::new()),
-            Err(keanu_io::IoError::NotSaveable(_))
-        ));
+    #[derive(Debug)]
+    struct Flat;
+    impl CustomDistribution for Flat {
+        fn log_prob(&self, _: &Value, _: &[&Value]) -> Result<f64, String> {
+            Ok(0.0)
+        }
+    }
+    let b = GraphBuilder::new();
+    b.add_distribution(DistributionKind::Custom(Arc::new(Flat)), Some(&[]), &[])
+        .unwrap();
+    let (graph, state) = b.build().unwrap();
+    for error in [
+        save_protobuf(&graph, &state, &Metadata::new()).unwrap_err(),
+        save_json(&graph, &state, &Metadata::new()).unwrap_err(),
+    ] {
+        assert!(
+            matches!(&error, IoError::NotSaveable(m) if m.contains("custom distribution")),
+            "{error}"
+        );
     }
 }
 
-#[test]
-fn unsupported_vertex_types_are_reported() {
-    let json = r#"{"graph": {"vertices": [{"id": {"id": "[0]"}, "vertexType": "io.improbable.keanu.vertices.tensor.generic.nonprobabilistic.PrintVertex"}]}}"#;
+// ----- the golden models -----
+
+fn golden_cases() -> Vec<Json> {
+    let text = std::fs::read_to_string(golden_dir().join("models.json")).unwrap();
+    let root: Json = serde_json::from_str(&text).unwrap();
+    let cases = root["cases"].as_array().unwrap().clone();
     assert!(
-        matches!(load_json(json), Err(keanu_io::IoError::UnsupportedVertex(t)) if t == "PrintVertex")
+        cases.len() >= 7,
+        "expected the golden models including the catalog"
+    );
+    cases
+}
+
+/// The golden model files: (name, protobuf bytes, JSON text).
+fn golden_files() -> Vec<(String, Vec<u8>, String)> {
+    golden_cases()
+        .iter()
+        .map(|case| {
+            let file = |key: &str| golden_dir().join(case[key].as_str().unwrap());
+            (
+                case["name"].as_str().unwrap().to_owned(),
+                std::fs::read(file("protobuf")).unwrap(),
+                std::fs::read_to_string(file("json")).unwrap(),
+            )
+        })
+        .collect()
+}
+
+/// Checks a loaded golden model against the values Java computed: log prob, log likelihood, their gradients, and
+/// the value of every labelled node (deterministic nodes are recomputed rather than taken from the file).
+fn check_golden(context: &str, loaded: &Loaded, expected: &Json) -> Vec<String> {
+    const TOLERANCE: f64 = 1e-10;
+    let mut problems = Vec::new();
+    let graph = &loaded.graph;
+    let state = recompute(graph, &loaded.state);
+    let model = Model::new(graph.clone(), &state).unwrap();
+    fn check_tensor(
+        problems: &mut Vec<String>,
+        what: String,
+        actual: (Vec<usize>, Vec<f64>),
+        expected: &Json,
+    ) {
+        let expected = parse_tensor(expected).unwrap();
+        if actual.0 != expected.shape {
+            problems.push(format!(
+                "{what}: shape {:?}, expected {:?}",
+                actual.0, expected.shape
+            ));
+        } else if let Err(e) = close(&actual.1, &expected.data, TOLERANCE) {
+            problems.push(format!("{what}: {e}"));
+        }
+    }
+    for (key, actual) in [
+        ("logProb", model.log_prob(&state).unwrap()),
+        ("logLikelihood", model.log_likelihood(&state).unwrap()),
+    ] {
+        if let Err(e) = close(&[actual], &[number(&expected[key])], TOLERANCE) {
+            problems.push(format!("{context} {key}: {e}"));
+        }
+    }
+    for (key, gradient) in [
+        ("dLogProb", model.log_prob_gradient(&state).unwrap()),
+        (
+            "dLogLikelihood",
+            model.log_likelihood_gradient(&state).unwrap(),
+        ),
+    ] {
+        let expected = expected[key].as_object().unwrap();
+        let actual: BTreeMap<String, _> = gradient
+            .iter()
+            .map(|(id, g)| {
+                (
+                    graph[id].label().unwrap_or("?").to_owned(),
+                    (g.shape().to_vec(), g.as_slice().to_vec()),
+                )
+            })
+            .collect();
+        let actual_keys: Vec<&String> = actual.keys().collect();
+        let expected_keys: Vec<&String> = expected.keys().collect();
+        if actual_keys != expected_keys {
+            problems.push(format!(
+                "{context} {key}: gradient keys {actual_keys:?}, expected {expected_keys:?}"
+            ));
+            continue;
+        }
+        for (label, value) in actual {
+            check_tensor(
+                &mut problems,
+                format!("{context} {key}[{label}]"),
+                value,
+                &expected[&label],
+            );
+        }
+    }
+    for key in ["latentValues", "nodeValues"] {
+        for (label, value) in expected[key].as_object().unwrap() {
+            match graph.find(label) {
+                None => problems.push(format!("{context} {key}: no node labelled {label}")),
+                Some(id) => check_tensor(
+                    &mut problems,
+                    format!("{context} {key}[{label}]"),
+                    flatten(state.value(id).unwrap()),
+                    value,
+                ),
+            }
+        }
+    }
+    problems
+}
+
+#[test]
+fn golden_models_load_and_match_java() {
+    let mut problems = Vec::new();
+    for (case, (name, pb, json)) in golden_cases().iter().zip(golden_files()) {
+        for (format, loaded) in [("protobuf", load_protobuf(&pb)), ("json", load_json(&json))] {
+            let loaded = loaded.unwrap_or_else(|e| panic!("{name} ({format}): {e}"));
+            assert_eq!(
+                loaded.metadata.get("name").map(String::as_str),
+                Some(name.as_str())
+            );
+            problems.extend(check_golden(
+                &format!("{name} ({format})"),
+                &loaded,
+                &case["expected"],
+            ));
+        }
+    }
+    assert!(
+        problems.is_empty(),
+        "{} problems:\n{}",
+        problems.len(),
+        problems.join("\n")
     );
 }
+
+/// The format is stable: saving a loaded golden model writes its file again, byte for byte.
+#[test]
+fn saving_a_golden_model_reproduces_its_file() {
+    for (name, pb, json) in golden_files() {
+        let loaded = load_protobuf(&pb).unwrap();
+        assert!(
+            save_protobuf(&loaded.graph, &loaded.state, &loaded.metadata).unwrap() == pb,
+            "{name}: the protobuf file changed"
+        );
+        let loaded = load_json(&json).unwrap();
+        assert_eq!(
+            save_json(&loaded.graph, &loaded.state, &loaded.metadata).unwrap(),
+            json,
+            "{name}: the JSON file changed"
+        );
+        assert_round_trips(&name, &loaded.graph, &loaded.state);
+    }
+}
+
+// ----- values, labels and metadata -----
+
+/// A model with labels, observations, values set on latent and deterministic nodes, and metadata.
+#[test]
+fn observations_labels_values_and_metadata_survive() {
+    let b = GraphBuilder::new();
+    let a = b
+        .constant(DoubleTensor::new(&[2, 3], vec![0.2, 0.5, 0.7, 0.3, 0.9, 0.4]).unwrap())
+        .label("a");
+    let mu = b.gaussian(0.0, 1.0).label("mu");
+    b.set_value(mu, DoubleTensor::scalar(0.3));
+    let sigma = b.half_gaussian(1.5).label("sigma");
+    b.set_value(sigma, DoubleTensor::scalar(0.8));
+    let kde = b
+        .kde(Kde::new(vec![0.1, 0.4, 0.5, 1.2], 0.3).unwrap(), &[])
+        .label("kde");
+    b.set_value(kde, DoubleTensor::scalar(0.45));
+    let mean = a * mu + 1.0;
+    b.set_value(mean, DoubleTensor::full(&[2, 3], 2.0));
+    let y = b.gaussian_with_shape(&[2, 3], mean, sigma).label("y");
+    b.observe(
+        y,
+        DoubleTensor::new(&[2, 3], vec![1.1, 1.4, 1.0, 1.3, 1.5, 0.9]).unwrap(),
+    );
+    let flag = a.gt(0.5).label("flag");
+    b.observe(flag, BoolTensor::new(&[2, 3], vec![false; 6]).unwrap());
+    let counts = b.poisson_with_shape(&[3], b.scalar(2.0)).label("counts");
+    b.observe(counts, IntTensor::vector(vec![1, 2, 4]));
+    let (flag, mean) = (flag.id(), mean.id());
+    let (graph, state) = b.build().unwrap();
+    assert!(state.is_observed(flag) && state.value(mean).is_some());
+    assert_round_trips("values", &graph, &state);
+
+    let metadata: Metadata = [
+        ("author".to_owned(), "keanu".to_owned()),
+        ("version".to_owned(), "2".to_owned()),
+    ]
+    .into();
+    let loaded = load_json(&save_json(&graph, &state, &metadata).unwrap()).unwrap();
+    assert_eq!(loaded.metadata, metadata);
+    let loaded = load_protobuf(&save_protobuf(&graph, &state, &metadata).unwrap()).unwrap();
+    assert_eq!(loaded.metadata, metadata);
+}
+
+#[test]
+fn slices_with_spaces_and_a_trailing_comma_save_and_load() {
+    let b = GraphBuilder::new();
+    let a = b.constant(DoubleTensor::new(&[2, 4], (0..8).map(f64::from).collect()).unwrap());
+    a.slice(": , 1 : 3").label("spaced");
+    a.slice("1,").label("trailing");
+    let (graph, state) = b.build().unwrap();
+    let json = save_json(&graph, &state, &Metadata::new()).unwrap();
+    let loaded = load_json(&json).unwrap();
+    let state = recompute(&loaded.graph, &loaded.state);
+    let value = |label: &str| {
+        let id = loaded.graph.find(label).unwrap();
+        flatten(state.value(id).unwrap())
+    };
+    assert_eq!(value("spaced"), (vec![2, 2], vec![1.0, 2.0, 5.0, 6.0]));
+    assert_eq!(value("trailing"), (vec![4], vec![4.0, 5.0, 6.0, 7.0]));
+}
+
+// ----- invalid and newer files -----
+
+/// A saved model of a vector constant (node 0) as JSON.
+fn saved_vector() -> Json {
+    let b = GraphBuilder::new();
+    b.constant(DoubleTensor::vector(vec![1.0, 2.0, 3.0]));
+    let (graph, state) = b.build().unwrap();
+    serde_json::from_str(&save_json(&graph, &state, &Metadata::new()).unwrap()).unwrap()
+}
+
+/// The saved vector model with another node.
+fn with_node(node: Json) -> String {
+    let mut model = saved_vector();
+    model["graph"]["nodes"].as_array_mut().unwrap().push(node);
+    model.to_string()
+}
+
+#[test]
+fn files_with_a_newer_format_version_are_rejected() {
+    let mut model = saved_vector();
+    model["formatVersion"] = 2.into();
+    assert_eq!(
+        load_json(&model.to_string()).unwrap_err(),
+        IoError::UnsupportedVersion {
+            found: 2,
+            supported: 1
+        }
+    );
+    // the protobuf encoding starts with the version: field 1, varint
+    let b = GraphBuilder::new();
+    b.scalar(1.0);
+    let (graph, state) = b.build().unwrap();
+    let mut pb = save_protobuf(&graph, &state, &Metadata::new()).unwrap();
+    assert_eq!(pb[..2], [0x08, 0x01]);
+    pb[1] = 0x07;
+    let error = load_protobuf(&pb).unwrap_err();
+    assert_eq!(
+        error,
+        IoError::UnsupportedVersion {
+            found: 7,
+            supported: 1
+        }
+    );
+    assert!(error.to_string().contains("format version 7"), "{error}");
+
+    // a file without a version isn't a Keanu model
+    let mut model = saved_vector();
+    model.as_object_mut().unwrap().remove("formatVersion");
+    assert!(matches!(
+        load_json(&model.to_string()),
+        Err(IoError::Decode(_))
+    ));
+}
+
+fn is_invalid_node(result: keanu_io::Result<Loaded>, expected_index: usize) -> bool {
+    matches!(result, Err(IoError::InvalidNode { index, .. }) if index == expected_index)
+}
+
+#[test]
+fn invalid_nodes_are_reported_with_their_index() {
+    // a parent that isn't an earlier node
+    for parent in [1, 2, u32::MAX] {
+        let json = with_node(serde_json::json!({"parents": [parent], "unary": "UNARY_OP_EXP"}));
+        assert!(is_invalid_node(load_json(&json), 1), "parent {parent}");
+    }
+    // no operation, or an unspecified kind
+    assert!(is_invalid_node(
+        load_json(&with_node(serde_json::json!({"parents": [0]}))),
+        1
+    ));
+    let unspecified =
+        with_node(serde_json::json!({"parents": [0], "unary": "UNARY_OP_UNSPECIFIED"}));
+    assert!(is_invalid_node(load_json(&unspecified), 1));
+    let unspecified =
+        with_node(serde_json::json!({"distribution": {"kind": "DISTRIBUTION_KIND_UNSPECIFIED"}}));
+    assert!(is_invalid_node(load_json(&unspecified), 1));
+    // a KDE without samples, or samples on another distribution
+    let kde = with_node(serde_json::json!({"distribution": {"kind": "DISTRIBUTION_KIND_KDE"}}));
+    assert!(is_invalid_node(load_json(&kde), 1));
+    let samples = with_node(serde_json::json!({"parents": [0, 0],
+        "distribution": {"kind": "DISTRIBUTION_KIND_GAUSSIAN", "kde": {"samples": [1.0], "bandwidth": 1.0}}}));
+    assert!(is_invalid_node(load_json(&samples), 1));
+    // a proxy with two parents
+    let proxy = with_node(
+        serde_json::json!({"parents": [0, 0], "proxy": {"dtype": "D_TYPE_F64", "shape": [3]}}),
+    );
+    assert!(is_invalid_node(load_json(&proxy), 1));
+    // ops the graph rejects are graph errors
+    let tril = with_node(serde_json::json!({"parents": [0], "tril": {"k": 1}}));
+    assert!(matches!(load_json(&tril), Err(IoError::Graph(_))));
+}
+
+#[test]
+fn invalid_shapes_and_values_are_decode_errors() {
+    let is_decode_error = |result: keanu_io::Result<Loaded>| {
+        matches!(
+            result,
+            Err(IoError::Decode(_)) | Err(IoError::InvalidNode { .. })
+        )
+    };
+    let huge = serde_json::json!(["4294967296", "4294967296"]);
+    let huge_constant = with_node(serde_json::json!({"constant": {"shape": huge, "f64": {}}}));
+    assert!(is_decode_error(load_json(&huge_constant)));
+    let huge_distribution = with_node(serde_json::json!({"parents": [0, 0],
+        "distribution": {"kind": "DISTRIBUTION_KIND_GAUSSIAN", "shape": huge}}));
+    assert!(is_decode_error(load_json(&huge_distribution)));
+    let huge_broadcast = with_node(serde_json::json!({"parents": [0],
+        "broadcast": {"shape": ["4294967296", "4294967296", "3"]}}));
+    assert!(is_decode_error(load_json(&huge_broadcast)));
+    // values that don't fit their shape
+    let mismatched =
+        with_node(serde_json::json!({"constant": {"shape": [2], "f64": {"values": [1.0]}}}));
+    assert!(is_decode_error(load_json(&mismatched)));
+    let no_values = with_node(serde_json::json!({"constant": {"shape": [2]}}));
+    assert!(is_decode_error(load_json(&no_values)));
+
+    // a value stored for a node that doesn't exist
+    let mut model = saved_vector();
+    model["graph"]["values"] =
+        serde_json::json!([{"node": 5, "value": {"shape": [], "f64": {"values": [1.0]}}}]);
+    assert!(matches!(
+        load_json(&model.to_string()),
+        Err(IoError::Decode(_))
+    ));
+    // a stored value of the wrong type is a graph error
+    model["graph"]["values"] = serde_json::json!([{"node": 0, "value": {"shape": [3], "bool": {"values": [true, true, true]}}}]);
+    assert!(matches!(
+        load_json(&model.to_string()),
+        Err(IoError::Graph(_))
+    ));
+}
+
+// ----- DOT -----
 
 #[cfg(feature = "dot")]
 #[test]
@@ -344,266 +967,13 @@ fn dot_export_describes_nodes_edges_and_metadata() {
     assert!(dot.contains("2[label=\"mu\"]"), "{dot}");
     assert!(dot.contains("[label=\"+\"]"));
     assert!(dot.contains("0[label=\"0.0\"]"));
+    assert!(dot.contains("[label=\"Gaussian\"]"), "{dot}");
 
     let with_values = keanu_io::to_dot(&graph, Some(&state), &Metadata::new());
     assert!(
         with_values.contains("2[label=\"0.5 (mu)\"]"),
         "{with_values}"
     );
-}
-
-const DOUBLE_CONSTANT: &str =
-    "io.improbable.keanu.vertices.tensor.number.floating.dbl.nonprobabilistic.ConstantDoubleVertex";
-
-/// A model of a vector constant `[0]` followed by `vertex` (JSON).
-fn with_vector_and(vertex: &str) -> String {
-    format!(
-        r#"{{"graph": {{"vertices": [
-            {{"id": {{"id": "[0]"}}, "vertexType": "{DOUBLE_CONSTANT}", "shape": ["3"],
-              "parameters": [{{"name": "constant", "doubleTensorParam": {{"shape": ["3"], "values": [1, 2, 3]}}}}]}},
-            {vertex}
-        ]}}}}"#
-    )
-}
-
-fn is_decode_error(result: keanu_io::Result<keanu_io::Loaded>) -> bool {
-    matches!(result, Err(keanu_io::IoError::Decode(_)))
-}
-
-#[test]
-fn a_slice_dimension_outside_the_input_is_invalid() {
-    for dimension in ["4611686018427387904", "1", "-1"] {
-        let json = with_vector_and(&format!(
-            r#"{{"id": {{"id": "[1]"}}, "vertexType": "io.improbable.keanu.vertices.tensor.generic.nonprobabilistic.operators.unary.SliceVertex",
-                "parameters": [{{"name": "inputVertex", "parentVertex": {{"id": "[0]"}}}},
-                               {{"name": "dimension", "longParam": "{dimension}"}},
-                               {{"name": "index", "longParam": "0"}}]}}"#
-        ));
-        assert!(
-            matches!(load_json(&json), Err(keanu_io::IoError::InvalidParameter { ref parameter, .. }) if parameter == "dimension"),
-            "dimension {dimension}"
-        );
-    }
-}
-
-#[test]
-fn slices_with_spaces_and_a_trailing_comma_save_and_load() {
-    let b = GraphBuilder::new();
-    let a = b.constant(DoubleTensor::new(&[2, 4], (0..8).map(f64::from).collect()).unwrap());
-    a.slice(": , 1 : 3").label("spaced");
-    a.slice("1,").label("trailing");
-    let (graph, state) = b.build().unwrap();
-    let json = save_json(&graph, &state, &Metadata::new()).unwrap();
-    let loaded = load_json(&json).unwrap();
-    let state = recompute(&loaded.graph, &loaded.state);
-    let value = |label: &str| {
-        let id = loaded.graph.find(label).unwrap();
-        flatten(state.value(id).unwrap())
-    };
-    assert_eq!(value("spaced"), (vec![2, 2], vec![1.0, 2.0, 5.0, 6.0]));
-    assert_eq!(value("trailing"), (vec![4], vec![4.0, 5.0, 6.0, 7.0]));
-}
-
-#[test]
-fn a_tri_lower_k_that_cannot_be_negated_is_a_decode_error() {
-    let tri_lower = |k: &str| {
-        with_vector_and(&format!(
-            r#"{{"id": {{"id": "[1]"}}, "vertexType": "io.improbable.keanu.vertices.tensor.generic.nonprobabilistic.operators.unary.TriLowerVertex",
-                "parameters": [{{"name": "inputVertex", "parentVertex": {{"id": "[0]"}}}},
-                               {{"name": "k", "longParam": "{k}"}}]}}"#
-        ))
-    };
-    // used to overflow (a panic in debug builds)
-    assert!(is_decode_error(load_json(&tri_lower(
-        "-9223372036854775808"
-    ))));
-    // other values still load; tril needs rank >= 2 so the vector input fails in the graph, not decoding
-    assert!(matches!(
-        load_json(&tri_lower("9223372036854775807")),
-        Err(keanu_io::IoError::Graph(_))
-    ));
-}
-
-#[test]
-fn shapes_with_too_many_elements_are_decode_errors() {
-    let huge_constant = format!(
-        r#"{{"graph": {{"vertices": [{{"id": {{"id": "[0]"}}, "vertexType": "{DOUBLE_CONSTANT}",
-            "parameters": [{{"name": "constant", "doubleTensorParam": {{"shape": ["4294967296", "4294967296"], "values": []}}}}]}}]}}}}"#
-    );
-    assert!(is_decode_error(load_json(&huge_constant)));
-
-    let huge_vertex_shape = with_vector_and(
-        r#"{"id": {"id": "[1]"}, "vertexType": "io.improbable.keanu.vertices.tensor.number.floating.dbl.probabilistic.GaussianVertex",
-            "shape": ["4294967296", "4294967296"],
-            "parameters": [{"name": "mu", "parentVertex": {"id": "[0]"}}, {"name": "sigma", "parentVertex": {"id": "[0]"}}]}"#,
-    );
-    assert!(is_decode_error(load_json(&huge_vertex_shape)));
-
-    let huge_broadcast = with_vector_and(
-        r#"{"id": {"id": "[1]"}, "vertexType": "io.improbable.keanu.vertices.tensor.generic.nonprobabilistic.operators.unary.BroadcastVertex",
-            "parameters": [{"name": "inputVertex", "parentVertex": {"id": "[0]"}},
-                           {"name": "toShape", "longArrayParam": {"values": ["4294967296", "4294967296", "3"]}}]}"#,
-    );
-    assert!(is_decode_error(load_json(&huge_broadcast)));
-}
-
-#[test]
-fn duplicate_or_missing_vertex_ids_are_decode_errors() {
-    let duplicate = with_vector_and(&format!(
-        r#"{{"id": {{"id": "[0]"}}, "vertexType": "{DOUBLE_CONSTANT}",
-            "parameters": [{{"name": "constant", "doubleTensorParam": {{"values": [1]}}}}]}}"#
-    ));
-    assert!(is_decode_error(load_json(&duplicate)));
-
-    let missing = with_vector_and(&format!(
-        r#"{{"vertexType": "{DOUBLE_CONSTANT}", "parameters": [{{"name": "constant", "doubleTensorParam": {{"values": [1]}}}}]}}"#
-    ));
-    assert!(is_decode_error(load_json(&missing)));
-}
-
-#[test]
-fn generic_stored_values_are_unsupported_values() {
-    let json = format!(
-        r#"{{"graph": {{
-            "vertices": [{{"id": {{"id": "[0]"}}, "vertexType": "{DOUBLE_CONSTANT}",
-                "parameters": [{{"name": "constant", "doubleTensorParam": {{"values": [1]}}}}]}}],
-            "defaultState": [{{"id": {{"id": "[0]"}}, "value": {{"genericVal": {{"values": ["x"]}}}}}}]}}}}"#
-    );
-    assert!(matches!(
-        load_json(&json),
-        Err(keanu_io::IoError::UnsupportedValue(_))
-    ));
-}
-
-#[test]
-fn values_stored_by_label_are_applied_to_the_labelled_node() {
-    let b = GraphBuilder::new();
-    for i in 0..200 {
-        b.gaussian(0.0, 1.0).label(&format!("x{i}"));
-    }
-    let (graph, state) = b.build().unwrap();
-    let mut model: serde_json::Value =
-        serde_json::from_str(&save_json(&graph, &state, &Metadata::new()).unwrap()).unwrap();
-    model["graph"]["defaultState"] = (0..200)
-        .map(|i| {
-            serde_json::json!({
-                "vertexLabel": format!("x{i}"),
-                "value": {"doubleVal": {"values": [f64::from(i)]}},
-                "isObserved": i % 2 == 0
-            })
-        })
-        .collect();
-    let loaded = load_json(&model.to_string()).unwrap();
-    for id in loaded.graph.ids() {
-        let Some(label) = loaded.graph[id].label() else {
-            continue;
-        };
-        let i: u32 = label[1..].parse().unwrap();
-        assert_eq!(
-            loaded.state.value(id),
-            Some(&Value::F64(DoubleTensor::scalar(f64::from(i))))
-        );
-        assert_eq!(loaded.state.is_observed(id), i % 2 == 0);
-    }
-}
-
-/// The labels of a graph's nodes.
-fn labels(graph: &Graph) -> Vec<Option<String>> {
-    graph
-        .ids()
-        .map(|id| graph[id].label().map(str::to_owned))
-        .collect()
-}
-
-#[test]
-fn unlabelled_proxies_round_trip_without_an_invented_label() {
-    let b = GraphBuilder::new();
-    // the label the saver used to invent for the proxy (node 1)
-    let x = b.scalar(1.5).label("proxy_1");
-    let proxy = b.double_proxy(&[]);
-    b.connect(proxy, x);
-    (proxy * 2.0).label("doubled");
-    let (graph, state) = b.build().unwrap();
-
-    let reloaded =
-        load_protobuf(&save_protobuf(&graph, &state, &Metadata::new()).unwrap()).unwrap();
-    assert_eq!(labels(&reloaded.graph), labels(&graph));
-    let reloaded = load_json(&save_json(&graph, &state, &Metadata::new()).unwrap()).unwrap();
-    assert_eq!(labels(&reloaded.graph), labels(&graph));
-
-    // files saved by earlier versions, with an invented label parameter, load without it
-    let mut old: serde_json::Value =
-        serde_json::from_str(&save_json(&graph, &state, &Metadata::new()).unwrap()).unwrap();
-    let vertices = old["graph"]["vertices"].as_array_mut().unwrap();
-    let proxy_vertex = vertices
-        .iter_mut()
-        .find(|v| {
-            v["vertexType"]
-                .as_str()
-                .unwrap()
-                .ends_with("DoubleProxyVertex")
-        })
-        .unwrap();
-    for param in proxy_vertex["parameters"].as_array_mut().unwrap() {
-        if param["name"] == "label" {
-            param["stringParam"] = "proxy_7".into();
-        }
-    }
-    let reloaded = load_json(&old.to_string()).unwrap();
-    assert_eq!(labels(&reloaded.graph), labels(&graph));
-}
-
-/// Saves and loads a model `cycles` times, checking each load has the same number of nodes, values and log prob.
-fn assert_save_load_is_idempotent(name: &str, graph: Graph, state: State, cycles: usize) {
-    let metadata = Metadata::new();
-    let first = load_protobuf(&save_protobuf(&graph, &state, &metadata).unwrap()).unwrap();
-    let expected = summarise(&first.graph, &first.state);
-    let nodes = first.graph.len();
-    let (mut graph, mut state) = (first.graph, first.state);
-    for cycle in 0..cycles {
-        let loaded = if cycle % 2 == 0 {
-            load_json(&save_json(&graph, &state, &metadata).unwrap()).unwrap()
-        } else {
-            load_protobuf(&save_protobuf(&graph, &state, &metadata).unwrap()).unwrap()
-        };
-        assert_eq!(
-            loaded.graph.len(),
-            nodes,
-            "{name}: nodes after cycle {cycle}"
-        );
-        assert_same(
-            &format!("{name} cycle {cycle}"),
-            &summarise(&loaded.graph, &loaded.state),
-            &expected,
-        );
-        (graph, state) = (loaded.graph, loaded.state);
-    }
-}
-
-#[test]
-fn saving_and_loading_repeatedly_does_not_grow_the_graph() {
-    let b = GraphBuilder::new();
-    let square = b
-        .constant(
-            DoubleTensor::new(&[3, 3], vec![4.0, 1.0, 0.5, 1.0, 3.0, 0.2, 0.5, 0.2, 2.0]).unwrap(),
-        )
-        .label("square");
-    square.cholesky().cholesky_inverse().label("inverse");
-    let sigma = b.half_gaussian(1.5).label("sigma");
-    b.set_value(sigma, DoubleTensor::scalar(0.8));
-    let scale = b.half_cauchy(2.0).label("scale");
-    b.set_value(scale, DoubleTensor::scalar(1.1));
-    let (graph, state) = b.build().unwrap();
-
-    let loaded = load_protobuf(&save_protobuf(&graph, &state, &Metadata::new()).unwrap()).unwrap();
-    assert_eq!(loaded.graph.len(), graph.len());
-    assert_save_load_is_idempotent("rust built", graph, state, 4);
-
-    // and the models saved by Java (whose half distributions share a zero location constant, and whose cholesky
-    // inverses are in Java's lower triangle form)
-    for (name, graph, state) in cases() {
-        assert_save_load_is_idempotent(&name, graph, state, 3);
-    }
 }
 
 #[cfg(feature = "dot")]

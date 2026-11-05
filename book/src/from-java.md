@@ -27,6 +27,8 @@ The API is idiomatic Rust rather than a translation.
   - the runtime-compiled computable graph (graphs are evaluated directly)
   - the CSV object binding
   - MIR files
+  - Java's saved model files: Rust saves models in its own format (see [Saving and loading](save-and-load.md)), so
+    rebuild a Java model with the builder rather than loading its file
   - external-process (lambda model) vertices
   - `PrintVertex`
   - generic object vertices (`Categorical` works over category indices)

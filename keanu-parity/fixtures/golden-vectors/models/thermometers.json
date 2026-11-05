@@ -1,171 +1,149 @@
 {
+  "formatVersion": 1,
   "graph": {
-    "vertices": [{
-      "id": {
-        "id": "[0]"
-      },
-      "vertexType": "io.improbable.keanu.vertices.tensor.number.floating.dbl.nonprobabilistic.ConstantDoubleVertex",
-      "parameters": [{
-        "name": "constant",
-        "doubleTensorParam": {
-          "values": [20.0]
-        }
-      }]
-    }, {
-      "id": {
-        "id": "[1]"
-      },
-      "vertexType": "io.improbable.keanu.vertices.tensor.number.floating.dbl.nonprobabilistic.ConstantDoubleVertex",
-      "parameters": [{
-        "name": "constant",
-        "doubleTensorParam": {
-          "values": [30.0]
-        }
-      }]
-    }, {
-      "id": {
-        "id": "[2]"
-      },
-      "label": "temperature",
-      "vertexType": "io.improbable.keanu.vertices.tensor.number.floating.dbl.probabilistic.UniformVertex",
-      "parameters": [{
-        "name": "xMax",
-        "parentVertex": {
-          "id": "[1]"
-        }
-      }, {
-        "name": "xMin",
-        "parentVertex": {
-          "id": "[0]"
-        }
-      }]
-    }, {
-      "id": {
-        "id": "[3]"
-      },
-      "vertexType": "io.improbable.keanu.vertices.tensor.number.floating.dbl.nonprobabilistic.ConstantDoubleVertex",
-      "parameters": [{
-        "name": "constant",
-        "doubleTensorParam": {
-          "values": [2.5]
-        }
-      }]
-    }, {
-      "id": {
-        "id": "[4]"
-      },
-      "label": "thermometerOne",
-      "vertexType": "io.improbable.keanu.vertices.tensor.number.floating.dbl.probabilistic.GaussianVertex",
-      "parameters": [{
-        "name": "mu",
-        "parentVertex": {
-          "id": "[2]"
-        }
-      }, {
-        "name": "sigma",
-        "parentVertex": {
-          "id": "[3]"
-        }
-      }]
-    }, {
-      "id": {
-        "id": "[5]"
-      },
-      "vertexType": "io.improbable.keanu.vertices.tensor.number.floating.dbl.nonprobabilistic.ConstantDoubleVertex",
-      "parameters": [{
-        "name": "constant",
-        "doubleTensorParam": {
-          "values": [5.0]
-        }
-      }]
-    }, {
-      "id": {
-        "id": "[6]"
-      },
-      "label": "thermometerTwo",
-      "vertexType": "io.improbable.keanu.vertices.tensor.number.floating.dbl.probabilistic.GaussianVertex",
-      "parameters": [{
-        "name": "mu",
-        "parentVertex": {
-          "id": "[2]"
-        }
-      }, {
-        "name": "sigma",
-        "parentVertex": {
-          "id": "[5]"
-        }
-      }]
-    }],
-    "defaultState": [{
-      "value": {
-        "doubleVal": {
-          "values": [20.0]
+    "nodes": [
+      {
+        "constant": {
+          "f64": {
+            "values": [
+              20.0
+            ]
+          }
         }
       },
-      "id": {
-        "id": "[0]"
+      {
+        "constant": {
+          "f64": {
+            "values": [
+              30.0
+            ]
+          }
+        }
+      },
+      {
+        "distribution": {
+          "kind": "DISTRIBUTION_KIND_UNIFORM"
+        },
+        "label": "temperature",
+        "parents": [
+          0,
+          1
+        ]
+      },
+      {
+        "constant": {
+          "f64": {
+            "values": [
+              2.5
+            ]
+          }
+        }
+      },
+      {
+        "distribution": {
+          "kind": "DISTRIBUTION_KIND_GAUSSIAN"
+        },
+        "label": "thermometerOne",
+        "parents": [
+          2,
+          3
+        ]
+      },
+      {
+        "constant": {
+          "f64": {
+            "values": [
+              5.0
+            ]
+          }
+        }
+      },
+      {
+        "distribution": {
+          "kind": "DISTRIBUTION_KIND_GAUSSIAN"
+        },
+        "label": "thermometerTwo",
+        "parents": [
+          2,
+          5
+        ]
       }
-    }, {
-      "value": {
-        "doubleVal": {
-          "values": [30.0]
+    ],
+    "values": [
+      {
+        "value": {
+          "f64": {
+            "values": [
+              20.0
+            ]
+          }
         }
       },
-      "id": {
-        "id": "[1]"
+      {
+        "node": 1,
+        "value": {
+          "f64": {
+            "values": [
+              30.0
+            ]
+          }
+        }
+      },
+      {
+        "node": 2,
+        "value": {
+          "f64": {
+            "values": [
+              25.3
+            ]
+          }
+        }
+      },
+      {
+        "node": 3,
+        "value": {
+          "f64": {
+            "values": [
+              2.5
+            ]
+          }
+        }
+      },
+      {
+        "node": 4,
+        "observed": true,
+        "value": {
+          "f64": {
+            "values": [
+              25.0
+            ]
+          }
+        }
+      },
+      {
+        "node": 5,
+        "value": {
+          "f64": {
+            "values": [
+              5.0
+            ]
+          }
+        }
+      },
+      {
+        "node": 6,
+        "observed": true,
+        "value": {
+          "f64": {
+            "values": [
+              30.0
+            ]
+          }
+        }
       }
-    }, {
-      "value": {
-        "doubleVal": {
-          "values": [25.3]
-        }
-      },
-      "id": {
-        "id": "[2]"
-      }
-    }, {
-      "value": {
-        "doubleVal": {
-          "values": [2.5]
-        }
-      },
-      "id": {
-        "id": "[3]"
-      }
-    }, {
-      "value": {
-        "doubleVal": {
-          "values": [25.0]
-        }
-      },
-      "id": {
-        "id": "[4]"
-      },
-      "isObserved": true
-    }, {
-      "value": {
-        "doubleVal": {
-          "values": [5.0]
-        }
-      },
-      "id": {
-        "id": "[5]"
-      }
-    }, {
-      "value": {
-        "doubleVal": {
-          "values": [30.0]
-        }
-      },
-      "id": {
-        "id": "[6]"
-      },
-      "isObserved": true
-    }]
+    ]
   },
   "metadata": {
-    "metadataInfo": {
-      "name": "thermometers"
-    }
+    "name": "thermometers"
   }
 }
