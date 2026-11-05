@@ -48,6 +48,37 @@ some of the "Same model semantics" guarantees above no longer hold where noted.
   log1mexp, log-beta, regularised incomplete gamma and beta with shape derivatives, log-scaled Bessel I0 and I1),
   with the elementwise ones also available as graph ops.
 - keanu-distributions, keanu-graph: `LkjCholesky` prior on Cholesky factors of correlation matrices.
+- keanu-graph: indexing by tensor (`Op::Gather`, `Op::ScatterAdd`, `Op::Stack`) for hierarchical models, and stable
+  logsumexp, softmax and log-softmax. The crate-private strided `Tensor::gather` is now `strided_read`.
+- keanu-algorithms: NUTS records the energy of every step; `NutsStatistics::divergence_count`, `divergent_flags` and
+  `diagnostics::e_bfmi`.
+- keanu-distributions, keanu-graph: log CDFs and survival functions (`log_cdf`, `log_ccdf` and their gradients) for 16
+  distributions; `Truncated` and `Censored` wrappers; `NegativeBinomial` (mean and dispersion), `Weibull`, `VonMises`
+  (on a circular transform) and `OrderedLogistic`; same-family `Mixture`; `HiddenMarkovModel` (log-space forward
+  algorithm) and `LinearGaussianStateSpace` (Kalman filter with the Joseph-form update). New `Support::LessThan` and
+  `transform::UpperBound`. `parameter_types()` and `parameter_names()` now return `Cow`. The save schema gained a
+  recursive `DistributionType` for nested kinds.
+- keanu-graph: linear algebra ops `SolveTriangular`, `Solve`, `LogAbsDeterminant`, `DeterminantSign`, `Eigvalsh` and
+  `EighVectors` (`DoubleVar::slogdet`, `eigh`).
+- keanu-graph: `gp` module: covariance kernels (exponentiated quadratic, Matérn 1/2, 3/2 and 5/2, rational quadratic,
+  periodic, linear, sums and products), the exact GP marginal likelihood and the conditional predictive distribution.
+- keanu-graph: `Op::Scan` is now a general deterministic loop over a nested graph (`GraphBuilder::scan`,
+  `scan_steps`), with forward, reverse and second-order autodiff and save support. **The old cumulative op is renamed
+  `Op::Cumulative` (`ScanOp` → `CumulativeOp`).**
+- keanu-graph: exact Hessian-vector products (`Parameterisation::hvp`, `hessian`) by forward-over-reverse
+  differentiation, with second-order rules for every op, bijector and distribution, except custom distributions,
+  lambdas, `LinearGaussianStateSpace`, and the shape parameters of CDFs built on incomplete gamma or beta functions,
+  which return the new `GraphError::NoSecondOrderRule`.
+- keanu-algorithms: **L-BFGS with a strong-Wolfe line search is the new default gradient optimizer** (Stan's settings).
+  It needed far fewer evaluations than conjugate gradient on the golden models (36 against 320 on linear
+  regression MAP); three tests that check CG-specific behaviour now name `ConjugateGradient`.
+- keanu-algorithms: `Laplace` approximation at the mode in unconstrained space, using the exact Hessian; new
+  `AlgorithmError::ModeOnBoundary` and `IndefiniteHessian`.
+- keanu-algorithms: mean-field and full-rank `Advi` with Stan's defaults; new `AlgorithmError::NonFiniteElbo`.
+- keanu-algorithms: the optimizers now compute deterministic nodes that depend only on constants before starting
+  (they failed with `MissingValue` before).
+- keanu: new examples `eight_schools`, `radon` (data from the PyMC examples repository, MIT), `gaussian_mixture` and
+  `gp_regression`; new book chapters on variational inference and Gaussian processes.
 
 ### Code review fixes
 
