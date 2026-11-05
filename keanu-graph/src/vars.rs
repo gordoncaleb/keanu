@@ -832,8 +832,9 @@ impl<'b> DoubleVar<'b> {
         self.same(Op::Eigvalsh)
     }
     /// The orthonormal eigenvectors (`[..., n, n]`, one per column, in the order of [`Self::eigvalsh`]) of each
-    /// symmetric matrix, reading only its lower triangle. Each is signed so its largest component is positive.
-    /// Gradients assume distinct eigenvalues; repeated eigenvalues give non-finite gradients.
+    /// symmetric matrix, reading only its lower triangle. Each is signed so its first component within a relative
+    /// 1e-10 of the largest magnitude is positive. The eigenvectors and their gradients are discontinuous where that
+    /// sign convention switches and at repeated eigenvalues, which give non-finite gradients.
     pub fn eigh_vectors(self) -> Self {
         self.same(Op::EighVectors)
     }

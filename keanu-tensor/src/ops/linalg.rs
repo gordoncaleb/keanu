@@ -343,10 +343,15 @@ impl DoubleTensor {
     /// The eigendecomposition A = Q diag(λ) Qᵀ of each symmetric matrix, by faer's self-adjoint eigensolver. Only
     /// the lower triangle of each matrix, diagonal included, is read. Returns the eigenvalues λ (`[..., n]`, in
     /// ascending order) and the orthonormal eigenvectors Q (`[..., n, n]`, one per column, in the same order). Each
-    /// eigenvector's sign is chosen so that its component of largest magnitude (the first, among equals) is
-    /// positive, so the result is deterministic. Repeated eigenvalues have no unique eigenvectors: any orthonormal
-    /// basis of their eigenspace may be returned. A matrix with a non-finite element in its lower triangle gives
-    /// NaN eigenvalues and eigenvectors.
+    /// eigenvector's sign is chosen so that its first component (lowest row) whose magnitude is within a relative
+    /// 1e-10 of the largest is positive, so the result is deterministic and components that tie in magnitude don't
+    /// make the sign depend on rounding. Repeated eigenvalues have no unique eigenvectors: any orthonormal basis of
+    /// their eigenspace may be returned. A matrix with a non-finite element in its lower triangle gives NaN
+    /// eigenvalues and eigenvectors.
+    ///
+    /// The eigenvectors (and so their derivatives) are discontinuous where the sign convention switches (as the
+    /// matrix varies, the component deciding the sign changes, flipping the eigenvector) and at repeated
+    /// eigenvalues; elsewhere they are smooth.
     pub fn eigh(&self) -> Result<(Self, Self)> {
         let n = self.square_dims("eigh")?;
         let batch = self.batch_shape();
@@ -788,8 +793,13 @@ fn cholesky_lower_into(a: &[f64], n: usize, out: &mut [f64]) -> Result<()> {
     Ok(())
 }
 
+/// The relative tolerance within which eigenvector components count as tied for the largest magnitude when
+/// choosing the eigenvector's sign (see [`Tensor::eigh`]).
+const SIGN_TOLERANCE: f64 = 1e-10;
+
 /// The eigenvalues (ascending, into `values`) and eigenvectors (columns of row-major `vectors`) of one symmetric
-/// n × n matrix, reading only its lower triangle. Each eigenvector's largest-magnitude component is made positive.
+/// n × n matrix, reading only its lower triangle. Each eigenvector is signed so that its first component within a
+/// relative [`SIGN_TOLERANCE`] of the largest magnitude is positive.
 fn symmetric_eigen_into(
     a: &[f64],
     n: usize,
@@ -809,14 +819,14 @@ fn symmetric_eigen_into(
     let (s, u) = (eigen.S(), eigen.U());
     for col in 0..n {
         values[col] = s[col];
-        let mut largest = 0.0f64;
-        for row in 0..n {
-            let x = u[(row, col)];
-            if x.abs() > largest.abs() {
-                largest = x;
-            }
-        }
-        let flip = if largest < 0.0 { -1.0 } else { 1.0 };
+        let largest = (0..n).map(|row| u[(row, col)].abs()).fold(0.0, f64::max);
+        // the first component within a relative SIGN_TOLERANCE of the largest decides the sign, so components
+        // that tie in magnitude (up to rounding) don't make the sign depend on rounding
+        let leading = (0..n)
+            .map(|row| u[(row, col)])
+            .find(|x| x.abs() >= largest * (1.0 - SIGN_TOLERANCE))
+            .unwrap_or(0.0);
+        let flip = if leading < 0.0 { -1.0 } else { 1.0 };
         for row in 0..n {
             vectors[row * n + col] = flip * u[(row, col)];
         }

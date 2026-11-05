@@ -431,8 +431,10 @@ pub enum Op {
     /// lower triangle, as [`DoubleTensor::eigh`](keanu_tensor::DoubleTensor::eigh).
     Eigvalsh,
     /// Parents: `input`, f64 -> the orthonormal eigenvectors (`[..., n, n]`, one per column, in the order of
-    /// [`Op::Eigvalsh`]) of each symmetric matrix, reading only its lower triangle, each signed so its largest
-    /// component is positive. Gradients assume distinct eigenvalues: repeated eigenvalues give non-finite gradients.
+    /// [`Op::Eigvalsh`]) of each symmetric matrix, reading only its lower triangle, each signed so its first
+    /// component within a relative 1e-10 of the largest magnitude is positive. The eigenvectors and their gradients
+    /// are discontinuous where that sign convention switches and at repeated eigenvalues, which give non-finite
+    /// gradients.
     EighVectors,
     /// Parents: `input` -> the given type. Numbers to bool are true where equal to 1; bool to numbers is a 0/1 mask;
     /// f64 to i64 truncates.

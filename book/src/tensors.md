@@ -30,5 +30,6 @@ Some details worth knowing:
   for `inverse`.
 - `slogdet()` returns numpy's (sign, ln |det|), which stays finite where `determinant()` would overflow; a singular
   matrix has sign 0 and ln |det| −∞.
-- `eigh()` returns the eigenvalues (ascending) and eigenvectors (columns, each signed so its largest component is
-  positive) of symmetric matrices, reading only the lower triangle.
+- `eigh()` returns the eigenvalues (ascending) and eigenvectors (columns, each signed so its first component within a
+  relative 1e-10 of the largest magnitude is positive) of symmetric matrices, reading only the lower triangle. The
+  eigenvectors are discontinuous where that sign convention switches and at repeated eigenvalues.

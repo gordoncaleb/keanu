@@ -203,15 +203,18 @@ fn eigh_reconstructs_the_matrix_with_ascending_eigenvalues() {
                 .unwrap(),
             1e-10,
         );
-        // each eigenvector's largest component is positive, so the signs are deterministic
+        // each eigenvector's first component within a relative 1e-10 of the largest magnitude is positive, so the
+        // signs are deterministic
         let q = vectors.as_slice();
         for m in 0..4 {
             for col in 0..n {
                 let column: Vec<f64> = (0..n).map(|row| q[m * n * n + row * n + col]).collect();
-                let largest = column.iter().copied().fold(0.0f64, |best, x| {
-                    if x.abs() > best.abs() { x } else { best }
-                });
-                assert!(largest > 0.0);
+                let largest = column.iter().fold(0.0f64, |best, x| best.max(x.abs()));
+                let leading = column
+                    .iter()
+                    .find(|x| x.abs() >= largest * (1.0 - 1e-10))
+                    .unwrap();
+                assert!(*leading > 0.0);
             }
         }
     }
@@ -264,4 +267,29 @@ fn eigh_edge_cases() {
     );
     assert!(DoubleTensor::zeros(&[2, 3]).eigh().is_err());
     assert!(DoubleTensor::zeros(&[3]).eigh().is_err());
+}
+
+#[test]
+fn eigh_signs_are_stable_when_components_tie_in_magnitude() {
+    // the eigenvectors of [[2, 1], [1, 2]] are (1, -1)/√2 and (1, 1)/√2: both components of each have equal
+    // magnitude, so perturbing the matrix by rounding-sized amounts changes which one is (barely) largest. The first
+    // component within a relative 1e-10 of the largest is made positive, so the signs don't depend on the rounding.
+    let vectors = |e: f64| {
+        DoubleTensor::new(&[2, 2], vec![2.0 + e, 1.0, 1.0, 2.0 - e])
+            .unwrap()
+            .eigh()
+            .unwrap()
+            .1
+    };
+    let exact = vectors(0.0);
+    let s = std::f64::consts::FRAC_1_SQRT_2;
+    // columns: (1, -1)/√2 for λ = 1 and (1, 1)/√2 for λ = 3, each with its first component positive
+    assert_close(
+        &exact,
+        &DoubleTensor::new(&[2, 2], vec![s, s, -s, s]).unwrap(),
+        1e-12,
+    );
+    for e in [1e-14, -1e-14, 3e-15, -3e-15] {
+        assert_close(&vectors(e), &exact, 1e-10);
+    }
 }
