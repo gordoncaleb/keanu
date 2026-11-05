@@ -99,6 +99,12 @@ fn save_op(graph: &Graph, id: NodeId) -> Result<P> {
         Op::Slice(spec) => P::Slice(proto::Slice { spec: spec.clone() }),
         Op::Concat(axis) => P::Concat(proto::Concat { axis: *axis as i64 }),
         Op::Take(index) => P::Take(proto::Take { index: dims(index) }),
+        Op::Gather { axis } => P::Gather(proto::Gather { axis: *axis as i64 }),
+        Op::ScatterAdd { axis, size } => P::ScatterAdd(proto::ScatterAdd {
+            axis: *axis as i64,
+            size: *size as u64,
+        }),
+        Op::Stack(axis) => P::Stack(proto::Stack { axis: *axis as i64 }),
         Op::Diag => P::Diag(empty()),
         Op::DiagPart => P::DiagPart(empty()),
         Op::Tril(k) => P::Tril(proto::Triangle { k: *k as i64 }),

@@ -124,6 +124,36 @@ fn building_models() -> keanu::Result<()> {
     Ok(())
 }
 
+#[test]
+fn indexing() -> keanu::Result<()> {
+    // ANCHOR: indexing
+    let b = GraphBuilder::new();
+
+    // one mean per group, drawn around a shared mean
+    let mu = b.gaussian(0.0, 10.0);
+    let group_mu = b.gaussian_with_shape(&[3], mu, 1.0);
+
+    // each observation's group, and its mean: group_mu[group]
+    let group = b.int_constant(IntTensor::vector(vec![0, 0, 1, 2, 2, 2]));
+    let y = b.gaussian(group_mu.gather(0, group), 0.5);
+    b.observe(y, DoubleTensor::vector(vec![1.1, 0.9, 3.2, 5.0, 5.2, 4.8]));
+
+    // the adjoint: per-group totals of the observations
+    let totals = y.scatter_add(0, group, 3);
+    // and stack builds a tensor from separate nodes
+    let pair = b.stack(0, &[mu, group_mu.sum()]);
+
+    let (group_mu, totals, pair) = (group_mu.id(), totals.id(), pair.id());
+    let (graph, mut state) = b.build()?;
+    state.lazy_eval(&graph, &[totals, pair], &mut KeanuRng::seed_from_u64(1))?;
+    assert_eq!(graph[group_mu].shape(), &[3]);
+    assert_eq!(graph[pair].shape(), &[2]);
+    let totals = state.f64(totals).unwrap().as_slice().to_vec();
+    assert!((totals[0] - 2.0).abs() < 1e-12 && (totals[2] - 15.0).abs() < 1e-12);
+    // ANCHOR_END: indexing
+    Ok(())
+}
+
 /// The thermometer example: a room temperature read by two noisy thermometers.
 fn thermometers() -> keanu::Result<(Model, State, NodeId)> {
     // ANCHOR: thermometers

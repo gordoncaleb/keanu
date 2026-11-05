@@ -228,7 +228,7 @@ impl<T: Element> Tensor<T> {
     }
 
     /// Reads the tensor with arbitrary (possibly negative or zero) strides into a new contiguous tensor.
-    pub(crate) fn gather(
+    pub(crate) fn strided_read(
         &self,
         out_shape: &[usize],
         read_strides: &[isize],

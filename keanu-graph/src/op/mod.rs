@@ -324,6 +324,25 @@ pub enum Op {
     Concat(isize),
     /// Parents: `input` -> the element at an index, as a scalar
     Take(Vec<usize>),
+    /// Parents: `input`, `indices` (i64) -> the input's elements selected along an axis by index, as numpy's
+    /// `take(input, indices, axis)`: shape `input[..axis] ++ indices ++ input[axis + 1..]`. Out of range indices are
+    /// an evaluation error. Differentiable in the input only.
+    Gather {
+        /// The input axis the indices select along.
+        axis: isize,
+    },
+    /// Parents: `input` (f64 or i64), `indices` (i64) -> the adjoint of [`Op::Gather`]: zeros of shape
+    /// `input[..axis] ++ [size] ++ input[axis + k..]` (k the indices' rank) with each input element added at its
+    /// index along `axis`, so repeated indices accumulate. Out of range indices are an evaluation error.
+    /// Differentiable in the input only.
+    ScatterAdd {
+        /// The output axis the indices address.
+        axis: isize,
+        /// The output's length along that axis.
+        size: usize,
+    },
+    /// Parents: `inputs...` of the same type and shape -> joined along a new axis
+    Stack(isize),
     /// Parents: `input`
     Diag,
     /// Parents: `input`
@@ -423,6 +442,9 @@ impl Op {
             Op::Slice(_) => "slice",
             Op::Concat(_) => "concat",
             Op::Take(_) => "take",
+            Op::Gather { .. } => "gather",
+            Op::ScatterAdd { .. } => "scatter_add",
+            Op::Stack(_) => "stack",
             Op::Diag => "diag",
             Op::DiagPart => "diag_part",
             Op::Tril(_) => "tril",

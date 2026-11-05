@@ -3,7 +3,7 @@
 
 use keanu_distributions::KeanuRng;
 use keanu_graph::{DoubleVar, GraphBuilder, forward_partials, joint_log_prob, reverse_partials};
-use keanu_tensor::DoubleTensor;
+use keanu_tensor::{DoubleTensor, IntTensor};
 use proptest::prelude::*;
 
 #[derive(Debug, Clone)]
@@ -25,6 +25,9 @@ enum Step {
     CumSum(isize),
     BroadcastTo(Vec<usize>),
     Take(Vec<usize>),
+    Gather(isize, Vec<i64>),
+    ScatterAdd(isize, Vec<i64>, usize),
+    Stack(isize, usize),
     Tril(isize),
     Cholesky,
     Inverse,
@@ -77,6 +80,10 @@ fn step() -> impl Strategy<Value = Step> {
         (-4isize..4).prop_map(Step::CumSum),
         shape().prop_map(Step::BroadcastTo),
         prop::collection::vec(0usize..4, 0..4).prop_map(Step::Take),
+        (-3isize..3, prop::collection::vec(-1i64..4, 0..4)).prop_map(|(a, i)| Step::Gather(a, i)),
+        (-3isize..3, prop::collection::vec(-1i64..4, 0..4), 0usize..4)
+            .prop_map(|(a, i, n)| Step::ScatterAdd(a, i, n)),
+        (-3isize..4, 0usize..8).prop_map(|(a, i)| Step::Stack(a, i)),
         (-3isize..3).prop_map(Step::Tril),
         Just(Step::Cholesky),
         Just(Step::Inverse),
@@ -127,6 +134,9 @@ proptest! {
                 Step::CumSum(a) => last.cumsum(*a),
                 Step::BroadcastTo(s) => last.broadcast_to(s),
                 Step::Take(i) => last.take(i),
+                Step::Gather(a, i) => last.gather(*a, IntTensor::vector(i.clone())),
+                Step::ScatterAdd(a, i, n) => last.scatter_add(*a, IntTensor::vector(i.clone()), *n),
+                Step::Stack(a, i) => b.stack(*a, &[last, pick(*i)]),
                 Step::Tril(k) => last.tril(*k),
                 Step::Cholesky => last.cholesky(),
                 Step::Inverse => last.inverse(),

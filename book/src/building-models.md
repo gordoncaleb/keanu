@@ -26,7 +26,8 @@ Handles (`DoubleVar`, `IntVar`, `BoolVar`) support:
   - element-wise math (`exp`, `ln`, `sigmoid`, `ln_gamma`, ...)
   - comparisons (`gt`, `le`, ...) and masks
   - reductions (`sum`, `sum_axes`, `mean`, `max`, ...) and scans (`cumsum`)
-  - shapes (`reshape`, `permute`, `slice`, `broadcast_to`, ...)
+  - shapes (`reshape`, `permute`, `slice`, `broadcast_to`, ...) and indexing (`gather`, `scatter_add`; see
+    [Indexing](#indexing))
   - linear algebra (`matmul`, `inverse`, `cholesky`, `determinant`, `tensor_multiply`)
   - casts (`to_double`, `to_int`)
 - **Control flow on the builder:**
@@ -37,6 +38,20 @@ Handles (`DoubleVar`, `IntVar`, `BoolVar`) support:
 
 floor, ceil, round, sign, comparisons and casts aren't differentiable, so a model whose latents flow through them is
 sampled with Metropolis–Hastings rather than NUTS (see `Sampler::for_model`).
+
+## Indexing
+
+Hierarchical models give each observation the parameter of its group: in maths `mu[group[i]]`. `gather(axis,
+indices)` selects elements along an axis by an integer tensor or `IntVar`, as numpy's `take`, so
+`group_mu.gather(0, group)` has one element per observation. Indices may repeat, and they may be a node whose value
+changes, such as a categorical latent: a cascade recomputes the selection and gradients follow the current indices.
+`scatter_add(axis, indices, size)` is the adjoint, adding each element into its group (gradients of a gather are
+scatter-adds and vice versa), and the builder's `stack(axis, parts)` joins nodes of the same shape along a new
+axis. Indices outside the axis fail evaluation with an error, and gradients never flow into the indices.
+
+```rust,ignore
+{{#include ../../keanu/tests/book.rs:indexing}}
+```
 
 ## Labels
 

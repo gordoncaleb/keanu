@@ -121,6 +121,18 @@ pub(crate) fn output_type(op: &Op, parents: &[(DType, &[usize])]) -> Result<(DTy
             f64_parents(2)?;
             dummy(op, parents)
         }
+        Op::Gather { .. } | Op::ScatterAdd { .. } => {
+            if parents[1].0 != DType::I64 {
+                return Err(invalid(op, "the indices must be i64"));
+            }
+            // zero indices are in range wherever any index could be, so the dummy evaluation checks only shapes
+            let values = [
+                Value::ones(parents[0].0, parents[0].1),
+                Value::I64(keanu_tensor::IntTensor::full(parents[1].1, 0)),
+            ];
+            let out = eval(op, &[&values[0], &values[1]])?;
+            Ok((out.dtype(), Shape::from_slice(out.shape())))
+        }
         _ => dummy(op, parents),
     }
 }
@@ -164,9 +176,11 @@ fn check_arity(op: &Op, count: usize) -> Result<()> {
         | Op::ApproxEq(_)
         | Op::Logic(_)
         | Op::MatMul { .. }
-        | Op::TensorMultiply { .. } => (2, Some(2)),
+        | Op::TensorMultiply { .. }
+        | Op::Gather { .. }
+        | Op::ScatterAdd { .. } => (2, Some(2)),
         Op::Where | Op::SetWithMask => (3, Some(3)),
-        Op::Concat(_) => (1, None),
+        Op::Concat(_) | Op::Stack(_) => (1, None),
         Op::Multiplexer => (2, None),
         Op::Cpt { conditions, keys } => {
             let n = conditions + keys.len() + 1;

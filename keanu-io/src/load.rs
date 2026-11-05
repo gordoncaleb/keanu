@@ -175,6 +175,14 @@ fn add_node(builder: &GraphBuilder, op: &P, parents: &[NodeId]) -> Result<NodeId
         P::Slice(p) => Op::Slice(p.spec.clone()),
         P::Concat(p) => Op::Concat(isize_of(p.axis)?),
         P::Take(p) => Op::Take(usizes(&p.index)?),
+        P::Gather(p) => Op::Gather {
+            axis: isize_of(p.axis)?,
+        },
+        P::ScatterAdd(p) => Op::ScatterAdd {
+            axis: isize_of(p.axis)?,
+            size: usize_of(p.size)?,
+        },
+        P::Stack(p) => Op::Stack(isize_of(p.axis)?),
         P::Diag(_) => Op::Diag,
         P::DiagPart(_) => Op::DiagPart,
         P::Tril(p) => Op::Tril(isize_of(p.k)?),

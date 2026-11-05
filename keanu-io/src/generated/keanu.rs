@@ -34,7 +34,7 @@ pub struct Node {
     pub label: ::prost::alloc::string::String,
     #[prost(
         oneof = "node::Op",
-        tags = "10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52"
+        tags = "10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55"
     )]
     pub op: ::core::option::Option<node::Op>,
 }
@@ -128,6 +128,12 @@ pub mod node {
         Assert(super::Assert),
         #[prost(message, tag = "52")]
         Distribution(super::Distribution),
+        #[prost(message, tag = "53")]
+        Gather(super::Gather),
+        #[prost(message, tag = "54")]
+        ScatterAdd(super::ScatterAdd),
+        #[prost(message, tag = "55")]
+        Stack(super::Stack),
     }
 }
 /// The parameters of an operation that has none.
@@ -247,6 +253,27 @@ pub struct Concat {
 pub struct Take {
     #[prost(uint64, repeated, tag = "1")]
     pub index: ::prost::alloc::vec::Vec<u64>,
+}
+/// Parents: input, indices (i64). The input's elements selected along an axis by index, as numpy's `take`.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct Gather {
+    #[prost(sint64, tag = "1")]
+    pub axis: i64,
+}
+/// Parents: input, indices (i64). The adjoint of `Gather`: each input element added at its index along `axis` of a
+/// zero tensor whose length along that axis is `size`.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct ScatterAdd {
+    #[prost(sint64, tag = "1")]
+    pub axis: i64,
+    #[prost(uint64, tag = "2")]
+    pub size: u64,
+}
+/// Parents: inputs of the same type and shape, joined along a new axis.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct Stack {
+    #[prost(sint64, tag = "1")]
+    pub axis: i64,
 }
 /// numpy's tril / triu diagonal offset.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]

@@ -1,6 +1,6 @@
 //! Property tests for the shape logic: broadcasting, slicing, permuting and reducing.
 
-use keanu_tensor::{DoubleTensor, broadcast_shape};
+use keanu_tensor::{DoubleTensor, IntTensor, broadcast_shape};
 use proptest::prelude::*;
 
 fn shape(max_rank: usize, max_dim: usize) -> impl Strategy<Value = Vec<usize>> {
@@ -114,4 +114,92 @@ proptest! {
         let filled = v.fill_triangular(upper, !upper).unwrap();
         prop_assert_eq!(filled.triangle_part(upper).unwrap(), v);
     }
+
+    /// Scatter-add is the adjoint of gather: <gather(x), u> = <x, scatter_add(u)> for any axis and indices,
+    /// including repeated ones.
+    #[test]
+    fn scatter_add_is_the_adjoint_of_gather(
+        x in shape(3, 3).prop_filter("rank >= 1", |s| !s.is_empty()).prop_flat_map(tensor_with_shape),
+        axis_seed in 0usize..3,
+        index_seed in prop::collection::vec(0usize..100, 0..4),
+        index_rank in 0usize..3,
+    ) {
+        let axis = axis_seed % x.rank();
+        let n = x.shape()[axis];
+        let mut idx: Vec<i64> = index_seed.iter().map(|&i| (i % n) as i64).collect();
+        let index_shape: Vec<usize> = match index_rank {
+            0 => { idx.truncate(1); if idx.is_empty() { idx.push(0); } vec![] }
+            1 => vec![idx.len()],
+            _ => vec![1, idx.len()],
+        };
+        let indices = IntTensor::new(&index_shape, idx).unwrap();
+        let gathered = x.gather(axis as isize, &indices).unwrap();
+        let u = DoubleTensor::new(gathered.shape(), (0..gathered.len()).map(|i| (i as f64) * 0.5 - 1.0).collect()).unwrap();
+        let scattered = u.scatter_add(axis as isize, &indices, n).unwrap();
+        prop_assert_eq!(scattered.shape(), x.shape());
+        let left: f64 = gathered.mul(&u).unwrap().sum();
+        let right: f64 = x.mul(&scattered).unwrap().sum();
+        prop_assert!((left - right).abs() <= 1e-9 * left.abs().max(1.0), "{} != {}", left, right);
+    }
+
+    #[test]
+    fn stack_then_slice_recovers_the_parts(a in tensor_with_shape(vec![2, 3]), b in tensor_with_shape(vec![2, 3])) {
+        let stacked = DoubleTensor::stack(1, &[&a, &b]).unwrap();
+        prop_assert_eq!(stacked.shape(), &[2, 2, 3]);
+        prop_assert_eq!(stacked.slice(":, 0").unwrap(), a.clone());
+        prop_assert_eq!(stacked.slice(":, 1").unwrap(), b.clone());
+        let last = DoubleTensor::stack(-1, &[&a, &b]).unwrap();
+        prop_assert_eq!(last.shape(), &[2, 3, 2]);
+        prop_assert_eq!(last.slice("..., 0").unwrap(), a);
+    }
+}
+
+#[test]
+fn gather_selects_along_an_axis() {
+    let x = DoubleTensor::new(&[2, 3], vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0]).unwrap();
+    let idx = IntTensor::vector(vec![2, 0, 2, 1]);
+    let g = x.gather(1, &idx).unwrap();
+    assert_eq!(g.shape(), &[2, 4]);
+    assert_eq!(g.as_slice(), &[3.0, 1.0, 3.0, 2.0, 6.0, 4.0, 6.0, 5.0]);
+    let rows = x
+        .gather(-2, &IntTensor::new(&[1, 2], vec![1, 1]).unwrap())
+        .unwrap();
+    assert_eq!(rows.shape(), &[1, 2, 3]);
+    let empty = x.gather(0, &IntTensor::vector(vec![])).unwrap();
+    assert_eq!(empty.shape(), &[0, 3]);
+    assert!(x.gather(1, &IntTensor::vector(vec![3])).is_err());
+    assert!(x.gather(1, &IntTensor::vector(vec![-1])).is_err());
+    assert!(x.gather(2, &idx).is_err());
+    assert!(DoubleTensor::scalar(1.0).gather(0, &idx).is_err());
+}
+
+#[test]
+fn scatter_add_accumulates_repeated_indices() {
+    let u = DoubleTensor::vector(vec![1.0, 2.0, 3.0, 4.0]);
+    let idx = IntTensor::vector(vec![0, 2, 2, 1]);
+    assert_eq!(
+        u.scatter_add(0, &idx, 3).unwrap().as_slice(),
+        &[1.0, 4.0, 5.0]
+    );
+    assert!(u.scatter_add(0, &idx, 2).is_err());
+    assert!(u.scatter_add(0, &IntTensor::vector(vec![0, 1]), 3).is_err());
+    assert!(u.scatter_add(1, &idx, 3).is_err());
+    let ints = IntTensor::vector(vec![1, 1]);
+    assert_eq!(
+        ints.scatter_add(0, &IntTensor::vector(vec![1, 1]), 2)
+            .unwrap()
+            .as_slice(),
+        &[0, 2]
+    );
+}
+
+#[test]
+fn stack_needs_matching_shapes() {
+    let a = DoubleTensor::vector(vec![1.0, 2.0]);
+    let b = DoubleTensor::vector(vec![1.0, 2.0, 3.0]);
+    assert!(DoubleTensor::stack(0, &[&a, &b]).is_err());
+    assert!(DoubleTensor::stack(0, &[]).is_err());
+    assert!(DoubleTensor::stack(2, &[&a]).is_err());
+    let s = DoubleTensor::stack(0, &[&a, &a, &a]).unwrap();
+    assert_eq!(s.shape(), &[3, 2]);
 }

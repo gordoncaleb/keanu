@@ -265,6 +265,35 @@ pub(crate) fn eval(op: &Op, inputs: &[&Value]) -> Result<Value> {
                     .collect::<Result<Vec<_>>>()?,
             )?),
         },
+        Op::Gather { axis } => {
+            let indices = inputs[1].i64()?;
+            any_dtype!(inputs[0], |t| t.gather(*axis, indices)?)
+        }
+        Op::ScatterAdd { axis, size } => {
+            let indices = inputs[1].i64()?;
+            match inputs[0] {
+                Value::F64(t) => Value::F64(t.scatter_add(*axis, indices, *size)?),
+                Value::I64(t) => Value::I64(t.scatter_add(*axis, indices, *size)?),
+                Value::Bool(_) => return Err(invalid(op, "scatter-add applies to numbers")),
+            }
+        }
+        Op::Stack(axis) => match same_dtype(op, inputs)? {
+            DType::F64 => Value::F64(DoubleTensor::stack(
+                *axis,
+                &inputs.iter().map(|v| v.f64()).collect::<Result<Vec<_>>>()?,
+            )?),
+            DType::I64 => Value::I64(IntTensor::stack(
+                *axis,
+                &inputs.iter().map(|v| v.i64()).collect::<Result<Vec<_>>>()?,
+            )?),
+            DType::Bool => Value::Bool(BoolTensor::stack(
+                *axis,
+                &inputs
+                    .iter()
+                    .map(|v| v.bool())
+                    .collect::<Result<Vec<_>>>()?,
+            )?),
+        },
         Op::Take(index) => {
             let take = |shape: &[usize]| {
                 invalid(

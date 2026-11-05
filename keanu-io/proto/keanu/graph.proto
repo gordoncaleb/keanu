@@ -79,6 +79,9 @@ message Node {
     Proxy proxy = 50;
     Assert assert = 51;
     Distribution distribution = 52;
+    Gather gather = 53;
+    ScatterAdd scatter_add = 54;
+    Stack stack = 55;
   }
 
   // Reserved for a general scan whose body is a nested `Graph`.
@@ -296,6 +299,23 @@ message Concat {
 // The element at an index, as a scalar.
 message Take {
   repeated uint64 index = 1;
+}
+
+// Parents: input, indices (i64). The input's elements selected along an axis by index, as numpy's `take`.
+message Gather {
+  sint64 axis = 1;
+}
+
+// Parents: input, indices (i64). The adjoint of `Gather`: each input element added at its index along `axis` of a
+// zero tensor whose length along that axis is `size`.
+message ScatterAdd {
+  sint64 axis = 1;
+  uint64 size = 2;
+}
+
+// Parents: inputs of the same type and shape, joined along a new axis.
+message Stack {
+  sint64 axis = 1;
 }
 
 // numpy's tril / triu diagonal offset.

@@ -1,8 +1,10 @@
-//! Reshaping, permuting, broadcasting, triangles, diagonals, concatenation and numpy style slicing.
+//! Reshaping, permuting, broadcasting, triangles, diagonals, concatenation, stacking, gathering by index and numpy
+//! style slicing.
 
 use crate::error::{Result, TensorError};
+use crate::ops::elementwise::Numeric;
 use crate::shape::{self, Shape};
-use crate::tensor::{Element, Tensor};
+use crate::tensor::{Element, IntTensor, Tensor};
 
 impl<T: Element> Tensor<T> {
     /// As [`reshape`](Self::reshape), but consumes the tensor so its data is moved rather than copied.
@@ -72,7 +74,7 @@ impl<T: Element> Tensor<T> {
         let strides = shape::row_major_strides(&self.shape);
         let out_shape: Shape = permutation.iter().map(|&p| self.shape[p]).collect();
         let read: Vec<isize> = permutation.iter().map(|&p| strides[p] as isize).collect();
-        Ok(self.gather(&out_shape, &read, 0))
+        Ok(self.strided_read(&out_shape, &read, 0))
     }
 
     /// Swaps the last two dimensions.
@@ -99,7 +101,7 @@ impl<T: Element> Tensor<T> {
         }
         let strides = shape::broadcast_strides(&self.shape, target);
         let read: Vec<isize> = strides.iter().map(|&s| s as isize).collect();
-        Ok(self.gather(target, &read, 0))
+        Ok(self.strided_read(target, &read, 0))
     }
 
     /// Joins tensors along an existing axis. All other dimensions must match.
@@ -279,8 +281,117 @@ impl<T: Element> Tensor<T> {
                 read.push(s.step * strides[d] as isize);
             }
         }
-        Ok(self.gather(&out_shape, &read, offset))
+        Ok(self.strided_read(&out_shape, &read, offset))
     }
+
+    /// Selects elements along an axis by index, as numpy's `take(x, indices, axis)`: the result has shape
+    /// `shape[..axis] ++ indices.shape ++ shape[axis + 1..]`, and the element at `[o..., i..., r...]` is the element
+    /// of this tensor at `[o..., indices[i...], r...]`. Indices may repeat; each must lie in `0..shape[axis]`.
+    pub fn gather(&self, axis: isize, indices: &IntTensor) -> Result<Self> {
+        let axis = shape::axis(axis, self.rank())?;
+        let (outer, n, inner) = axis_lanes(&self.shape, axis);
+        let index = checked_indices(indices, n)?;
+        let mut out_shape: Shape = self.shape[..axis].iter().copied().collect();
+        out_shape.extend(indices.shape().iter().copied());
+        out_shape.extend(self.shape[axis + 1..].iter().copied());
+        let mut data = Vec::with_capacity(outer * index.len() * inner);
+        for o in 0..outer {
+            for &i in &index {
+                let start = (o * n + i) * inner;
+                data.extend_from_slice(&self.data[start..start + inner]);
+            }
+        }
+        Ok(Tensor::from_parts(out_shape, data))
+    }
+
+    /// Joins tensors of the same shape along a new axis, which may be `0..=rank` (negative counts from the end, so
+    /// -1 appends a last axis).
+    pub fn stack(axis: isize, tensors: &[&Self]) -> Result<Self> {
+        let first = tensors
+            .first()
+            .ok_or_else(|| TensorError::InvalidArgument("nothing to stack".into()))?;
+        let rank = first.rank();
+        let axis = shape::axis(axis, rank + 1)?;
+        if let Some(t) = tensors.iter().find(|t| t.shape != first.shape) {
+            return Err(TensorError::IncompatibleShapes {
+                left: first.shape.to_vec(),
+                right: t.shape.to_vec(),
+            });
+        }
+        let (outer, inner) = (
+            shape::length(&first.shape[..axis]),
+            shape::length(&first.shape[axis..]),
+        );
+        let mut out_shape = first.shape.clone();
+        out_shape.insert(axis, tensors.len());
+        let mut data = Vec::with_capacity(outer * inner * tensors.len());
+        for o in 0..outer {
+            for t in tensors {
+                data.extend_from_slice(&t.data[o * inner..(o + 1) * inner]);
+            }
+        }
+        Ok(Tensor::from_parts(out_shape, data))
+    }
+}
+
+impl<T: Numeric> Tensor<T> {
+    /// The adjoint of [`gather`](Self::gather): a tensor of shape `shape[..axis] ++ [size] ++ shape[axis + k..]`
+    /// (k the rank of `indices`), zero except that each element of this tensor at `[o..., i..., r...]` is added
+    /// to the result at `[o..., indices[i...], r...]`. Repeated indices accumulate. This tensor's dimensions
+    /// `axis..axis + k` must equal the shape of `indices`, `axis` counts within the result's rank, and each index
+    /// must lie in `0..size`.
+    pub fn scatter_add(&self, axis: isize, indices: &IntTensor, size: usize) -> Result<Self> {
+        let k = indices.rank();
+        let incompatible = || TensorError::IncompatibleShapes {
+            left: self.shape.to_vec(),
+            right: indices.shape().to_vec(),
+        };
+        let out_rank = (self.rank() + 1).checked_sub(k).ok_or_else(incompatible)?;
+        let axis = shape::axis(axis, out_rank)?;
+        if self.shape[axis..axis + k] != *indices.shape() {
+            return Err(incompatible());
+        }
+        let index = checked_indices(indices, size)?;
+        let mut out_shape: Shape = self.shape[..axis].iter().copied().collect();
+        out_shape.push(size);
+        out_shape.extend(self.shape[axis + k..].iter().copied());
+        let (outer, _, inner) = axis_lanes(&out_shape, axis);
+        let mut data = vec![T::ZERO; shape::length(&out_shape)];
+        for o in 0..outer {
+            for (j, &i) in index.iter().enumerate() {
+                let from = (o * index.len() + j) * inner;
+                let to = (o * size + i) * inner;
+                for r in 0..inner {
+                    data[to + r] = data[to + r].add(self.data[from + r]);
+                }
+            }
+        }
+        Ok(Tensor::from_parts(out_shape, data))
+    }
+}
+
+/// The number of elements before, along and after an axis.
+fn axis_lanes(shape: &[usize], axis: usize) -> (usize, usize, usize) {
+    (
+        shape::length(&shape[..axis]),
+        shape[axis],
+        shape::length(&shape[axis + 1..]),
+    )
+}
+
+/// The indices as positions, each checked to lie in `0..n`.
+fn checked_indices(indices: &IntTensor, n: usize) -> Result<Vec<usize>> {
+    indices
+        .as_slice()
+        .iter()
+        .map(|&i| {
+            usize::try_from(i).ok().filter(|&i| i < n).ok_or_else(|| {
+                TensorError::InvalidArgument(format!(
+                    "index {i} is out of range for an axis of length {n}"
+                ))
+            })
+        })
+        .collect()
 }
 
 /// One comma separated item of a numpy slice string (see [`Tensor::slice`]).

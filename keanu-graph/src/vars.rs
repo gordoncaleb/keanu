@@ -82,6 +82,18 @@ macro_rules! handle {
             pub fn take(self, index: &[usize]) -> Self {
                 self.same(Op::Take(index.to_vec()))
             }
+            /// The elements selected along `axis` by `indices`, as numpy's `take(x, indices, axis)`: shape
+            /// `shape[..axis] ++ indices.shape ++ shape[axis + 1..]`. `mu.gather(0, group)` is the hierarchical
+            /// `mu[group]`. The indices may be a node whose value changes (e.g. a categorical latent); indices
+            /// outside `0..shape[axis]` fail evaluation. Gradients flow to self, not to the indices.
+            pub fn gather(self, axis: isize, indices: impl IntoIntVar<'b>) -> Self {
+                let indices = indices.into_var(self.builder);
+                Self::new(
+                    self.builder,
+                    self.builder
+                        .add(Op::Gather { axis }, &[self.id, indices.id()], $dtype),
+                )
+            }
             /// A diagonal matrix from each vector in the last dimension.
             pub fn diag(self) -> Self {
                 self.same(Op::Diag)
@@ -222,6 +234,27 @@ macro_rules! numeric_methods {
                 IntVar::new(
                     self.builder,
                     self.unary_node(Op::ArgReduce { kind, axis }, DType::I64),
+                )
+            }
+
+            /// The adjoint of [`gather`](Self::gather): zeros of shape `shape[..axis] ++ [size] ++ shape[axis + k..]`
+            /// (k the rank of `indices`) with each element added at its index along `axis`, so repeated indices
+            /// accumulate (e.g. per-group totals). Self's dimensions `axis..axis + k` must equal the indices'
+            /// shape; indices outside `0..size` fail evaluation.
+            pub fn scatter_add(
+                self,
+                axis: isize,
+                indices: impl IntoIntVar<'b>,
+                size: usize,
+            ) -> Self {
+                let indices = indices.into_var(self.builder);
+                Self::new(
+                    self.builder,
+                    self.builder.add(
+                        Op::ScatterAdd { axis, size },
+                        &[self.id, indices.id()],
+                        Self::DTYPE,
+                    ),
                 )
             }
 

@@ -1966,6 +1966,101 @@ impl<'de> serde::Deserialize<'de> for FillTriangular {
         deserializer.deserialize_struct("keanu.FillTriangular", FIELDS, GeneratedVisitor)
     }
 }
+impl serde::Serialize for Gather {
+    #[allow(deprecated)]
+    fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        use serde::ser::SerializeStruct;
+        let mut len = 0;
+        if self.axis != 0 {
+            len += 1;
+        }
+        let mut struct_ser = serializer.serialize_struct("keanu.Gather", len)?;
+        if self.axis != 0 {
+            #[allow(clippy::needless_borrow)]
+            #[allow(clippy::needless_borrows_for_generic_args)]
+            struct_ser.serialize_field("axis", ToString::to_string(&self.axis).as_str())?;
+        }
+        struct_ser.end()
+    }
+}
+impl<'de> serde::Deserialize<'de> for Gather {
+    #[allow(deprecated)]
+    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        const FIELDS: &[&str] = &[
+            "axis",
+        ];
+
+        #[allow(clippy::enum_variant_names)]
+        enum GeneratedField {
+            Axis,
+        }
+        impl<'de> serde::Deserialize<'de> for GeneratedField {
+            fn deserialize<D>(deserializer: D) -> std::result::Result<GeneratedField, D::Error>
+            where
+                D: serde::Deserializer<'de>,
+            {
+                struct GeneratedVisitor;
+
+                impl serde::de::Visitor<'_> for GeneratedVisitor {
+                    type Value = GeneratedField;
+
+                    fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                        write!(formatter, "expected one of: {:?}", &FIELDS)
+                    }
+
+                    #[allow(unused_variables)]
+                    fn visit_str<E>(self, value: &str) -> std::result::Result<GeneratedField, E>
+                    where
+                        E: serde::de::Error,
+                    {
+                        match value {
+                            "axis" => Ok(GeneratedField::Axis),
+                            _ => Err(serde::de::Error::unknown_field(value, FIELDS)),
+                        }
+                    }
+                }
+                deserializer.deserialize_identifier(GeneratedVisitor)
+            }
+        }
+        struct GeneratedVisitor;
+        impl<'de> serde::de::Visitor<'de> for GeneratedVisitor {
+            type Value = Gather;
+
+            fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                formatter.write_str("struct keanu.Gather")
+            }
+
+            fn visit_map<V>(self, mut map_: V) -> std::result::Result<Gather, V::Error>
+                where
+                    V: serde::de::MapAccess<'de>,
+            {
+                let mut axis__ = None;
+                while let Some(k) = map_.next_key()? {
+                    match k {
+                        GeneratedField::Axis => {
+                            if axis__.is_some() {
+                                return Err(serde::de::Error::duplicate_field("axis"));
+                            }
+                            axis__ = 
+                                Some(map_.next_value::<::pbjson::private::NumberDeserialize<_>>()?.0)
+                            ;
+                        }
+                    }
+                }
+                Ok(Gather {
+                    axis: axis__.unwrap_or_default(),
+                })
+            }
+        }
+        deserializer.deserialize_struct("keanu.Gather", FIELDS, GeneratedVisitor)
+    }
+}
 impl serde::Serialize for Graph {
     #[allow(deprecated)]
     fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
@@ -2767,6 +2862,15 @@ impl serde::Serialize for Node {
                 node::Op::Distribution(v) => {
                     struct_ser.serialize_field("distribution", v)?;
                 }
+                node::Op::Gather(v) => {
+                    struct_ser.serialize_field("gather", v)?;
+                }
+                node::Op::ScatterAdd(v) => {
+                    struct_ser.serialize_field("scatterAdd", v)?;
+                }
+                node::Op::Stack(v) => {
+                    struct_ser.serialize_field("stack", v)?;
+                }
             }
         }
         struct_ser.end()
@@ -2833,6 +2937,10 @@ impl<'de> serde::Deserialize<'de> for Node {
             "proxy",
             "assert",
             "distribution",
+            "gather",
+            "scatter_add",
+            "scatterAdd",
+            "stack",
         ];
 
         #[allow(clippy::enum_variant_names)]
@@ -2882,6 +2990,9 @@ impl<'de> serde::Deserialize<'de> for Node {
             Proxy,
             Assert,
             Distribution,
+            Gather,
+            ScatterAdd,
+            Stack,
         }
         impl<'de> serde::Deserialize<'de> for GeneratedField {
             fn deserialize<D>(deserializer: D) -> std::result::Result<GeneratedField, D::Error>
@@ -2948,6 +3059,9 @@ impl<'de> serde::Deserialize<'de> for Node {
                             "proxy" => Ok(GeneratedField::Proxy),
                             "assert" => Ok(GeneratedField::Assert),
                             "distribution" => Ok(GeneratedField::Distribution),
+                            "gather" => Ok(GeneratedField::Gather),
+                            "scatterAdd" | "scatter_add" => Ok(GeneratedField::ScatterAdd),
+                            "stack" => Ok(GeneratedField::Stack),
                             _ => Err(serde::de::Error::unknown_field(value, FIELDS)),
                         }
                     }
@@ -3279,6 +3393,27 @@ impl<'de> serde::Deserialize<'de> for Node {
                                 return Err(serde::de::Error::duplicate_field("distribution"));
                             }
                             op__ = map_.next_value::<::std::option::Option<_>>()?.map(node::Op::Distribution)
+;
+                        }
+                        GeneratedField::Gather => {
+                            if op__.is_some() {
+                                return Err(serde::de::Error::duplicate_field("gather"));
+                            }
+                            op__ = map_.next_value::<::std::option::Option<_>>()?.map(node::Op::Gather)
+;
+                        }
+                        GeneratedField::ScatterAdd => {
+                            if op__.is_some() {
+                                return Err(serde::de::Error::duplicate_field("scatterAdd"));
+                            }
+                            op__ = map_.next_value::<::std::option::Option<_>>()?.map(node::Op::ScatterAdd)
+;
+                        }
+                        GeneratedField::Stack => {
+                            if op__.is_some() {
+                                return Err(serde::de::Error::duplicate_field("stack"));
+                            }
+                            op__ = map_.next_value::<::std::option::Option<_>>()?.map(node::Op::Stack)
 ;
                         }
                     }
@@ -3969,6 +4104,122 @@ impl<'de> serde::Deserialize<'de> for Reshape {
         deserializer.deserialize_struct("keanu.Reshape", FIELDS, GeneratedVisitor)
     }
 }
+impl serde::Serialize for ScatterAdd {
+    #[allow(deprecated)]
+    fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        use serde::ser::SerializeStruct;
+        let mut len = 0;
+        if self.axis != 0 {
+            len += 1;
+        }
+        if self.size != 0 {
+            len += 1;
+        }
+        let mut struct_ser = serializer.serialize_struct("keanu.ScatterAdd", len)?;
+        if self.axis != 0 {
+            #[allow(clippy::needless_borrow)]
+            #[allow(clippy::needless_borrows_for_generic_args)]
+            struct_ser.serialize_field("axis", ToString::to_string(&self.axis).as_str())?;
+        }
+        if self.size != 0 {
+            #[allow(clippy::needless_borrow)]
+            #[allow(clippy::needless_borrows_for_generic_args)]
+            struct_ser.serialize_field("size", ToString::to_string(&self.size).as_str())?;
+        }
+        struct_ser.end()
+    }
+}
+impl<'de> serde::Deserialize<'de> for ScatterAdd {
+    #[allow(deprecated)]
+    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        const FIELDS: &[&str] = &[
+            "axis",
+            "size",
+        ];
+
+        #[allow(clippy::enum_variant_names)]
+        enum GeneratedField {
+            Axis,
+            Size,
+        }
+        impl<'de> serde::Deserialize<'de> for GeneratedField {
+            fn deserialize<D>(deserializer: D) -> std::result::Result<GeneratedField, D::Error>
+            where
+                D: serde::Deserializer<'de>,
+            {
+                struct GeneratedVisitor;
+
+                impl serde::de::Visitor<'_> for GeneratedVisitor {
+                    type Value = GeneratedField;
+
+                    fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                        write!(formatter, "expected one of: {:?}", &FIELDS)
+                    }
+
+                    #[allow(unused_variables)]
+                    fn visit_str<E>(self, value: &str) -> std::result::Result<GeneratedField, E>
+                    where
+                        E: serde::de::Error,
+                    {
+                        match value {
+                            "axis" => Ok(GeneratedField::Axis),
+                            "size" => Ok(GeneratedField::Size),
+                            _ => Err(serde::de::Error::unknown_field(value, FIELDS)),
+                        }
+                    }
+                }
+                deserializer.deserialize_identifier(GeneratedVisitor)
+            }
+        }
+        struct GeneratedVisitor;
+        impl<'de> serde::de::Visitor<'de> for GeneratedVisitor {
+            type Value = ScatterAdd;
+
+            fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                formatter.write_str("struct keanu.ScatterAdd")
+            }
+
+            fn visit_map<V>(self, mut map_: V) -> std::result::Result<ScatterAdd, V::Error>
+                where
+                    V: serde::de::MapAccess<'de>,
+            {
+                let mut axis__ = None;
+                let mut size__ = None;
+                while let Some(k) = map_.next_key()? {
+                    match k {
+                        GeneratedField::Axis => {
+                            if axis__.is_some() {
+                                return Err(serde::de::Error::duplicate_field("axis"));
+                            }
+                            axis__ = 
+                                Some(map_.next_value::<::pbjson::private::NumberDeserialize<_>>()?.0)
+                            ;
+                        }
+                        GeneratedField::Size => {
+                            if size__.is_some() {
+                                return Err(serde::de::Error::duplicate_field("size"));
+                            }
+                            size__ = 
+                                Some(map_.next_value::<::pbjson::private::NumberDeserialize<_>>()?.0)
+                            ;
+                        }
+                    }
+                }
+                Ok(ScatterAdd {
+                    axis: axis__.unwrap_or_default(),
+                    size: size__.unwrap_or_default(),
+                })
+            }
+        }
+        deserializer.deserialize_struct("keanu.ScatterAdd", FIELDS, GeneratedVisitor)
+    }
+}
 impl serde::Serialize for Slice {
     #[allow(deprecated)]
     fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
@@ -4058,6 +4309,101 @@ impl<'de> serde::Deserialize<'de> for Slice {
             }
         }
         deserializer.deserialize_struct("keanu.Slice", FIELDS, GeneratedVisitor)
+    }
+}
+impl serde::Serialize for Stack {
+    #[allow(deprecated)]
+    fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        use serde::ser::SerializeStruct;
+        let mut len = 0;
+        if self.axis != 0 {
+            len += 1;
+        }
+        let mut struct_ser = serializer.serialize_struct("keanu.Stack", len)?;
+        if self.axis != 0 {
+            #[allow(clippy::needless_borrow)]
+            #[allow(clippy::needless_borrows_for_generic_args)]
+            struct_ser.serialize_field("axis", ToString::to_string(&self.axis).as_str())?;
+        }
+        struct_ser.end()
+    }
+}
+impl<'de> serde::Deserialize<'de> for Stack {
+    #[allow(deprecated)]
+    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        const FIELDS: &[&str] = &[
+            "axis",
+        ];
+
+        #[allow(clippy::enum_variant_names)]
+        enum GeneratedField {
+            Axis,
+        }
+        impl<'de> serde::Deserialize<'de> for GeneratedField {
+            fn deserialize<D>(deserializer: D) -> std::result::Result<GeneratedField, D::Error>
+            where
+                D: serde::Deserializer<'de>,
+            {
+                struct GeneratedVisitor;
+
+                impl serde::de::Visitor<'_> for GeneratedVisitor {
+                    type Value = GeneratedField;
+
+                    fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                        write!(formatter, "expected one of: {:?}", &FIELDS)
+                    }
+
+                    #[allow(unused_variables)]
+                    fn visit_str<E>(self, value: &str) -> std::result::Result<GeneratedField, E>
+                    where
+                        E: serde::de::Error,
+                    {
+                        match value {
+                            "axis" => Ok(GeneratedField::Axis),
+                            _ => Err(serde::de::Error::unknown_field(value, FIELDS)),
+                        }
+                    }
+                }
+                deserializer.deserialize_identifier(GeneratedVisitor)
+            }
+        }
+        struct GeneratedVisitor;
+        impl<'de> serde::de::Visitor<'de> for GeneratedVisitor {
+            type Value = Stack;
+
+            fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                formatter.write_str("struct keanu.Stack")
+            }
+
+            fn visit_map<V>(self, mut map_: V) -> std::result::Result<Stack, V::Error>
+                where
+                    V: serde::de::MapAccess<'de>,
+            {
+                let mut axis__ = None;
+                while let Some(k) = map_.next_key()? {
+                    match k {
+                        GeneratedField::Axis => {
+                            if axis__.is_some() {
+                                return Err(serde::de::Error::duplicate_field("axis"));
+                            }
+                            axis__ = 
+                                Some(map_.next_value::<::pbjson::private::NumberDeserialize<_>>()?.0)
+                            ;
+                        }
+                    }
+                }
+                Ok(Stack {
+                    axis: axis__.unwrap_or_default(),
+                })
+            }
+        }
+        deserializer.deserialize_struct("keanu.Stack", FIELDS, GeneratedVisitor)
     }
 }
 impl serde::Serialize for StoredValue {

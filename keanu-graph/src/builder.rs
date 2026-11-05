@@ -594,6 +594,12 @@ impl GraphBuilder {
         V::wrap(self, self.add(Op::Concat(axis), &parents, V::DTYPE))
     }
 
+    /// Joins nodes of the same shape along a new axis (`0..=rank`; -1 appends a last axis).
+    pub fn stack<'builder, V: Var<'builder>>(&'builder self, axis: isize, parts: &[V]) -> V {
+        let parents: Vec<NodeId> = parts.iter().map(|&p| self.own(p).id()).collect();
+        V::wrap(self, self.add(Op::Stack(axis), &parents, V::DTYPE))
+    }
+
     // ----- distributions -----
 
     /// Adds a probabilistic node. On error nothing is added.

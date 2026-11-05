@@ -87,7 +87,10 @@ pub fn is_differentiable(graph: &Graph, id: NodeId) -> bool {
             | Op::Broadcast(_)
             | Op::Slice(_)
             | Op::Concat(_)
-            | Op::Take(_) => true,
+            | Op::Stack(_)
+            | Op::Take(_)
+            | Op::Gather { .. }
+            | Op::ScatterAdd { .. } => true,
             Op::Diag
             | Op::DiagPart
             | Op::Tril(_)
@@ -685,6 +688,34 @@ pub(crate) fn index_map(op: &Op, parents: &[&Value]) -> Result<Vec<Option<(usize
         .collect())
 }
 
+/// The index map of selecting along `axis` of a tensor of shape `shape` by `indices` (a gather from that tensor,
+/// or the target of each element of a scatter-add into it): in the order of the selection's elements
+/// `[o..., i..., r...]`, the flat position `[o..., indices[i...], r...]` in parent 0. Built from the current index
+/// values on every call; an out of range index is an error.
+fn axis_index_map(
+    shape: &[usize],
+    axis: isize,
+    indices: &Value,
+) -> Result<Vec<Option<(usize, usize)>>> {
+    let indices = indices.as_i64().ok_or_else(|| {
+        GraphError::InvalidValue(format!("expected i64 indices, got {:?}", indices.dtype()))
+    })?;
+    let axis = resolve_axis(axis, shape.len())?;
+    let (outer, n, inner) = lanes(shape, axis);
+    let mut map = Vec::with_capacity(outer * indices.len() * inner);
+    for o in 0..outer {
+        for &i in indices.as_slice() {
+            let i = usize::try_from(i).ok().filter(|&i| i < n).ok_or_else(|| {
+                GraphError::InvalidValue(format!(
+                    "index {i} is out of range for an axis of length {n}"
+                ))
+            })?;
+            map.extend((0..inner).map(|r| Some((0, (o * n + i) * inner + r))));
+        }
+    }
+    Ok(map)
+}
+
 fn gather_forward(
     map: &[Option<(usize, usize)>],
     tangents: &[Option<&DoubleTensor>],
@@ -1188,6 +1219,7 @@ fn jvp(
         | Op::Broadcast(_)
         | Op::Slice(_)
         | Op::Concat(_)
+        | Op::Stack(_)
         | Op::Take(_)
         | Op::Diag
         | Op::DiagPart
@@ -1196,6 +1228,17 @@ fn jvp(
         | Op::FillTriangular { .. }
         | Op::TrianglePart { .. } => {
             gather_forward(graph.index_map(id, parents)?, t, b, &out_shape)?
+        }
+        // the maps depend on the index values, so they are built afresh rather than cached by shape
+        Op::Gather { axis } => {
+            let map = axis_index_map(f64v(parents[0])?.shape(), *axis, parents[1])?;
+            gather_forward(&map, &t[..1], b, &out_shape)?
+        }
+        Op::ScatterAdd { axis, .. } => {
+            // each input element is added to one output element: the transpose of a gather
+            let Some(t0) = t[0] else { return Ok(None) };
+            let map = axis_index_map(&out_shape, *axis, parents[1])?;
+            gather_reverse(&map, t0, &[out], b)?.pop().flatten()
         }
         Op::TensorMultiply {
             left_axes,
@@ -1442,6 +1485,7 @@ fn vjp(
         | Op::Broadcast(_)
         | Op::Slice(_)
         | Op::Concat(_)
+        | Op::Stack(_)
         | Op::Take(_)
         | Op::Diag
         | Op::DiagPart
@@ -1449,6 +1493,17 @@ fn vjp(
         | Op::Triu(_)
         | Op::FillTriangular { .. }
         | Op::TrianglePart { .. } => gather_reverse(graph.index_map(id, parents)?, g, parents, b)?,
+        Op::Gather { axis } => {
+            let map = axis_index_map(f64v(parents[0])?.shape(), *axis, parents[1])?;
+            let mut grads = gather_reverse(&map, g, &parents[..1], b)?;
+            grads.push(None);
+            grads
+        }
+        Op::ScatterAdd { axis, .. } => {
+            let map = axis_index_map(&out_shape, *axis, parents[1])?;
+            let input_shape = f64v(parents[0])?.shape().to_vec();
+            vec![gather_forward(&map, &[Some(g)], b, &input_shape)?, None]
+        }
         Op::TensorMultiply {
             left_axes,
             right_axes,
