@@ -23,6 +23,8 @@ mod coal_mining_disasters;
 mod custom_distribution;
 #[path = "../examples/eight_schools.rs"]
 mod eight_schools;
+#[path = "../examples/gaussian_mixture.rs"]
+mod gaussian_mixture;
 #[path = "../examples/radon.rs"]
 mod radon;
 #[path = "../examples/text_messaging.rs"]
@@ -254,5 +256,46 @@ fn radon_varying_intercepts_converge_to_the_reference_posterior() {
     }
     for (j, &expected) in RADON_COUNTY_MEANS.iter().enumerate() {
         check(r.a, &[j], expected, &format!("county {j} intercept"));
+    }
+}
+
+#[test]
+fn gaussian_mixture_recovers_the_components() {
+    use keanu::algorithms::diagnostics::RHAT_THRESHOLD;
+    let observations = gaussian_mixture::data(300, 7);
+    let fit = gaussian_mixture::run(&observations, 4, 1000, 11).unwrap();
+    let chains = &fit.chains;
+    for c in 0..2 {
+        // each true parameter within four posterior standard deviations (plus the Monte Carlo error) of its
+        // posterior mean; the data are one draw, so the posterior is centred near, not on, the truth
+        for (node, truth, what) in [
+            (fit.means, gaussian_mixture::TRUE_MEANS[c], "mean"),
+            (fit.sigmas, gaussian_mixture::TRUE_SIGMA, "sigma"),
+            (fit.weights, gaussian_mixture::TRUE_WEIGHTS[c], "weight"),
+        ] {
+            let stats = chains.summarize(node, &[c]).unwrap();
+            let within = 4.0 * stats.sd + 4.0 * stats.mcse_mean;
+            assert_close(stats.mean, truth, within, &format!("component {c} {what}"));
+            assert!(
+                stats.r_hat < RHAT_THRESHOLD,
+                "component {c} {what}: R-hat {}",
+                stats.r_hat
+            );
+            assert!(
+                stats.ess_bulk > 400.0,
+                "component {c} {what}: bulk ESS {}",
+                stats.ess_bulk
+            );
+        }
+    }
+    // the ordering holds in every draw, so the chains never swap labels
+    for chain in chains.chains() {
+        let means = chain.f64(fit.means).unwrap();
+        assert!(
+            means
+                .as_slice()
+                .iter()
+                .all(|m| m.as_slice()[0] < m.as_slice()[1])
+        );
     }
 }

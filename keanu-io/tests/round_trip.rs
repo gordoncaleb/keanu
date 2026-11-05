@@ -411,6 +411,21 @@ fn distribution_parameters(kind: &DistributionKind) -> Vec<Value> {
         Multinomial => vec![int(5), f64s(&[3], &[0.2, 0.3, 0.5])],
         Categorical => vec![scalar(0.2), scalar(0.3), scalar(0.5)],
         Kde(_) => vec![],
+        // each component parameter with a component axis of length 2, then the weights
+        Mixture(component) => {
+            let mut parameters: Vec<Value> = distribution_parameters(component)
+                .into_iter()
+                .map(|p| match p {
+                    Value::F64(t) if t.rank() == 0 => {
+                        let v = t.as_slice()[0];
+                        f64s(&[2], &[v, v + 0.25])
+                    }
+                    other => other,
+                })
+                .collect();
+            parameters.push(f64s(&[2], &[0.3, 0.7]));
+            parameters
+        }
         kind => kind
             .parameter_names()
             .unwrap()
@@ -423,6 +438,9 @@ fn distribution_parameters(kind: &DistributionKind) -> Vec<Value> {
                 "x_max" => scalar(2.0),
                 "c" => scalar(1.0),
                 "p" | "prob_true" => scalar(0.4),
+                "cutpoints" => f64s(&[2], &[-0.5, 0.5]),
+                "lower" => scalar(-1.0),
+                "upper" => scalar(2.0),
                 _ => scalar(0.5),
             })
             .collect(),
@@ -457,6 +475,14 @@ const DISTRIBUTIONS: &[&str] = &[
     "Poisson",
     "UniformInt",
     "LkjCholesky",
+    "Weibull",
+    "VonMises",
+    "NegativeBinomial",
+    "OrderedLogistic",
+    "Truncated(Gaussian)",
+    "Censored(Poisson)",
+    "Mixture(Gaussian)",
+    "Mixture(Truncated(Gaussian))",
 ];
 
 fn distribution_kinds() -> Vec<DistributionKind> {
@@ -491,6 +517,14 @@ fn distribution_kinds() -> Vec<DistributionKind> {
         Poisson,
         UniformInt,
         LkjCholesky,
+        Weibull,
+        VonMises,
+        NegativeBinomial,
+        OrderedLogistic,
+        Truncated(Arc::new(Gaussian)),
+        Censored(Arc::new(Poisson)),
+        Mixture(Arc::new(Gaussian)),
+        Mixture(Arc::new(Truncated(Arc::new(Gaussian)))),
     ]
 }
 
@@ -500,7 +534,11 @@ fn distribution_cases() -> Vec<(String, Graph, State)> {
     distribution_kinds()
         .into_iter()
         .map(|kind| {
-            let name = format!("{kind:?}").split('(').next().unwrap().to_owned();
+            // a KDE by its name alone (its debug form lists its samples)
+            let name = match kind {
+                DistributionKind::Kde(_) => "Kde".to_owned(),
+                _ => format!("{kind:?}"),
+            };
             let b = GraphBuilder::new();
             let parents: Vec<NodeId> = distribution_parameters(&kind)
                 .into_iter()
@@ -1026,6 +1064,35 @@ fn dot_export_describes_nodes_edges_and_metadata() {
         with_values.contains("2[label=\"0.5 (mu)\"]"),
         "{with_values}"
     );
+}
+
+#[cfg(feature = "dot")]
+#[test]
+fn dot_edges_of_nested_distributions_name_every_parameter() {
+    let b = GraphBuilder::new();
+    let (mu, sigma, lower, upper) = (b.scalar(0.0), b.scalar(1.0), b.scalar(-1.0), b.scalar(1.0));
+    let ids = [mu.id(), sigma.id(), lower.id(), upper.id()];
+    let truncated = DistributionKind::Truncated(Arc::new(DistributionKind::Gaussian));
+    let weights = b.constant(DoubleTensor::vector(vec![0.4, 0.6]));
+    let mut parents = ids.to_vec();
+    parents.push(weights.id());
+    let node = b
+        .add_distribution(
+            DistributionKind::Mixture(Arc::new(truncated)),
+            None,
+            &parents,
+        )
+        .unwrap();
+    let (graph, _) = b.build().unwrap();
+    let dot = keanu_io::to_dot(&graph, None, &Metadata::new());
+    for (parent, name) in parents
+        .iter()
+        .zip(["mu", "sigma", "lower", "upper", "weights"])
+    {
+        let edge = format!("<{}> -> <{}> [label={name}]", parent.index(), node.index());
+        assert!(dot.contains(&edge), "{edge} in {dot}");
+    }
+    assert!(dot.contains("[label=\"Mixture\"]"), "{dot}");
 }
 
 #[cfg(feature = "dot")]

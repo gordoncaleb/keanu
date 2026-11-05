@@ -1,5 +1,6 @@
 //! Probabilistic nodes: a distribution whose parameters are the node's parents.
 
+use super::mixture;
 use super::wrappers::{self, Wrapper};
 use crate::error::{GraphError, Result};
 use crate::value::{DType, Value};
@@ -143,6 +144,13 @@ pub enum DistributionKind {
     /// the base's parameters, then `lower`, `upper` (f64, either may be infinite). Support: as for
     /// [`Truncated`](Self::Truncated). See [`GraphBuilder::censored`](crate::GraphBuilder::censored).
     Censored(Arc<DistributionKind>),
+    /// A mixture of C distributions of the component kind: density Σ_c w_c p_c(x). Parameters: the component's
+    /// parameters, each with a trailing component axis of length C (or 1, or no axes at all, to share the value
+    /// between components), then `weights` (non-negative and summing to 1 along their last axis, of length C).
+    /// The component is an element-wise univariate kind (a distribution of one value per element, or a truncated
+    /// or censored one); the value type is the component's. Support: the component's support widened to hold
+    /// every component's. See [`GraphBuilder::mixture`](crate::GraphBuilder::mixture).
+    Mixture(Arc<DistributionKind>),
 }
 
 /// A user-defined distribution for a probabilistic node, the equivalent of implementing a custom probabilistic
@@ -255,7 +263,9 @@ macro_rules! gradient {
 ///
 /// A univariate distribution with `log_cdf`, `log_ccdf`, `d_log_cdf` and `d_log_ccdf` methods (which can then be
 /// truncated or censored) says so with `cdf = inverse` if it also has `inverse_cdf` and `inverse_ccdf` (so a
-/// truncation is sampled by inverting the CDF), or `cdf = rejection` if not (so it is sampled by rejection).
+/// truncation is sampled by inverting the CDF), or `cdf = rejection` if not (so it is sampled by rejection). A
+/// distribution of one value per element whose log density and gradient are element-wise but which has no CDF says
+/// `cdf = none`: it can't be truncated or censored, but it can be a mixture component.
 macro_rules! distributions {
     ($(
         $kind:ident $name:literal ($($param:ident: $ptype:ident),+) -> $vtype:ident => $build:expr,
@@ -275,19 +285,32 @@ macro_rules! distributions {
                         types.extend([DType::F64; wrappers::OWN_PARAMETERS]);
                         Some(Cow::Owned(types))
                     }
+                    DistributionKind::Mixture(component) => {
+                        let mut types = component.parameter_types()?.into_owned();
+                        types.extend([DType::F64; mixture::OWN_PARAMETERS]);
+                        Some(Cow::Owned(types))
+                    }
                 }
             }
 
             /// The parameter names, in parent order (e.g. `["mu", "sigma"]` for a Gaussian), or None for a variable
-            /// number of parameters (Categorical, Custom).
-            pub fn parameter_names(&self) -> Option<&'static [&'static str]> {
+            /// number of parameters (Categorical, Custom). A kind built around another one has its base's names
+            /// followed by its own (`lower` and `upper` for a truncated or censored kind, `weights` for a mixture).
+            pub fn parameter_names(&self) -> Option<Cow<'static, [&'static str]>> {
                 match self {
-                    $(DistributionKind::$kind => Some(&[$(stringify!($param)),+]),)+
-                    DistributionKind::Kde(_) => Some(&[]),
-                    DistributionKind::Categorical
-                    | DistributionKind::Custom(_)
-                    | DistributionKind::Truncated(_)
-                    | DistributionKind::Censored(_) => None,
+                    $(DistributionKind::$kind => Some(Cow::Borrowed(&[$(stringify!($param)),+])),)+
+                    DistributionKind::Kde(_) => Some(Cow::Borrowed(&[])),
+                    DistributionKind::Categorical | DistributionKind::Custom(_) => None,
+                    DistributionKind::Truncated(base) | DistributionKind::Censored(base) => {
+                        let mut names = base.parameter_names()?.into_owned();
+                        names.extend(["lower", "upper"]);
+                        Some(Cow::Owned(names))
+                    }
+                    DistributionKind::Mixture(component) => {
+                        let mut names = component.parameter_names()?.into_owned();
+                        names.push("weights");
+                        Some(Cow::Owned(names))
+                    }
                 }
             }
 
@@ -299,9 +322,20 @@ macro_rules! distributions {
                 }
             }
 
-            /// `function` of a univariate distribution (one with a CDF) at `x`, a value of the distribution's type,
-            /// element-wise and broadcast with the parameters; with `gradient`, also its derivatives with respect
-            /// to x and each parameter, element-wise.
+            /// Whether the distribution has one value per element and an element-wise log density and gradient
+            /// (see [`Self::univariate`]), so that it can be a mixture component.
+            pub(crate) fn is_elementwise(&self) -> bool {
+                match self {
+                    $(DistributionKind::$kind => is_elementwise!([$($cdf)?]),)+
+                    DistributionKind::Truncated(_) | DistributionKind::Censored(_) => true,
+                    _ => false,
+                }
+            }
+
+            /// `function` of an element-wise distribution at `x`, a value of the distribution's type, element-wise
+            /// and broadcast with the parameters; with `gradient`, also its derivatives with respect to x and each
+            /// parameter, element-wise. The log density works for every [element-wise](Self::is_elementwise) kind,
+            /// the CDF and survival function only for those [with a CDF](Self::has_cdf).
             pub(crate) fn univariate(
                 &self,
                 function: Univariate,
@@ -314,6 +348,12 @@ macro_rules! distributions {
                         [$($cdf)?], self, function, x, parameters, gradient, $vtype,
                         [$($param: $ptype),+], [$($gradient)?], $build
                     ),)+
+                    DistributionKind::Truncated(base) if function == Univariate::Density => {
+                        wrappers::elementwise(Wrapper::Truncated, base, x, parameters, gradient)?
+                    }
+                    DistributionKind::Censored(base) if function == Univariate::Density => {
+                        wrappers::elementwise(Wrapper::Censored, base, x, parameters, gradient)?
+                    }
                     _ => return Err(self.no_cdf()),
                 })
             }
@@ -341,7 +381,9 @@ macro_rules! distributions {
                     DistributionKind::Kde(_) => DType::F64,
                     DistributionKind::Categorical => DType::I64,
                     DistributionKind::Custom(c) => c.value_type(),
-                    DistributionKind::Truncated(base) | DistributionKind::Censored(base) => base.value_type(),
+                    DistributionKind::Truncated(base)
+                    | DistributionKind::Censored(base)
+                    | DistributionKind::Mixture(base) => base.value_type(),
                 }
             }
 
@@ -353,6 +395,7 @@ macro_rules! distributions {
                     DistributionKind::Custom(_) => "custom",
                     DistributionKind::Truncated(_) => "truncated",
                     DistributionKind::Censored(_) => "censored",
+                    DistributionKind::Mixture(_) => "mixture",
                 }
             }
 
@@ -372,6 +415,7 @@ macro_rules! distributions {
                     DistributionKind::Truncated(base) | DistributionKind::Censored(base) => {
                         wrappers::support(base, parameters)?
                     }
+                    DistributionKind::Mixture(component) => mixture::support(component, parameters)?,
                 })
             }
 
@@ -414,6 +458,7 @@ macro_rules! distributions {
                     }
                     DistributionKind::Truncated(base) => wrappers::sample_truncated(base, shape, parameters, rng)?,
                     DistributionKind::Censored(base) => wrappers::sample_censored(base, shape, parameters, rng)?,
+                    DistributionKind::Mixture(component) => mixture::sample(component, shape, parameters, rng)?,
                 })
             }
 
@@ -435,6 +480,9 @@ macro_rules! distributions {
                     }
                     DistributionKind::Censored(base) => {
                         wrappers::log_prob(Wrapper::Censored, base, value, parameters, false)?.0
+                    }
+                    DistributionKind::Mixture(component) => {
+                        mixture::log_prob(component, value, parameters, false)?.0
                     }
                 })
             }
@@ -471,6 +519,10 @@ macro_rules! distributions {
                     }
                     DistributionKind::Censored(base) => {
                         wrapper_gradient(Wrapper::Censored, base, value, parameters)?
+                    }
+                    DistributionKind::Mixture(component) => {
+                        let (_, gradient) = mixture::log_prob(component, value, parameters, true)?;
+                        gradient.unwrap_or_else(|| no_gradient(parameters.len()))
                     }
                 })
             }
@@ -526,6 +578,10 @@ macro_rules! distributions {
                             wrappers::log_prob(Wrapper::Censored, base, value, parameters, true)?;
                         (log_prob, gradient.filter(|_| !is_impossible(log_prob)))
                     }
+                    DistributionKind::Mixture(component) => {
+                        let (log_prob, gradient) = mixture::log_prob(component, value, parameters, true)?;
+                        (log_prob, gradient.filter(|_| !is_impossible(log_prob)))
+                    }
                 })
             }
         }
@@ -554,6 +610,19 @@ macro_rules! has_cdf {
     ([]) => {
         false
     };
+    ([none]) => {
+        false
+    };
+    ([$cdf:ident]) => {
+        true
+    };
+}
+
+/// `true` for an element-wise row: one with a `cdf` entry, even `none`.
+macro_rules! is_elementwise {
+    ([]) => {
+        false
+    };
     ([$cdf:ident]) => {
         true
     };
@@ -566,6 +635,24 @@ macro_rules! univariate {
     ([], $kind:ident, $($rest:tt)*) => {
         return Err($kind.no_cdf())
     };
+    ([none], $kind:ident, $function:ident, $x:ident, $parameters:ident, $want:ident, $vtype:ident,
+     [$($param:ident: $ptype:ident),+], [$($gradient:expr)?], $build:expr) => {{
+        if $function != Univariate::Density {
+            return Err($kind.no_cdf());
+        }
+        let &[$($param),+] = $parameters else { return Err($kind.wrong_parameters()) };
+        $(let $param = tensor!($ptype, $param);)+
+        let dist = $build;
+        let x = tensor!($vtype, $x);
+        (
+            dist.log_prob(x)?,
+            if $want {
+                Some(distribution_gradient!(dist, x, $vtype, [$($param: $ptype),+], [$($gradient)?]))
+            } else {
+                None
+            },
+        )
+    }};
     ([$cdf:ident], $kind:ident, $function:ident, $x:ident, $parameters:ident, $want:ident, $vtype:ident,
      [$($param:ident: $ptype:ident),+], [$($gradient:expr)?], $build:expr) => {{
         let &[$($param),+] = $parameters else { return Err($kind.wrong_parameters()) };
@@ -651,17 +738,20 @@ distributions! {
         cdf = inverse,
         fused = gaussian_log_prob_and_gradient;
     HalfGaussian "half_gaussian" (sigma: F64) -> F64 => d::HalfGaussian::new(sigma),
-        support = Support::greater_than(0.0);
+        support = Support::greater_than(0.0),
+        cdf = none;
     Cauchy "cauchy" (location: F64, scale: F64) -> F64 => d::Cauchy::new(location, scale),
         support = Support::Real,
         cdf = inverse;
     HalfCauchy "half_cauchy" (scale: F64) -> F64 => d::HalfCauchy::new(scale),
-        support = Support::greater_than(0.0);
+        support = Support::greater_than(0.0),
+        cdf = none;
     Beta "beta" (alpha: F64, beta: F64) -> F64 => d::Beta::standard(alpha, beta),
         support = Support::interval(0.0, 1.0),
         cdf = rejection;
     ChiSquared "chi_squared" (k: I64) -> F64 => d::ChiSquared::new(k),
-        support = Support::greater_than(0.0);
+        support = Support::greater_than(0.0),
+        cdf = none;
     Dirichlet "dirichlet" (concentration: F64) -> F64 => d::Dirichlet::new(concentration),
         support = Support::Simplex,
         sample = |dist: &d::Dirichlet<'_>, _, rng| dist.sample(rng);
@@ -672,7 +762,8 @@ distributions! {
         support = Support::greater_than(0.0),
         cdf = rejection;
     InverseGamma "inverse_gamma" (alpha: F64, beta: F64) -> F64 => d::InverseGamma::new(alpha, beta),
-        support = Support::greater_than(0.0);
+        support = Support::greater_than(0.0),
+        cdf = none;
     Laplace "laplace" (mu: F64, beta: F64) -> F64 => d::Laplace::new(mu, beta),
         support = Support::Real,
         cdf = inverse;
@@ -688,12 +779,14 @@ distributions! {
         d::MultivariateGaussian::new(mu, covariance),
         support = Support::Real;
     Pareto "pareto" (location: F64, scale: F64) -> F64 => d::Pareto::new(location, scale),
-        support = Support::GreaterThan(location.clone());
+        support = Support::GreaterThan(location.clone()),
+        cdf = none;
     StudentT "student_t" (v: I64) -> F64 => d::StudentT::new(v),
         support = Support::Real,
         cdf = rejection;
     Triangular "triangular" (x_min: F64, x_max: F64, c: F64) -> F64 => d::Triangular::new(x_min, x_max, c),
-        support = Support::Interval(x_min.clone(), x_max.clone());
+        support = Support::Interval(x_min.clone(), x_max.clone()),
+        cdf = none;
     Uniform "uniform" (x_min: F64, x_max: F64) -> F64 => d::Uniform::new(x_min, x_max),
         support = Support::Interval(x_min.clone(), x_max.clone()),
         cdf = inverse,
@@ -702,14 +795,16 @@ distributions! {
         support = Support::greater_than(0.0),
         cdf = inverse;
     VonMises "von_mises" (mu: F64, kappa: F64) -> F64 => d::VonMises::new(mu, kappa),
-        support = Support::Circular;
+        support = Support::Circular,
+        cdf = none;
     Bernoulli "bernoulli" (prob_true: F64) -> Bool => d::Bernoulli::new(prob_true),
         support = Support::Discrete;
     Binomial "binomial" (p: F64, n: I64) -> I64 => d::Binomial::new(p, n),
         support = Support::Discrete,
         cdf = rejection;
     Geometric "geometric" (p: F64) -> I64 => d::Geometric::new(p),
-        support = Support::Discrete;
+        support = Support::Discrete,
+        cdf = none;
     Multinomial "multinomial" (n: I64, p: F64) -> I64 => d::Multinomial::new(n, p)?,
         support = Support::Discrete;
     Poisson "poisson" (mu: F64) -> I64 => d::Poisson::new(mu),
@@ -723,6 +818,7 @@ distributions! {
         support = Support::Discrete;
     UniformInt "uniform_int" (x_min: I64, x_max: I64) -> I64 => d::UniformInt::new(x_min, x_max),
         support = Support::Discrete,
+        cdf = none,
         gradient = |_, _| Ok(no_gradient(2));
 }
 
@@ -830,6 +926,15 @@ impl DistributionOp {
                 )));
             }
         }
+        if let DistributionKind::Mixture(component) = kind {
+            if !component.is_elementwise() {
+                return Err(invalid(format!(
+                    "the component distribution ({}) does not have one value per element with an element-wise \
+                     density, so it cannot be mixed",
+                    component.name()
+                )));
+            }
+        }
         match kind.parameter_types() {
             Some(types) => {
                 if parameters.len() != types.len()
@@ -899,6 +1004,9 @@ impl DistributionOp {
                 Ok(Shape::from_slice(shape))
             }
             DistributionKind::Kde(_) => Ok(Shape::from_slice(requested.unwrap_or(&[]))),
+            DistributionKind::Mixture(_) => {
+                mixture::value_shape(requested, parameters).map_err(invalid)
+            }
             DistributionKind::OrderedLogistic => {
                 let (eta, cutpoints) = (parameters[0].1, parameters[1].1);
                 let Some((&count, leading)) = cutpoints.split_last() else {

@@ -399,6 +399,20 @@ message Distribution {
   repeated uint64 shape = 2;
   // The samples and bandwidth of a kernel density estimate (`DISTRIBUTION_KIND_KDE` only).
   Kde kde = 3;
+  // The distribution a nested kind is built around (`DISTRIBUTION_KIND_TRUNCATED`, `DISTRIBUTION_KIND_CENSORED`
+  // and `DISTRIBUTION_KIND_MIXTURE` only, for which it is required). The node's parents are the base's parameters
+  // followed by the nested kind's own.
+  DistributionType base = 4;
+}
+
+// A distribution without a node: the base of a nested distribution kind, itself possibly nested (a mixture of
+// truncated Gaussians is a mixture whose base is a truncation whose base is a Gaussian).
+message DistributionType {
+  DistributionKind kind = 1;
+  // As `Distribution.kde`.
+  Kde kde = 2;
+  // As `Distribution.base`.
+  DistributionType base = 3;
 }
 
 enum DistributionKind {
@@ -430,6 +444,16 @@ enum DistributionKind {
   DISTRIBUTION_KIND_POISSON = 25;
   DISTRIBUTION_KIND_UNIFORM_INT = 26;
   DISTRIBUTION_KIND_LKJ_CHOLESKY = 27;
+  DISTRIBUTION_KIND_WEIBULL = 28;
+  DISTRIBUTION_KIND_VON_MISES = 29;
+  DISTRIBUTION_KIND_NEGATIVE_BINOMIAL = 30;
+  DISTRIBUTION_KIND_ORDERED_LOGISTIC = 31;
+  // Parameters: the base's, then `lower`, `upper`.
+  DISTRIBUTION_KIND_TRUNCATED = 32;
+  // Parameters: the base's, then `lower`, `upper`.
+  DISTRIBUTION_KIND_CENSORED = 33;
+  // Parameters: the base's (with a trailing component axis), then `weights`.
+  DISTRIBUTION_KIND_MIXTURE = 34;
 }
 
 // A kernel density estimate's fixed samples and bandwidth.

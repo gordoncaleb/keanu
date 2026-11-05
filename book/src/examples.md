@@ -14,8 +14,11 @@ examples' tests check, and the hierarchical ones check multi-chain R-hat, diverg
 | `custom_distribution` | A hierarchical model with user-defined distributions, reparameterised to sample well |
 | `eight_schools` | How much do coaching effects differ between schools? Centred and non-centred forms |
 | `radon` | How much does indoor radon vary between Minnesota counties? A varying-intercept model |
+| `gaussian_mixture` | Which of two groups does each measurement come from, and what are the groups like? |
 
-The first five come from *Bayesian Methods for Hackers* by Cameron Davidson-Pilon.
+The first five come from *Bayesian Methods for Hackers* by Cameron Davidson-Pilon; `eight_schools` and `radon` are
+classic hierarchical models from Gelman et al. `gaussian_mixture` is checked against the mixture its synthetic data
+are drawn from, with four chains and R-hat below 1.01.
 
 ## Coal mining disasters
 
@@ -60,4 +63,12 @@ Gelman & Hill's book.
 
 ```rust,ignore
 {{#include ../../keanu/examples/radon.rs}}
+## A Gaussian mixture
+
+A two-component mixture with a Dirichlet prior on the weights and ordered means, built as the first mean plus a
+positive gap (Keanu has no distribution over ordered vectors; this is how Stan's ordered transform builds them).
+Four NUTS chains recover the components, and `ChainSamples::summary` reports R-hat and effective sample sizes.
+
+```rust,ignore
+{{#include ../../keanu/examples/gaussian_mixture.rs}}
 ```

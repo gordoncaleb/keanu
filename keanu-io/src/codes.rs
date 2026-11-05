@@ -83,37 +83,87 @@ codes! {
 /// The distributions whose kind carries no data, by the same name in Keanu and the schema.
 macro_rules! distribution_codes {
     ($($kind:ident),+ $(,)?) => {
-        /// The schema kind of a distribution (a KDE's samples are saved separately), or None for a custom one.
-        pub(crate) fn distribution_code(kind: &DistributionKind) -> Option<proto::DistributionKind> {
-            match kind {
-                $(DistributionKind::$kind => Some(proto::DistributionKind::$kind),)+
-                DistributionKind::Kde(_) => Some(proto::DistributionKind::Kde),
-                _ => None,
-            }
+        /// The saved type of a distribution: its schema kind, a KDE's samples and a nested kind's base (saved the
+        /// same way, recursively). None for a custom distribution, or a kind built around one.
+        pub(crate) fn distribution_type(kind: &DistributionKind) -> Option<proto::DistributionType> {
+            let (code, kde, base) = match kind {
+                $(DistributionKind::$kind => (proto::DistributionKind::$kind, None, None),)+
+                DistributionKind::Kde(kde) => (
+                    proto::DistributionKind::Kde,
+                    Some(proto::Kde {
+                        samples: kde.samples.clone(),
+                        bandwidth: kde.bandwidth,
+                    }),
+                    None,
+                ),
+                DistributionKind::Truncated(base) => (proto::DistributionKind::Truncated, None, Some(base)),
+                DistributionKind::Censored(base) => (proto::DistributionKind::Censored, None, Some(base)),
+                DistributionKind::Mixture(base) => (proto::DistributionKind::Mixture, None, Some(base)),
+                _ => return None,
+            };
+            let base = match base {
+                Some(base) => Some(Box::new(distribution_type(base)?)),
+                None => None,
+            };
+            Some(proto::DistributionType {
+                kind: code as i32,
+                kde,
+                base,
+            })
         }
 
-        /// The distribution of a schema kind, with a KDE built from its saved samples.
-        pub(crate) fn distribution_of_code(
-            code: i32,
-            kde: Option<&proto::Kde>,
-        ) -> Result<DistributionKind> {
+        /// The distribution of a saved type, with a KDE built from its saved samples and a nested kind around its
+        /// saved base.
+        pub(crate) fn distribution_of_type(saved: &proto::DistributionType) -> Result<DistributionKind> {
+            let code = saved.kind;
             let unknown = || IoError::Decode(format!("unknown distribution {code}"));
             let kind = proto::DistributionKind::try_from(code).map_err(|_| unknown())?;
-            if kde.is_some() && kind != proto::DistributionKind::Kde {
+            if saved.kde.is_some() && kind != proto::DistributionKind::Kde {
                 return Err(IoError::Decode(format!(
                     "a {} distribution has KDE samples",
                     kind.as_str_name()
                 )));
             }
-            Ok(match kind {
-                $(proto::DistributionKind::$kind => DistributionKind::$kind,)+
-                proto::DistributionKind::Kde => {
-                    let kde = kde.ok_or_else(|| IoError::Decode("a KDE has no samples".into()))?;
+            let nested = matches!(
+                kind,
+                proto::DistributionKind::Truncated
+                    | proto::DistributionKind::Censored
+                    | proto::DistributionKind::Mixture
+            );
+            let base = match (&saved.base, nested) {
+                (Some(base), true) => Some(Arc::new(distribution_of_type(base)?)),
+                (None, false) => None,
+                (None, true) => {
+                    return Err(IoError::Decode(format!(
+                        "a {} distribution has no base distribution",
+                        kind.as_str_name()
+                    )));
+                }
+                (Some(_), false) => {
+                    return Err(IoError::Decode(format!(
+                        "a {} distribution has a base distribution",
+                        kind.as_str_name()
+                    )));
+                }
+            };
+            Ok(match (kind, base) {
+                $((proto::DistributionKind::$kind, _) => DistributionKind::$kind,)+
+                (proto::DistributionKind::Kde, _) => {
+                    let kde = saved.kde.as_ref().ok_or_else(|| IoError::Decode("a KDE has no samples".into()))?;
                     let kde = Kde::new(kde.samples.clone(), kde.bandwidth)
                         .map_err(|e| IoError::Decode(format!("invalid KDE: {e}")))?;
                     DistributionKind::Kde(Arc::new(kde))
                 }
-                proto::DistributionKind::Unspecified => return Err(unknown()),
+                (proto::DistributionKind::Truncated, Some(base)) => DistributionKind::Truncated(base),
+                (proto::DistributionKind::Censored, Some(base)) => DistributionKind::Censored(base),
+                (proto::DistributionKind::Mixture, Some(base)) => DistributionKind::Mixture(base),
+                (proto::DistributionKind::Unspecified, _)
+                | (
+                    proto::DistributionKind::Truncated
+                    | proto::DistributionKind::Censored
+                    | proto::DistributionKind::Mixture,
+                    None,
+                ) => return Err(unknown()),
             })
         }
     };
@@ -146,6 +196,10 @@ distribution_codes!(
     Poisson,
     UniformInt,
     LkjCholesky,
+    Weibull,
+    VonMises,
+    NegativeBinomial,
+    OrderedLogistic,
 );
 
 #[cfg(test)]
@@ -162,6 +216,9 @@ mod tests {
         }
     }
 
+    /// The number of distribution kinds in the schema.
+    const DISTRIBUTION_KINDS: i32 = 34;
+
     #[test]
     fn every_schema_value_has_a_variant() {
         every_code_has_a_variant::<UnaryOp>(39);
@@ -173,15 +230,44 @@ mod tests {
         every_code_has_a_variant::<ScanOp>(2);
         every_code_has_a_variant::<ArgOp>(4);
         every_code_has_a_variant::<DType>(3);
-        for code in 1..=27 {
+        let saved = |kind: i32, kde: Option<proto::Kde>, base: Option<proto::DistributionType>| {
+            proto::DistributionType {
+                kind,
+                kde,
+                base: base.map(Box::new),
+            }
+        };
+        let gaussian = || saved(proto::DistributionKind::Gaussian as i32, None, None);
+        let nested = [
+            proto::DistributionKind::Truncated as i32,
+            proto::DistributionKind::Censored as i32,
+            proto::DistributionKind::Mixture as i32,
+        ];
+        for code in 1..=DISTRIBUTION_KINDS {
             let kde = (code == proto::DistributionKind::Kde as i32).then(|| proto::Kde {
                 samples: vec![1.0],
                 bandwidth: 1.0,
             });
-            let kind = distribution_of_code(code, kde.as_ref()).unwrap();
-            assert_eq!(distribution_code(&kind).map(|k| k as i32), Some(code));
+            let base = nested.contains(&code).then(gaussian);
+            let original = saved(code, kde, base);
+            let kind = distribution_of_type(&original).unwrap();
+            assert_eq!(distribution_type(&kind), Some(original));
         }
-        assert!(distribution_of_code(0, None).is_err());
-        assert!(distribution_of_code(28, None).is_err());
+        assert!(distribution_of_type(&saved(0, None, None)).is_err());
+        assert!(distribution_of_type(&saved(DISTRIBUTION_KINDS + 1, None, None)).is_err());
+        // a nested kind needs a base, and only a nested kind has one
+        assert!(distribution_of_type(&saved(nested[0], None, None)).is_err());
+        assert!(distribution_of_type(&saved(1, None, Some(gaussian()))).is_err());
+        // nesting is recursive
+        let deep = saved(
+            nested[2],
+            None,
+            Some(saved(nested[0], None, Some(gaussian()))),
+        );
+        let kind = distribution_of_type(&deep).unwrap();
+        assert!(
+            matches!(&kind, DistributionKind::Mixture(base) if matches!(**base, DistributionKind::Truncated(_)))
+        );
+        assert_eq!(distribution_type(&kind), Some(deep));
     }
 }

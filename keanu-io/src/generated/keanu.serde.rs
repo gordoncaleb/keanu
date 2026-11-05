@@ -1431,6 +1431,9 @@ impl serde::Serialize for Distribution {
         if self.kde.is_some() {
             len += 1;
         }
+        if self.base.is_some() {
+            len += 1;
+        }
         let mut struct_ser = serializer.serialize_struct("keanu.Distribution", len)?;
         if self.kind != 0 {
             let v = DistributionKind::try_from(self.kind)
@@ -1442,6 +1445,9 @@ impl serde::Serialize for Distribution {
         }
         if let Some(v) = self.kde.as_ref() {
             struct_ser.serialize_field("kde", v)?;
+        }
+        if let Some(v) = self.base.as_ref() {
+            struct_ser.serialize_field("base", v)?;
         }
         struct_ser.end()
     }
@@ -1456,6 +1462,7 @@ impl<'de> serde::Deserialize<'de> for Distribution {
             "kind",
             "shape",
             "kde",
+            "base",
         ];
 
         #[allow(clippy::enum_variant_names)]
@@ -1463,6 +1470,7 @@ impl<'de> serde::Deserialize<'de> for Distribution {
             Kind,
             Shape,
             Kde,
+            Base,
         }
         impl<'de> serde::Deserialize<'de> for GeneratedField {
             fn deserialize<D>(deserializer: D) -> std::result::Result<GeneratedField, D::Error>
@@ -1487,6 +1495,7 @@ impl<'de> serde::Deserialize<'de> for Distribution {
                             "kind" => Ok(GeneratedField::Kind),
                             "shape" => Ok(GeneratedField::Shape),
                             "kde" => Ok(GeneratedField::Kde),
+                            "base" => Ok(GeneratedField::Base),
                             _ => Err(serde::de::Error::unknown_field(value, FIELDS)),
                         }
                     }
@@ -1509,6 +1518,7 @@ impl<'de> serde::Deserialize<'de> for Distribution {
                 let mut kind__ = None;
                 let mut shape__ = None;
                 let mut kde__ = None;
+                let mut base__ = None;
                 while let Some(k) = map_.next_key()? {
                     match k {
                         GeneratedField::Kind => {
@@ -1532,12 +1542,19 @@ impl<'de> serde::Deserialize<'de> for Distribution {
                             }
                             kde__ = map_.next_value()?;
                         }
+                        GeneratedField::Base => {
+                            if base__.is_some() {
+                                return Err(serde::de::Error::duplicate_field("base"));
+                            }
+                            base__ = map_.next_value()?;
+                        }
                     }
                 }
                 Ok(Distribution {
                     kind: kind__.unwrap_or_default(),
                     shape: shape__.unwrap_or_default(),
                     kde: kde__,
+                    base: base__,
                 })
             }
         }
@@ -1579,6 +1596,13 @@ impl serde::Serialize for DistributionKind {
             Self::Poisson => "DISTRIBUTION_KIND_POISSON",
             Self::UniformInt => "DISTRIBUTION_KIND_UNIFORM_INT",
             Self::LkjCholesky => "DISTRIBUTION_KIND_LKJ_CHOLESKY",
+            Self::Weibull => "DISTRIBUTION_KIND_WEIBULL",
+            Self::VonMises => "DISTRIBUTION_KIND_VON_MISES",
+            Self::NegativeBinomial => "DISTRIBUTION_KIND_NEGATIVE_BINOMIAL",
+            Self::OrderedLogistic => "DISTRIBUTION_KIND_ORDERED_LOGISTIC",
+            Self::Truncated => "DISTRIBUTION_KIND_TRUNCATED",
+            Self::Censored => "DISTRIBUTION_KIND_CENSORED",
+            Self::Mixture => "DISTRIBUTION_KIND_MIXTURE",
         };
         serializer.serialize_str(variant)
     }
@@ -1618,6 +1642,13 @@ impl<'de> serde::Deserialize<'de> for DistributionKind {
             "DISTRIBUTION_KIND_POISSON",
             "DISTRIBUTION_KIND_UNIFORM_INT",
             "DISTRIBUTION_KIND_LKJ_CHOLESKY",
+            "DISTRIBUTION_KIND_WEIBULL",
+            "DISTRIBUTION_KIND_VON_MISES",
+            "DISTRIBUTION_KIND_NEGATIVE_BINOMIAL",
+            "DISTRIBUTION_KIND_ORDERED_LOGISTIC",
+            "DISTRIBUTION_KIND_TRUNCATED",
+            "DISTRIBUTION_KIND_CENSORED",
+            "DISTRIBUTION_KIND_MIXTURE",
         ];
 
         struct GeneratedVisitor;
@@ -1686,11 +1717,145 @@ impl<'de> serde::Deserialize<'de> for DistributionKind {
                     "DISTRIBUTION_KIND_POISSON" => Ok(DistributionKind::Poisson),
                     "DISTRIBUTION_KIND_UNIFORM_INT" => Ok(DistributionKind::UniformInt),
                     "DISTRIBUTION_KIND_LKJ_CHOLESKY" => Ok(DistributionKind::LkjCholesky),
+                    "DISTRIBUTION_KIND_WEIBULL" => Ok(DistributionKind::Weibull),
+                    "DISTRIBUTION_KIND_VON_MISES" => Ok(DistributionKind::VonMises),
+                    "DISTRIBUTION_KIND_NEGATIVE_BINOMIAL" => Ok(DistributionKind::NegativeBinomial),
+                    "DISTRIBUTION_KIND_ORDERED_LOGISTIC" => Ok(DistributionKind::OrderedLogistic),
+                    "DISTRIBUTION_KIND_TRUNCATED" => Ok(DistributionKind::Truncated),
+                    "DISTRIBUTION_KIND_CENSORED" => Ok(DistributionKind::Censored),
+                    "DISTRIBUTION_KIND_MIXTURE" => Ok(DistributionKind::Mixture),
                     _ => Err(serde::de::Error::unknown_variant(value, FIELDS)),
                 }
             }
         }
         deserializer.deserialize_any(GeneratedVisitor)
+    }
+}
+impl serde::Serialize for DistributionType {
+    #[allow(deprecated)]
+    fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        use serde::ser::SerializeStruct;
+        let mut len = 0;
+        if self.kind != 0 {
+            len += 1;
+        }
+        if self.kde.is_some() {
+            len += 1;
+        }
+        if self.base.is_some() {
+            len += 1;
+        }
+        let mut struct_ser = serializer.serialize_struct("keanu.DistributionType", len)?;
+        if self.kind != 0 {
+            let v = DistributionKind::try_from(self.kind)
+                .map_err(|_| serde::ser::Error::custom(format!("Invalid variant {}", self.kind)))?;
+            struct_ser.serialize_field("kind", &v)?;
+        }
+        if let Some(v) = self.kde.as_ref() {
+            struct_ser.serialize_field("kde", v)?;
+        }
+        if let Some(v) = self.base.as_ref() {
+            struct_ser.serialize_field("base", v)?;
+        }
+        struct_ser.end()
+    }
+}
+impl<'de> serde::Deserialize<'de> for DistributionType {
+    #[allow(deprecated)]
+    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        const FIELDS: &[&str] = &[
+            "kind",
+            "kde",
+            "base",
+        ];
+
+        #[allow(clippy::enum_variant_names)]
+        enum GeneratedField {
+            Kind,
+            Kde,
+            Base,
+        }
+        impl<'de> serde::Deserialize<'de> for GeneratedField {
+            fn deserialize<D>(deserializer: D) -> std::result::Result<GeneratedField, D::Error>
+            where
+                D: serde::Deserializer<'de>,
+            {
+                struct GeneratedVisitor;
+
+                impl serde::de::Visitor<'_> for GeneratedVisitor {
+                    type Value = GeneratedField;
+
+                    fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                        write!(formatter, "expected one of: {:?}", &FIELDS)
+                    }
+
+                    #[allow(unused_variables)]
+                    fn visit_str<E>(self, value: &str) -> std::result::Result<GeneratedField, E>
+                    where
+                        E: serde::de::Error,
+                    {
+                        match value {
+                            "kind" => Ok(GeneratedField::Kind),
+                            "kde" => Ok(GeneratedField::Kde),
+                            "base" => Ok(GeneratedField::Base),
+                            _ => Err(serde::de::Error::unknown_field(value, FIELDS)),
+                        }
+                    }
+                }
+                deserializer.deserialize_identifier(GeneratedVisitor)
+            }
+        }
+        struct GeneratedVisitor;
+        impl<'de> serde::de::Visitor<'de> for GeneratedVisitor {
+            type Value = DistributionType;
+
+            fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                formatter.write_str("struct keanu.DistributionType")
+            }
+
+            fn visit_map<V>(self, mut map_: V) -> std::result::Result<DistributionType, V::Error>
+                where
+                    V: serde::de::MapAccess<'de>,
+            {
+                let mut kind__ = None;
+                let mut kde__ = None;
+                let mut base__ = None;
+                while let Some(k) = map_.next_key()? {
+                    match k {
+                        GeneratedField::Kind => {
+                            if kind__.is_some() {
+                                return Err(serde::de::Error::duplicate_field("kind"));
+                            }
+                            kind__ = Some(map_.next_value::<DistributionKind>()? as i32);
+                        }
+                        GeneratedField::Kde => {
+                            if kde__.is_some() {
+                                return Err(serde::de::Error::duplicate_field("kde"));
+                            }
+                            kde__ = map_.next_value()?;
+                        }
+                        GeneratedField::Base => {
+                            if base__.is_some() {
+                                return Err(serde::de::Error::duplicate_field("base"));
+                            }
+                            base__ = map_.next_value()?;
+                        }
+                    }
+                }
+                Ok(DistributionType {
+                    kind: kind__.unwrap_or_default(),
+                    kde: kde__,
+                    base: base__,
+                })
+            }
+        }
+        deserializer.deserialize_struct("keanu.DistributionType", FIELDS, GeneratedVisitor)
     }
 }
 impl serde::Serialize for DoubleValues {

@@ -1,7 +1,7 @@
 //! Loading a model saved in Keanu's schema: each saved node becomes the graph node with the same index.
 
 use crate::Metadata;
-use crate::codes::{decode, distribution_of_code};
+use crate::codes::{decode, distribution_of_type};
 use crate::error::{IoError, Result};
 use crate::proto;
 use crate::proto::node::Op as P;
@@ -240,7 +240,11 @@ fn add_node(builder: &GraphBuilder, op: &P, parents: &[NodeId]) -> Result<NodeId
             return Ok(proxy);
         }
         P::Distribution(p) => {
-            let kind = distribution_of_code(p.kind, p.kde.as_ref())?;
+            let kind = distribution_of_type(&proto::DistributionType {
+                kind: p.kind,
+                kde: p.kde.clone(),
+                base: p.base.clone().map(Box::new),
+            })?;
             return Ok(builder.add_distribution(kind, Some(&shape_of(&p.shape)?), parents)?);
         }
     };

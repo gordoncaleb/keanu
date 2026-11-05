@@ -2,11 +2,11 @@
 //! operation.
 
 use crate::Metadata;
-use crate::codes::{distribution_code, encode};
+use crate::codes::{distribution_type, encode};
 use crate::error::{IoError, Result};
 use crate::proto;
 use crate::proto::node::Op as P;
-use keanu_graph::op::{DistributionKind, Op};
+use keanu_graph::op::Op;
 use keanu_graph::{Graph, NodeId, State, Value};
 
 /// The schema version this crate writes, and the newest it reads.
@@ -165,19 +165,13 @@ fn save_op(graph: &Graph, id: NodeId) -> Result<P> {
             message: message.clone(),
         }),
         Op::Distribution(distribution) => {
-            let kind = distribution_code(&distribution.kind)
+            let saved = distribution_type(&distribution.kind)
                 .ok_or_else(|| unsupported("a custom distribution"))?;
-            let kde = match &distribution.kind {
-                DistributionKind::Kde(kde) => Some(proto::Kde {
-                    samples: kde.samples.clone(),
-                    bandwidth: kde.bandwidth,
-                }),
-                _ => None,
-            };
             P::Distribution(proto::Distribution {
-                kind: kind as i32,
+                kind: saved.kind,
                 shape: dims(&distribution.shape),
-                kde,
+                kde: saved.kde,
+                base: saved.base.map(|base| *base),
             })
         }
         Op::Lambda(_) => return Err(unsupported("a lambda")),

@@ -15,8 +15,10 @@ a node has the same `NodeId` after loading as it had when it was saved, and keep
 Files use Keanu's own protobuf schema, `keanu-io/proto/keanu/graph.proto`; the JSON form is its standard protobuf
 JSON mapping. Each node is saved with its parents and a typed operation: a unary or binary operation, a reduction,
 a shape operation and so on, each with its own parameters, or a distribution identified by its kind with its
-parameters as the node's parents. Every operation and distribution can be saved except lambda nodes and custom
-distributions, which return `IoError::NotSaveable`.
+parameters as the node's parents. A distribution built around another (truncated, censored, mixture) saves its base
+as a nested distribution type, recursively, so a mixture of truncated distributions round-trips. Every operation and
+distribution can be saved except lambda nodes and custom distributions (also as the base of another), which return
+`IoError::NotSaveable`.
 
 Every file records the format version it was written with. Adding operations or distributions keeps the version,
 so older files keep loading; a file written with a newer version than this one reads returns

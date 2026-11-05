@@ -3,8 +3,9 @@
 //! # Nested distribution kinds
 //!
 //! A distribution kind built around another one (here [`DistributionKind::Truncated`] and
-//! [`DistributionKind::Censored`]) holds its base as an `Arc<DistributionKind>` and takes the node's parents as the
-//! base's parameters, in the base's own order, followed by the wrapper's own parameters. So:
+//! [`DistributionKind::Censored`], and [`DistributionKind::Mixture`] in the mixture module) holds its base as an
+//! `Arc<DistributionKind>` and takes the node's parents as the base's parameters, in the base's own order, followed
+//! by the wrapper's own parameters. So:
 //!
 //! - the base sees exactly the parameter slice it would as a node of its own ([`split`] separates the two), and its
 //!   values, supports and gradient parts map one to one onto the leading parents;
@@ -12,8 +13,10 @@
 //!   own;
 //! - the parameter types are the base's followed by the wrapper's own, and the value type is the base's.
 //!
-//! Other kinds wrapping a base distribution (mixtures over a component kind, hidden Markov model emissions) use the
-//! same layout.
+//! A mixture's base parameters carry a trailing component axis, and its gradient parts for them are shaped like the
+//! parameters broadcast with the value and that axis. Other kinds wrapping a base distribution (hidden Markov model
+//! emissions) use the same layout. The saved schema stores the base as a nested distribution type, recursively, so
+//! any nesting the graph accepts (a mixture of truncated distributions) saves and loads.
 
 use super::Support;
 use super::distribution::{DistributionKind, LogProbGradientParts, ParameterGradients, Univariate};
@@ -188,9 +191,30 @@ pub(crate) fn log_prob(
     parameters: &[&Value],
     gradient: bool,
 ) -> Result<(f64, Option<LogProbGradientParts>)> {
+    let (log_probs, gradient) = elementwise(wrapper, base, value, parameters, gradient)?;
+    Ok((log_probs.sum(), gradient))
+}
+
+/// [`log_prob`] element-wise: the log probability of each element of `value` broadcast with the parameters, and
+/// the gradient parts in that broadcast shape (what [`DistributionKind::univariate`] gives for the log density).
+pub(crate) fn elementwise(
+    wrapper: Wrapper,
+    base: &DistributionKind,
+    value: &Value,
+    parameters: &[&Value],
+    gradient: bool,
+) -> Result<(DoubleTensor, Option<LogProbGradientParts>)> {
     let bounds = Bounds::new(base, parameters)?;
-    let shape = Shape::from_slice(value.shape());
+    let mut shape = Shape::from_slice(value.shape());
+    for p in parameters {
+        shape = broadcast_shape(&shape, p.shape())?;
+    }
     let x = value_as_f64(value)?;
+    let x = if x.shape() == shape.as_slice() {
+        x
+    } else {
+        x.broadcast_to(&shape)?
+    };
     let lower = broadcast(bounds.lower, &shape)?;
     let upper = broadcast(bounds.upper, &shape)?;
     let density = evaluate(
@@ -211,7 +235,7 @@ pub(crate) fn log_prob(
         }
     };
     let (log_probs, gradient) = parts;
-    Ok((log_probs.iter().sum(), gradient))
+    Ok((DoubleTensor::new(&shape, log_probs)?, gradient))
 }
 
 /// Element-wise log probabilities and gradient parts.
@@ -498,25 +522,37 @@ pub(crate) fn support(base: &DistributionKind, parameters: &[&Value]) -> Result<
     if bounds.discrete {
         return Ok(Support::Discrete);
     }
+    let Some((base_lower, base_upper)) = support_bounds(base_support.clone()) else {
+        return Ok(base_support);
+    };
+    let lower = base_lower.zip_with(bounds.lower, f64::max)?;
+    let upper = base_upper.zip_with(bounds.upper, f64::min)?;
+    Ok(support_between(lower, upper))
+}
+
+/// The bounds of a real support, with infinite bounds as infinities: (-∞, ∞) for [`Support::Real`]; None for a
+/// support that isn't a range of real numbers.
+pub(crate) fn support_bounds(support: Support) -> Option<(DoubleTensor, DoubleTensor)> {
     let infinity = |v: f64| DoubleTensor::scalar(v);
-    let (base_lower, base_upper) = match base_support {
+    Some(match support {
         Support::Real => (infinity(f64::NEG_INFINITY), infinity(f64::INFINITY)),
         Support::GreaterThan(a) => (a, infinity(f64::INFINITY)),
         Support::LessThan(b) => (infinity(f64::NEG_INFINITY), b),
         Support::Interval(a, b) => (a, b),
-        other => return Ok(other),
-    };
-    let lower = base_lower.zip_with(bounds.lower, f64::max)?;
-    let upper = base_upper.zip_with(bounds.upper, f64::min)?;
+        _ => return None,
+    })
+}
+
+/// The real support between element-wise bounds, either of which may be infinite: [`Support::Real`],
+/// [`Support::GreaterThan`], [`Support::LessThan`] or [`Support::Interval`] as every element's bounds allow.
+pub(crate) fn support_between(lower: DoubleTensor, upper: DoubleTensor) -> Support {
     let all = |t: &DoubleTensor, v: f64| t.as_slice().iter().all(|&x| x == v);
-    Ok(
-        match (all(&lower, f64::NEG_INFINITY), all(&upper, f64::INFINITY)) {
-            (true, true) => Support::Real,
-            (false, true) => Support::GreaterThan(lower),
-            (true, false) => Support::LessThan(upper),
-            (false, false) => Support::Interval(lower, upper),
-        },
-    )
+    match (all(&lower, f64::NEG_INFINITY), all(&upper, f64::INFINITY)) {
+        (true, true) => Support::Real,
+        (false, true) => Support::GreaterThan(lower),
+        (true, false) => Support::LessThan(upper),
+        (false, false) => Support::Interval(lower, upper),
+    }
 }
 
 /// Draws a truncated value of `shape`: by inverting the base's CDF where it has a closed-form inverse, else by

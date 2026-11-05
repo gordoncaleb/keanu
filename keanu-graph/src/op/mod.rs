@@ -2,6 +2,7 @@
 
 mod distribution;
 pub(crate) mod eval;
+mod mixture;
 mod shape;
 mod wrappers;
 

@@ -52,6 +52,31 @@ otherwise, which fails with an error if the bounds hold too little of the base's
 observed data. Each of these distributions also has `log_cdf` and `log_ccdf` (with gradients) in
 `keanu::distributions`, accurate far into the tails.
 
+## Mixtures
+
+`mixture(component, parameters, weights)` is a mixture of C distributions of one kind, with density
+Σ_c w_c p_c(x). The weights are non-negative and sum to 1 along their last axis, the component axis, of length C (a
+`dirichlet` prior keeps a latent weight vector on the simplex). Each of the component's parameters, given as node
+ids in the component's order, has the same trailing component axis, of length C, or of length 1 or no axes at all
+to share one value between the components. The value has the parameters' batch shape (their shapes without the
+component axis); `mixture_with_shape` gives a larger one, such as a vector of observations.
+
+```rust,ignore
+{{#include ../../keanu/tests/book.rs:mixture}}
+```
+
+The component can be any distribution with one value per element (the continuous and count distributions, but
+not `dirichlet`, `multivariate_gaussian`, `lkj_cholesky`, `kde`, `categorical`, `multinomial`, `ordered_logistic` or
+`bernoulli`), or a truncated or censored one; a mixture itself can't be truncated or mixed again. The log density is
+computed as logsumexp_c(log w_c + log p_c(x)), so it stays accurate far in the tails, and its gradient with respect
+to the value, the component parameters and the weights is exact, for NUTS and the optimizers. The support is the
+component's, widened to hold every component's (the smallest lower bound and the largest upper bound). Values are
+drawn by picking a component by its weight and drawing from it.
+
+A mixture's likelihood doesn't change when components swap labels, so a posterior over unconstrained component
+parameters has a copy of each mode per labelling. Order the components to remove the copies, as the
+[Gaussian mixture example](examples.md#a-gaussian-mixture) orders the means.
+
 ## Deterministic nodes
 
 Handles (`DoubleVar`, `IntVar`, `BoolVar`) support:

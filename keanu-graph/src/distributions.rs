@@ -474,6 +474,83 @@ impl GraphBuilder {
     }
 }
 
+impl GraphBuilder {
+    /// A mixture of C distributions of the `component` kind: density Σ_c w_c p_c(x), with the weights `weights`
+    /// (non-negative, summing to 1 along their last axis, the component axis, of length C) and `parameters` the
+    /// component's parameter nodes, in its order, each with the same trailing component axis (of length C, or 1, or
+    /// no axes at all, to share one value between the components).
+    ///
+    /// The component is an element-wise univariate kind: one of the continuous or count distributions with one
+    /// value per element (not Dirichlet, MultivariateGaussian, LkjCholesky, Kde, Categorical, Multinomial,
+    /// OrderedLogistic, Bernoulli, a custom distribution or another mixture), or a truncated or censored one. The
+    /// value has the batch shape: the parameters' shapes without their component axes, broadcast together; use
+    /// [`Self::mixture_with_shape`] for a larger one (a vector of observations from one mixture). The log density is
+    /// computed as logsumexp_c(log w_c + log p_c(x)), so components far in the tails stay accurate, and its gradient
+    /// with respect to the value, the component parameters and the weights is exact.
+    ///
+    /// The support is the component's, widened to hold every component's (the smallest lower bound and largest
+    /// upper bound across components). A mixture can't itself be truncated or censored; truncate the components
+    /// instead. The handle type must match the component's value type ([`DoubleVar`] or [`IntVar`]).
+    ///
+    /// ```
+    /// use keanu_graph::{DoubleVar, GraphBuilder, op::DistributionKind};
+    /// use keanu_tensor::DoubleTensor;
+    ///
+    /// let b = GraphBuilder::new();
+    /// let means = b.constant(DoubleTensor::vector(vec![-2.0, 3.0]));
+    /// let sigma = b.scalar(1.0);
+    /// let weights = b.dirichlet(DoubleTensor::vector(vec![1.0, 1.0]));
+    /// // 100 observations from a two-component Gaussian mixture
+    /// let y: DoubleVar =
+    ///     b.mixture_with_shape(&[100], DistributionKind::Gaussian, &[means.id(), sigma.id()], weights);
+    /// # let _ = y;
+    /// b.build()?;
+    /// # Ok::<(), keanu_graph::GraphError>(())
+    /// ```
+    pub fn mixture<'b, V: Var<'b>>(
+        &'b self,
+        component: DistributionKind,
+        parameters: &[NodeId],
+        weights: impl IntoDoubleVar<'b>,
+    ) -> V {
+        self.mixture_node(None, component, parameters, weights.into_var(self))
+    }
+
+    /// Like [`Self::mixture`], with a value of the given shape (broadcast with the parameters' batch shapes).
+    pub fn mixture_with_shape<'b, V: Var<'b>>(
+        &'b self,
+        shape: &[usize],
+        component: DistributionKind,
+        parameters: &[NodeId],
+        weights: impl IntoDoubleVar<'b>,
+    ) -> V {
+        self.mixture_node(Some(shape), component, parameters, weights.into_var(self))
+    }
+
+    fn mixture_node<'b, V: Var<'b>>(
+        &'b self,
+        shape: Option<&[usize]>,
+        component: DistributionKind,
+        parameters: &[NodeId],
+        weights: DoubleVar<'b>,
+    ) -> V {
+        let kind = DistributionKind::Mixture(Arc::new(component));
+        if kind.value_type() != V::DTYPE {
+            self.record(GraphError::InvalidNode {
+                op: "mixture",
+                message: format!(
+                    "the component distribution's values are {:?} but a {:?} node was requested",
+                    kind.value_type(),
+                    V::DTYPE
+                ),
+            });
+        }
+        let mut ids = parameters.to_vec();
+        ids.push(weights.id());
+        V::wrap(self, self.distribution(kind, shape, &ids))
+    }
+}
+
 /// Two tensors broadcast to their common shape.
 fn broadcast_pair(
     a: &DoubleTensor,

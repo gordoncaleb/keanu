@@ -386,6 +386,24 @@ pub struct Distribution {
     /// The samples and bandwidth of a kernel density estimate (`DISTRIBUTION_KIND_KDE` only).
     #[prost(message, optional, tag = "3")]
     pub kde: ::core::option::Option<Kde>,
+    /// The distribution a nested kind is built around (`DISTRIBUTION_KIND_TRUNCATED`, `DISTRIBUTION_KIND_CENSORED`
+    /// and `DISTRIBUTION_KIND_MIXTURE` only, for which it is required). The node's parents are the base's parameters
+    /// followed by the nested kind's own.
+    #[prost(message, optional, tag = "4")]
+    pub base: ::core::option::Option<DistributionType>,
+}
+/// A distribution without a node: the base of a nested distribution kind, itself possibly nested (a mixture of
+/// truncated Gaussians is a mixture whose base is a truncation whose base is a Gaussian).
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct DistributionType {
+    #[prost(enumeration = "DistributionKind", tag = "1")]
+    pub kind: i32,
+    /// As `Distribution.kde`.
+    #[prost(message, optional, tag = "2")]
+    pub kde: ::core::option::Option<Kde>,
+    /// As `Distribution.base`.
+    #[prost(message, optional, boxed, tag = "3")]
+    pub base: ::core::option::Option<::prost::alloc::boxed::Box<DistributionType>>,
 }
 /// A kernel density estimate's fixed samples and bandwidth.
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -888,6 +906,16 @@ pub enum DistributionKind {
     Poisson = 25,
     UniformInt = 26,
     LkjCholesky = 27,
+    Weibull = 28,
+    VonMises = 29,
+    NegativeBinomial = 30,
+    OrderedLogistic = 31,
+    /// Parameters: the base's, then `lower`, `upper`.
+    Truncated = 32,
+    /// Parameters: the base's, then `lower`, `upper`.
+    Censored = 33,
+    /// Parameters: the base's (with a trailing component axis), then `weights`.
+    Mixture = 34,
 }
 impl DistributionKind {
     /// String value of the enum field names used in the ProtoBuf definition.
@@ -924,6 +952,13 @@ impl DistributionKind {
             Self::Poisson => "DISTRIBUTION_KIND_POISSON",
             Self::UniformInt => "DISTRIBUTION_KIND_UNIFORM_INT",
             Self::LkjCholesky => "DISTRIBUTION_KIND_LKJ_CHOLESKY",
+            Self::Weibull => "DISTRIBUTION_KIND_WEIBULL",
+            Self::VonMises => "DISTRIBUTION_KIND_VON_MISES",
+            Self::NegativeBinomial => "DISTRIBUTION_KIND_NEGATIVE_BINOMIAL",
+            Self::OrderedLogistic => "DISTRIBUTION_KIND_ORDERED_LOGISTIC",
+            Self::Truncated => "DISTRIBUTION_KIND_TRUNCATED",
+            Self::Censored => "DISTRIBUTION_KIND_CENSORED",
+            Self::Mixture => "DISTRIBUTION_KIND_MIXTURE",
         }
     }
     /// Creates an enum from field names used in the ProtoBuf definition.
@@ -957,6 +992,13 @@ impl DistributionKind {
             "DISTRIBUTION_KIND_POISSON" => Some(Self::Poisson),
             "DISTRIBUTION_KIND_UNIFORM_INT" => Some(Self::UniformInt),
             "DISTRIBUTION_KIND_LKJ_CHOLESKY" => Some(Self::LkjCholesky),
+            "DISTRIBUTION_KIND_WEIBULL" => Some(Self::Weibull),
+            "DISTRIBUTION_KIND_VON_MISES" => Some(Self::VonMises),
+            "DISTRIBUTION_KIND_NEGATIVE_BINOMIAL" => Some(Self::NegativeBinomial),
+            "DISTRIBUTION_KIND_ORDERED_LOGISTIC" => Some(Self::OrderedLogistic),
+            "DISTRIBUTION_KIND_TRUNCATED" => Some(Self::Truncated),
+            "DISTRIBUTION_KIND_CENSORED" => Some(Self::Censored),
+            "DISTRIBUTION_KIND_MIXTURE" => Some(Self::Mixture),
             _ => None,
         }
     }

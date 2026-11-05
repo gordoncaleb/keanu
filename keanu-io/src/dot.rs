@@ -30,6 +30,7 @@ fn distribution_name(kind: &DistributionKind) -> String {
         DistributionKind::Custom(_) => "Custom".into(),
         DistributionKind::Truncated(_) => "Truncated".into(),
         DistributionKind::Censored(_) => "Censored".into(),
+        DistributionKind::Mixture(_) => "Mixture".into(),
         // the other kinds are unit variants, which format as their name
         kind => format!("{kind:?}"),
     }
@@ -58,7 +59,7 @@ pub fn to_dot(graph: &Graph, state: Option<&State>, metadata: &Metadata) -> Stri
         let node = &graph[child];
         let names = match node.op() {
             Op::Distribution(d) => d.kind.parameter_names().unwrap_or_default(),
-            _ => &[],
+            _ => Default::default(),
         };
         for (i, parent) in node.parents().iter().enumerate() {
             match names.get(i) {
@@ -148,6 +149,10 @@ mod tests {
             (
                 DistributionKind::Censored(Arc::new(DistributionKind::Gaussian)),
                 "Censored",
+            ),
+            (
+                DistributionKind::Mixture(Arc::new(DistributionKind::Gaussian)),
+                "Mixture",
             ),
             (DistributionKind::Weibull, "Weibull"),
             (DistributionKind::VonMises, "VonMises"),

@@ -226,6 +226,50 @@ fn truncated_and_censored() -> keanu::Result<()> {
     Ok(())
 }
 
+#[test]
+fn mixtures() -> keanu::Result<()> {
+    // ANCHOR: mixture
+    use keanu::graph::op::DistributionKind;
+
+    let b = GraphBuilder::new();
+    // three components: the last axis of the means, scales and weights is the component axis
+    let means = b.constant(DoubleTensor::vector(vec![-5.0, 0.0, 5.0]));
+    let sigmas = b.constant(DoubleTensor::vector(vec![1.0, 0.5, 2.0]));
+    let weights = b.dirichlet(DoubleTensor::vector(vec![1.0, 1.0, 1.0]));
+    let y: DoubleVar = b.mixture_with_shape(
+        &[4],
+        DistributionKind::Gaussian,
+        &[means.id(), sigmas.id()],
+        weights,
+    );
+    b.observe(y, DoubleTensor::vector(vec![-4.6, 0.2, 0.1, 6.3]));
+
+    // a mixture of zero-truncated Poissons, sharing the bounds between components
+    let rates = b.constant(DoubleTensor::vector(vec![1.0, 8.0]));
+    let counts: IntVar = b.mixture_with_shape(
+        &[3],
+        DistributionKind::Truncated(std::sync::Arc::new(DistributionKind::Poisson)),
+        &[rates.id(), b.scalar(1.0).id(), b.scalar(f64::INFINITY).id()],
+        DoubleTensor::vector(vec![0.5, 0.5]),
+    );
+    b.observe(counts, IntTensor::vector(vec![1, 9, 2]));
+
+    let weights = weights.id();
+    let (graph, mut state) = b.build()?;
+    let model = Model::new(graph, &state)?;
+    let samples = Nuts::default().sample(
+        &model,
+        &mut state,
+        &[weights],
+        500,
+        &mut KeanuRng::seed_from_u64(1),
+    )?;
+    let mean = samples.f64(weights).unwrap().mean()?;
+    assert!((mean.as_slice().iter().sum::<f64>() - 1.0).abs() < 1e-9);
+    // ANCHOR_END: mixture
+    Ok(())
+}
+
 /// The thermometer example: a room temperature read by two noisy thermometers.
 fn thermometers() -> keanu::Result<(Model, State, NodeId)> {
     // ANCHOR: thermometers
