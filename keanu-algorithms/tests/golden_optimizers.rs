@@ -4,7 +4,7 @@
 //! an exact port of Java's update rule, so in constrained space (Java's) it is held to a tighter tolerance than
 //! conjugate gradient, whose line search is independent of Java's; in unconstrained space (the default) Adam is held
 //! to conjugate gradient's tolerance. L-BFGS (the default) is checked on every conjugate gradient case, to conjugate
-//! gradient's tolerance.
+//! gradient's tolerance and to use no more evaluations than conjugate gradient.
 
 use keanu_algorithms::optimizer::{
     Adam, ConjugateGradient, Fitness, GradientOptimizer, Lbfgs, OptimizedResult,
@@ -111,8 +111,9 @@ fn optimizers_match_java() {
         };
         checked += 1;
 
-        if let Ok(r) = &result {
-            println!("{name}: used {} evaluations", r.evaluations);
+        let evaluations = result.as_ref().ok().map(|r| r.evaluations);
+        if let Some(evaluations) = evaluations {
+            println!("{name}: used {evaluations} evaluations");
         }
         let expected = &case["result"];
         if let Some(p) = compare(&model, expected, result, value_tolerance, fitness_tolerance) {
@@ -129,6 +130,18 @@ fn optimizers_match_java() {
                 println!("{name}: L-BFGS used {} evaluations", r.evaluations);
                 if !r.converged {
                     failures.push(format!("{name} with L-BFGS: did not converge"));
+                }
+                // L-BFGS needs at most as many evaluations as conjugate gradient on every golden case (between a
+                // half and a ninth of them; docs/benchmarks.md). The one documented exception is the benchmark's
+                // warm start from the optimum, where L-BFGS's stricter convergence tests cost it a few more; no
+                // golden case starts there.
+                if let Some(cg) = evaluations
+                    && r.evaluations > cg
+                {
+                    failures.push(format!(
+                        "{name} with L-BFGS: {} evaluations, more than conjugate gradient's {cg}",
+                        r.evaluations
+                    ));
                 }
             }
             // Java's converged flag is conjugate gradient's (which can run out of evaluations): L-BFGS has to

@@ -200,8 +200,8 @@ at every trial point, so each trial point counts twice.
 
 L-BFGS needs fewer evaluations everywhere except the warm start, where it is already at the optimum and its
 convergence tests (Stan's, such as a fitness change below 1e-12) are stricter than conjugate gradient's (1e-8).
-The golden optimizer test (`keanu-algorithms/tests/golden_optimizers.rs`) prints the counts for every conjugate
-gradient case. L-BFGS needs between a half and a ninth of conjugate gradient's evaluations there; for example,
+The golden optimizer test (`keanu-algorithms/tests/golden_optimizers.rs`) checks that L-BFGS uses no more
+evaluations than conjugate gradient on every conjugate gradient case, and prints the counts. L-BFGS needs between a half and a ninth of conjugate gradient's evaluations there; for example,
 randomWalkSequence MAP takes 20 against 62 and betaBinomial MAP 6 against 34. hierarchicalGaussian's MAP is left
 out: its posterior is unbounded, so neither optimizer has an optimum to reach.
 
