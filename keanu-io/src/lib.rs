@@ -5,6 +5,9 @@
 //! node is saved with its typed operation, in graph order, with its label; the state's values and observations and
 //! a metadata map are saved alongside. [`to_dot`] (feature `dot`) exports a Graphviz description of a graph.
 //!
+//! Loading checks the model against [`LoadOptions`], whose defaults protect against untrusted files describing
+//! enormous nodes or practically endless scans; [`load_protobuf_with`] and [`load_json_with`] take other limits.
+//!
 //! Every operation and distribution can be saved except lambda nodes and custom distributions, which return
 //! [`IoError::NotSaveable`]. Files written by a newer version of the format return
 //! [`IoError::UnsupportedVersion`].
@@ -43,9 +46,9 @@ pub(crate) mod proto {
 pub use dot::to_dot;
 pub use error::{IoError, Result};
 #[cfg(any(feature = "protobuf", feature = "json"))]
-pub use load::Loaded;
-#[cfg(any(feature = "protobuf", feature = "json"))]
 use load::load_model;
+#[cfg(any(feature = "protobuf", feature = "json"))]
+pub use load::{LoadOptions, Loaded};
 #[cfg(any(feature = "protobuf", feature = "json"))]
 use save::save_model;
 
@@ -54,12 +57,18 @@ use std::collections::BTreeMap;
 /// Metadata saved with a model (e.g. a name or version).
 pub type Metadata = BTreeMap<String, String>;
 
-/// Loads a model saved as binary protobuf.
+/// Loads a model saved as binary protobuf, within the default [`LoadOptions`].
 #[cfg(feature = "protobuf")]
 pub fn load_protobuf(bytes: &[u8]) -> Result<Loaded> {
+    load_protobuf_with(bytes, &LoadOptions::default())
+}
+
+/// Loads a model saved as binary protobuf, within the given limits.
+#[cfg(feature = "protobuf")]
+pub fn load_protobuf_with(bytes: &[u8], options: &LoadOptions) -> Result<Loaded> {
     let model = <proto::Model as prost::Message>::decode(bytes)
         .map_err(|e| IoError::Decode(e.to_string()))?;
-    load_model(&model)
+    load_model(&model, options)
 }
 
 /// Saves a model as binary protobuf, with the values in `state` (observed values are saved as observations).
@@ -74,12 +83,18 @@ pub fn save_protobuf(
     )?))
 }
 
-/// Loads a model saved as JSON.
+/// Loads a model saved as JSON, within the default [`LoadOptions`].
 #[cfg(feature = "json")]
 pub fn load_json(text: &str) -> Result<Loaded> {
+    load_json_with(text, &LoadOptions::default())
+}
+
+/// Loads a model saved as JSON, within the given limits.
+#[cfg(feature = "json")]
+pub fn load_json_with(text: &str, options: &LoadOptions) -> Result<Loaded> {
     let model: proto::Model =
         serde_json::from_str(text).map_err(|e| IoError::Decode(e.to_string()))?;
-    load_model(&model)
+    load_model(&model, options)
 }
 
 /// Saves a model as JSON, with the values in `state`.

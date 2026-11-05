@@ -24,6 +24,57 @@ pub struct Loaded {
     pub metadata: Metadata,
 }
 
+/// Limits on what loading a file may create, protecting against untrusted files: a few bytes can describe nodes of
+/// enormous shapes, or a scan of so many steps that evaluating it would practically never finish. Loading fails with
+/// [`IoError::InvalidNode`] for a node beyond them. The defaults suit models of moderate size; raise them to load
+/// larger trusted models.
+///
+/// Whatever the limits, no node may have more than `isize::MAX / 8` elements (the most one allocation can hold).
+///
+/// ```
+/// let mut options = keanu_io::LoadOptions::default();
+/// options.max_scan_steps = 1 << 30;
+/// options.max_scan_work = 1 << 40;
+/// ```
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct LoadOptions {
+    /// The most elements any node (including the nodes of scan bodies) may have. Default 2^31 (16 GiB of `f64`).
+    pub max_elements: usize,
+    /// The most steps any scan may have. Default 2^24.
+    pub max_scan_steps: usize,
+    /// The most work any scan may do, counted as its steps times the work of its body: the sum, over the body's
+    /// nodes, of each node's element count (at least 1), with a nested scan counting its own work. Default 2^32.
+    pub max_scan_work: u64,
+}
+
+impl Default for LoadOptions {
+    fn default() -> Self {
+        Self {
+            max_elements: 1 << 31,
+            max_scan_steps: 1 << 24,
+            max_scan_work: 1 << 32,
+        }
+    }
+}
+
+/// The work of a scan, as [`LoadOptions::max_scan_work`] counts it (saturating).
+fn scan_work(body: &ScanBody) -> u64 {
+    let graph = body.graph();
+    let per_step = graph
+        .ids()
+        .map(|id| match graph[id].op() {
+            Op::Scan(inner) => scan_work(inner),
+            _ => u64::try_from(graph[id].shape().iter().product::<usize>())
+                .unwrap_or(u64::MAX)
+                .max(1),
+        })
+        .fold(0u64, u64::saturating_add);
+    u64::try_from(body.length())
+        .unwrap_or(u64::MAX)
+        .saturating_mul(per_step)
+}
+
 /// A size or index from the file as a `usize`, or a decode error where it doesn't fit.
 fn usize_of(v: u64) -> Result<usize> {
     usize::try_from(v).map_err(|_| IoError::Decode(format!("the integer {v} is too large")))
@@ -77,7 +128,7 @@ fn value_of(tensor: &proto::Tensor) -> Result<Value> {
 }
 
 /// Builds a graph from a decoded model.
-pub(crate) fn load_model(model: &proto::Model) -> Result<Loaded> {
+pub(crate) fn load_model(model: &proto::Model, options: &LoadOptions) -> Result<Loaded> {
     match model.format_version {
         0 => return Err(IoError::Decode("the model has no format version".into())),
         found if found > FORMAT_VERSION => {
@@ -92,7 +143,7 @@ pub(crate) fn load_model(model: &proto::Model) -> Result<Loaded> {
         .graph
         .as_ref()
         .ok_or_else(|| IoError::Decode("the model has no graph".into()))?;
-    let (graph, state) = load_graph(saved)?;
+    let (graph, state) = load_graph(saved, options)?;
     Ok(Loaded {
         graph,
         state,
@@ -101,7 +152,7 @@ pub(crate) fn load_model(model: &proto::Model) -> Result<Loaded> {
 }
 
 /// Builds a graph and its state from a saved graph.
-fn load_graph(saved: &proto::Graph) -> Result<(Graph, State)> {
+fn load_graph(saved: &proto::Graph, options: &LoadOptions) -> Result<(Graph, State)> {
     let builder = GraphBuilder::new();
     for (index, node) in saved.nodes.iter().enumerate() {
         let invalid = |message: String| IoError::InvalidNode { index, message };
@@ -117,11 +168,19 @@ fn load_graph(saved: &proto::Graph) -> Result<(Graph, State)> {
             .op
             .as_ref()
             .ok_or_else(|| invalid("no operation (or one this version doesn't know)".into()))?;
-        let id = add_node(&builder, op, &parents).map_err(|e| match e {
+        let id = add_node(&builder, op, &parents, options).map_err(|e| match e {
             IoError::Decode(message) => invalid(message),
             other => other,
         })?;
         debug_assert_eq!(id.index(), index);
+        let shape = builder.shape(id).unwrap_or_default();
+        let elements = shape.iter().try_fold(1usize, |n, &d| n.checked_mul(d));
+        if elements.is_none_or(|n| n > options.max_elements) {
+            return Err(invalid(format!(
+                "the shape {shape:?} has more elements than the limit of {}",
+                options.max_elements
+            )));
+        }
         if !node.label.is_empty() {
             builder.set_label_of(id, &node.label)?;
         }
@@ -153,7 +212,7 @@ fn load_graph(saved: &proto::Graph) -> Result<(Graph, State)> {
 }
 
 /// The body of a saved scan.
-fn scan_body(p: &proto::Scan) -> Result<ScanBody> {
+fn scan_body(p: &proto::Scan, options: &LoadOptions) -> Result<ScanBody> {
     let saved = p
         .body
         .as_ref()
@@ -163,19 +222,39 @@ fn scan_body(p: &proto::Scan) -> Result<ScanBody> {
     }
     let id = |i: u32| -> Result<NodeId> { Ok(NodeId::from_index(usize_of(u64::from(i))?)) };
     let ids = |v: &[u32]| v.iter().map(|&i| id(i)).collect::<Result<Vec<_>>>();
-    let (graph, _) = load_graph(saved)?;
-    Ok(ScanBody::new(
+    let length = usize_of(p.length)?;
+    if length > options.max_scan_steps {
+        return Err(IoError::Decode(format!(
+            "{length} steps is more than the limit of {}",
+            options.max_scan_steps
+        )));
+    }
+    let (graph, _) = load_graph(saved, options)?;
+    let body = ScanBody::new(
         graph,
-        usize_of(p.length)?,
+        length,
         id(p.carry)?,
         ids(&p.xs)?,
         ids(&p.constants)?,
         id(p.output)?,
-    )?)
+    )?;
+    let work = scan_work(&body);
+    if work > options.max_scan_work {
+        return Err(IoError::Decode(format!(
+            "the scan's work ({work}: steps times body elements) is more than the limit of {}",
+            options.max_scan_work
+        )));
+    }
+    Ok(body)
 }
 
 /// Adds the node of a saved operation.
-fn add_node(builder: &GraphBuilder, op: &P, parents: &[NodeId]) -> Result<NodeId> {
+fn add_node(
+    builder: &GraphBuilder,
+    op: &P,
+    parents: &[NodeId],
+    options: &LoadOptions,
+) -> Result<NodeId> {
     let op = match op {
         P::Constant(tensor) => Op::Constant(value_of(tensor)?),
         P::Unary(code) => Op::Unary(decode(*code)?),
@@ -288,7 +367,7 @@ fn add_node(builder: &GraphBuilder, op: &P, parents: &[NodeId]) -> Result<NodeId
             return Ok(proxy);
         }
         P::Scan(p) => {
-            Op::Scan(Arc::new(scan_body(p).map_err(|e| {
+            Op::Scan(Arc::new(scan_body(p, options).map_err(|e| {
                 IoError::Decode(format!("in the scan body: {e}"))
             })?))
         }

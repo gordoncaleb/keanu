@@ -10,6 +10,11 @@ or binary protobuf (feature `protobuf`), with some metadata.
 `load_json` / `load_protobuf` return the graph, the saved state and the metadata. Saved nodes keep their order, so
 a node has the same `NodeId` after loading as it had when it was saved, and keep their labels.
 
+A small file can describe enormous nodes, or a scan of so many steps that evaluating it would practically never
+finish, so loading checks every node against `LoadOptions`: by default at most 2^31 elements per node, 2^24 steps
+per scan and 2^32 units of work per scan (steps times the elements of the body's nodes). These protect against
+untrusted files; `load_json_with` / `load_protobuf_with` take larger limits for trusted models.
+
 ## The format
 
 Files use Keanu's own protobuf schema, `keanu-io/proto/keanu/graph.proto`; the JSON form is its standard protobuf
