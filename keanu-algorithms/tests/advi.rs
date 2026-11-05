@@ -199,7 +199,7 @@ fn full_rank_recovers_correlation_and_mean_field_underestimates_variance() {
 const SCHOOL_EFFECTS: [f64; 8] = [28.0, 8.0, -3.0, 7.0, -1.0, 1.0, 18.0, 12.0];
 const SCHOOL_SIGMAS: [f64; 8] = [15.0, 10.0, 16.0, 11.0, 9.0, 11.0, 10.0, 18.0];
 
-/// Non-centred eight schools (as in `tests/mcmc.rs`): mu ~ N(0, 5), tau ~ HalfCauchy(5), eta ~ N(0, 1),
+/// Non-centred eight schools (as in `tests/mcmc_nuts.rs`): mu ~ N(0, 5), tau ~ HalfCauchy(5), eta ~ N(0, 1),
 /// theta = mu + tau·eta, y ~ N(theta, sigma).
 fn eight_schools() -> (Model, State, Vec<NodeId>) {
     let schools = SCHOOL_EFFECTS.len();
