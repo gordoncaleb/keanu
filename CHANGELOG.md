@@ -92,6 +92,30 @@ some of the "Same model semantics" guarantees above no longer hold where noted.
     gradients); a boundary is reported only when confirmed, so interior optima far from 1 converge normally; the
     Laplace approximation rejects circular latents. `Laplace::lbfgs` is now `with_lbfgs`.
   - keanu-graph: `DistributionKind::nested()` and `Nested` describe wrapped kinds; `Graph::describe` names a node.
+- Follow-ups after the review:
+  - keanu-distributions, keanu-graph: **exact second derivatives everywhere**: `LinearGaussianStateSpace::hvp`
+    (forward mode through the Kalman filter, so the Laplace approximation works on Kalman models) and the shape
+    parameters of truncated and censored gamma, beta and negative binomial distributions, from new second shape
+    derivatives in `keanu_tensor::special` (`gamma_p_da2`, `inc_beta_da2`, `inc_beta_dadb`, `inc_beta_db2` and log
+    variants). Only lambdas and custom distributions lack second-order rules. The Kalman filter now uses
+    keanu-tensor's linear algebra.
+  - keanu-tensor: DiDonato & Morris's asymptotic expansion for the incomplete beta at large shapes (1e-13 relative up to
+    1e14); pentagamma to 1e-14; `eigh` signs each eigenvector so its first near-largest component is positive.
+  - keanu-graph: every op's shape is inferred from its parents' shapes without evaluating; explicit proxy and
+    distribution shapes are capped. **`GraphBuilder::add_proxy` now returns `Result<NodeId>`.**
+  - keanu-io: **load limits for untrusted files** (`LoadOptions`, `load_protobuf_with`, `load_json_with`): by default at
+    most 2^31 elements per node, 2^24 scan steps and 2^32 units of scan work. Larger trusted models need the `_with`
+    functions.
+  - keanu-graph, keanu-distributions: invalid parameters that come from the state (crossed truncation bounds,
+    non-increasing cutpoints, mixture weights or transition rows off the simplex) give a log probability of −∞ instead
+    of an error, so Metropolis–Hastings rejects them; Weibull sampling can no longer return +inf; NegativeBinomial and
+    Weibull gradients have the correct limits at mu = 0 and x = 0.
+  - keanu-algorithms: NUTS checks for U-turns across subtree boundaries, as Stan does (trees on a 100-dimensional
+    Gaussian no longer run to the 1023-step maximum), and adapts its step size and diagonal metric on Stan's windowed
+    schedule (75-step fast start, doubling slow windows from 25, 50-step fast end, regularised variance).
+    `QuadraticPotential::adaptation_window` now means the first slow window (default 25, was 100), new
+    `initial_buffer` and `terminal_buffer`; `initial_mean` and `initial_weight` are deprecated and ignored. NUTS draws
+    for a given seed change.
 - keanu: new examples `eight_schools`, `radon` (data from the PyMC examples repository, MIT), `gaussian_mixture` and
   `gp_regression`; new book chapters on variational inference and Gaussian processes.
 
