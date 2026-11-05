@@ -566,6 +566,39 @@ impl<'b> DoubleVar<'b> {
     pub fn trigamma(self) -> Self {
         self.map(UnaryOp::Trigamma)
     }
+    /// A node computing the error function erf(x).
+    pub fn erf(self) -> Self {
+        self.map(UnaryOp::Erf)
+    }
+    /// A node computing the complementary error function erfc(x) = 1 - erf(x).
+    pub fn erfc(self) -> Self {
+        self.map(UnaryOp::Erfc)
+    }
+    /// A node computing the inverse error function erf⁻¹(x), for -1 <= x <= 1.
+    pub fn erf_inv(self) -> Self {
+        self.map(UnaryOp::ErfInv)
+    }
+    /// A node computing ln Φ(x), the log of the standard normal CDF, which stays finite and accurate deep in the
+    /// lower tail where Φ underflows.
+    pub fn log_ndtr(self) -> Self {
+        self.map(UnaryOp::LogNdtr)
+    }
+    /// A node computing the standard normal quantile function Φ⁻¹(p), for 0 <= p <= 1.
+    pub fn ndtri(self) -> Self {
+        self.map(UnaryOp::Ndtri)
+    }
+    /// A node computing softplus(x) = ln(1 + eˣ).
+    pub fn softplus(self) -> Self {
+        self.map(UnaryOp::Softplus)
+    }
+    /// A node computing logit(p) = ln(p / (1 - p)), for 0 <= p <= 1.
+    pub fn logit(self) -> Self {
+        self.map(UnaryOp::Logit)
+    }
+    /// A node computing ln(1 - eˣ), for x <= 0.
+    pub fn log1mexp(self) -> Self {
+        self.map(UnaryOp::Log1mExp)
+    }
 
     /// Element-wise atan2(y, self).
     pub fn atan2(self, y: impl IntoDoubleVar<'b>) -> Self {
@@ -582,6 +615,10 @@ impl<'b> DoubleVar<'b> {
     /// y * ln(self), taken to be 0 where y is 0.
     pub fn safe_ln_times(self, y: impl IntoDoubleVar<'b>) -> Self {
         self.binary(BinaryOp::SafeLnTimes, y)
+    }
+    /// A node computing ln B(self, b), the log of the beta function.
+    pub fn log_beta(self, b: impl IntoDoubleVar<'b>) -> Self {
+        self.binary(BinaryOp::LogBeta, b)
     }
 
     /// 1.0 where self > other, else 0.0.

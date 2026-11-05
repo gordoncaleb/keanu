@@ -872,6 +872,7 @@ dependencies = [
  "faer",
  "keanu-parity",
  "proptest",
+ "serde_json",
  "smallvec",
 ]
 

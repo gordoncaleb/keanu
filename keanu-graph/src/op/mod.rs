@@ -82,6 +82,22 @@ pub enum UnaryOp {
     Digamma,
     /// Trigamma ψ₁(x).
     Trigamma,
+    /// The error function erf(x).
+    Erf,
+    /// The complementary error function erfc(x) = 1 - erf(x).
+    Erfc,
+    /// The inverse error function erf⁻¹(x), for -1 <= x <= 1.
+    ErfInv,
+    /// Ln Φ(x), the log of the standard normal CDF, accurate deep in the lower tail.
+    LogNdtr,
+    /// The standard normal quantile function Φ⁻¹(p), for 0 <= p <= 1.
+    Ndtri,
+    /// Ln(1 + eˣ).
+    Softplus,
+    /// Ln(p / (1 - p)), for 0 <= p <= 1.
+    Logit,
+    /// Ln(1 - eˣ), for x <= 0.
+    Log1mExp,
 }
 
 impl UnaryOp {
@@ -119,6 +135,8 @@ pub enum BinaryOp {
     LogAddExp2,
     /// B × ln(a), taken as 0 where b is 0.
     SafeLnTimes,
+    /// Ln B(a, b), the log of the beta function, for a, b > 0.
+    LogBeta,
 }
 
 /// Element-wise comparisons with broadcasting.

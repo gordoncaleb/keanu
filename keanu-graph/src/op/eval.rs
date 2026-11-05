@@ -45,6 +45,14 @@ fn unary_f64(op: UnaryOp, x: &DoubleTensor) -> DoubleTensor {
         UnaryOp::LnGamma => x.ln_gamma(),
         UnaryOp::Digamma => x.digamma(),
         UnaryOp::Trigamma => x.trigamma(),
+        UnaryOp::Erf => x.erf(),
+        UnaryOp::Erfc => x.erfc(),
+        UnaryOp::ErfInv => x.erf_inv(),
+        UnaryOp::LogNdtr => x.log_ndtr(),
+        UnaryOp::Ndtri => x.ndtri(),
+        UnaryOp::Softplus => x.softplus(),
+        UnaryOp::Logit => x.logit(),
+        UnaryOp::Log1mExp => x.log1mexp(),
     }
 }
 
@@ -61,6 +69,7 @@ fn binary_f64(op: BinaryOp, a: &DoubleTensor, b: &DoubleTensor) -> Result<Option
         BinaryOp::LogAddExp => a.log_add_exp(b)?,
         BinaryOp::LogAddExp2 => a.log_add_exp2(b)?,
         BinaryOp::SafeLnTimes => a.safe_ln_times(b)?,
+        BinaryOp::LogBeta => a.log_beta(b)?,
         BinaryOp::Rem => return Ok(None),
     }))
 }

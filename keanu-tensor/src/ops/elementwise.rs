@@ -222,6 +222,90 @@ unary! {
     ln_gamma => special::ln_gamma,
     digamma => special::digamma,
     trigamma => special::trigamma,
+    /// The error function ([`special::erf`]).
+    erf => special::erf,
+    /// The complementary error function ([`special::erfc`]).
+    erfc => special::erfc,
+    /// The scaled complementary error function e^(x²) erfc(x) ([`special::erfcx`]).
+    erfcx => special::erfcx,
+    /// The inverse error function ([`special::erf_inv`]).
+    erf_inv => special::erf_inv,
+    /// The inverse complementary error function ([`special::erfc_inv`]).
+    erfc_inv => special::erfc_inv,
+    /// The standard normal CDF Φ(x) ([`special::ndtr`]).
+    ndtr => special::ndtr,
+    /// ln Φ(x), accurate deep in the lower tail ([`special::log_ndtr`]).
+    log_ndtr => special::log_ndtr,
+    /// The standard normal quantile function Φ⁻¹(p) ([`special::ndtri`]).
+    ndtri => special::ndtri,
+    /// ln(1 + eˣ) ([`special::softplus`]).
+    softplus => special::softplus,
+    /// ln(p / (1 - p)) ([`special::logit`]).
+    logit => special::logit,
+    /// ln(1 - eˣ) for x <= 0 ([`special::log1mexp`]).
+    log1mexp => special::log1mexp,
+    /// ln I₀(κ) ([`special::log_bessel_i0`]).
+    log_bessel_i0 => special::log_bessel_i0,
+    /// ln I₁(κ) ([`special::log_bessel_i1`]).
+    log_bessel_i1 => special::log_bessel_i1,
+}
+
+/// Applies a function of three arguments element-wise, broadcasting all three to their common shape.
+fn zip3(
+    a: &DoubleTensor,
+    b: &DoubleTensor,
+    c: &DoubleTensor,
+    f: impl Fn(f64, f64, f64) -> f64,
+) -> Result<DoubleTensor> {
+    let shape = crate::broadcast_shape(&crate::broadcast_shape(a.shape(), b.shape())?, c.shape())?;
+    let (a, b, c) = (
+        a.broadcast_to(&shape)?,
+        b.broadcast_to(&shape)?,
+        c.broadcast_to(&shape)?,
+    );
+    let data = a
+        .as_slice()
+        .iter()
+        .zip(b.as_slice())
+        .zip(c.as_slice())
+        .map(|((&a, &b), &c)| f(a, b, c))
+        .collect();
+    DoubleTensor::new(&shape, data)
+}
+
+/// Special functions of several arguments, element-wise with broadcasting.
+impl DoubleTensor {
+    /// Element-wise, broadcasting: ln B(self, b) ([`special::log_beta`]).
+    pub fn log_beta(&self, b: &Self) -> Result<Self> {
+        self.zip_with(b, special::log_beta)
+    }
+    /// Element-wise, broadcasting: the regularised lower incomplete gamma function P(self, x)
+    /// ([`special::gamma_p`]), with self the shape.
+    pub fn gamma_p(&self, x: &Self) -> Result<Self> {
+        self.zip_with(x, special::gamma_p)
+    }
+    /// Element-wise, broadcasting: the regularised upper incomplete gamma function Q(self, x)
+    /// ([`special::gamma_q`]), with self the shape.
+    pub fn gamma_q(&self, x: &Self) -> Result<Self> {
+        self.zip_with(x, special::gamma_q)
+    }
+    /// Element-wise, broadcasting: ∂P(self, x)/∂self ([`special::gamma_p_da`]).
+    pub fn gamma_p_da(&self, x: &Self) -> Result<Self> {
+        self.zip_with(x, special::gamma_p_da)
+    }
+    /// Element-wise, broadcasting all three: the regularised incomplete beta function I_x(self, b)
+    /// ([`special::inc_beta`]).
+    pub fn inc_beta(&self, b: &Self, x: &Self) -> Result<Self> {
+        zip3(self, b, x, special::inc_beta)
+    }
+    /// Element-wise, broadcasting all three: ∂I_x(self, b)/∂self ([`special::inc_beta_da`]).
+    pub fn inc_beta_da(&self, b: &Self, x: &Self) -> Result<Self> {
+        zip3(self, b, x, special::inc_beta_da)
+    }
+    /// Element-wise, broadcasting all three: ∂I_x(self, b)/∂b ([`special::inc_beta_db`]).
+    pub fn inc_beta_db(&self, b: &Self, x: &Self) -> Result<Self> {
+        zip3(self, b, x, special::inc_beta_db)
+    }
 }
 
 impl DoubleTensor {

@@ -187,6 +187,46 @@ fn unary_ops() {
 }
 
 #[test]
+fn special_function_ops() {
+    let signed = t(&[2, 3], &[-1.7, -0.3, 0.4, 1.1, 2.2, -2.5]);
+    let probability = t(&[2, 3], &[0.01, 0.2, 0.45, 0.5, 0.8, 0.97]);
+    let unit = range(-0.9, 0.9, &[2, 3]);
+    let negative = t(&[2, 3], &[-0.01, -0.3, -0.69, -1.0, -4.0, -20.0]);
+    check(&[signed.clone()], |_, v| v[0].erf());
+    check(&[signed.clone()], |_, v| v[0].erfc());
+    check(&[unit], |_, v| v[0].erf_inv());
+    check(&[signed.clone()], |_, v| v[0].log_ndtr());
+    // deep in the lower tail, where Φ underflows but ln Φ and its derivative don't
+    check(&[t(&[3], &[-40.0, -15.0, 6.0])], |_, v| v[0].log_ndtr());
+    check(&[probability.clone()], |_, v| v[0].ndtri());
+    check(&[t(&[2], &[1e-6, 0.999])], |_, v| v[0].ndtri());
+    check(&[t(&[4], &[-40.0, -1.0, 2.0, 40.0])], |_, v| {
+        v[0].softplus()
+    });
+    check(&[signed], |_, v| v[0].softplus());
+    check(&[probability], |_, v| v[0].logit());
+    check(&[negative], |_, v| v[0].log1mexp());
+    // scalars take the scalar fast path
+    let scalar = DoubleTensor::scalar;
+    check(&[scalar(-0.4)], |_, v| v[0].erf());
+    check(&[scalar(-0.4)], |_, v| v[0].erfc());
+    check(&[scalar(0.6)], |_, v| v[0].erf_inv());
+    check(&[scalar(-12.0)], |_, v| v[0].log_ndtr());
+    check(&[scalar(0.3)], |_, v| v[0].ndtri());
+    check(&[scalar(-0.4)], |_, v| v[0].softplus());
+    check(&[scalar(0.3)], |_, v| v[0].logit());
+    check(&[scalar(-0.4)], |_, v| v[0].log1mexp());
+    let shapes: [(&[usize], &[usize]); 3] = [(&[2, 3], &[2, 3]), (&[2, 3], &[3]), (&[], &[2, 2])];
+    for (ls, rs) in shapes {
+        let a = range(0.3, 4.0, ls);
+        let b = range(0.5, 25.0, rs);
+        check(&[a.clone(), b.clone()], |_, v| v[0].log_beta(v[1]));
+        check(&[a, b], |_, v| v[1].log_beta(v[0]));
+    }
+    check(&[DoubleTensor::scalar(2.5)], |_, v| v[0].log_beta(3.0));
+}
+
+#[test]
 fn binary_ops_with_broadcasting() {
     let shapes: [(&[usize], &[usize]); 4] = [
         (&[2, 3], &[2, 3]),

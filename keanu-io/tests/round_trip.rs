@@ -286,6 +286,36 @@ fn nodes_without_a_saved_form_are_reported() {
 }
 
 #[test]
+fn special_function_ops_are_not_saveable_yet() {
+    // the Java format has no vertices for these; native schema in U5
+    type Build = for<'b> fn(keanu_graph::DoubleVar<'b>) -> keanu_graph::DoubleVar<'b>;
+    let builds: [Build; 9] = [
+        |x| x.erf(),
+        |x| x.erfc(),
+        |x| x.erf_inv(),
+        |x| x.log_ndtr(),
+        |x| x.ndtri(),
+        |x| x.softplus(),
+        |x| x.logit(),
+        |x| x.log1mexp(),
+        |x| x.log_beta(2.0),
+    ];
+    for build in builds {
+        let b = GraphBuilder::new();
+        build(b.scalar(0.5));
+        let (graph, state) = b.build().unwrap();
+        assert!(matches!(
+            save_protobuf(&graph, &state, &Metadata::new()),
+            Err(keanu_io::IoError::NotSaveable(_))
+        ));
+        assert!(matches!(
+            save_json(&graph, &state, &Metadata::new()),
+            Err(keanu_io::IoError::NotSaveable(_))
+        ));
+    }
+}
+
+#[test]
 fn unsupported_vertex_types_are_reported() {
     let json = r#"{"graph": {"vertices": [{"id": {"id": "[0]"}, "vertexType": "io.improbable.keanu.vertices.tensor.generic.nonprobabilistic.PrintVertex"}]}}"#;
     assert!(

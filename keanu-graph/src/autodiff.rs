@@ -773,12 +773,49 @@ fn unary_derivative(u: UnaryOp, x: &DoubleTensor, y: &DoubleTensor) -> Result<Do
         UnaryOp::LnGamma => x.digamma(),
         UnaryOp::Digamma => x.trigamma(),
         UnaryOp::Trigamma => x.map(special::tetragamma),
+        UnaryOp::Erf
+        | UnaryOp::Erfc
+        | UnaryOp::ErfInv
+        | UnaryOp::LogNdtr
+        | UnaryOp::Ndtri
+        | UnaryOp::Softplus
+        | UnaryOp::Logit
+        | UnaryOp::Log1mExp => x.zip_with(y, |x, y| special_unary_derivative(u, x, y))?,
         UnaryOp::Floor | UnaryOp::Ceil | UnaryOp::Round | UnaryOp::Sign => {
             return Err(GraphError::NotDifferentiable(format!(
                 "{u:?} is not differentiable"
             )));
         }
     })
+}
+
+/// d y / d x for the special-function unary ops at x with y = op(x) (NaN for any other op).
+fn special_unary_derivative(u: UnaryOp, x: f64, y: f64) -> f64 {
+    use std::f64::consts::{FRAC_1_SQRT_2, FRAC_2_SQRT_PI, PI};
+    match u {
+        UnaryOp::Erf => FRAC_2_SQRT_PI * (-x * x).exp(),
+        UnaryOp::Erfc => -FRAC_2_SQRT_PI * (-x * x).exp(),
+        UnaryOp::ErfInv => 0.5 * PI.sqrt() * (y * y).exp(),
+        // φ(x) / Φ(x); in the lower half through erfcx, so that it doesn't become 0 / 0 in the tail
+        UnaryOp::LogNdtr => {
+            if x < 0.0 {
+                FRAC_2_SQRT_PI * FRAC_1_SQRT_2 / special::erfcx(-x * FRAC_1_SQRT_2)
+            } else {
+                (-0.5 * x * x - y).exp() / (2.0 * PI).sqrt()
+            }
+        }
+        // 1 / φ(Φ⁻¹(p))
+        UnaryOp::Ndtri => (2.0 * PI).sqrt() * (0.5 * y * y).exp(),
+        UnaryOp::Softplus => 1.0 / (1.0 + (-x).exp()),
+        UnaryOp::Logit => 1.0 / (x * (1.0 - x)),
+        UnaryOp::Log1mExp => -1.0 / (-x).exp_m1(),
+        _ => f64::NAN,
+    }
+}
+
+/// ∂/∂a ln B(a, b) = ψ(a) - ψ(a + b).
+fn log_beta_derivative(a: f64, b: f64) -> f64 {
+    special::digamma(a) - special::digamma(a + b)
 }
 
 /// A local derivative ∂y/∂operand of an element-wise binary op, broadcastable against the output.
@@ -854,6 +891,10 @@ fn binary_derivatives<'a>(
             owned(l.zip_with(r, |x, y| y / x)?),
             owned(l.zip_with(r, |x, y| if y == 0.0 { f64::NAN } else { x.ln() })?),
         ),
+        BinaryOp::LogBeta => (
+            owned(l.zip_with(r, log_beta_derivative)?),
+            owned(r.zip_with(l, log_beta_derivative)?),
+        ),
         BinaryOp::Rem => {
             return Err(GraphError::NotDifferentiable(
                 "rem is not differentiable".into(),
@@ -908,6 +949,14 @@ fn unary_derivative_scalar(u: UnaryOp, x: f64, y: f64) -> Option<f64> {
         UnaryOp::LnGamma => special::digamma(x),
         UnaryOp::Digamma => special::trigamma(x),
         UnaryOp::Trigamma => special::tetragamma(x),
+        UnaryOp::Erf
+        | UnaryOp::Erfc
+        | UnaryOp::ErfInv
+        | UnaryOp::LogNdtr
+        | UnaryOp::Ndtri
+        | UnaryOp::Softplus
+        | UnaryOp::Logit
+        | UnaryOp::Log1mExp => special_unary_derivative(u, x, y),
         _ => return None,
     })
 }
@@ -932,6 +981,7 @@ fn binary_derivatives_scalar(op: BinaryOp, l: f64, r: f64, y: f64) -> Option<(f6
         BinaryOp::LogAddExp => ((l - y).exp(), (r - y).exp()),
         BinaryOp::LogAddExp2 => ((l - y).exp2(), (r - y).exp2()),
         BinaryOp::SafeLnTimes => (r / l, if r == 0.0 { f64::NAN } else { l.ln() }),
+        BinaryOp::LogBeta => (log_beta_derivative(l, r), log_beta_derivative(r, l)),
         _ => return None,
     })
 }
