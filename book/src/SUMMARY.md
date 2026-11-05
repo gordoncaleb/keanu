@@ -18,5 +18,6 @@
 - [Custom distributions](custom-distributions.md)
 - [Regression models](regression.md)
 - [Gaussian processes](gaussian-processes.md)
+- [Differential equations](differential-equations.md)
 - [Examples](examples.md)
 - [Coming from Java Keanu](from-java.md)

@@ -3,8 +3,8 @@
 These live in `keanu/examples`. Run one with `cargo run --release --example <name>`. Each is also an
 integration test (`keanu/tests/examples.rs`): the examples ported from Java check the same results the Java
 examples' tests check, and the hierarchical ones check multi-chain R-hat, divergences and posterior means.
-The Gaussian process, stochastic volatility and hidden Markov model examples check their results against the
-functions or parameters their synthetic data were generated from.
+The Gaussian process, stochastic volatility, hidden Markov model, pharmacokinetic and multi-state examples check
+their results against the functions or parameters their synthetic data were generated from.
 
 | Example | Question |
 |---|---|
@@ -20,6 +20,9 @@ functions or parameters their synthetic data were generated from.
 | `gp_regression` | What smooth function produced noisy measurements? Gaussian process hyperparameters by NUTS |
 | `stochastic_volatility` | How volatile are daily returns, and how persistent is the volatility? A scan over latent innovations |
 | `hmm` | When does a series switch regime, and how often? A two-state hidden Markov model |
+| `sir` | How fast did influenza spread through a boarding school, and how long were the boys ill? An SIR ODE |
+| `pharmacokinetics` | How quickly is an oral dose absorbed and cleared? A one-compartment ODE, checked against its closed form |
+| `multi_state` | How fast do people fall ill and die, seen only at clinic visits? An illness–death model with the matrix exponential |
 
 The first five come from *Bayesian Methods for Hackers* by Cameron Davidson-Pilon; `eight_schools` and `radon` are
 classic hierarchical models from Gelman et al. `gaussian_mixture` is checked against the mixture its synthetic data
@@ -139,4 +142,51 @@ scale within their posterior uncertainty of the truth, and the ordering in every
 
 ```rust,ignore
 {{#include ../../keanu/examples/hmm.rs}}
+```
+
+## An SIR epidemic
+
+The SIR model (susceptible, infected, recovered) of the 1978 influenza outbreak at an English boarding school (BMJ,
+1978): 763 boys, with the number confined to bed counted on each of 14 days. The compartments follow
+dS/dt = −β S I / N, dI/dt = β S I / N − γ I and dR/dt = γ I from one infected boy, solved by an
+[ODE node](differential-equations.md), and each day's count is negative binomial around I(t) with dispersion φ.
+The priors are those of the Stan case study by Grinsztajn, Semenova, Margossian and Riou (2021): β ~ N(2, 1) and
+γ ~ N(0.4, 0.5), both truncated to positive values, and 1/φ ~ Exponential(5). Four NUTS chains give β ≈ 1.74 per
+day, γ ≈ 0.54 per day, R₀ = β / γ ≈ 3.2 and a mean recovery time 1 / γ ≈ 1.85 days, as in the case study.
+
+Its tests fit data simulated from the model with β = 1.7 and γ = 0.55 and check that both lie in their 90%
+posterior intervals, check the boarding school posterior means against the case study's, and check the gradient of
+the log probability (through the ODE's sensitivities) against finite differences to 10⁻⁶ relative.
+
+```rust,ignore
+{{#include ../../keanu/examples/sir.rs}}
+```
+
+## Pharmacokinetics
+
+The one-compartment model with first-order absorption of an oral dose: the dose moves from the gut into the body at
+the absorption rate kₐ and is cleared at kₑ = CL / V, and the measured concentration A_central / V has a log-normal
+error. One subject's concentrations at the sampling times of R's `Theoph` study are simulated with a 320 mg dose,
+kₐ = 1.5 per hour, CL = 2.8 L per hour and V = 35 L. The model is fitted twice, with the ODE solved numerically and
+with its closed-form solution; the test checks that the two log probabilities and gradients agree to the solver's
+tolerance at several points, that the two posteriors' means agree within their Monte Carlo error, and that each
+parameter is recovered within its posterior uncertainty.
+
+```rust,ignore
+{{#include ../../keanu/examples/pharmacokinetics.rs}}
+```
+
+## A multi-state model
+
+The illness–death model: a continuous-time Markov chain on healthy, ill and dead with intensities q₀₁ (falling
+ill), q₀₂ (dying while healthy) and q₁₂ (dying while ill). 300 simulated subjects are seen at visits 0.5, 1 or
+2 years apart until they die, and only their state at each visit is recorded, so when each transition happened is
+interval-censored. The probability of each observed pair of states is an entry of P(Δt) = exp(Q Δt), one batched
+[matrix exponential](differential-equations.md#the-matrix-exponential) over the three gaps, and each visit's state
+is a categorical draw from the row of the state before it (as R's `msm` package fits panel data). The example also
+reports the probability that someone healthy now is dead within 5 years, exp(5 Q)₀₂. Its test checks that each true
+intensity lies in its 90% posterior interval and that the five-year probability is recovered.
+
+```rust,ignore
+{{#include ../../keanu/examples/multi_state.rs}}
 ```

@@ -33,8 +33,14 @@ mod gaussian_mixture;
 mod gp_regression;
 #[path = "../examples/hmm.rs"]
 mod hmm;
+#[path = "../examples/multi_state.rs"]
+mod multi_state;
+#[path = "../examples/pharmacokinetics.rs"]
+mod pharmacokinetics;
 #[path = "../examples/radon.rs"]
 mod radon;
+#[path = "../examples/sir.rs"]
+mod sir;
 #[path = "../examples/stochastic_volatility.rs"]
 mod stochastic_volatility;
 #[path = "../examples/text_messaging.rs"]
@@ -614,4 +620,211 @@ fn hmm_recovers_the_transition_probabilities() {
                 .all(|m| m.as_slice()[0] < m.as_slice()[1])
         );
     }
+}
+
+/// Asserts every R-hat of a summary is below `limit`.
+fn assert_r_hat(samples: &keanu::algorithms::ChainSamples, limit: f64, what: &str) {
+    for row in samples.summary().unwrap().rows() {
+        assert!(
+            row.stats.r_hat < limit,
+            "{what}: R-hat of {:?}{:?} is {}",
+            row.node,
+            row.index,
+            row.stats.r_hat
+        );
+    }
+}
+
+/// The gradient of the log probability in unconstrained space against central differences, at the model's point
+/// and at `points` others (unconstrained, one value per coordinate), to `tolerance` relative.
+fn assert_gradient_matches_finite_differences(
+    model: &keanu::graph::Model,
+    state: &keanu::graph::State,
+    points: &[Vec<f64>],
+    tolerance: f64,
+    what: &str,
+) {
+    use keanu::graph::Parameterisation;
+    let param = Parameterisation::new(model, state).unwrap();
+    let mut state = state.clone();
+    let mut all = vec![param.from_state(&state).unwrap()];
+    all.extend(points.iter().cloned());
+    for z in all {
+        let (_, gradient) = param.log_prob_and_gradient(&z, true, &mut state).unwrap();
+        let gradient = gradient.unwrap();
+        for m in 0..z.len() {
+            let at = |delta: f64, state: &mut keanu::graph::State| {
+                let mut point = z.clone();
+                point[m] += delta;
+                param.log_prob(&point, true, state).unwrap()
+            };
+            let h = 1e-5;
+            let fd = (at(h, &mut state) - at(-h, &mut state)) / (2.0 * h);
+            assert!(
+                (gradient[m] - fd).abs() <= tolerance * fd.abs().max(1.0),
+                "{what} at {z:?}: d/dz[{m}] is {} by sensitivities, {fd} by finite differences",
+                gradient[m]
+            );
+        }
+    }
+}
+
+#[test]
+fn sir_gradient_matches_finite_differences() {
+    // the solver at tight tolerances, so that differences of the log probability resolve its gradient
+    let options = keanu::graph::ode::OdeOptions::default().with_tolerances(1e-12, 1e-12);
+    let (model, state, _) = sir::model(&sir::BOARDING_SCHOOL, options).unwrap();
+    let points = [vec![0.5, -0.6, -1.9], vec![0.2, -0.2, -1.0]];
+    assert_gradient_matches_finite_differences(&model, &state, &points, 1e-6, "SIR");
+}
+
+#[test]
+fn sir_recovers_simulated_transmission_and_recovery_rates() {
+    // 4 chains of 300 draws after 300 adaptation steps, on 14 days simulated with beta = 1.7, gamma = 0.55 and
+    // phi = 8. Over seeds 1 to 8 the largest R-hat was 1.015, nothing diverged, and both 90% intervals covered the
+    // true rates.
+    let (beta, gamma) = (1.7, 0.55);
+    let cases = sir::simulate(beta, gamma, 8.0, 14, 3).unwrap();
+    let r = sir::fit(&cases, sir::CHAINS, 1, 300).unwrap();
+    assert_r_hat(&r.samples, 1.02, "SIR on simulated data");
+    for (node, truth, what) in [
+        (r.nodes.beta, beta, "beta"),
+        (r.nodes.gamma, gamma, "gamma"),
+    ] {
+        let s = r.samples.summarize(node, &[]).unwrap();
+        assert!(
+            s.q5 <= truth && truth <= s.q95,
+            "{what}: {truth} is outside the 90% interval [{}, {}]",
+            s.q5,
+            s.q95
+        );
+    }
+}
+
+#[test]
+fn sir_fits_the_boarding_school_outbreak_as_the_stan_case_study() {
+    // 4 chains of 300 draws after 300 adaptation steps. The Stan case study (Grinsztajn et al., 2021) reports
+    // posterior means of about 1.73 for beta, 0.54 for gamma, 3.2 for R0 and 1.85 days to recover. Over seeds 1 to
+    // 8 the largest R-hat was 1.017, nothing diverged, and the means were 1.734 to 1.739, 0.539 to 0.545, 3.20 to
+    // 3.24 and 1.85 to 1.87.
+    let r = sir::run(1, 300).unwrap();
+    assert_r_hat(&r.samples, 1.02, "SIR on the boarding school data");
+    assert!(r.divergences <= 4, "{} divergences", r.divergences);
+    let n = r.nodes;
+    for (node, expected, within, what) in [
+        (n.beta, 1.73, 0.05, "beta"),
+        (n.gamma, 0.54, 0.03, "gamma"),
+        (n.r0, 3.2, 0.2, "R0"),
+        (n.recovery_time, 1.85, 0.1, "recovery time"),
+    ] {
+        let s = r.samples.summarize(node, &[]).unwrap();
+        assert_close(s.mean, expected, within, what);
+    }
+}
+
+#[test]
+fn pharmacokinetics_ode_agrees_with_the_closed_form() {
+    use pharmacokinetics::Solution;
+    let data = pharmacokinetics::simulate(pharmacokinetics::DATA_SEED).unwrap();
+    // the log probabilities and gradients agree to the solver's tolerance at several points
+    let (ode, mut ode_state, _) = pharmacokinetics::model(&data, Solution::Ode).unwrap();
+    let (analytic, mut analytic_state, _) =
+        pharmacokinetics::model(&data, Solution::Analytic).unwrap();
+    let ode_param = keanu::graph::Parameterisation::new(&ode, &ode_state).unwrap();
+    let analytic_param = keanu::graph::Parameterisation::new(&analytic, &analytic_state).unwrap();
+    for z in [
+        vec![0.0, 1.1, 3.4, -1.2],
+        vec![0.4, 1.0, 3.6, -2.3],
+        vec![-0.3, 0.8, 3.2, -0.5],
+    ] {
+        let (a, ga) = ode_param
+            .log_prob_and_gradient(&z, true, &mut ode_state)
+            .unwrap();
+        let (b, gb) = analytic_param
+            .log_prob_and_gradient(&z, true, &mut analytic_state)
+            .unwrap();
+        assert_close(a, b, 1e-4 * b.abs().max(1.0), "log probability");
+        for (i, (x, y)) in ga.unwrap().iter().zip(gb.unwrap()).enumerate() {
+            assert_close(*x, y, 1e-4 * y.abs().max(1.0), &format!("gradient {i}"));
+        }
+    }
+    // and their NUTS fits agree, each covering the truth: 4 chains of 300 draws after 300 adaptation steps (over
+    // seeds 1 to 8 the largest R-hat was 1.019)
+    let r = pharmacokinetics::run(1, 300).unwrap();
+    assert_r_hat(&r.ode.samples, 1.02, "PK (ODE)");
+    assert_r_hat(&r.analytic.samples, 1.02, "PK (closed form)");
+    for (ode, analytic, truth, what) in [
+        (
+            r.ode.nodes.ka,
+            r.analytic.nodes.ka,
+            pharmacokinetics::TRUE_KA,
+            "ka",
+        ),
+        (
+            r.ode.nodes.cl,
+            r.analytic.nodes.cl,
+            pharmacokinetics::TRUE_CL,
+            "CL",
+        ),
+        (
+            r.ode.nodes.v,
+            r.analytic.nodes.v,
+            pharmacokinetics::TRUE_V,
+            "V",
+        ),
+        (
+            r.ode.nodes.sigma,
+            r.analytic.nodes.sigma,
+            pharmacokinetics::TRUE_SIGMA,
+            "sigma",
+        ),
+    ] {
+        let a = r.ode.samples.summarize(ode, &[]).unwrap();
+        let b = r.analytic.samples.summarize(analytic, &[]).unwrap();
+        // the same posterior: means within four Monte Carlo standard errors of their difference
+        let mcse = (a.mcse_mean.powi(2) + b.mcse_mean.powi(2)).sqrt();
+        assert_close(a.mean, b.mean, 4.0 * mcse, what);
+        assert_close(a.mean, truth, 4.0 * a.sd + 4.0 * a.mcse_mean, what);
+    }
+}
+
+#[test]
+fn multi_state_recovers_the_simulated_intensities() {
+    // 4 chains of 300 draws after 300 adaptation steps, on 300 simulated subjects. Over seeds 1 to 8 every R-hat
+    // was below 1.01 and every 90% interval covered its true intensity.
+    let r = multi_state::run(1, 300).unwrap();
+    assert_r_hat(&r.samples, 1.02, "multi-state");
+    let n = r.nodes;
+    for (node, truth, what) in [
+        (n.illness, multi_state::TRUE_ILLNESS, "q01"),
+        (n.healthy_death, multi_state::TRUE_HEALTHY_DEATH, "q02"),
+        (n.ill_death, multi_state::TRUE_ILL_DEATH, "q12"),
+    ] {
+        let s = r.samples.summarize(node, &[]).unwrap();
+        assert!(
+            s.q5 <= truth && truth <= s.q95,
+            "{what}: {truth} is outside the 90% interval [{}, {}]",
+            s.q5,
+            s.q95
+        );
+    }
+    // the five-year death probability is a function of the intensities: exp(5 Q)[0, 2] at the true ones
+    let (q01, q02, q12) = (
+        multi_state::TRUE_ILLNESS,
+        multi_state::TRUE_HEALTHY_DEATH,
+        multi_state::TRUE_ILL_DEATH,
+    );
+    let q = keanu::tensor::DoubleTensor::new(
+        &[3, 3],
+        vec![-(q01 + q02), q01, q02, 0.0, -q12, q12, 0.0, 0.0, 0.0],
+    )
+    .unwrap();
+    let truth = (&q * 5.0).matrix_exp().unwrap().as_slice()[2];
+    let s = r.samples.summarize(n.dead_in_five_years, &[]).unwrap();
+    assert_close(
+        s.mean,
+        truth,
+        4.0 * s.sd + 4.0 * s.mcse_mean,
+        "P(dead in 5 years)",
+    );
 }

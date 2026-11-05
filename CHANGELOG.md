@@ -272,6 +272,13 @@ Work from `docs/plans/2026-11-05-001-feat-applied-modelling-gaps-plan.md`.
   Gibbs and discrete Metropolis reject the value, the optimizers reject the step, and ADVI reports a non-finite
   ELBO as for any impossible draw. The save schema gained `ode` and `OdeSolver`, `LoadOptions::max_ode_steps`
   (default 10⁷) caps a loaded step limit, and the DOT export draws ODE bodies as clusters.
+- keanu: **ODE and multi-state examples** and a guide chapter, "Differential equations". `sir` fits the SIR
+  epidemic model with a negative binomial likelihood to the 1978 boarding school influenza outbreak (BMJ), with the
+  priors of the Stan case study by Grinsztajn et al. (2021), whose posterior it reproduces (β ≈ 1.74, γ ≈ 0.54,
+  R₀ ≈ 3.2); its tests also recover β and γ from simulated data within their 90% intervals and check the log
+  probability's gradient against finite differences to 10⁻⁶ relative. `pharmacokinetics` fits a one-compartment
+  oral-dose model as an ODE and in closed form and checks that they agree. `multi_state` fits an illness–death
+  continuous-time Markov chain to simulated interval-censored panel data through a batched matrix exponential.
 
 ### Code review fixes
 

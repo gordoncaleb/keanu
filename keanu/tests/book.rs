@@ -1358,3 +1358,195 @@ fn model_comparison() -> keanu::Result<()> {
     // ANCHOR_END: loo_weights
     Ok(())
 }
+
+#[test]
+fn differential_equations() -> keanu::Result<()> {
+    // ANCHOR: ode_logistic
+    use keanu::graph::ode::OdeOptions;
+
+    // logistic growth dN/dt = r N (1 − N / K) from N(0) = 5, counted at six times
+    let times = vec![1.0, 2.0, 3.0, 4.0, 6.0, 8.0];
+    let counts = vec![12.0, 27.0, 49.0, 71.0, 92.0, 98.0];
+    let b = GraphBuilder::new();
+    let r = b.log_normal(0.0, 1.0).label("r");
+    let capacity = b.log_normal(100.0f64.ln(), 0.5).label("capacity");
+    b.set_value(r, DoubleTensor::scalar(1.0));
+    b.set_value(capacity, DoubleTensor::scalar(100.0));
+    let n = b.ode(
+        b.constant(DoubleTensor::vector(vec![5.0])), // the initial state, [n]
+        b.constant(DoubleTensor::vector(times)),     // the output times, [T]
+        b.scalar(0.0),                               // the initial time
+        &[r, capacity],                              // the parameters the body sees
+        OdeOptions::default(),
+        // the body: dN/dt from placeholders for the time, the state and the parameters
+        |_body, _t, n, theta| {
+            let (r, capacity) = (theta[0], theta[1]);
+            r * n * (1.0 - n / capacity)
+        },
+    );
+    assert_eq!(n.shape(), vec![6, 1]); // [T, n]: the state at each output time
+    let observed = b.gaussian(n.reshape(&[6]), 3.0);
+    b.observe(observed, DoubleTensor::vector(counts));
+    let (r, capacity) = (r.id(), capacity.id());
+    let (graph, state) = b.build()?;
+    let model = Model::new(graph, &state)?;
+    // NUTS takes gradients through the solver
+    let samples = Nuts::default().with_adapt_count(300).sample(
+        &model,
+        &mut state.clone(),
+        &[r, capacity],
+        600,
+        &mut KeanuRng::seed_from_u64(2),
+    )?;
+    let samples = samples.drop(300)?;
+    let mean = |id| {
+        samples
+            .f64(id)
+            .unwrap()
+            .mean()
+            .unwrap()
+            .to_scalar()
+            .unwrap()
+    };
+    println!("r ≈ {:.2}, K ≈ {:.0}", mean(r), mean(capacity));
+    // ANCHOR_END: ode_logistic
+    assert!((mean(r) - 0.9).abs() < 0.15, "r {}", mean(r));
+    assert!((mean(capacity) - 100.0).abs() < 6.0, "K {}", mean(capacity));
+
+    // ANCHOR: ode_options
+    use keanu::graph::ode::OdeSolver;
+
+    // Robertson's chemical kinetics, a classic stiff problem: the stiff solver takes few steps where the explicit
+    // one would need millions
+    let b = GraphBuilder::new();
+    let rates = b.constant(DoubleTensor::vector(vec![0.04, 1e4, 3e7]));
+    let options = OdeOptions::new(OdeSolver::Stiff)
+        .with_tolerances(1e-8, 1e-10)
+        .with_max_steps(10_000);
+    let y = b.ode(
+        b.constant(DoubleTensor::vector(vec![1.0, 0.0, 0.0])),
+        b.constant(DoubleTensor::vector(vec![40.0])),
+        b.scalar(0.0),
+        &[rates],
+        options,
+        |body, _t, y, k| {
+            let (y1, y2, y3) = (y.take(&[0]), y.take(&[1]), y.take(&[2]));
+            let k = |i: usize| k[0].take(&[i]);
+            let a = k(0) * y1 - k(1) * y2 * y3;
+            let c = k(2) * y2 * y2;
+            body.stack(0, &[-a, a - c, c])
+        },
+    );
+    let y = y.id();
+    let (graph, mut state) = b.build()?;
+    state.eval(&graph, &[y], &mut KeanuRng::seed_from_u64(0))?;
+    // y₁(40) from the LSODE documentation
+    assert!((state.f64(y).unwrap().as_slice()[0] - 0.7158271).abs() < 1e-6);
+    // ANCHOR_END: ode_options
+
+    // ANCHOR: ode_gradient
+    use keanu::graph::reverse_partials;
+
+    // dy/dt = −k y from y(t0) = y0: y(t) = y0 e^(−k (t − t0)); every parent is differentiable
+    let b = GraphBuilder::new();
+    let (k, y0, t0) = (
+        b.uniform(0.0, 2.0),
+        b.uniform_with_shape(&[1], 0.0, 5.0),
+        b.uniform(-1.0, 1.0),
+    );
+    b.set_value(k, DoubleTensor::scalar(0.5));
+    b.set_value(y0, DoubleTensor::vector(vec![2.0]));
+    b.set_value(t0, DoubleTensor::scalar(0.0));
+    let options = OdeOptions::default().with_tolerances(1e-10, 1e-10);
+    let times = b.constant(DoubleTensor::vector(vec![1.0, 3.0]));
+    let y = b.ode(y0, times, t0, &[k], options, |_, _, y, theta| {
+        -(theta[0] * y)
+    });
+    let (k, y0, t0, y) = (k.id(), y0.id(), t0.id(), y.id());
+    let (graph, mut state) = b.build()?;
+    state.eval(&graph, &[y], &mut KeanuRng::seed_from_u64(0))?;
+    let partials = reverse_partials(&graph, &state, y, &[k, y0, t0])?;
+    // ∂y(3)/∂k = −3 y(3), ∂y(3)/∂y0 = e^(−3k) and ∂y(3)/∂t0 = k y(3)
+    let y3 = 2.0 * (-1.5f64).exp();
+    let d = |id| partials.get(id).unwrap().as_slice()[1];
+    assert!((d(k) + 3.0 * y3).abs() < 1e-8);
+    assert!((d(y0) - (-1.5f64).exp()).abs() < 1e-8);
+    assert!((d(t0) - 0.5 * y3).abs() < 1e-8);
+    // ANCHOR_END: ode_gradient
+
+    // ANCHOR: ode_failure
+    use keanu::graph::GraphError;
+
+    // dy/dt = k y² from y(0) = 1 blows up at t = 1 / k: for k ≥ 1 there is no solution at t = 1
+    let b = GraphBuilder::new();
+    let k = b.uniform(0.0, 2.0);
+    b.set_value(k, DoubleTensor::scalar(0.5));
+    let times = b.constant(DoubleTensor::vector(vec![1.0]));
+    let one = b.constant(DoubleTensor::vector(vec![1.0]));
+    let y = b.ode(
+        one,
+        times,
+        b.scalar(0.0),
+        &[k],
+        OdeOptions::default(),
+        |_, _, y, theta| theta[0] * y * y,
+    );
+    let observed = b.gaussian(y, 1.0);
+    b.observe(observed, DoubleTensor::new(&[1, 1], vec![2.0])?);
+    let (k, y) = (k.id(), y.id());
+    let (graph, mut state) = b.build()?;
+    state.eval(&graph, &[y], &mut KeanuRng::seed_from_u64(0))?;
+    let model = Model::new(graph, &state)?;
+    let before = model.log_prob(&state)?;
+    // evaluating there fails with a solver error, which the model reports as an impossible point
+    let proposal = [(k, Value::from(DoubleTensor::scalar(1.5)))];
+    assert_eq!(
+        model.log_prob_after(&mut state, &proposal, before)?,
+        f64::NEG_INFINITY
+    );
+    let error = state
+        .set_and_cascade(model.graph(), k, DoubleTensor::scalar(1.5))
+        .unwrap_err();
+    assert!(matches!(error, GraphError::SolverFailed(_)) && error.is_impossible_point());
+    // ANCHOR_END: ode_failure
+
+    // ANCHOR: matrix_exp
+    // a two-state continuous-time Markov chain with rates a (0 → 1) and b (1 → 0): P(t) = exp(Q t)
+    let builder = GraphBuilder::new();
+    let (a, b) = (0.3, 0.1);
+    let q = builder.constant(DoubleTensor::new(&[2, 2], vec![-a, a, b, -b])?);
+    let p = (q * 2.0).matrix_exp().id();
+    let (graph, mut state) = builder.build()?;
+    state.eval(&graph, &[p], &mut KeanuRng::seed_from_u64(0))?;
+    let p = state.f64(p).unwrap().as_slice().to_vec();
+    // each row sums to 1, and P₀₁(t) = a / (a + b) · (1 − e^(−(a + b) t))
+    assert!((p[0] + p[1] - 1.0).abs() < 1e-12 && (p[2] + p[3] - 1.0).abs() < 1e-12);
+    assert!((p[1] - a / (a + b) * (1.0 - (-(a + b) * 2.0f64).exp())).abs() < 1e-12);
+    // ANCHOR_END: matrix_exp
+    Ok(())
+}
+
+#[test]
+fn ode_solvers_on_slices() -> Result<(), Box<dyn std::error::Error>> {
+    // ANCHOR: ode_integrate
+    use keanu::graph::ode::{OdeOptions, integrate};
+
+    // the solvers also work on plain slices, outside any graph: the harmonic oscillator y'' = −y
+    let states = integrate(
+        |_t, y, dydt| {
+            dydt[0] = y[1];
+            dydt[1] = -y[0];
+        },
+        |_t, _y, dfdy, dfdt| {
+            dfdy.copy_from_slice(&[0.0, 1.0, -1.0, 0.0]);
+            dfdt.fill(0.0);
+        },
+        0.0,
+        &[1.0, 0.0],
+        &[std::f64::consts::PI],
+        &OdeOptions::default().with_tolerances(1e-10, 1e-10),
+    )?;
+    assert!((states[0][0] + 1.0).abs() < 1e-8);
+    // ANCHOR_END: ode_integrate
+    Ok(())
+}
