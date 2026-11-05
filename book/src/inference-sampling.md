@@ -66,6 +66,23 @@ Because the graph is shared and each chain has its own state, `algorithms::mcmc:
 independent, seeded chains. With the `parallel` feature they run on rayon's thread pool, with the same results as
 running them one after another.
 
+## Predictive sampling
+
+`PredictiveSampler` draws observed nodes as the model would generate them. `prior` samples the latents from their
+priors and then the observations (the prior predictive distribution, for checking that the priors produce
+plausible data). `posterior` takes posterior samples and, for each, draws the observations given those latent
+values (the posterior predictive distribution, for checking the fitted model against the data). Both return
+`NetworkSamples` of the requested nodes and work on a copy of the state, so the observations keep their values.
+
+```rust,ignore
+{{#include ../../keanu/tests/book.rs:predictive}}
+```
+
+The targets must be observed probabilistic nodes. Other observations stay fixed, so for a posterior draw the
+samples need to hold only the latents the targets depend on; for a prior draw, an observation that a target depends
+on must not itself depend on a latent (make it a target too). `with_draws(n)` uses `n` evenly spaced posterior
+samples instead of all of them.
+
 ## Simulated annealing
 
 `SimulatedAnnealing` uses Metropolis–Hastings steps at a decreasing temperature to find the most probable state. It

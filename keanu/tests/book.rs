@@ -253,6 +253,44 @@ fn posterior_sampling() -> keanu::Result<()> {
 }
 
 #[test]
+fn predictive_sampling() -> keanu::Result<()> {
+    // ANCHOR: predictive
+    // the rate of a Poisson process, with a Gamma prior, and three observed counts
+    let b = GraphBuilder::new();
+    let rate = b.gamma(2.0, 3.0); // scale 2, shape 3: prior mean 6
+    let counts: Vec<NodeId> = [4, 7, 5]
+        .into_iter()
+        .map(|count| {
+            let y = b.poisson(rate);
+            b.observe(y, IntTensor::scalar(count));
+            y.id()
+        })
+        .collect();
+    let rate = rate.id();
+    let (graph, mut state) = b.build()?;
+    let model = Model::new(graph, &state)?;
+    let mut rng = KeanuRng::seed_from_u64(1);
+    model.probe_for_non_zero_probability(&mut state, 100, &mut rng)?;
+
+    // prior predictive: counts the model generates before seeing any data
+    let prior = PredictiveSampler::new().prior(&model, &state, &counts, 1000, &mut rng)?;
+    assert_eq!(prior.len(), 1000);
+
+    // posterior predictive: one draw of every count for each of 200 evenly spaced posterior samples
+    let posterior =
+        MetropolisHastings::default().sample(&model, &mut state, &[rate], 5000, &mut rng)?;
+    let replicated = PredictiveSampler::new()
+        .with_draws(200)
+        .posterior(&model, &state, &posterior, &counts, &mut rng)?;
+    let first = replicated.i64(counts[0]).unwrap();
+    assert_eq!(first.len(), 200);
+    // the observations themselves are unchanged
+    assert_eq!(state.i64(counts[0]).unwrap().to_scalar(), Some(4));
+    // ANCHOR_END: predictive
+    Ok(())
+}
+
+#[test]
 fn sequences() -> keanu::Result<()> {
     // ANCHOR: sequence
     // a Gaussian random walk x[t] ~ N(x[t-1], 1), observed with noise as y[t] ~ N(x[t], 0.5)
