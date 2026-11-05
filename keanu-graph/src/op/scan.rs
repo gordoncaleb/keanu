@@ -379,8 +379,14 @@ impl ScanBody {
         if t.iter().all(Option::is_none) {
             return Ok(None);
         }
-        let m: usize = self.shape_of(self.carry).iter().product();
-        let mut result = vec![0.0; b * self.length * m];
+        let shape = self.batched_out_shape(b);
+        let total = super::shape::element_count(&shape).ok_or_else(|| {
+            invalid(format!(
+                "the batched tangent of shape {shape:?} has too many elements (at most {})",
+                super::shape::MAX_ELEMENTS
+            ))
+        })?;
+        let mut result = vec![0.0; total];
         let mut carry = t[0].cloned();
         for step in 0..self.length {
             let seeds = self.step_seeds(carry.take(), t, step, b)?;
@@ -394,7 +400,7 @@ impl ScanBody {
                 put_step(&mut result, b, self.length, step, c.as_slice());
             }
         }
-        Ok(Some(DoubleTensor::new(&self.batched_out_shape(b), result)?))
+        Ok(Some(DoubleTensor::new(&shape, result)?))
     }
 
     /// Reverse mode: the parents' cotangents from the stacked output's cotangent `[b, length, carry...]`, sweeping
@@ -626,5 +632,42 @@ impl fmt::Debug for ScanBody {
             .field("output", &self.output)
             .field("nodes", &nodes)
             .finish()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::GraphBuilder;
+    use std::sync::Arc;
+
+    /// The body of a long scan of a scalar carry, built but never evaluated.
+    fn long_scan(length: usize) -> Arc<ScanBody> {
+        let b = GraphBuilder::new();
+        let x = b
+            .scan_steps(length, b.scalar(1.0), &[], |_, x, _| x * 2.0)
+            .id();
+        let (graph, _) = b.build().unwrap();
+        match graph[x].op() {
+            Op::Scan(body) => body.clone(),
+            op => panic!("expected a scan, got {op:?}"),
+        }
+    }
+
+    #[test]
+    fn jvp_rejects_a_batched_tangent_too_large_to_allocate() {
+        // 2^59 steps of a scalar carry is within the element cap, but the batched tangent [b, 2^59] is not: with 32
+        // directions its element count overflows usize, and with 4 it is over the cap
+        let body = long_scan(1 << 59);
+        let init = Value::F64(DoubleTensor::scalar(1.0));
+        let out = DoubleTensor::scalar(0.0);
+        for b in [32, 4] {
+            let tangent = DoubleTensor::zeros(&[b]);
+            let result = body.jvp(&[&init], &out, &[Some(&tangent)], b);
+            assert!(
+                matches!(result, Err(GraphError::InvalidNode { op: "scan", .. })),
+                "{b}: {result:?}"
+            );
+        }
     }
 }
