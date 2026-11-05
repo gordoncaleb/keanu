@@ -76,6 +76,36 @@ fn square_cases() -> Vec<Case> {
         }
         assert_eq!(cases.last().unwrap().bijector.unconstrained_len(), n);
     }
+    // element-wise mixed bound kinds: free, lower only, upper only and both in one value
+    let (inf, ninf) = (f64::INFINITY, f64::NEG_INFINITY);
+    let mixed = [
+        (
+            "lower_bound_mixed",
+            Support::GreaterThan(t(&[2], &[0.5, ninf])),
+        ),
+        (
+            "upper_bound_mixed",
+            Support::LessThan(t(&[2], &[inf, -1.0])),
+        ),
+        (
+            "interval_mixed",
+            Support::Interval(
+                t(&[4], &[ninf, 0.0, ninf, -1.0]),
+                t(&[4], &[inf, inf, 2.0, 3.0]),
+            ),
+        ),
+    ];
+    for (name, support) in mixed {
+        let shape = match &support {
+            Support::Interval(lower, _) => lower.shape().to_vec(),
+            _ => vec![2],
+        };
+        cases.push(Case {
+            name: name.to_string(),
+            bijector: bijector(&support, &shape),
+            free: all,
+        });
+    }
     for shape in [vec![1], vec![3], vec![2, 3]] {
         cases.push(Case {
             name: format!("ordered {shape:?}"),
@@ -536,13 +566,19 @@ fn invalid_supports_are_rejected() {
         (Support::interval(3.0, 2.0), vec![3]),
         (Support::interval(nan, 1.0), vec![]),
         (Support::interval(0.0, nan), vec![]),
-        (Support::interval(0.0, f64::INFINITY), vec![]),
+        (Support::interval(f64::INFINITY, f64::INFINITY), vec![]),
+        (
+            Support::interval(f64::NEG_INFINITY, f64::NEG_INFINITY),
+            vec![],
+        ),
         (
             Support::Interval(t(&[2], &[0.0, 1.0]), t(&[2], &[1.0, 1.0])),
             vec![2],
         ),
         (Support::greater_than(nan), vec![2]),
-        (Support::greater_than(f64::NEG_INFINITY), vec![]),
+        (Support::greater_than(f64::INFINITY), vec![]),
+        (Support::less_than(f64::NEG_INFINITY), vec![2]),
+        (Support::less_than(nan), vec![]),
         (Support::GreaterThan(t(&[3], &[0.0; 3])), vec![2]),
         (Support::GreaterThan(t(&[3], &[0.0; 3])), vec![]),
         (Support::Discrete, vec![]),
@@ -574,6 +610,25 @@ fn inverse_of_values_outside_or_on_the_boundary_errors() {
         (Support::interval(0.0, 1.0), DoubleTensor::scalar(1.0)),
         (Support::interval(0.0, 1.0), DoubleTensor::scalar(f64::NAN)),
         (Support::Real, DoubleTensor::scalar(f64::NAN)),
+        // mixed element-wise bounds: an unbounded element must still be finite
+        (
+            Support::GreaterThan(t(&[2], &[0.0, f64::NEG_INFINITY])),
+            t(&[2], &[1.0, f64::NEG_INFINITY]),
+        ),
+        (
+            Support::Interval(
+                t(&[2], &[0.0, f64::NEG_INFINITY]),
+                t(&[2], &[f64::INFINITY, 1.0]),
+            ),
+            t(&[2], &[1.0, 1.0]),
+        ),
+        (
+            Support::Interval(
+                t(&[2], &[0.0, f64::NEG_INFINITY]),
+                t(&[2], &[f64::INFINITY, 1.0]),
+            ),
+            t(&[2], &[f64::INFINITY, 0.0]),
+        ),
         (Support::Ordered, t(&[3], &[0.0, 1.0, 1.0])),
         (Support::Ordered, t(&[2], &[1.0, 0.0])),
         (Support::Simplex, t(&[3], &[0.0, 0.5, 0.5])),

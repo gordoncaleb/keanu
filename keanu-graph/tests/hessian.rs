@@ -818,6 +818,30 @@ fn bijectors() -> Vec<(Box<dyn Bijector>, Vec<f64>)> {
             ),
             vec![0.3, -0.8, 2.5],
         ),
+        // element-wise mixed bound kinds
+        (
+            Box::new(
+                LowerBound::new(&DoubleTensor::vector(vec![1.0, f64::NEG_INFINITY]), &[2]).unwrap(),
+            ),
+            vec![0.3, -0.8],
+        ),
+        (
+            Box::new(
+                UpperBound::new(&DoubleTensor::vector(vec![f64::INFINITY, 1.0]), &[2]).unwrap(),
+            ),
+            vec![0.3, -0.8],
+        ),
+        (
+            Box::new(
+                Interval::new(
+                    &DoubleTensor::vector(vec![f64::NEG_INFINITY, 0.0, f64::NEG_INFINITY, -1.0]),
+                    &DoubleTensor::vector(vec![f64::INFINITY, f64::INFINITY, 2.0, 3.0]),
+                    &[4],
+                )
+                .unwrap(),
+            ),
+            vec![0.3, -0.8, 2.5, -1.1],
+        ),
         (
             Box::new(Ordered::new(&[2, 3]).unwrap()),
             vec![0.3, -0.8, 0.1, 1.2, 0.4, -0.5],

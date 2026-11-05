@@ -205,7 +205,7 @@ impl<'m> Parameterisation<'m> {
     ///
     /// # Errors
     ///
-    /// [`GraphError::Transform`] if a latent's support has no transform (non-finite bounds, a discrete support) or
+    /// [`GraphError::Transform`] if a latent's support has no transform (NaN bounds, a discrete support) or
     /// depends on another continuous latent (see the [module documentation](self)), and
     /// [`GraphError::MissingValue`] if a latent's parameter has no value in `state`.
     pub fn new(model: &'m Model, state: &State) -> Result<Self> {

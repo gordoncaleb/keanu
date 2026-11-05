@@ -247,6 +247,60 @@ fn nuts_keeps_a_truncated_latent_inside_its_bounds() {
     }
 }
 
+/// A vector latent N(0, 1) truncated element-wise to [0, ∞) and (-∞, 1]: the elements have different bound kinds,
+/// and NUTS still samples it in unconstrained space and finds each element's truncated moments.
+#[test]
+fn nuts_samples_a_truncated_vector_latent_with_mixed_bounds() {
+    use keanu_graph::DoubleVar;
+    use keanu_graph::op::DistributionKind;
+    let phi = |x: f64| {
+        if x.is_finite() {
+            (-x * x / 2.0).exp() / (2.0 * std::f64::consts::PI).sqrt()
+        } else {
+            0.0
+        }
+    };
+    let x_phi = |x: f64| if x.is_finite() { x * phi(x) } else { 0.0 };
+    let cdf = keanu_tensor::special::ndtr;
+    let (lower, upper) = ([0.0, f64::NEG_INFINITY], [f64::INFINITY, 1.0]);
+    let builder = GraphBuilder::new();
+    let (mu, sigma) = (builder.scalar(0.0), builder.scalar(1.0));
+    let x: DoubleVar = builder.truncated(
+        DistributionKind::Gaussian,
+        &[mu.id(), sigma.id()],
+        DoubleTensor::vector(lower.to_vec()),
+        DoubleTensor::vector(upper.to_vec()),
+    );
+    builder.set_value(x, DoubleTensor::vector(vec![0.5, 0.0]));
+    let x = x.id();
+    let (graph, mut state) = builder.build().unwrap();
+    let model = Model::new(graph, &state).unwrap();
+    let samples = Nuts::default()
+        .with_adapt_count(500)
+        .sample_with_statistics(
+            &model,
+            &mut state,
+            &[x],
+            4000,
+            SamplingOptions::default()
+                .with_drop(500)
+                .with_down_sample_interval(1),
+            &mut rng(23),
+        )
+        .unwrap()
+        .0;
+    let chain = samples.f64(x).unwrap();
+    for i in 0..2 {
+        let (a, b) = (lower[i], upper[i]);
+        let xs = chain.element(&[i]).unwrap();
+        assert!(xs.iter().all(|&x| x > a && x < b), "[{a}, {b}]");
+        let z = cdf(b) - cdf(a);
+        let m = (phi(a) - phi(b)) / z;
+        let v = 1.0 + (x_phi(a) - x_phi(b)) / z - m * m;
+        assert_moments(&xs, m, v, &format!("element {i} truncated to [{a}, {b}]"));
+    }
+}
+
 /// A von Mises latent whose mean direction is near the ±π seam: NUTS moves through its circular transform across
 /// the seam and recovers the circular mean and the mean resultant length I₁(κ)/I₀(κ).
 #[test]
