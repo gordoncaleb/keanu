@@ -8,6 +8,7 @@
 //!
 //! The hierarchical examples with no Java counterpart (eight schools, radon) are checked against published or
 //! independently computed posteriors, with multi-chain R-hat and divergence counts; each passed over seeds 1 to 8.
+//! The GP regression example is checked against the function its data were generated from.
 
 #![allow(dead_code)]
 
@@ -25,6 +26,8 @@ mod custom_distribution;
 mod eight_schools;
 #[path = "../examples/gaussian_mixture.rs"]
 mod gaussian_mixture;
+#[path = "../examples/gp_regression.rs"]
+mod gp_regression;
 #[path = "../examples/radon.rs"]
 mod radon;
 #[path = "../examples/text_messaging.rs"]
@@ -297,5 +300,34 @@ fn gaussian_mixture_recovers_the_components() {
                 .iter()
                 .all(|m| m.as_slice()[0] < m.as_slice()[1])
         );
+    }
+}
+
+#[test]
+fn gp_regression_recovers_the_sine_curve() {
+    // 4 chains of 500 draws after 500 adaptation steps each. Over seeds 1 to 10 every grid point was within 2
+    // predictive sd of sin(x) (the worst at 1.98 sd, for seed 6) and the largest hyperparameter R-hat was 1.007.
+    // With 20 training points instead of 40, half of those seeds had a grid point beyond 2 sd: the GP flattens the
+    // sine's peaks, and 2 sd at each of 21 correlated grid points is close to a simultaneous band.
+    let r = gp_regression::run(2, 500).unwrap();
+    for (name, id) in [
+        ("amplitude", r.amplitude),
+        ("length scale", r.length_scale),
+        ("noise", r.noise),
+    ] {
+        let s = r.samples.summarize(id, &[]).unwrap();
+        assert!(s.r_hat < 1.01, "R-hat of {name} is {}", s.r_hat);
+    }
+    // the noise was generated with sd 0.2, and its posterior sd is a few hundredths
+    let noise = r.samples.summarize(r.noise, &[]).unwrap();
+    assert_close(noise.mean, gp_regression::NOISE, 0.1, "noise");
+    for ((x, m), s) in r.grid.iter().zip(&r.mean).zip(&r.sd) {
+        let truth = gp_regression::truth(*x);
+        assert!(
+            (m - truth).abs() < 2.0 * s,
+            "predictive mean {m} ± {s} at x = {x} vs {truth}"
+        );
+        // the data pin the function down: the predictive sd is well below the function's amplitude of 1
+        assert!(*s < 0.3, "predictive sd {s} at x = {x}");
     }
 }

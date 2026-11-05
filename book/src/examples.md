@@ -3,6 +3,7 @@
 These live in `keanu/examples`. Run one with `cargo run --release --example <name>`. Each is also an
 integration test (`keanu/tests/examples.rs`): the examples ported from Java check the same results the Java
 examples' tests check, and the hierarchical ones check multi-chain R-hat, divergences and posterior means.
+The Gaussian process example checks its prediction against the function its data were generated from.
 
 | Example | Question |
 |---|---|
@@ -15,6 +16,7 @@ examples' tests check, and the hierarchical ones check multi-chain R-hat, diverg
 | `eight_schools` | How much do coaching effects differ between schools? Centred and non-centred forms |
 | `radon` | How much does indoor radon vary between Minnesota counties? A varying-intercept model |
 | `gaussian_mixture` | Which of two groups does each measurement come from, and what are the groups like? |
+| `gp_regression` | What smooth function produced noisy measurements? Gaussian process hyperparameters by NUTS |
 
 The first five come from *Bayesian Methods for Hackers* by Cameron Davidson-Pilon; `eight_schools` and `radon` are
 classic hierarchical models from Gelman et al. `gaussian_mixture` is checked against the mixture its synthetic data
@@ -71,4 +73,23 @@ Four NUTS chains recover the components, and `ChainSamples::summary` reports R-h
 
 ```rust,ignore
 {{#include ../../keanu/examples/gaussian_mixture.rs}}
+```
+
+## Gaussian process regression
+
+Forty noisy observations of sin(x) on [0, 10] (noise sd 0.2, from a fixed seed) are modelled with a zero-mean
+Gaussian process with an exponentiated quadratic kernel (see [Gaussian processes](gaussian-processes.md)). The
+amplitude, length scale and noise get half-Gaussian priors, and four NUTS chains (`sample_chains`) sample them from
+the GP marginal likelihood, with the function itself integrated out. The prediction on a grid of 21 points averages
+over the posterior: a second graph holds the same GP with constant hyperparameters, `predict` gives the conditional
+mean and variance of the function, and each draw's hyperparameters are set into it and evaluated in turn. The
+posterior-predictive mean is the average conditional mean, and its variance the average conditional variance plus
+the variance of the conditional means. Keeping the prediction out of the sampled model means NUTS does not recompute
+it at every leapfrog step.
+
+Its test checks that the hyperparameters' R-hat is below 1.01, the noise is recovered, and the predictive mean is
+within two predictive standard deviations of sin(x) at every grid point.
+
+```rust,ignore
+{{#include ../../keanu/examples/gp_regression.rs}}
 ```
