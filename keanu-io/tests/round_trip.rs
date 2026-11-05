@@ -584,6 +584,7 @@ const DISTRIBUTIONS: &[&str] = &[
     "HiddenMarkovModel(Gaussian)",
     "HiddenMarkovModel(Poisson)",
     "LinearGaussianStateSpace",
+    "ZeroSumNormal",
 ];
 
 fn distribution_kinds() -> Vec<DistributionKind> {
@@ -629,6 +630,7 @@ fn distribution_kinds() -> Vec<DistributionKind> {
         HiddenMarkovModel(Arc::new(Gaussian)),
         HiddenMarkovModel(Arc::new(Poisson)),
         LinearGaussianStateSpace,
+        ZeroSumNormal,
     ]
 }
 
@@ -648,14 +650,18 @@ fn distribution_cases() -> Vec<(String, Graph, State)> {
                 .into_iter()
                 .map(|v| constant(&b, v))
                 .collect();
-            // an LKJ node needs a [K, K] shape, and a time series its number of steps
+            // an LKJ node needs a [K, K] shape, a time series its number of steps
             let lkj = matches!(kind, DistributionKind::LkjCholesky);
+            // and a zero-sum normal its vector length
+            let zero_sum = matches!(kind, DistributionKind::ZeroSumNormal);
             let series = matches!(
                 kind,
                 DistributionKind::HiddenMarkovModel(_) | DistributionKind::LinearGaussianStateSpace
             );
             let requested = if lkj {
                 Some(&[3, 3][..])
+            } else if zero_sum {
+                Some(&[4][..])
             } else if series {
                 Some(&[3][..])
             } else {
@@ -668,6 +674,8 @@ fn distribution_cases() -> Vec<(String, Graph, State)> {
             let batch = b.shape(latent).unwrap();
             let shape: Vec<usize> = if lkj {
                 vec![2, 3, 3]
+            } else if zero_sum {
+                vec![2, 4]
             } else if series {
                 vec![5]
             } else if parents.is_empty() || batch.is_empty() {

@@ -11,7 +11,8 @@
 //!   the wrappers module), a mixture those of a logsumexp of its components (see the mixture module), and a
 //!   hidden Markov model those of the forward-backward algorithm (see the hmm module), all on top of the
 //!   element-wise contraction of their base, component or emission;
-//! - the multivariate kinds (multivariate Gaussian, Dirichlet, LKJ Cholesky, multinomial, ordered logistic, KDE)
+//! - the multivariate kinds (multivariate Gaussian, Dirichlet, LKJ Cholesky, zero-sum normal, multinomial,
+//!   ordered logistic, KDE)
 //!   have closed forms of their own here;
 //! - the linear Gaussian state space model differentiates the Kalman filter's reverse pass in forward mode (see
 //!   [`keanu_distributions::LinearGaussianStateSpace::hvp`]).
@@ -127,6 +128,18 @@ impl DistributionKind {
                 lkj_cholesky_hvp(
                     value.f64()?,
                     eta.f64()?,
+                    value_tangent,
+                    parameter_tangents[0],
+                    b,
+                )
+            }
+            K::ZeroSumNormal => {
+                let &[sigma] = parameters else {
+                    return Err(self.wrong_parameters());
+                };
+                zero_sum_normal_hvp(
+                    value.f64()?,
+                    sigma.f64()?,
                     value_tangent,
                     parameter_tangents[0],
                     b,
@@ -444,6 +457,50 @@ fn lkj_cholesky_hvp(
     Ok((
         reduce(Some(hx), b, shape, shape)?,
         smallvec::smallvec![reduce(Some(he), b, batch, eta.shape())?],
+    ))
+}
+
+/// The zero-sum normal density −Σ x²/(2σ²) − (N − 1)(ln σ + ½ ln 2π) per vector: the gradient is
+/// (−x/σ², Σx²/σ³ − (N − 1)/σ), so the products are −ẋ/σ² + 2xσ̇/σ³ for each element and
+/// 2 Σ x ẋ/σ³ + ((N − 1)/σ² − 3Σx²/σ⁴) σ̇ for σ.
+fn zero_sum_normal_hvp(
+    x: &DoubleTensor,
+    sigma: &DoubleTensor,
+    x_tangent: Option<&DoubleTensor>,
+    sigma_tangent: Option<&DoubleTensor>,
+    b: usize,
+) -> Result<LogProbHvpParts> {
+    let shape = x.shape();
+    let (batch, n) = match shape {
+        [batch @ .., n] if *n > 0 => (batch, *n),
+        _ => return Err(DistributionKind::ZeroSumNormal.wrong_parameters()),
+    };
+    let sigmas = spread(sigma, batch)?;
+    let tx = spread_tangent(x_tangent, b, shape)?;
+    let ts = spread_tangent(sigma_tangent, b, batch)?;
+    let (len, vectors) = (x.len(), sigmas.len());
+    let xs = x.as_slice();
+    let mut hx = vec![0.0; b * len];
+    let mut hs = vec![0.0; b * vectors];
+    for (v, &s) in sigmas.iter().enumerate() {
+        let row = v * n..(v + 1) * n;
+        let squares: f64 = xs[row.clone()].iter().map(|x| x * x).sum();
+        let (s2, s3) = (s * s, s * s * s);
+        for k in 0..b {
+            let ds = ts.as_ref().map_or(0.0, |t| t[k * vectors + v]);
+            let mut cross = 0.0;
+            for i in row.clone() {
+                let dx = tx.as_ref().map_or(0.0, |t| t[k * len + i]);
+                hx[k * len + i] = -dx / s2 + 2.0 * xs[i] * ds / s3;
+                cross += xs[i] * dx;
+            }
+            hs[k * vectors + v] =
+                2.0 * cross / s3 + ((n - 1) as f64 / s2 - 3.0 * squares / (s2 * s2)) * ds;
+        }
+    }
+    Ok((
+        reduce(Some(hx), b, shape, shape)?,
+        smallvec::smallvec![reduce(Some(hs), b, batch, sigma.shape())?],
     ))
 }
 

@@ -16,6 +16,7 @@
 //! | [`Support::Interval`] | [`Interval`] | `x = a + (b − a)·logistic(y)` | `log(b − a) + log s + log(1 − s)`, `s = logistic(y)` |
 //! | [`Support::Ordered`] | [`Ordered`] | `x₁ = y₁`, `xₖ = xₖ₋₁ + exp(yₖ)` | `Σₖ₌₂ yₖ` |
 //! | [`Support::Simplex`] | [`Simplex`] | inverse isometric log-ratio, then softmax | `Σ log xᵢ + ½ log K` |
+//! | [`Support::SumToZero`] | [`SumToZero`] | `x = V y`, an orthonormal basis of the zero-sum subspace | 0 (isometric) |
 //! | [`Support::CorrelationCholesky`] | [`CorrelationCholesky`] | tanh canonical partial correlations | see the type |
 //! | [`Support::Circular`] | [`Circular`] | `θ = atan2(v, u)` | `−½(u² + v²)` (not a Jacobian, see the type) |
 //!
@@ -26,8 +27,8 @@
 //! Every log-Jacobian is summed over the whole value, and every value is laid out row-major, so the unconstrained
 //! vector of a batch is the concatenation of the unconstrained vectors of its members.
 //!
-//! The unconstrained length can differ from the constrained value's size: a simplex of K elements has K − 1 free
-//! coordinates, a K × K correlation Cholesky factor has K(K − 1)/2, and an angle has 2. For the simplex and the
+//! The unconstrained length can differ from the constrained value's size: a simplex or a zero-sum vector of K
+//! elements has K − 1 free coordinates, a K × K correlation Cholesky factor has K(K − 1)/2, and an angle has 2. For the simplex and the
 //! correlation Cholesky factor the Jacobian, and so the log-determinant, is taken with respect to the free
 //! constrained coordinates: the first K − 1 elements of a simplex, and the strictly lower triangle (row by row) of a
 //! Cholesky factor, which is what the Dirichlet and LKJ densities are densities of.
@@ -65,6 +66,7 @@ mod correlation_cholesky;
 mod identity;
 mod ordered;
 mod simplex;
+mod sum_to_zero;
 
 pub use bounded::{Interval, LowerBound, UpperBound};
 pub use circular::Circular;
@@ -72,6 +74,7 @@ pub use correlation_cholesky::CorrelationCholesky;
 pub use identity::Identity;
 pub use ordered::Ordered;
 pub use simplex::Simplex;
+pub use sum_to_zero::SumToZero;
 
 /// A smooth invertible map from unconstrained flat vectors to constrained values of a fixed shape.
 ///
@@ -149,8 +152,8 @@ fn check_second_order(y: &[f64], tangent: &[f64], len: usize) -> Result<()> {
 /// Bounds of [`Support::GreaterThan`], [`Support::LessThan`] and [`Support::Interval`] are broadcast to `shape` and apply element-wise;
 /// each lower bound must be less than its upper bound. A bound may be infinite on its own side (−∞ below, +∞ above),
 /// leaving that element unbounded there, so the elements of one value may differ in kind: each is transformed by
-/// the identity, `a + exp(y)`, `b − exp(y)` or the scaled logistic as its own bounds require. [`Support::Ordered`] and
-/// [`Support::Simplex`] act on the last axis and [`Support::CorrelationCholesky`] on the last two (which must be
+/// the identity, `a + exp(y)`, `b − exp(y)` or the scaled logistic as its own bounds require. [`Support::Ordered`],
+/// [`Support::Simplex`] and [`Support::SumToZero`] act on the last axis and [`Support::CorrelationCholesky`] on the last two (which must be
 /// equal), with any leading axes as a batch.
 ///
 /// # Errors
@@ -166,6 +169,7 @@ pub fn bijector_for(support: &Support, shape: &[usize]) -> Result<Box<dyn Biject
         Support::LessThan(upper) => Box::new(UpperBound::new(upper, shape)?),
         Support::Interval(lower, upper) => Box::new(Interval::new(lower, upper, shape)?),
         Support::Simplex => Box::new(Simplex::new(shape)?),
+        Support::SumToZero => Box::new(SumToZero::new(shape)?),
         Support::Ordered => Box::new(Ordered::new(shape)?),
         Support::CorrelationCholesky => Box::new(CorrelationCholesky::new(shape)?),
         Support::Circular => Box::new(Circular::new(shape)),

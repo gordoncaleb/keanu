@@ -515,6 +515,7 @@ enum DistributionKind {
   // Parameters: the emission's (with a trailing state axis), then `initial`, `transition`.
   DISTRIBUTION_KIND_HIDDEN_MARKOV_MODEL = 35;
   DISTRIBUTION_KIND_LINEAR_GAUSSIAN_STATE_SPACE = 36;
+  DISTRIBUTION_KIND_ZERO_SUM_NORMAL = 37;
 }
 
 // A kernel density estimate's fixed samples and bandwidth.

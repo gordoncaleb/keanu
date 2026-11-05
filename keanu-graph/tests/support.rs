@@ -118,6 +118,11 @@ fn every_built_in_reports_its_documented_support() {
             Support::Circular,
         ),
         (
+            "zero_sum_normal",
+            |b| b.zero_sum_normal(4, 1.5).id(),
+            Support::SumToZero,
+        ),
+        (
             "uniform_int",
             |b| b.uniform_int(0, 5).id(),
             Support::Discrete,

@@ -13,7 +13,7 @@ use keanu_distributions::KeanuRng;
 use keanu_graph::op::{DistributionKind, Op};
 use keanu_graph::transform::{
     Bijector, Circular, CorrelationCholesky, Identity, Interval, LowerBound, Ordered, Simplex,
-    UpperBound,
+    SumToZero, UpperBound,
 };
 use keanu_graph::{
     DoubleVar, GraphBuilder, GraphError, IntVar, Model, NodeId, Parameterisation, Space, State,
@@ -842,6 +842,10 @@ fn bijectors() -> Vec<(Box<dyn Bijector>, Vec<f64>)> {
         ),
         (Box::new(Simplex::new(&[4]).unwrap()), vec![0.3, -0.8, 0.6]),
         (
+            Box::new(SumToZero::new(&[2, 3]).unwrap()),
+            vec![0.3, -0.8, 0.6, 1.4],
+        ),
+        (
             Box::new(CorrelationCholesky::new(&[3, 3]).unwrap()),
             vec![0.3, -0.8, 0.6],
         ),
@@ -1267,6 +1271,15 @@ fn distribution_cases() -> Vec<DistributionCase> {
             b.set_value(x, v(&[0.2, 0.5, 0.3]));
             let y = b.dirichlet(concentration * 2.0);
             b.observe(y, v(&[0.1, 0.6, 0.3]));
+        }),
+        unconstrained("zero_sum_normal", |b| {
+            let sigma = positive(b, 1.3);
+            let x = b.zero_sum_normal(4, sigma);
+            b.set_value(x, v(&[0.4, -1.1, 0.2, 0.5]));
+            // a batch of two vectors with one sigma each
+            let scales = positive_vector(b, &[0.7, 2.0]);
+            let y = b.zero_sum_normal_with_shape(&[2, 3], scales);
+            b.observe(y, t(&[2, 3], &[0.3, -0.5, 0.2, 1.5, -2.0, 0.5]));
         }),
         case("kde", |b| {
             let kde = keanu_distributions::Kde::new(vec![-0.5, 0.2, 0.4, 1.5], 0.6).unwrap();

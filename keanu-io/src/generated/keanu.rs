@@ -1025,6 +1025,7 @@ pub enum DistributionKind {
     /// Parameters: the emission's (with a trailing state axis), then `initial`, `transition`.
     HiddenMarkovModel = 35,
     LinearGaussianStateSpace = 36,
+    ZeroSumNormal = 37,
 }
 impl DistributionKind {
     /// String value of the enum field names used in the ProtoBuf definition.
@@ -1072,6 +1073,7 @@ impl DistributionKind {
             Self::LinearGaussianStateSpace => {
                 "DISTRIBUTION_KIND_LINEAR_GAUSSIAN_STATE_SPACE"
             }
+            Self::ZeroSumNormal => "DISTRIBUTION_KIND_ZERO_SUM_NORMAL",
         }
     }
     /// Creates an enum from field names used in the ProtoBuf definition.
@@ -1116,6 +1118,7 @@ impl DistributionKind {
             "DISTRIBUTION_KIND_LINEAR_GAUSSIAN_STATE_SPACE" => {
                 Some(Self::LinearGaussianStateSpace)
             }
+            "DISTRIBUTION_KIND_ZERO_SUM_NORMAL" => Some(Self::ZeroSumNormal),
             _ => None,
         }
     }

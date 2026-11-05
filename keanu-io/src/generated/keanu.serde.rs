@@ -1605,6 +1605,7 @@ impl serde::Serialize for DistributionKind {
             Self::Mixture => "DISTRIBUTION_KIND_MIXTURE",
             Self::HiddenMarkovModel => "DISTRIBUTION_KIND_HIDDEN_MARKOV_MODEL",
             Self::LinearGaussianStateSpace => "DISTRIBUTION_KIND_LINEAR_GAUSSIAN_STATE_SPACE",
+            Self::ZeroSumNormal => "DISTRIBUTION_KIND_ZERO_SUM_NORMAL",
         };
         serializer.serialize_str(variant)
     }
@@ -1653,6 +1654,7 @@ impl<'de> serde::Deserialize<'de> for DistributionKind {
             "DISTRIBUTION_KIND_MIXTURE",
             "DISTRIBUTION_KIND_HIDDEN_MARKOV_MODEL",
             "DISTRIBUTION_KIND_LINEAR_GAUSSIAN_STATE_SPACE",
+            "DISTRIBUTION_KIND_ZERO_SUM_NORMAL",
         ];
 
         struct GeneratedVisitor;
@@ -1730,6 +1732,7 @@ impl<'de> serde::Deserialize<'de> for DistributionKind {
                     "DISTRIBUTION_KIND_MIXTURE" => Ok(DistributionKind::Mixture),
                     "DISTRIBUTION_KIND_HIDDEN_MARKOV_MODEL" => Ok(DistributionKind::HiddenMarkovModel),
                     "DISTRIBUTION_KIND_LINEAR_GAUSSIAN_STATE_SPACE" => Ok(DistributionKind::LinearGaussianStateSpace),
+                    "DISTRIBUTION_KIND_ZERO_SUM_NORMAL" => Ok(DistributionKind::ZeroSumNormal),
                     _ => Err(serde::de::Error::unknown_variant(value, FIELDS)),
                 }
             }

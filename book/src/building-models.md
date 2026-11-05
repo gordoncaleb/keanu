@@ -12,6 +12,7 @@ Each distribution has a builder method taking its parameters, which can be other
 | Kind | Distributions |
 |---|---|
 | Continuous | `gaussian`, `half_gaussian`, `cauchy`, `half_cauchy`, `beta`, `chi_squared`, `dirichlet`, `exponential` (takes a rate), `gamma` (scale θ, shape k), `inverse_gamma`, `laplace`, `logistic`, `log_normal`, `multivariate_gaussian`, `pareto`, `student_t`, `triangular`, `uniform`, `weibull` (shape α, scale β), `von_mises` (an angle), `kde` |
+| Zero-sum vectors | `zero_sum_normal(n, sigma)`: n elements summing to zero, N(0, σ² I) restricted to that subspace (`zero_sum_normal_with_shape(&[.., n], sigma)` for a batch); see [Sum-to-zero group effects](#sum-to-zero-group-effects) |
 | Correlation matrices | `lkj_cholesky(k, eta)`: the k × k lower triangular Cholesky factor `L` of a correlation matrix `L Lᵀ` under the LKJ(η) prior (`lkj_cholesky_with_shape(&[.., k, k], eta)` for a batch) |
 | Discrete | `bernoulli` (bool), `binomial`, `categorical`, `geometric`, `multinomial`, `negative_binomial` (mean μ, dispersion α), `ordered_logistic`, `poisson`, `uniform_int` |
 | Your own | `custom` (see [Custom distributions](custom-distributions.md)) |
@@ -32,6 +33,27 @@ Each distribution has a builder method taking its parameters, which can be other
 ```rust,ignore
 {{#include ../../keanu/tests/book.rs:new_distributions}}
 ```
+
+### Sum-to-zero group effects
+
+A model with an intercept and one effect per group, y ~ N(μ + a[group], σ), is not identified as written: adding a
+constant to μ and subtracting it from every a gives the same likelihood, so only the prior holds them apart. The
+usual fixes are to drop one group's effect (a reference level) or to make the effects sum to zero, so that μ is the
+grand mean and each a_j a deviation from it. `zero_sum_normal(n, sigma)` is the second, as PyMC's `ZeroSumNormal`:
+the density of N(0, σ² I) on the subspace of vectors summing to zero. Each effect's marginal standard deviation is
+σ √((n − 1)/n), and draws are draws of N(0, σ² I) minus their mean.
+
+```rust,ignore
+{{#include ../../keanu/tests/book.rs:zero_sum}}
+```
+
+Its support is `Support::SumToZero`. The gradient based algorithms map it to n − 1 unconstrained coordinates with
+Stan's `sum_to_zero_vector` transform (2.36 and later): the coordinates are those of the value in an orthonormal
+basis of the subspace, so the map is an isometry and NUTS sees an isotropic Gaussian when the data are weak. A
+value given with `set_value` or observed must sum to zero (to 10⁻⁸ relative); one that doesn't is impossible (log
+probability −∞). For hierarchical models with several grouping factors, give each factor its own zero-sum effects.
+The [radon example](examples.md) uses an intercept per county instead (partial pooling around a common mean), where
+the identification comes from the hierarchical prior.
 
 ## Truncated and censored distributions
 
@@ -68,8 +90,8 @@ component axis); `mixture_with_shape` gives a larger one, such as a vector of ob
 ```
 
 The component can be any distribution with one value per element (the continuous and count distributions, but
-not `dirichlet`, `multivariate_gaussian`, `lkj_cholesky`, `kde`, `categorical`, `multinomial`, `ordered_logistic` or
-`bernoulli`), or a truncated or censored one; a mixture itself can't be truncated or mixed again. The log density is
+not `dirichlet`, `multivariate_gaussian`, `lkj_cholesky`, `zero_sum_normal`, `kde`, `categorical`, `multinomial`,
+`ordered_logistic` or `bernoulli`), or a truncated or censored one; a mixture itself can't be truncated or mixed again. The log density is
 computed as logsumexp_c(log w_c + log p_c(x)), so it stays accurate far in the tails, and its gradient with respect
 to the value, the component parameters and the weights is exact, for NUTS and the optimizers. The support is the
 component's, widened to hold every component's (the smallest lower bound and the largest upper bound). Values are
@@ -94,8 +116,8 @@ likelihoods that no distribution provides. A factor that isn't finite (NaN or ±
 deterministic node: its sum is the log probability a node of that distribution with that value would have, so a
 factor of it gives a likelihood to a value that isn't itself a probabilistic node (such as a transformed
 observation). It works for every distribution with one value per element (the continuous and count distributions,
-`bernoulli`, and truncated and censored ones; not `dirichlet`, `multivariate_gaussian`, `lkj_cholesky`, `kde`,
-`categorical`, `multinomial`, `ordered_logistic` or mixtures), its value has the distribution's type (f64, i64 for
+`bernoulli`, and truncated and censored ones; not `dirichlet`, `multivariate_gaussian`, `lkj_cholesky`,
+`zero_sum_normal`, `kde`, `categorical`, `multinomial`, `ordered_logistic` or mixtures), its value has the distribution's type (f64, i64 for
 counts, or bool for `bernoulli`), and it differentiates, to second order, as the distribution does.
 
 ```rust,ignore

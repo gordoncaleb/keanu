@@ -414,6 +414,142 @@ fn sample_beta(a: f64, b: f64, rng: &mut KeanuRng) -> Result<f64> {
     Ok(x / (x + y))
 }
 
+/// The zero-sum normal distribution over the last dimension, as PyMC's `ZeroSumNormal`: a Gaussian N(0, σ² I)
+/// restricted to vectors whose elements sum to zero. Leading dimensions are a batch, and `sigma` is a scalar or
+/// broadcasts to the batch shape (one σ per vector).
+///
+/// For vectors of N elements the density, with respect to the volume of the (N − 1)-dimensional zero-sum subspace,
+/// is that of N(0, σ² I) in an orthonormal basis of the subspace:
+///
+/// `ln p(x) = −Σᵢ xᵢ² / (2σ²) − (N − 1) (ln σ + ½ ln 2π)`.
+///
+/// Each element's marginal is N(0, σ² (N − 1) / N), and a draw is a draw of N(0, σ² I) minus its mean. It is the
+/// usual prior for group effects next to an intercept: the effects are identified, and their scale is σ.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ZeroSumNormal<'a> {
+    /// The scale σ > 0, a scalar or one per vector of the batch.
+    pub sigma: Param<'a>,
+}
+
+/// Derivatives of [`ZeroSumNormal::log_prob`].
+#[derive(Debug, Clone, PartialEq)]
+pub struct ZeroSumNormalGradient {
+    /// With respect to x, `−x / σ²` (in the ambient space; its projection onto the zero-sum subspace is the
+    /// derivative within it).
+    pub x: DoubleTensor,
+    /// With respect to `sigma`, shaped like it.
+    pub sigma: DoubleTensor,
+}
+
+/// How far a vector's sum may be from zero, relative to the larger of 1 and the sum of its elements' magnitudes, for
+/// [`ZeroSumNormal::log_prob`] to treat it as in the support.
+pub const ZERO_SUM_TOLERANCE: f64 = 1e-8;
+
+/// Whether `x` sums to zero within [`ZERO_SUM_TOLERANCE`].
+pub fn sums_to_zero(x: &[f64]) -> bool {
+    let (sum, magnitude) = x
+        .iter()
+        .fold((0.0, 0.0), |(s, m): (f64, f64), v| (s + v, m + v.abs()));
+    sum.abs() <= ZERO_SUM_TOLERANCE * magnitude.max(1.0)
+}
+
+impl<'a> ZeroSumNormal<'a> {
+    /// Creates the distribution from its parameter.
+    pub fn new(sigma: impl IntoParam<'a, f64>) -> Self {
+        Self {
+            sigma: sigma.into_param(),
+        }
+    }
+
+    /// Checks a value shape [..., N] (N ≥ 1) against `sigma`, returning N and `sigma` broadcast to the batch shape.
+    fn validate(&self, shape: &[usize]) -> Result<(usize, DoubleTensor)> {
+        let n = match shape.last() {
+            Some(&n) if n > 0 => n,
+            _ => {
+                return Err(DistributionError::InvalidValue(format!(
+                    "a zero-sum normal value must have at least one dimension, of at least one element, not \
+                     {shape:?}"
+                )));
+            }
+        };
+        let batch = batch(shape, 1);
+        if broadcast_shape(batch, self.sigma.shape())?.as_slice() != batch {
+            return invalid_parameter(format!(
+                "sigma of shape {:?} does not broadcast to the batch shape {batch:?}",
+                self.sigma.shape()
+            ));
+        }
+        Ok((n, self.sigma.broadcast_to(batch)?))
+    }
+
+    /// The total log density of every vector in x (summed over the batch). -infinity for a vector that is not
+    /// finite or doesn't sum to zero (within [`ZERO_SUM_TOLERANCE`]), NaN where `sigma` is not positive. An error
+    /// if x is a scalar or has an empty last dimension, or `sigma` does not broadcast to its batch shape.
+    pub fn log_prob(&self, x: &DoubleTensor) -> Result<f64> {
+        let (n, sigma) = self.validate(x.shape())?;
+        let normaliser = 0.5 * (2.0 * PI).ln();
+        let mut total = 0.0;
+        for (row, &s) in x.as_slice().chunks(n).zip(sigma.as_slice()) {
+            if s.is_nan() || s <= 0.0 {
+                return Ok(f64::NAN);
+            }
+            if !row.iter().all(|v| v.is_finite()) || !sums_to_zero(row) {
+                return Ok(f64::NEG_INFINITY);
+            }
+            let squares: f64 = row.iter().map(|v| v * v).sum();
+            total += -0.5 * squares / (s * s) - (n - 1) as f64 * (s.ln() + normaliser);
+        }
+        Ok(total)
+    }
+
+    /// The derivatives of [`Self::log_prob`] with respect to x and `sigma` (the support is not checked).
+    pub fn d_log_prob(&self, x: &DoubleTensor) -> Result<ZeroSumNormalGradient> {
+        let (n, sigma) = self.validate(x.shape())?;
+        let mut dx = vec![0.0; x.len()];
+        let mut d_sigma = Vec::with_capacity(sigma.len());
+        for ((row, d), &s) in x
+            .as_slice()
+            .chunks(n)
+            .zip(dx.chunks_mut(n))
+            .zip(sigma.as_slice())
+        {
+            let mut squares = 0.0;
+            for (d, v) in d.iter_mut().zip(row) {
+                *d = -v / (s * s);
+                squares += v * v;
+            }
+            d_sigma.push(squares / (s * s * s) - (n - 1) as f64 / s);
+        }
+        Ok(ZeroSumNormalGradient {
+            x: DoubleTensor::new(x.shape(), dx)?,
+            sigma: sum_over_batch(
+                &DoubleTensor::new(sigma.shape(), d_sigma)?,
+                self.sigma.shape(),
+            )?,
+        })
+    }
+
+    /// Draws vectors of the given shape ([..., N]): each is a draw of N(0, σ² I) minus its mean. An error unless
+    /// `sigma` is positive and finite.
+    pub fn sample(&self, shape: &[usize], rng: &mut KeanuRng) -> Result<DoubleTensor> {
+        let (n, sigma) = self.validate(shape)?;
+        let mut samples = vec![0.0; sigma.len() * n];
+        for (row, &s) in samples.chunks_mut(n).zip(sigma.as_slice()) {
+            if !s.is_finite() || s <= 0.0 {
+                return invalid_parameter(format!("sigma must be positive, got {s}"));
+            }
+            for v in row.iter_mut() {
+                *v = s * rng.next_gaussian();
+            }
+            let mean = row.iter().sum::<f64>() / n as f64;
+            for v in row.iter_mut() {
+                *v -= mean;
+            }
+        }
+        Ok(DoubleTensor::new(shape, samples)?)
+    }
+}
+
 /// Multinomial distribution: counts of `n` draws over the categories in the last dimension of `p`.
 /// `p` need not be normalised.
 #[derive(Debug, Clone, PartialEq)]

@@ -152,6 +152,30 @@ impl GraphBuilder {
         )
     }
 
+    /// A zero-sum normal prior over vectors of `n` elements that sum to zero (see
+    /// [`keanu_distributions::ZeroSumNormal`]): N(0, σ² I) restricted to the zero-sum subspace, as PyMC's
+    /// `ZeroSumNormal`. Each element's marginal standard deviation is σ √((N − 1) / N). Its support is
+    /// [`Support::SumToZero`](crate::Support::SumToZero), which the gradient based algorithms map to N − 1
+    /// unconstrained coordinates with Stan's isometric `sum_to_zero_vector` transform. A typical use is group effects
+    /// next to an intercept, which the constraint identifies.
+    pub fn zero_sum_normal<'b>(&'b self, n: usize, sigma: impl IntoDoubleVar<'b>) -> DoubleVar<'b> {
+        self.zero_sum_normal_with_shape(&[n], sigma)
+    }
+
+    /// Like [`Self::zero_sum_normal`], with a batch of vectors: `shape` is [..., N], each vector of the last axis
+    /// sums to zero, and `sigma` broadcasts to the batch shape [...].
+    pub fn zero_sum_normal_with_shape<'b>(
+        &'b self,
+        shape: &[usize],
+        sigma: impl IntoDoubleVar<'b>,
+    ) -> DoubleVar<'b> {
+        let sigma = sigma.into_var(self).id();
+        DoubleVar::new(
+            self,
+            self.distribution(DistributionKind::ZeroSumNormal, Some(shape), &[sigma]),
+        )
+    }
+
     /// A kernel density estimate from fixed samples, with values of the given shape.
     pub fn kde(&self, kde: Kde, shape: &[usize]) -> DoubleVar<'_> {
         DoubleVar::new(
@@ -482,8 +506,8 @@ impl GraphBuilder {
     /// no axes at all, to share one value between the components).
     ///
     /// The component is an element-wise univariate kind: one of the continuous or count distributions with one
-    /// value per element (not Dirichlet, MultivariateGaussian, LkjCholesky, Kde, Categorical, Multinomial,
-    /// OrderedLogistic, Bernoulli, a custom distribution or another mixture), or a truncated or censored one. The
+    /// value per element (not Dirichlet, MultivariateGaussian, LkjCholesky, ZeroSumNormal, Kde, Categorical,
+    /// Multinomial, OrderedLogistic, Bernoulli, a custom distribution or another mixture), or a truncated or censored one. The
     /// value has the batch shape: the parameters' shapes without their component axes, broadcast together; use
     /// [`Self::mixture_with_shape`] for a larger one (a vector of observations from one mixture). The log density is
     /// computed as logsumexp_c(log w_c + log p_c(x)), so components far in the tails stay accurate, and its gradient

@@ -287,7 +287,7 @@ fn boundary_coordinates(param: &Parameterisation<'_>, state: &State) -> Result<V
     for &id in param.latents() {
         let range = param.range(id).unwrap_or_default();
         match node_support(graph, state, id)? {
-            Support::Real | Support::Circular | Support::Discrete => {}
+            Support::Real | Support::Circular | Support::SumToZero | Support::Discrete => {}
             Support::Ordered => {
                 let row = graph[id].shape().last().copied().unwrap_or(1).max(1);
                 coordinates.extend(range.clone().filter(|i| (i - range.start) % row != 0));

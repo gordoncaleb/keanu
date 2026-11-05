@@ -1,4 +1,4 @@
-//! NUTS on constrained latents: truncated, circular, half-Gaussian, Dirichlet and mixture-weight latents, constrained and unconstrained space, and supports it can't sample.
+//! NUTS on constrained latents: truncated, circular, half-Gaussian, Dirichlet, mixture-weight and zero-sum latents, constrained and unconstrained space, and supports it can't sample.
 
 mod mcmc_common;
 
@@ -470,4 +470,81 @@ fn nuts_samples_latent_mixture_weights() {
     // three of the four observations favour the second component
     let second = chain.element(&[1]).unwrap();
     assert!(mean(&second) > 0.5, "{}", mean(&second));
+}
+
+/// A one-way ANOVA, y_ij ~ N(mu + a_j, sigma), with zero-sum group effects a ~ ZeroSumNormal(tau): the effects are
+/// identified next to the intercept, every draw sums to zero, and NUTS recovers them.
+#[test]
+fn nuts_recovers_zero_sum_group_effects_in_a_one_way_anova() {
+    use keanu_algorithms::mcmc::chains::sample_chains;
+    let effects = [-1.0, -0.4, 0.1, 0.5, 0.8];
+    let (groups, per_group, mu_true, sigma_true) = (effects.len(), 30, 2.0, 0.5);
+    let mut generator = rng(31);
+    let mut group = Vec::new();
+    let mut y = Vec::new();
+    for (j, a) in effects.iter().enumerate() {
+        for _ in 0..per_group {
+            group.push(j as i64);
+            y.push(mu_true + a + sigma_true * generator.next_gaussian());
+        }
+    }
+    // the balanced design's estimates: each group's mean minus the grand mean
+    let grand = mean(&y);
+    let estimates: Vec<f64> = (0..groups)
+        .map(|j| mean(&y[j * per_group..(j + 1) * per_group]) - grand)
+        .collect();
+
+    let b = GraphBuilder::new();
+    let mu = b.gaussian(0.0, 5.0);
+    let tau = b.half_gaussian(1.0);
+    let sigma = b.half_gaussian(1.0);
+    b.set_value(tau, DoubleTensor::scalar(1.0));
+    b.set_value(sigma, DoubleTensor::scalar(1.0));
+    let a = b.zero_sum_normal(groups, tau);
+    b.set_value(a, DoubleTensor::zeros(&[groups]));
+    let index = b.int_constant(IntTensor::vector(group));
+    let observed = b.gaussian(mu + a.gather(0, index), sigma);
+    b.observe(observed, DoubleTensor::vector(y));
+    let (a, mu) = (a.id(), mu.id());
+    let (graph, state) = b.build().unwrap();
+    let model = Model::new(graph, &state).unwrap();
+    let nuts = Nuts::default().with_adapt_count(300);
+    let samples = sample_chains(4, 32, &state, |state, rng| {
+        nuts.sample_with_statistics(
+            &model,
+            state,
+            &[a, mu],
+            700,
+            SamplingOptions::default().with_drop(300),
+            rng,
+        )
+        .map(|(samples, _)| samples)
+    })
+    .unwrap();
+    for chain in samples.chains() {
+        for draw in chain.iter() {
+            let sum: f64 = draw.f64(a).unwrap().as_slice().iter().sum();
+            assert!(sum.abs() < 1e-12, "a draw sums to {sum}");
+        }
+    }
+    for j in 0..groups {
+        let s = samples.summarize(a, &[j]).unwrap();
+        assert!(s.r_hat < 1.01, "R-hat of a[{j}] is {}", s.r_hat);
+        // the posterior sd is about σ √(4/5) / √30 = 0.08, and the prior on tau shrinks by about 2%
+        assert!(
+            (s.mean - estimates[j]).abs() < 0.03,
+            "a[{j}]: posterior mean {} vs estimate {}",
+            s.mean,
+            estimates[j]
+        );
+        assert!(
+            (s.mean - effects[j]).abs() < 3.0 * s.sd,
+            "a[{j}]: posterior mean {} ± {} vs {}",
+            s.mean,
+            s.sd,
+            effects[j]
+        );
+    }
+    let mu = samples.summarize(mu, &[]).unwrap();
+    assert!((mu.mean - grand).abs() < 0.03, "mu {} vs {grand}", mu.mean);
 }

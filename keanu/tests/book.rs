@@ -1291,6 +1291,51 @@ fn gaussian_processes() -> keanu::Result<()> {
 }
 
 #[test]
+fn zero_sum() -> keanu::Result<()> {
+    // ANCHOR: zero_sum
+    use keanu::algorithms::mcmc::chains::sample_chains;
+
+    // 20 measurements in each of 4 groups whose effects are -0.5, 0, 0.2 and 0.3 around a mean of 1
+    let mut rng = KeanuRng::seed_from_u64(8);
+    let effects = [-0.5, 0.0, 0.2, 0.3];
+    let group: Vec<i64> = (0..80).map(|i| i / 20).collect();
+    let y: Vec<f64> = group
+        .iter()
+        .map(|&g| 1.0 + effects[g as usize] + 0.3 * rng.next_gaussian())
+        .collect();
+
+    let b = GraphBuilder::new();
+    let mu = b.gaussian(0.0, 5.0).label("mu");
+    let tau = b.half_gaussian(1.0).label("tau");
+    let sigma = b.half_gaussian(1.0).label("sigma");
+    b.set_value(tau, DoubleTensor::scalar(1.0));
+    b.set_value(sigma, DoubleTensor::scalar(1.0));
+    // one effect per group, summing to zero: mu is the grand mean
+    let a = b.zero_sum_normal(4, tau).label("a");
+    b.set_value(a, DoubleTensor::zeros(&[4]));
+    let group = b.int_constant(IntTensor::vector(group));
+    let observed = b.gaussian(mu + a.gather(0, group), sigma);
+    b.observe(observed, DoubleTensor::vector(y));
+    let (a, mu) = (a.id(), mu.id());
+    let (graph, state) = b.build()?;
+    let model = Model::new(graph, &state)?;
+
+    // 4 chains of 300 draws after 300 adaptation steps
+    let nuts = Nuts::default().with_adapt_count(300);
+    let samples = sample_chains(4, 8, &state, |state, rng| {
+        let options = SamplingOptions::default().with_drop(300);
+        let (samples, _) =
+            nuts.sample_with_statistics(&model, state, &[a, mu], 600, options, rng)?;
+        Ok(samples)
+    })?;
+    let a_mean = samples.summarize(a, &[0])?.mean;
+    // ANCHOR_END: zero_sum
+    assert!((a_mean + 0.5).abs() < 0.2, "{a_mean}");
+    assert!((samples.summarize(mu, &[])?.mean - 1.0).abs() < 0.15);
+    Ok(())
+}
+
+#[test]
 fn hsgp() -> keanu::Result<()> {
     // ANCHOR: hsgp
     use keanu::graph::gp::{Hsgp, Kernel};

@@ -33,6 +33,8 @@ pub enum Support {
     Simplex,
     /// Strictly increasing vectors, over the value's last dimension.
     Ordered,
+    /// Vectors whose elements sum to zero, over the value's last dimension.
+    SumToZero,
     /// Lower triangular Cholesky factors of correlation matrices, over the value's last two dimensions: a positive
     /// diagonal and rows of unit length.
     CorrelationCholesky,
@@ -107,6 +109,10 @@ pub enum DistributionKind {
     Uniform,
     /// Parameters: `alpha` (shape), `beta` (scale). Support: greater than 0.
     Weibull,
+    /// Parameters: `sigma`; the value is a vector of N elements summing to zero (or a batch of them, shape [..., N],
+    /// with `sigma` broadcasting to the batch shape), N set by the node's shape: N(0, σ² I) restricted to the
+    /// zero-sum subspace. Support: sum to zero. See [`keanu_distributions::ZeroSumNormal`].
+    ZeroSumNormal,
     /// Parameters: `mu` (mean direction), `kappa` (concentration). Support: circular (angles; the density is
     /// periodic with period 2π).
     VonMises,
@@ -842,6 +848,8 @@ distributions! {
     Weibull "weibull" (alpha: F64, beta: F64) -> F64 => d::Weibull::new(alpha, beta),
         support = Support::greater_than(0.0),
         cdf = inverse;
+    ZeroSumNormal "zero_sum_normal" (sigma: F64) -> F64 => d::ZeroSumNormal::new(sigma),
+        support = Support::SumToZero;
     VonMises "von_mises" (mu: F64, kappa: F64) -> F64 => d::VonMises::new(mu, kappa),
         support = Support::Circular,
         cdf = none;
@@ -1041,6 +1049,26 @@ impl DistributionOp {
                 if keanu_tensor::broadcast_shape(batch, eta)?.as_slice() != batch {
                     return Err(invalid(format!(
                         "eta of shape {eta:?} does not broadcast to the batch shape {batch:?}"
+                    )));
+                }
+                Ok(Shape::from_slice(shape))
+            }
+            DistributionKind::ZeroSumNormal => {
+                let shape = requested.unwrap_or(&[]);
+                let [batch @ .., n] = shape else {
+                    return Err(invalid(format!(
+                        "needs a shape [..., N] for its vectors of N elements, not {shape:?}"
+                    )));
+                };
+                if *n == 0 {
+                    return Err(invalid(format!(
+                        "needs a shape [..., N] for its vectors of N elements, with N > 0, not {shape:?}"
+                    )));
+                }
+                let sigma = parameters[0].1;
+                if keanu_tensor::broadcast_shape(batch, sigma)?.as_slice() != batch {
+                    return Err(invalid(format!(
+                        "sigma of shape {sigma:?} does not broadcast to the batch shape {batch:?}"
                     )));
                 }
                 Ok(Shape::from_slice(shape))

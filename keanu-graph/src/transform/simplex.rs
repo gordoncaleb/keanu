@@ -41,7 +41,7 @@ impl Simplex {
     }
 
     /// `z = V y`, for `y` of length K − 1 and `z` of length K.
-    fn basis_times(y: &[f64], z: &mut [f64]) {
+    pub(super) fn basis_times(y: &[f64], z: &mut [f64]) {
         z.fill(0.0);
         let mut suffix = 0.0;
         for i in (1..=y.len()).rev() {
@@ -54,7 +54,7 @@ impl Simplex {
     }
 
     /// `y = Vᵀ z`, for `z` of length K and `y` of length K − 1.
-    fn basis_transpose_times(z: &[f64], y: &mut [f64]) {
+    pub(super) fn basis_transpose_times(z: &[f64], y: &mut [f64]) {
         let mut prefix = 0.0;
         for i in 1..z.len() {
             prefix += z[i - 1];

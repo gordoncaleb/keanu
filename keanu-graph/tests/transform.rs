@@ -46,6 +46,38 @@ fn lower_free(shape: &[usize], x: &DoubleTensor) -> Vec<f64> {
     out
 }
 
+/// Column i (zero-based, i < n − 1) of Stan's orthonormal basis of the zero-sum subspace of ℝⁿ: 1/√(m(m+1)) in its
+/// first m = i + 1 entries and −m/√(m(m+1)) in entry m.
+fn helmert_column(n: usize, i: usize) -> Vec<f64> {
+    let m = (i + 1) as f64;
+    let scale = 1.0 / (m * (m + 1.0)).sqrt();
+    (0..n)
+        .map(|j| match j.cmp(&(i + 1)) {
+            std::cmp::Ordering::Less => scale,
+            std::cmp::Ordering::Equal => -m * scale,
+            std::cmp::Ordering::Greater => 0.0,
+        })
+        .collect()
+}
+
+/// The coordinates of each last-axis row in the zero-sum basis, Vᵀ x: an isometry of the subspace, so the
+/// log-Jacobian with respect to them is 0.
+fn zero_sum_free(shape: &[usize], x: &DoubleTensor) -> Vec<f64> {
+    let n = *shape.last().unwrap();
+    x.as_slice()
+        .chunks_exact(n)
+        .flat_map(|row| {
+            (0..n - 1).map(move |i| {
+                helmert_column(n, i)
+                    .iter()
+                    .zip(row)
+                    .map(|(v, x)| v * x)
+                    .sum::<f64>()
+            })
+        })
+        .collect()
+}
+
 fn bijector(support: &Support, shape: &[usize]) -> Box<dyn Bijector> {
     transform::bijector_for(support, shape).unwrap()
 }
@@ -117,6 +149,13 @@ fn square_cases() -> Vec<Case> {
             name: format!("simplex {shape:?}"),
             bijector: bijector(&Support::Simplex, &shape),
             free: simplex_free,
+        });
+    }
+    for shape in [vec![1], vec![2], vec![3], vec![5], vec![2, 3]] {
+        cases.push(Case {
+            name: format!("sum_to_zero {shape:?}"),
+            bijector: bijector(&Support::SumToZero, &shape),
+            free: zero_sum_free,
         });
     }
     for shape in [
@@ -391,6 +430,48 @@ fn simplex_log_det_is_sum_of_log_x_plus_half_log_k() {
 }
 
 #[test]
+fn sum_to_zero_values_sum_to_zero_and_keep_lengths() {
+    let mut rng = KeanuRng::seed_from_u64(21);
+    for n in [2, 3, 8, 50] {
+        let b = bijector(&Support::SumToZero, &[3, n]);
+        for scale in [1.0, 100.0] {
+            let y = random_y(&mut rng, 3 * (n - 1), scale);
+            let x = b.forward(&y).unwrap();
+            for (row, y) in x.as_slice().chunks_exact(n).zip(y.chunks_exact(n - 1)) {
+                let sum: f64 = row.iter().sum();
+                assert!(sum.abs() < 1e-12 * scale, "n = {n}: sum {sum}");
+                // the map is an isometry: ‖x‖ = ‖y‖
+                let (xx, yy): (f64, f64) = (
+                    row.iter().map(|v| v * v).sum(),
+                    y.iter().map(|v| v * v).sum(),
+                );
+                assert!((xx - yy).abs() <= 1e-12 * yy.max(1.0), "n = {n}");
+                // x = V y with the explicit basis
+                for (j, &xj) in row.iter().enumerate() {
+                    let expected: f64 = (0..n - 1).map(|i| helmert_column(n, i)[j] * y[i]).sum();
+                    assert!((xj - expected).abs() <= 1e-12 * scale, "n = {n}");
+                }
+            }
+            assert_eq!(b.log_det_jacobian(&y).unwrap(), 0.0);
+            assert!(
+                b.log_det_jacobian_gradient(&y)
+                    .unwrap()
+                    .iter()
+                    .all(|g| *g == 0.0)
+            );
+            let back = b.inverse(&x).unwrap();
+            for (a, e) in back.iter().zip(&y) {
+                assert!((a - e).abs() <= 1e-12 * scale, "n = {n}: {a} vs {e}");
+            }
+        }
+    }
+    // a vector of one element is 0, with no free coordinates
+    let one = bijector(&Support::SumToZero, &[2, 1]);
+    assert_eq!(one.forward(&[]).unwrap().as_slice(), &[0.0, 0.0]);
+    assert!(one.inverse(&t(&[2, 1], &[0.0, 0.0])).unwrap().is_empty());
+}
+
+#[test]
 fn correlation_cholesky_has_unit_rows_and_positive_diagonal() {
     let mut rng = KeanuRng::seed_from_u64(16);
     for k in [2usize, 3, 5] {
@@ -517,6 +598,8 @@ fn supports_map_to_bijectors_of_the_right_size() {
         (Support::Ordered, vec![2, 3], 6),
         (Support::Simplex, vec![2, 3], 4),
         (Support::Simplex, vec![1], 0),
+        (Support::SumToZero, vec![2, 3], 4),
+        (Support::SumToZero, vec![1], 0),
         (Support::CorrelationCholesky, vec![3, 3], 3),
         (Support::CorrelationCholesky, vec![2, 4, 4], 12),
         (Support::Circular, vec![3], 6),
@@ -640,6 +723,13 @@ fn inverse_of_values_outside_or_on_the_boundary_errors() {
             t(&[2, 2], &[1.0, 0.1, 0.6, 0.8]),
         ),
         (Support::Circular, DoubleTensor::scalar(f64::INFINITY)),
+        (Support::SumToZero, t(&[3], &[1.0, -0.5, -0.4])),
+        (Support::SumToZero, t(&[2, 2], &[1.0, -1.0, 0.0, 1e-6])),
+        (Support::SumToZero, t(&[2], &[f64::NAN, 0.0])),
+        (
+            Support::SumToZero,
+            t(&[2], &[f64::INFINITY, f64::NEG_INFINITY]),
+        ),
     ];
     for (support, x) in invalid {
         let b = bijector(&support, x.shape());

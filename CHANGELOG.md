@@ -289,6 +289,17 @@ Work from `docs/plans/2026-11-05-001-feat-applied-modelling-gaps-plan.md`.
   from the graph's autodiff. Other kernels and sums or products of kernels are rejected by `Hsgp::new`. The GP
   regression example gained an HSGP fit and the guide's GP chapter a section. keanu-tensor's small matrix products
   with one column (matrix-vector products) are about four times faster, with unchanged results.
+- keanu-distributions, keanu-graph, keanu-io: **sum-to-zero vectors and the zero-sum normal**.
+  `Support::SumToZero` and `transform::SumToZero` follow Stan's `sum_to_zero_vector` (2.36 and later): the N − 1
+  unconstrained coordinates of each vector over the last axis are its coordinates in an orthonormal basis of the
+  zero-sum subspace, so the map is linear and isometric, with log-Jacobian 0 and zero second derivatives.
+  `ZeroSumNormal` (`DistributionKind::ZeroSumNormal`, `GraphBuilder::zero_sum_normal` and
+  `zero_sum_normal_with_shape`) is PyMC's: N(0, σ² I) restricted to the subspace, with log density
+  −Σx²/(2σ²) − (N − 1)(ln σ + ½ ln 2π), σ a scalar or one per vector of a batch, draws of N(0, σ² I) minus their
+  mean, gradients and Hessian-vector products. A value that doesn't sum to zero (within 10⁻⁸ relative,
+  `keanu_distributions::multivariate::ZERO_SUM_TOLERANCE`) has log probability −∞. The save schema gained
+  `DISTRIBUTION_KIND_ZERO_SUM_NORMAL`, and the guide's "Building models" chapter a section on sum-to-zero group
+  effects.
 
 ### Code review fixes
 
