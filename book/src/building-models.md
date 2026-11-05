@@ -11,10 +11,26 @@ Each distribution has a builder method taking its parameters, which can be other
 
 | Kind | Distributions |
 |---|---|
-| Continuous | `gaussian`, `half_gaussian`, `cauchy`, `half_cauchy`, `beta`, `chi_squared`, `dirichlet`, `exponential` (takes a rate), `gamma` (scale θ, shape k), `inverse_gamma`, `laplace`, `logistic`, `log_normal`, `multivariate_gaussian`, `pareto`, `student_t`, `triangular`, `uniform`, `kde` |
+| Continuous | `gaussian`, `half_gaussian`, `cauchy`, `half_cauchy`, `beta`, `chi_squared`, `dirichlet`, `exponential` (takes a rate), `gamma` (scale θ, shape k), `inverse_gamma`, `laplace`, `logistic`, `log_normal`, `multivariate_gaussian`, `pareto`, `student_t`, `triangular`, `uniform`, `weibull` (shape α, scale β), `von_mises` (an angle), `kde` |
 | Correlation matrices | `lkj_cholesky(k, eta)`: the k × k lower triangular Cholesky factor `L` of a correlation matrix `L Lᵀ` under the LKJ(η) prior (`lkj_cholesky_with_shape(&[.., k, k], eta)` for a batch) |
-| Discrete | `bernoulli` (bool), `binomial`, `categorical`, `geometric`, `multinomial`, `poisson`, `uniform_int` |
+| Discrete | `bernoulli` (bool), `binomial`, `categorical`, `geometric`, `multinomial`, `negative_binomial` (mean μ, dispersion α), `ordered_logistic`, `poisson`, `uniform_int` |
 | Your own | `custom` (see [Custom distributions](custom-distributions.md)) |
+
+### Counts, durations, angles and ordered categories
+
+- `negative_binomial(mu, alpha)` is over-dispersed count data in PyMC's mean–dispersion form: mean μ and variance
+  μ + μ²/α, approaching `poisson(mu)` as α grows.
+- `weibull(alpha, beta)` has shape α and scale β, for durations and lifetimes.
+- `von_mises(mu, kappa)` is a distribution of angles with mean direction μ and concentration κ (uniform on the circle
+  at κ = 0). Its support is circular, so NUTS and the other gradient based algorithms move through a circular
+  transform and pass freely between -π and π; samples are reported in [-π, π).
+- `ordered_logistic(eta, cutpoints)` is Stan's ordered logistic regression: a category index in 0..K from a location
+  η and K − 1 strictly increasing cutpoints (the last axis of `cutpoints`). Cutpoints that don't increase are an
+  error; latent cutpoints are best given an ordered prior.
+
+```rust,ignore
+{{#include ../../keanu/tests/book.rs:new_distributions}}
+```
 
 ## Truncated and censored distributions
 
@@ -22,7 +38,7 @@ Each distribution has a builder method taking its parameters, which can be other
 it by the probability the base gives that range; `censored(base, parameters, lower, upper)` models values that are
 clipped to the bounds, so a value equal to `lower` has probability P(X ≤ lower) and a value equal to `upper` has
 P(X ≥ upper). The base is a `DistributionKind` with a CDF (Gaussian, LogNormal, Exponential, Gamma, Beta, StudentT,
-Cauchy, Laplace, Logistic, Uniform, Poisson or Binomial) and its parameters are node ids, in the base's order.
+Cauchy, Laplace, Logistic, Uniform, Weibull, Poisson, Binomial or NegativeBinomial) and its parameters are node ids, in the base's order.
 Either bound may be infinite; for a discrete base the bounds are whole numbers and the range includes them.
 
 ```rust,ignore
@@ -31,7 +47,7 @@ Either bound may be infinite; for a discrete base the bounds are whole numbers a
 
 A truncated latent's support is the base's support intersected with the bounds, so NUTS, the gradient optimizers
 and the other gradient based algorithms keep it inside them. Truncations are sampled by inverting the base's CDF
-where it has a closed form (Gaussian, LogNormal, Exponential, Cauchy, Laplace, Logistic, Uniform) and by rejection
+where it has a closed form (Gaussian, LogNormal, Exponential, Cauchy, Laplace, Logistic, Uniform, Weibull) and by rejection
 otherwise, which fails with an error if the bounds hold too little of the base's probability. Censoring is meant for
 observed data. Each of these distributions also has `log_cdf` and `log_ccdf` (with gradients) in
 `keanu::distributions`, accurate far into the tails.

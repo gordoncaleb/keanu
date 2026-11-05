@@ -149,6 +149,10 @@ mod tests {
                 DistributionKind::Censored(Arc::new(DistributionKind::Gaussian)),
                 "Censored",
             ),
+            (DistributionKind::Weibull, "Weibull"),
+            (DistributionKind::VonMises, "VonMises"),
+            (DistributionKind::NegativeBinomial, "NegativeBinomial"),
+            (DistributionKind::OrderedLogistic, "OrderedLogistic"),
         ] {
             assert_eq!(distribution_name(&kind), name);
         }

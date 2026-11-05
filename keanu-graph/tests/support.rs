@@ -110,6 +110,22 @@ fn every_built_in_reports_its_documented_support() {
         ),
         ("poisson", |b| b.poisson(2.0).id(), Support::Discrete),
         (
+            "negative_binomial",
+            |b| b.negative_binomial(2.0, 1.5).id(),
+            Support::Discrete,
+        ),
+        (
+            "ordered_logistic",
+            |b| b.ordered_logistic(0.0, v(&[-1.0, 1.0])).id(),
+            Support::Discrete,
+        ),
+        ("weibull", |b| b.weibull(1.5, 2.0).id(), positive()),
+        (
+            "von_mises",
+            |b| b.von_mises(0.0, 2.0).id(),
+            Support::Circular,
+        ),
+        (
             "uniform_int",
             |b| b.uniform_int(0, 5).id(),
             Support::Discrete,

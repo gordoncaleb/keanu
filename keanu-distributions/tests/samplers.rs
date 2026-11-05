@@ -495,3 +495,219 @@ fn invalid_parameters_are_errors_not_panics() {
             .is_err()
     );
 }
+
+#[test]
+fn negative_binomial() {
+    let (mu, alpha) = (4.0, 2.5);
+    let x = NegativeBinomial::new(s(mu), s(alpha))
+        .sample(&[N], &mut rng())
+        .unwrap();
+    let values = ints_as_f64(&x);
+    assert!(values.iter().all(|&k| k >= 0.0));
+    assert_moments("NegativeBinomial", &values, mu, mu + mu * mu / alpha, 0.04);
+    // KS against the CDF, which steps at the integers: compare at each distinct sample value
+    let d = NegativeBinomial::new(s(mu), s(alpha));
+    let cdf = |k: f64| d.log_cdf(&IntTensor::scalar(k as i64)).unwrap().as_slice()[0].exp();
+    let mut sorted = values.clone();
+    sorted.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    let n = sorted.len() as f64;
+    let mut i = 0;
+    while i < sorted.len() {
+        let k = sorted[i];
+        let mut j = i;
+        while j < sorted.len() && sorted[j] == k {
+            j += 1;
+        }
+        assert!(
+            (cdf(k) - j as f64 / n).abs() < 1.63 / n.sqrt(),
+            "CDF at {k}"
+        );
+        i = j;
+    }
+}
+
+#[test]
+fn negative_binomial_approaches_poisson_for_large_alpha() {
+    let mu = 3.5;
+    let k = IntTensor::vector((0..15).collect());
+    let poisson = Poisson::new(s(mu)).log_prob(&k).unwrap();
+    for (alpha, tolerance) in [(1e4, 2e-2), (1e8, 1e-6), (1e12, 1e-9)] {
+        let nb = NegativeBinomial::new(s(mu), s(alpha)).log_prob(&k).unwrap();
+        for (a, b) in nb.as_slice().iter().zip(poisson.as_slice()) {
+            assert!((a - b).abs() < tolerance, "alpha {alpha}: {a} vs {b}");
+        }
+    }
+}
+
+#[test]
+fn weibull() {
+    let (alpha, beta) = (1.7, 2.3);
+    let x = Weibull::new(s(alpha), s(beta))
+        .sample(&[N], &mut rng())
+        .unwrap();
+    let g = |v: f64| keanu_tensor::special::ln_gamma(v).exp();
+    let mean = beta * g(1.0 + 1.0 / alpha);
+    let var = beta * beta * (g(1.0 + 2.0 / alpha) - g(1.0 + 1.0 / alpha).powi(2));
+    assert_moments("Weibull", x.as_slice(), mean, var, 0.03);
+    assert_ks("Weibull", x.as_slice(), |v| {
+        1.0 - (-(v / beta).powf(alpha)).exp()
+    });
+}
+
+/// The von Mises CDF from -π by the trapezium rule over the density.
+fn von_mises_cdf(mu: f64, kappa: f64) -> impl Fn(f64) -> f64 {
+    let d = VonMises::new(s(mu), s(kappa));
+    let steps = 20_000;
+    let h = 2.0 * PI / steps as f64;
+    let density: Vec<f64> = (0..=steps)
+        .map(|i| d.log_prob(&s(-PI + i as f64 * h)).unwrap().as_slice()[0].exp())
+        .collect();
+    let mut cumulative = vec![0.0; steps + 1];
+    for i in 1..=steps {
+        cumulative[i] = cumulative[i - 1] + (density[i - 1] + density[i]) * h / 2.0;
+    }
+    move |x: f64| {
+        let position = ((x + PI) / h).clamp(0.0, steps as f64);
+        let i = (position as usize).min(steps - 1);
+        let t = position - i as f64;
+        cumulative[i] + t * (cumulative[i + 1] - cumulative[i])
+    }
+}
+
+#[test]
+fn von_mises() {
+    for (mu, kappa) in [(0.7, 2.0), (PI - 0.1, 10.0), (-3.0, 0.3)] {
+        let x = VonMises::new(s(mu), s(kappa))
+            .sample(&[N], &mut rng())
+            .unwrap();
+        assert!(x.as_slice().iter().all(|&v| (-PI..PI).contains(&v)));
+        // E[cos(x - mu)] = I₁(κ) / I₀(κ) and E[sin(x - mu)] = 0
+        let resultant = (keanu_tensor::special::log_bessel_i1(kappa)
+            - keanu_tensor::special::log_bessel_i0(kappa))
+        .exp();
+        let cos: Vec<f64> = x.as_slice().iter().map(|v| (v - mu).cos()).collect();
+        let sin: Vec<f64> = x.as_slice().iter().map(|v| (v - mu).sin()).collect();
+        let (mean_cos, _) = moments(&cos);
+        let (mean_sin, _) = moments(&sin);
+        let se = (1.0 / N as f64).sqrt();
+        assert!(
+            (mean_cos - resultant).abs() < 5.0 * se,
+            "{kappa}: {mean_cos} vs {resultant}"
+        );
+        assert!(mean_sin.abs() < 5.0 * se, "{kappa}: {mean_sin}");
+        assert_ks("VonMises", x.as_slice(), von_mises_cdf(mu, kappa));
+    }
+}
+
+#[test]
+fn von_mises_with_zero_concentration_is_uniform_on_the_circle() {
+    let d = VonMises::new(s(1.0), s(0.0));
+    let x = d.sample(&[N], &mut rng()).unwrap();
+    assert_ks("VonMises kappa 0", x.as_slice(), |v| (v + PI) / (2.0 * PI));
+    let lp = d
+        .log_prob(&DoubleTensor::vector(vec![-2.0, 0.0, 3.0]))
+        .unwrap();
+    for l in lp.as_slice() {
+        assert!((l + (2.0 * PI).ln()).abs() < 1e-15);
+    }
+}
+
+#[test]
+fn von_mises_with_large_concentration_is_stable() {
+    let (mu, kappa) = (0.3, 500.0);
+    let d = VonMises::new(s(mu), s(kappa));
+    // at the mode the density is close to a normal's with variance 1/κ
+    let lp = d.log_prob(&s(mu)).unwrap().as_slice()[0];
+    let normal = 0.5 * (kappa / (2.0 * PI)).ln();
+    assert!(
+        lp.is_finite() && (lp - normal).abs() < 1e-3,
+        "{lp} vs {normal}"
+    );
+    let g = d.d_log_prob(&s(mu + 0.01)).unwrap();
+    assert!(g.kappa.as_slice()[0].is_finite());
+    let x = d.sample(&[N], &mut rng()).unwrap();
+    let deviations: Vec<f64> = x.as_slice().iter().map(|v| v - mu).collect();
+    // the angle's variance is about 1/κ + 1/(2κ²)
+    assert_moments(
+        "VonMises kappa 500",
+        &deviations,
+        0.0,
+        1.0 / kappa + 0.5 / (kappa * kappa),
+        0.02,
+    );
+    // even larger: the wrapped normal limit
+    let x = VonMises::new(s(mu), s(1e7))
+        .sample(&[1000], &mut rng())
+        .unwrap();
+    assert!(x.as_slice().iter().all(|v| (v - mu).abs() < 0.01));
+}
+
+#[test]
+fn ordered_logistic() {
+    let cutpoints = DoubleTensor::vector(vec![-1.0, 0.5, 2.0]);
+    let d = OrderedLogistic::new(s(0.3), cutpoints.clone());
+    let p = d.probabilities().unwrap();
+    assert_eq!(p.shape(), &[4]);
+    assert!((p.as_slice().iter().sum::<f64>() - 1.0).abs() < 1e-14);
+    let sigmoid = |t: f64| 1.0 / (1.0 + (-t).exp());
+    let expected = [
+        1.0 - sigmoid(0.3 + 1.0),
+        sigmoid(0.3 + 1.0) - sigmoid(0.3 - 0.5),
+        sigmoid(0.3 - 0.5) - sigmoid(0.3 - 2.0),
+        sigmoid(0.3 - 2.0),
+    ];
+    for (a, b) in p.as_slice().iter().zip(expected) {
+        assert!((a - b).abs() < 1e-14);
+    }
+    let lp = d
+        .log_prob(&IntTensor::vector(vec![0, 1, 2, 3, 4, -1]))
+        .unwrap();
+    for (lp, p) in lp.as_slice().iter().zip(expected) {
+        assert!((lp - p.ln()).abs() < 1e-13);
+    }
+    assert_eq!(lp.as_slice()[4], f64::NEG_INFINITY);
+    assert_eq!(lp.as_slice()[5], f64::NEG_INFINITY);
+    // far from the cutpoints the log probabilities stay finite and accurate
+    let far = OrderedLogistic::new(s(60.0), cutpoints.clone());
+    let lp = far.log_prob(&IntTensor::vector(vec![0, 2])).unwrap();
+    assert!((lp.as_slice()[0] - (-61.0 - (-61f64).exp().ln_1p())).abs() < 1e-12);
+    assert!(lp.as_slice()[1].is_finite());
+
+    let x = d.sample(&[N], &mut rng()).unwrap();
+    for (k, &p) in expected.iter().enumerate() {
+        let frequency = x.as_slice().iter().filter(|&&v| v == k as i64).count() as f64 / N as f64;
+        let se = (p * (1.0 - p) / N as f64).sqrt();
+        assert!((frequency - p).abs() < 5.0 * se, "category {k}");
+    }
+    // a batch of etas against shared cutpoints
+    let batch = OrderedLogistic::new(DoubleTensor::vector(vec![-2.0, 0.0, 2.0]), cutpoints);
+    assert_eq!(batch.probabilities().unwrap().shape(), &[3, 4]);
+    assert_eq!(batch.sample(&[], &mut rng()).unwrap().shape(), &[3]);
+}
+
+#[test]
+fn ordered_logistic_rejects_cutpoints_that_do_not_increase() {
+    for cutpoints in [vec![0.0, 0.0], vec![1.0, -1.0], vec![0.0, f64::NAN]] {
+        let d = OrderedLogistic::new(s(0.0), DoubleTensor::vector(cutpoints));
+        assert!(matches!(
+            d.log_prob(&IntTensor::scalar(0)),
+            Err(DistributionError::InvalidParameter(_))
+        ));
+        assert!(d.sample(&[3], &mut rng()).is_err());
+    }
+    let empty = OrderedLogistic::new(s(0.0), DoubleTensor::vector(vec![]));
+    assert!(empty.log_prob(&IntTensor::scalar(0)).is_err());
+}
+
+#[test]
+fn new_log_densities_match_reference_values() {
+    // computed offline from the closed forms (the von Mises normaliser from the power series of I₀)
+    let weibull = Weibull::new(s(1.8), s(1.4)).log_prob(&s(1.3)).unwrap();
+    assert!((weibull.as_slice()[0] + 0.683_091_870_063_354_8).abs() < 1e-13);
+    let von_mises = VonMises::new(s(0.7), s(2.0)).log_prob(&s(-1.1)).unwrap();
+    assert!((von_mises.as_slice()[0] + 3.116_274_797_278_476).abs() < 1e-13);
+    let nb = NegativeBinomial::new(s(4.2), s(1.7))
+        .log_prob(&IntTensor::scalar(7))
+        .unwrap();
+    assert!((nb.as_slice()[0] + 2.956_017_727_630_323).abs() < 1e-12);
+}

@@ -103,6 +103,11 @@ pub enum DistributionKind {
     Triangular,
     /// Parameters: `x_min`, `x_max`. Support: the interval [`x_min`, `x_max`).
     Uniform,
+    /// Parameters: `alpha` (shape), `beta` (scale). Support: greater than 0.
+    Weibull,
+    /// Parameters: `mu` (mean direction), `kappa` (concentration). Support: circular (angles; the density is
+    /// periodic with period 2π).
+    VonMises,
     /// No parameters: a kernel density estimate from fixed samples. Support: real.
     Kde(Arc<d::Kde>),
     /// Parameters: `probability of true` -> bool. Support: discrete.
@@ -117,6 +122,12 @@ pub enum DistributionKind {
     Multinomial,
     /// Parameters: `mu` -> i64. Support: discrete.
     Poisson,
+    /// Parameters: `mu` (mean), `alpha` (dispersion) -> i64, with variance mu + mu²/alpha. Support: discrete.
+    NegativeBinomial,
+    /// Parameters: `eta`, `cutpoints` (strictly increasing along the last axis, K - 1 of them) -> i64 category index
+    /// in 0..K. The value's shape is the broadcast of eta's shape and the cutpoints' leading axes. Support:
+    /// discrete.
+    OrderedLogistic,
     /// Parameters: `x_min (i64)`, `x_max (i64)` -> i64 in [x_min, x_max). Support: discrete.
     UniformInt,
     /// A user-defined distribution; its parameters are whatever nodes it was given. Support: whatever
@@ -687,6 +698,11 @@ distributions! {
         support = Support::Interval(x_min.clone(), x_max.clone()),
         cdf = inverse,
         gradient = uniform_gradient;
+    Weibull "weibull" (alpha: F64, beta: F64) -> F64 => d::Weibull::new(alpha, beta),
+        support = Support::greater_than(0.0),
+        cdf = inverse;
+    VonMises "von_mises" (mu: F64, kappa: F64) -> F64 => d::VonMises::new(mu, kappa),
+        support = Support::Circular;
     Bernoulli "bernoulli" (prob_true: F64) -> Bool => d::Bernoulli::new(prob_true),
         support = Support::Discrete;
     Binomial "binomial" (p: F64, n: I64) -> I64 => d::Binomial::new(p, n),
@@ -699,6 +715,12 @@ distributions! {
     Poisson "poisson" (mu: F64) -> I64 => d::Poisson::new(mu),
         support = Support::Discrete,
         cdf = rejection;
+    NegativeBinomial "negative_binomial" (mu: F64, alpha: F64) -> I64 => d::NegativeBinomial::new(mu, alpha),
+        support = Support::Discrete,
+        cdf = rejection;
+    OrderedLogistic "ordered_logistic" (eta: F64, cutpoints: F64) -> I64 =>
+        d::OrderedLogistic::new(eta, cutpoints),
+        support = Support::Discrete;
     UniformInt "uniform_int" (x_min: I64, x_max: I64) -> I64 => d::UniformInt::new(x_min, x_max),
         support = Support::Discrete,
         gradient = |_, _| Ok(no_gradient(2));
@@ -877,6 +899,20 @@ impl DistributionOp {
                 Ok(Shape::from_slice(shape))
             }
             DistributionKind::Kde(_) => Ok(Shape::from_slice(requested.unwrap_or(&[]))),
+            DistributionKind::OrderedLogistic => {
+                let (eta, cutpoints) = (parameters[0].1, parameters[1].1);
+                let Some((&count, leading)) = cutpoints.split_last() else {
+                    return Err(invalid("the cutpoints must have at least one axis".into()));
+                };
+                if count == 0 {
+                    return Err(invalid("there must be at least one cutpoint".into()));
+                }
+                let mut shape = keanu_tensor::broadcast_shape(eta, leading)?;
+                if let Some(r) = requested {
+                    shape = keanu_tensor::broadcast_shape(r, &shape)?;
+                }
+                Ok(shape)
+            }
             _ => {
                 let mut shape = Shape::from_slice(requested.unwrap_or(&[]));
                 for (_, p) in parameters {

@@ -247,6 +247,62 @@ fn nuts_keeps_a_truncated_latent_inside_its_bounds() {
     }
 }
 
+/// A von Mises latent whose mean direction is near the ±π seam: NUTS moves through its circular transform across
+/// the seam and recovers the circular mean and the mean resultant length I₁(κ)/I₀(κ).
+#[test]
+fn nuts_recovers_the_circular_mean_of_a_von_mises_latent() {
+    let (mu, kappa) = (std::f64::consts::PI - 0.1, 10.0);
+    let b = GraphBuilder::new();
+    let theta = b.von_mises(mu, kappa);
+    b.set_value(theta, DoubleTensor::scalar(0.0));
+    let theta = theta.id();
+    let (graph, mut state) = b.build().unwrap();
+    let model = Model::new(graph, &state).unwrap();
+    let samples = Nuts::default()
+        .with_adapt_count(500)
+        .sample_with_statistics(
+            &model,
+            &mut state,
+            &[theta],
+            4000,
+            SamplingOptions::default()
+                .with_drop(500)
+                .with_down_sample_interval(1),
+            &mut rng(23),
+        )
+        .unwrap()
+        .0;
+    let xs = series(&samples, theta);
+    let cos: Vec<f64> = xs.iter().map(|x| x.cos()).collect();
+    let sin: Vec<f64> = xs.iter().map(|x| x.sin()).collect();
+    let circular_mean = mean(&sin).atan2(mean(&cos));
+    // the angular distance, so a mean on the other side of the seam counts as close
+    let error = (circular_mean - mu)
+        .sin()
+        .atan2((circular_mean - mu).cos())
+        .abs();
+    let deviations: Vec<f64> = xs.iter().map(|x| (x - mu).sin()).collect();
+    let ess = effective_sample_size(&deviations).max(10.0);
+    // the circular standard error is about sqrt(E[sin²(x - mu)] / ess) / R
+    let resultant = (keanu_tensor::special::log_bessel_i1(kappa)
+        - keanu_tensor::special::log_bessel_i0(kappa))
+    .exp();
+    let tolerance = 5.0 * (variance(&deviations) / ess).sqrt() / resultant;
+    assert!(
+        error < tolerance,
+        "circular mean {circular_mean} vs {mu} (tolerance {tolerance})"
+    );
+    let r = mean(&cos).hypot(mean(&sin));
+    assert!((r - resultant).abs() < 0.02, "resultant {r} vs {resultant}");
+    // some samples fall on each side of the seam
+    let (lo, hi) = xs
+        .iter()
+        .fold((f64::INFINITY, f64::NEG_INFINITY), |(a, b), &x| {
+            (a.min(x), b.max(x))
+        });
+    assert!(lo < 0.0 && hi > 0.0, "{lo} {hi}");
+}
+
 /// rate ~ Gamma(theta = 1.5, k = 2), x_i ~ Poisson(rate) observed: the posterior is
 /// Gamma(k + Σx, theta / (1 + n theta)).
 #[test]

@@ -386,3 +386,69 @@ fn kde() {
     let g = kde.d_log_prob(&x).unwrap();
     check("x", &x, &g.x, |x| kde.log_prob(x).sum());
 }
+
+#[test]
+fn negative_binomial() {
+    let k = IntTensor::vector(vec![0, 3, 11]);
+    let (mu, alpha) = (s(4.2), s(1.7));
+    let g = NegativeBinomial::new(mu.clone(), alpha.clone())
+        .d_log_prob(&k)
+        .unwrap();
+    check("mu", &mu, &g.mu, |p| {
+        total(NegativeBinomial::new(p.clone(), alpha.clone()).log_prob(&k))
+    });
+    check("alpha", &alpha, &g.alpha, |p| {
+        total(NegativeBinomial::new(mu.clone(), p.clone()).log_prob(&k))
+    });
+}
+
+#[test]
+fn weibull() {
+    let x = v(&[0.4, 1.3, 3.1]);
+    let (a, b) = (s(1.8), s(1.4));
+    let g = Weibull::new(a.clone(), b.clone()).d_log_prob(&x).unwrap();
+    check("x", &x, &g.x, |x| {
+        total(Weibull::new(a.clone(), b.clone()).log_prob(x))
+    });
+    check("alpha", &a, &g.alpha, |p| {
+        total(Weibull::new(p.clone(), b.clone()).log_prob(&x))
+    });
+    check("beta", &b, &g.beta, |p| {
+        total(Weibull::new(a.clone(), p.clone()).log_prob(&x))
+    });
+}
+
+#[test]
+fn von_mises() {
+    let x = v(&[-2.5, 0.4, 3.0]);
+    for kappa in [0.5, 4.0, 80.0] {
+        let (mu, k) = (s(0.9), s(kappa));
+        let g = VonMises::new(mu.clone(), k.clone()).d_log_prob(&x).unwrap();
+        check("x", &x, &g.x, |x| {
+            total(VonMises::new(mu.clone(), k.clone()).log_prob(x))
+        });
+        check("mu", &mu, &g.mu, |p| {
+            total(VonMises::new(p.clone(), k.clone()).log_prob(&x))
+        });
+        check("kappa", &k, &g.kappa, |p| {
+            total(VonMises::new(mu.clone(), p.clone()).log_prob(&x))
+        });
+    }
+}
+
+#[test]
+fn ordered_logistic() {
+    let k = IntTensor::vector(vec![0, 1, 2, 3]);
+    let (eta, cutpoints) = (s(0.4), v(&[-1.2, 0.3, 1.9]));
+    let g = OrderedLogistic::new(eta.clone(), cutpoints.clone())
+        .d_log_prob(&k)
+        .unwrap();
+    check("eta", &eta, &g.eta, |p| {
+        total(OrderedLogistic::new(p.clone(), cutpoints.clone()).log_prob(&k))
+    });
+    // the cutpoints' gradient has a row per value element: sum them for the total log prob
+    let summed = g.cutpoints.sum_axes(&[0]).unwrap();
+    check("cutpoints", &cutpoints, &summed, |p| {
+        total(OrderedLogistic::new(eta.clone(), p.clone()).log_prob(&k))
+    });
+}

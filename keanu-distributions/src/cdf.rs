@@ -16,8 +16,9 @@ use crate::util::{ln_gamma, map, map_n, safe_ln_times, softplus};
 use crate::{
     Beta, BetaGradient, Binomial, BinomialGradient, Cauchy, CauchyGradient, Exponential,
     ExponentialGradient, Gamma, GammaGradient, Gaussian, GaussianGradient, Laplace,
-    LaplaceGradient, LogNormal, LogNormalGradient, Logistic, LogisticGradient, Poisson,
-    PoissonGradient, StudentT, StudentTGradient, Uniform, UniformGradient,
+    LaplaceGradient, LogNormal, LogNormalGradient, Logistic, LogisticGradient, NegativeBinomial,
+    NegativeBinomialGradient, Poisson, PoissonGradient, StudentT, StudentTGradient, Uniform,
+    UniformGradient, Weibull, WeibullGradient,
 };
 use keanu_tensor::special::{
     gamma_p, gamma_p_da, gamma_q, inc_beta, inc_beta_da, inc_beta_db, log_beta, log_ndtr, log1mexp,
@@ -670,6 +671,139 @@ impl Binomial<'_> {
 
     /// The element-wise derivative of [`Self::log_ccdf`] with respect to p.
     pub fn d_log_ccdf(&self, k: &IntTensor) -> Result<BinomialGradient> {
+        self.cdf_gradient(k, true)
+    }
+}
+
+impl Weibull<'_> {
+    /// The element-wise log CDF, ln P(X <= x) = ln(1 - e^(-(x/β)^α)), broadcasting x with the parameters
+    /// (-infinity for x <= 0).
+    pub fn log_cdf(&self, x: &DoubleTensor) -> Result<DoubleTensor> {
+        map((x, &*self.alpha, &*self.beta), |(x, a, b)| {
+            if x <= 0.0 {
+                f64::NEG_INFINITY
+            } else {
+                log1mexp(-(x / b).powf(a))
+            }
+        })
+    }
+
+    /// The element-wise log survival function, ln P(X > x) = -(x/β)^α, broadcasting x with the parameters (0 for
+    /// x <= 0).
+    pub fn log_ccdf(&self, x: &DoubleTensor) -> Result<DoubleTensor> {
+        map((x, &*self.alpha, &*self.beta), |(x, a, b)| {
+            if x <= 0.0 { 0.0 } else { -(x / b).powf(a) }
+        })
+    }
+
+    /// With t = (x/β)^α, the derivatives of -t with respect to x, α and β, scaled by `factor(t)`.
+    fn cdf_gradient(&self, x: &DoubleTensor, factor: fn(f64) -> f64) -> Result<WeibullGradient> {
+        let [x, alpha, beta] = map_n((x, &*self.alpha, &*self.beta), |(x, a, b)| {
+            if x <= 0.0 {
+                return [0.0; 3];
+            }
+            let z = x / b;
+            let t = z.powf(a);
+            let f = factor(t);
+            [-a * t / x * f, -t * z.ln() * f, a * t / b * f]
+        })?;
+        Ok(WeibullGradient { x, alpha, beta })
+    }
+
+    /// The element-wise derivatives of [`Self::log_cdf`] with respect to x and each parameter.
+    pub fn d_log_cdf(&self, x: &DoubleTensor) -> Result<WeibullGradient> {
+        // d ln(1 - e^-t) = -d(-t) / (e^t - 1)
+        self.cdf_gradient(x, |t| -1.0 / t.exp_m1())
+    }
+
+    /// The element-wise derivatives of [`Self::log_ccdf`] with respect to x and each parameter.
+    pub fn d_log_ccdf(&self, x: &DoubleTensor) -> Result<WeibullGradient> {
+        self.cdf_gradient(x, |_| 1.0)
+    }
+
+    /// The element-wise inverse CDF: the x with P(X <= x) = p, for p in [0, 1].
+    pub fn inverse_cdf(&self, p: &DoubleTensor) -> Result<DoubleTensor> {
+        map((p, &*self.alpha, &*self.beta), |(p, a, b)| {
+            b * (-(-p).ln_1p()).powf(1.0 / a)
+        })
+    }
+
+    /// The element-wise inverse survival function: the x with P(X > x) = q, for q in [0, 1].
+    pub fn inverse_ccdf(&self, q: &DoubleTensor) -> Result<DoubleTensor> {
+        map((q, &*self.alpha, &*self.beta), |(q, a, b)| {
+            b * (-q.ln()).powf(1.0 / a)
+        })
+    }
+}
+
+impl NegativeBinomial<'_> {
+    /// ln P(X <= k) = ln I_p(α, k + 1) with p = α / (α + μ), or ln P(X > k) = ln I_(1-p)(k + 1, α) if `upper`.
+    fn log_cdf_at(k: i64, mu: f64, alpha: f64, upper: bool) -> f64 {
+        if k < 0 {
+            return if upper { 0.0 } else { f64::NEG_INFINITY };
+        }
+        let k = k as f64 + 1.0;
+        let (p, q) = (alpha / (alpha + mu), mu / (alpha + mu));
+        let (cdf, survival) = (inc_beta(alpha, k, p), inc_beta(k, alpha, q));
+        if upper {
+            ln_complement(survival, cdf)
+        } else {
+            ln_complement(cdf, survival)
+        }
+    }
+
+    /// The element-wise log CDF, ln P(X <= k), broadcasting k with the parameters.
+    pub fn log_cdf(&self, k: &IntTensor) -> Result<DoubleTensor> {
+        map((k, &*self.mu, &*self.alpha), |(k, mu, alpha)| {
+            Self::log_cdf_at(k, mu, alpha, false)
+        })
+    }
+
+    /// The element-wise log survival function, ln P(X > k), broadcasting k with the parameters.
+    pub fn log_ccdf(&self, k: &IntTensor) -> Result<DoubleTensor> {
+        map((k, &*self.mu, &*self.alpha), |(k, mu, alpha)| {
+            Self::log_cdf_at(k, mu, alpha, true)
+        })
+    }
+
+    fn cdf_gradient(&self, k: &IntTensor, upper: bool) -> Result<NegativeBinomialGradient> {
+        let [mu, alpha] = map_n((k, &*self.mu, &*self.alpha), |(k, mu, alpha)| {
+            if k < 0 {
+                return [0.0; 2];
+            }
+            let log_f = Self::log_cdf_at(k, mu, alpha, upper);
+            let f = log_f.exp();
+            let k = k as f64 + 1.0;
+            let total = alpha + mu;
+            let (p, q) = (alpha / total, mu / total);
+            // the Beta(α, k + 1) density at p, which is d I_p(α, k + 1) / dp
+            let log_density = (alpha - 1.0) * p.ln() + (k - 1.0) * q.ln() - log_beta(alpha, k);
+            let density = ratio(log_density, log_f);
+            // dp/dμ = -α / (α + μ)², dp/dα = μ / (α + μ)²
+            let (dp_dmu, dp_dalpha) = (-alpha / (total * total), mu / (total * total));
+            if upper {
+                // S = I_q(k + 1, α), q = 1 - p
+                [
+                    -density * dp_dmu,
+                    inc_beta_db(k, alpha, q) / f - density * dp_dalpha,
+                ]
+            } else {
+                [
+                    density * dp_dmu,
+                    inc_beta_da(alpha, k, p) / f + density * dp_dalpha,
+                ]
+            }
+        })?;
+        Ok(NegativeBinomialGradient { mu, alpha })
+    }
+
+    /// The element-wise derivatives of [`Self::log_cdf`] with respect to each parameter.
+    pub fn d_log_cdf(&self, k: &IntTensor) -> Result<NegativeBinomialGradient> {
+        self.cdf_gradient(k, false)
+    }
+
+    /// The element-wise derivatives of [`Self::log_ccdf`] with respect to each parameter.
+    pub fn d_log_ccdf(&self, k: &IntTensor) -> Result<NegativeBinomialGradient> {
         self.cdf_gradient(k, true)
     }
 }

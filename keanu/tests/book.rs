@@ -155,6 +155,41 @@ fn indexing() -> keanu::Result<()> {
 }
 
 #[test]
+fn new_distributions() -> keanu::Result<()> {
+    // ANCHOR: new_distributions
+    let b = GraphBuilder::new();
+
+    // over-dispersed counts: mean mu, variance mu + mu² / alpha
+    let mu = b.log_normal(1.0, 0.5);
+    let alpha = b.gamma(1.0, 2.0);
+    let counts = b.negative_binomial_with_shape(&[4], mu, alpha);
+    b.observe(counts, IntTensor::vector(vec![3, 0, 7, 12]));
+
+    // lifetimes
+    let lifetime = b.weibull(1.5, 100.0);
+
+    // a wind direction, near the ±π seam
+    let direction = b.von_mises(std::f64::consts::PI - 0.1, 4.0);
+
+    // ratings 0..4 from a latent score and four increasing cutpoints
+    let score = b.gaussian(0.0, 1.0);
+    let rating = b.ordered_logistic(score, DoubleTensor::vector(vec![-1.5, -0.5, 0.5, 1.5]));
+    b.observe(rating, IntTensor::scalar(3));
+
+    let (lifetime, direction) = (lifetime.id(), direction.id());
+    let (graph, mut state) = b.build()?;
+    state.lazy_eval(
+        &graph,
+        &[lifetime, direction],
+        &mut KeanuRng::seed_from_u64(1),
+    )?;
+    let angle = state.f64(direction).unwrap().to_scalar().unwrap();
+    assert!((-std::f64::consts::PI..std::f64::consts::PI).contains(&angle));
+    // ANCHOR_END: new_distributions
+    Ok(())
+}
+
+#[test]
 fn truncated_and_censored() -> keanu::Result<()> {
     // ANCHOR: truncated_censored
     use keanu::graph::op::DistributionKind;

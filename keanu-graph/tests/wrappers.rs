@@ -141,6 +141,7 @@ fn truncated_densities_integrate_to_one() {
         (DistributionKind::Gamma, vec![s(1.5), s(2.0)], 0.5, 6.0),
         (DistributionKind::Logistic, vec![s(0.0), s(1.0)], 8.0, 12.0),
         (DistributionKind::Cauchy, vec![s(0.0), s(1.0)], -30.0, -10.0),
+        (DistributionKind::Weibull, vec![s(1.5), s(2.0)], 0.5, 3.0),
     ];
     for (kind, parameters, lower, upper) in cases {
         let name = format!("{kind:?}");

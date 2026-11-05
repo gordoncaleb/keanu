@@ -1,13 +1,15 @@
 //! Discrete distributions. Values are integers (`IntTensor`) or booleans (`BoolTensor`).
 
+use crate::continuous::sample_gamma;
 use crate::error::{Result, invalid_parameter};
 use crate::param::{IntoParam, Param};
 use crate::rng::KeanuRng;
 use crate::util::{
-    Operand, broadcast_all, ln_gamma, map, operand, require, require_ordered, require_probability,
-    safe_ln_times, sample_each, sample_shape,
+    Operand, broadcast_all, digamma, ln_gamma, map, map_n, operand, require, require_ordered,
+    require_probability, safe_ln_times, sample_each, sample_shape, sigmoid, softplus,
 };
-use keanu_tensor::{BoolTensor, DoubleTensor, IntTensor};
+use keanu_tensor::special::{log_beta, log1mexp};
+use keanu_tensor::{BoolTensor, DoubleTensor, IntTensor, Shape};
 
 /// Bernoulli distribution: true with probability `prob_true`.
 #[derive(Debug, Clone, PartialEq)]
@@ -539,6 +541,285 @@ fn select_category(u: f64, probabilities: impl Iterator<Item = f64>) -> usize {
         }
     }
     last_possible.unwrap_or(count.saturating_sub(1))
+}
+
+/// Negative binomial distribution in the mean–dispersion form (as PyMC's `NegativeBinomial(mu, alpha)`): a Poisson
+/// whose rate is Gamma distributed with mean `mu` and shape `alpha`, so the mean is mu and the variance is
+/// mu + mu²/alpha. It approaches Poisson(mu) as alpha grows.
+///
+/// P(k) = Γ(k + α) / (Γ(α) k!) (α / (α + μ))^α (μ / (α + μ))^k for k >= 0.
+#[derive(Debug, Clone, PartialEq)]
+pub struct NegativeBinomial<'a> {
+    /// The mean μ.
+    pub mu: Param<'a>,
+    /// The dispersion (shape) α: smaller is more over-dispersed.
+    pub alpha: Param<'a>,
+}
+
+/// Derivatives of [`NegativeBinomial::log_prob`] (and of its log CDF and survival function).
+#[derive(Debug, Clone, PartialEq)]
+pub struct NegativeBinomialGradient {
+    /// With respect to `mu`.
+    pub mu: DoubleTensor,
+    /// With respect to `alpha`.
+    pub alpha: DoubleTensor,
+}
+
+/// ln Γ(k + α) - ln Γ(α) - ln k!, computed as -ln k - ln B(α, k) for k >= 1 so that it stays accurate for large α.
+fn negative_binomial_log_coefficient(k: f64, alpha: f64) -> f64 {
+    if k == 0.0 {
+        0.0
+    } else {
+        -k.ln() - log_beta(alpha, k)
+    }
+}
+
+impl<'a> NegativeBinomial<'a> {
+    /// Creates the distribution from its parameters.
+    pub fn new(mu: impl IntoParam<'a, f64>, alpha: impl IntoParam<'a, f64>) -> Self {
+        Self {
+            mu: mu.into_param(),
+            alpha: alpha.into_param(),
+        }
+    }
+
+    /// The element-wise log probability of k, broadcasting k with the parameters (-infinity for k < 0).
+    pub fn log_prob(&self, k: &IntTensor) -> Result<DoubleTensor> {
+        map((k, &*self.mu, &*self.alpha), |(k, mu, alpha)| {
+            if k < 0 {
+                return f64::NEG_INFINITY;
+            }
+            let k = k as f64;
+            // α ln(α / (α + μ)) = -α ln(1 + μ/α), accurate for large α
+            negative_binomial_log_coefficient(k, alpha) - alpha * (mu / alpha).ln_1p()
+                + safe_ln_times(mu / (alpha + mu), k)
+        })
+    }
+
+    /// The element-wise derivatives of [`Self::log_prob`] with respect to each parameter.
+    pub fn d_log_prob(&self, k: &IntTensor) -> Result<NegativeBinomialGradient> {
+        let [mu, alpha] = map_n((k, &*self.mu, &*self.alpha), |(k, mu, alpha)| {
+            if k < 0 {
+                return [0.0; 2];
+            }
+            let k = k as f64;
+            let total = alpha + mu;
+            [
+                k / mu - (k + alpha) / total,
+                digamma(k + alpha) - digamma(alpha) - (mu / alpha).ln_1p() + (mu - k) / total,
+            ]
+        })?;
+        Ok(NegativeBinomialGradient { mu, alpha })
+    }
+
+    /// Draws a sample of the given shape (broadcast with the parameters' shapes) as a Poisson draw whose rate is a
+    /// Gamma(shape α, scale μ/α) draw. An error unless mu and alpha are positive.
+    pub fn sample(&self, shape: &[usize], rng: &mut KeanuRng) -> Result<IntTensor> {
+        sample_each(shape, &[&self.mu, &self.alpha], |p| {
+            let (mu, alpha) = (p[0], p[1]);
+            // `!(..)` also rejects NaN
+            if !(mu > 0.0 && alpha > 0.0 && mu.is_finite()) {
+                return invalid_parameter(format!(
+                    "mu and alpha must be positive, got mu {mu} and alpha {alpha}"
+                ));
+            }
+            let rate = sample_gamma(mu / alpha, alpha, rng)?;
+            if rate <= 0.0 {
+                return Ok(0);
+            }
+            sample_poisson(rate, rng)
+        })
+    }
+}
+
+/// Ordered logistic distribution (Stan's `ordered_logistic`) over categories 0..K: a latent η is compared with K - 1
+/// increasing cutpoints c, giving P(0) = 1 - logit⁻¹(η - c₁), P(k) = logit⁻¹(η - cₖ) - logit⁻¹(η - cₖ₊₁) and
+/// P(K - 1) = logit⁻¹(η - c_(K-1)).
+///
+/// The cutpoints are a tensor whose last axis is the K - 1 cutpoints; its leading axes and η's shape broadcast with
+/// the value's shape. Probabilities are computed in log space, with logit⁻¹(a) - logit⁻¹(b) =
+/// logit⁻¹(a) logit⁻¹(-b) (1 - e^(b - a)), so no difference of nearly equal probabilities is taken.
+#[derive(Debug, Clone, PartialEq)]
+pub struct OrderedLogistic<'a> {
+    /// The location η.
+    pub eta: Param<'a>,
+    /// The cutpoints, strictly increasing along the last axis.
+    pub cutpoints: Param<'a>,
+}
+
+/// Derivatives of [`OrderedLogistic::log_prob`].
+#[derive(Debug, Clone, PartialEq)]
+pub struct OrderedLogisticGradient {
+    /// With respect to `eta`, shaped like the log probability.
+    pub eta: DoubleTensor,
+    /// With respect to `cutpoints`, shaped like the log probability with the cutpoints' last axis appended.
+    pub cutpoints: DoubleTensor,
+}
+
+/// ln logit⁻¹(t) = -softplus(-t).
+fn log_sigmoid(t: f64) -> f64 {
+    -softplus(-t)
+}
+
+/// The log probability of category `k` and its derivatives with respect to η and each cutpoint (written into
+/// `d_cutpoints`, which is zeroed first).
+fn ordered_logistic(k: i64, eta: f64, cutpoints: &[f64], d_cutpoints: &mut [f64]) -> (f64, f64) {
+    d_cutpoints.iter_mut().for_each(|d| *d = 0.0);
+    let last = cutpoints.len();
+    let Ok(k) = usize::try_from(k) else {
+        return (f64::NEG_INFINITY, 0.0);
+    };
+    if k > last {
+        return (f64::NEG_INFINITY, 0.0);
+    }
+    if k == 0 {
+        let a = eta - cutpoints[0];
+        d_cutpoints[0] = sigmoid(a);
+        return (log_sigmoid(-a), -sigmoid(a));
+    }
+    if k == last {
+        let a = eta - cutpoints[last - 1];
+        d_cutpoints[last - 1] = -sigmoid(-a);
+        return (log_sigmoid(a), sigmoid(-a));
+    }
+    // between cutpoints k - 1 and k (0-based): a > b
+    let (a, b) = (eta - cutpoints[k - 1], eta - cutpoints[k]);
+    let log_prob = log_sigmoid(a) + log_sigmoid(-b) + log1mexp(b - a);
+    let gap = 1.0 / (a - b).exp_m1();
+    let d_a = sigmoid(-a) + gap;
+    let d_b = -sigmoid(b) - gap;
+    d_cutpoints[k - 1] = -d_a;
+    d_cutpoints[k] = -d_b;
+    (log_prob, d_a + d_b)
+}
+
+impl<'a> OrderedLogistic<'a> {
+    /// Creates the distribution from its parameters.
+    pub fn new(eta: impl IntoParam<'a, f64>, cutpoints: impl IntoParam<'a, f64>) -> Self {
+        Self {
+            eta: eta.into_param(),
+            cutpoints: cutpoints.into_param(),
+        }
+    }
+
+    /// The batch shape (the broadcast of the value's shape, η's shape and the cutpoints' leading axes) and the
+    /// number of cutpoints, checking the cutpoints are a non-empty, strictly increasing last axis.
+    fn layout(&self, value: &[usize]) -> Result<(Shape, usize)> {
+        let Some((&count, leading)) = self.cutpoints.shape().split_last() else {
+            return invalid_parameter("the cutpoints must have at least one axis");
+        };
+        if count == 0 {
+            return invalid_parameter("there must be at least one cutpoint");
+        }
+        let increasing = self
+            .cutpoints
+            .as_slice()
+            .chunks_exact(count)
+            .all(|c| c.windows(2).all(|w| w[0] < w[1]) && c.iter().all(|c| !c.is_nan()));
+        if !increasing {
+            return invalid_parameter("the cutpoints must be strictly increasing");
+        }
+        Ok((broadcast_all(&[value, self.eta.shape(), leading])?, count))
+    }
+
+    /// The cutpoints broadcast to `batch` with their last axis appended.
+    fn cutpoints_for(&self, batch: &[usize], count: usize) -> Result<Vec<f64>> {
+        let mut shape = batch.to_vec();
+        shape.push(count);
+        Ok(self.cutpoints.broadcast_to(&shape)?.into_vec())
+    }
+
+    /// The log probability of each category index k, broadcasting k with η and the cutpoints' leading axes
+    /// (-infinity for an index that is not a category). An error unless the cutpoints are strictly increasing.
+    pub fn log_prob(&self, k: &IntTensor) -> Result<DoubleTensor> {
+        Ok(self.log_prob_and_gradient(k)?.0)
+    }
+
+    /// The derivatives of [`Self::log_prob`] with respect to each parameter.
+    pub fn d_log_prob(&self, k: &IntTensor) -> Result<OrderedLogisticGradient> {
+        Ok(self.log_prob_and_gradient(k)?.1)
+    }
+
+    fn log_prob_and_gradient(
+        &self,
+        k: &IntTensor,
+    ) -> Result<(DoubleTensor, OrderedLogisticGradient)> {
+        let (batch, count) = self.layout(k.shape())?;
+        let cutpoints = self.cutpoints_for(&batch, count)?;
+        let k = operand(k, &batch)?;
+        let eta = operand(&self.eta, &batch)?;
+        let len: usize = batch.iter().product();
+        let mut log_prob = Vec::with_capacity(len);
+        let mut d_eta = Vec::with_capacity(len);
+        let mut d_cutpoints = vec![0.0; len * count];
+        for i in 0..len {
+            let range = i * count..(i + 1) * count;
+            let (lp, de) = ordered_logistic(
+                k.at(i),
+                eta.at(i),
+                &cutpoints[range.clone()],
+                &mut d_cutpoints[range],
+            );
+            log_prob.push(lp);
+            d_eta.push(de);
+        }
+        let mut cut_shape = batch.to_vec();
+        cut_shape.push(count);
+        Ok((
+            DoubleTensor::new(&batch, log_prob)?,
+            OrderedLogisticGradient {
+                eta: DoubleTensor::new(&batch, d_eta)?,
+                cutpoints: DoubleTensor::new(&cut_shape, d_cutpoints)?,
+            },
+        ))
+    }
+
+    /// The probability of each category, shaped like the batch with a last axis of the K categories.
+    pub fn probabilities(&self) -> Result<DoubleTensor> {
+        let (batch, count) = self.layout(&[])?;
+        let len: usize = batch.iter().product();
+        let mut out = Vec::with_capacity(len * (count + 1));
+        let cutpoints = self.cutpoints_for(&batch, count)?;
+        let eta = operand(&self.eta, &batch)?;
+        let mut scratch = vec![0.0; count];
+        for i in 0..len {
+            for k in 0..=count {
+                let (lp, _) = ordered_logistic(
+                    k as i64,
+                    eta.at(i),
+                    &cutpoints[i * count..(i + 1) * count],
+                    &mut scratch,
+                );
+                out.push(lp.exp());
+            }
+        }
+        let mut shape = batch.to_vec();
+        shape.push(count + 1);
+        Ok(DoubleTensor::new(&shape, out)?)
+    }
+
+    /// Draws a sample of the given shape (broadcast with η's shape and the cutpoints' leading axes). An error
+    /// unless the cutpoints are strictly increasing.
+    pub fn sample(&self, shape: &[usize], rng: &mut KeanuRng) -> Result<IntTensor> {
+        let (batch, count) = self.layout(shape)?;
+        let cutpoints = self.cutpoints_for(&batch, count)?;
+        let eta = operand(&self.eta, &batch)?;
+        let len: usize = batch.iter().product();
+        let mut scratch = vec![0.0; count];
+        let samples = (0..len)
+            .map(|i| {
+                let cut = &cutpoints[i * count..(i + 1) * count];
+                let probabilities = (0..=count).map(|k| {
+                    ordered_logistic(k as i64, eta.at(i), cut, &mut scratch)
+                        .0
+                        .exp()
+                });
+                let probabilities: Vec<f64> = probabilities.collect();
+                select_category(rng.next_f64(), probabilities.into_iter()) as i64
+            })
+            .collect();
+        Ok(IntTensor::new(&batch, samples)?)
+    }
 }
 
 #[cfg(test)]

@@ -52,6 +52,11 @@ continuous! {
     triangular, triangular_with_shape => Triangular(x_min, x_max, c);
     /// Uniform on [x_min, x_max).
     uniform, uniform_with_shape => Uniform(x_min, x_max);
+    /// Weibull with shape alpha and scale beta.
+    weibull, weibull_with_shape => Weibull(alpha, beta);
+    /// Von Mises with mean direction mu and concentration kappa: an angle, mapped to unconstrained space with a
+    /// circular transform by the gradient based algorithms. Samples are in [-π, π).
+    von_mises, von_mises_with_shape => VonMises(mu, kappa);
 }
 
 impl GraphBuilder {
@@ -292,6 +297,50 @@ impl GraphBuilder {
         )
     }
 
+    /// A negative binomial node in mean–dispersion form: mean mu and variance mu + mu²/alpha (a Poisson whose rate
+    /// is Gamma distributed). It approaches Poisson(mu) as alpha grows.
+    pub fn negative_binomial<'b>(
+        &'b self,
+        mu: impl IntoDoubleVar<'b>,
+        alpha: impl IntoDoubleVar<'b>,
+    ) -> IntVar<'b> {
+        let ids = [mu.into_var(self).id(), alpha.into_var(self).id()];
+        IntVar::new(
+            self,
+            self.distribution(DistributionKind::NegativeBinomial, None, &ids),
+        )
+    }
+
+    /// Like [`Self::negative_binomial`], with values of the given shape (broadcast with the parameters' shapes).
+    pub fn negative_binomial_with_shape<'b>(
+        &'b self,
+        shape: &[usize],
+        mu: impl IntoDoubleVar<'b>,
+        alpha: impl IntoDoubleVar<'b>,
+    ) -> IntVar<'b> {
+        let ids = [mu.into_var(self).id(), alpha.into_var(self).id()];
+        IntVar::new(
+            self,
+            self.distribution(DistributionKind::NegativeBinomial, Some(shape), &ids),
+        )
+    }
+
+    /// An ordered logistic node (Stan's `ordered_logistic`): a category index in 0..K from a location eta and K - 1
+    /// strictly increasing cutpoints along the cutpoints' last axis. The value's shape is the broadcast of eta's
+    /// shape and the cutpoints' leading axes. Latent cutpoints are best given an ordered prior (the `Ordered`
+    /// support), so gradient based samplers keep them increasing.
+    pub fn ordered_logistic<'b>(
+        &'b self,
+        eta: impl IntoDoubleVar<'b>,
+        cutpoints: impl IntoDoubleVar<'b>,
+    ) -> IntVar<'b> {
+        let ids = [eta.into_var(self).id(), cutpoints.into_var(self).id()];
+        IntVar::new(
+            self,
+            self.distribution(DistributionKind::OrderedLogistic, None, &ids),
+        )
+    }
+
     /// Uniform on the integers in [x_min, x_max).
     pub fn uniform_int<'b>(
         &'b self,
@@ -322,15 +371,16 @@ impl GraphBuilder {
 
 impl GraphBuilder {
     /// A truncated distribution: `base` (a univariate distribution kind with a CDF: Gaussian, LogNormal,
-    /// Exponential, Gamma, Beta, StudentT, Cauchy, Laplace, Logistic, Uniform, Poisson or Binomial) with
+    /// Exponential, Gamma, Beta, StudentT, Cauchy, Laplace, Logistic, Uniform, Weibull, Poisson, Binomial or
+    /// NegativeBinomial) with
     /// `parameters` (its parameter nodes, in its order), restricted to `[lower, upper]` and renormalised by the
     /// probability the base gives that range. Either bound may be infinite; for a discrete base both must be whole
     /// numbers (or infinite) and the range includes them.
     ///
     /// The node's support is the base's intersected with the bounds, so gradient based samplers keep a latent
     /// truncated node inside them. Values are drawn by inverting the base's CDF where it has a closed-form inverse
-    /// (Gaussian, LogNormal, Exponential, Cauchy, Laplace, Logistic, Uniform) and by rejection otherwise, which
-    /// fails with an error if the bounds hold too little of the base's probability.
+    /// (Gaussian, LogNormal, Exponential, Cauchy, Laplace, Logistic, Uniform, Weibull) and by rejection otherwise,
+    /// which fails with an error if the bounds hold too little of the base's probability.
     ///
     /// The handle type must match the base's value type ([`DoubleVar`] or [`IntVar`]). Building fails if the base
     /// has no CDF, the parameters don't match it, or constant bounds have `lower >= upper`; bounds that are not

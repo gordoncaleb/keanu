@@ -628,3 +628,79 @@ fn inverse_cdfs_invert_the_cdfs() {
     let y = d.inverse_ccdf(&q).unwrap();
     assert!((y.as_slice()[0] - 2.2).abs() < 1e-12);
 }
+
+#[test]
+fn weibull() {
+    for (alpha, beta) in [(1.8, 1.4), (0.7, 2.0)] {
+        let d = Weibull::new(s(alpha), s(beta));
+        Continuous {
+            name: "weibull",
+            log_pdf: &|x| at(d.log_prob(&s(x))),
+            log_cdf: &|x| at(d.log_cdf(&s(x))),
+            log_ccdf: &|x| at(d.log_ccdf(&s(x))),
+        }
+        .check(&[1e-9, 0.3, 1.0, 2.5, 8.0], 1e-5);
+        let (x, a, b) = (v(&[0.4, 1.3, 3.1]), s(alpha), s(beta));
+        for upper in [false, true] {
+            let f = |d: &Weibull<'_>, x: &DoubleTensor| {
+                if upper { d.log_ccdf(x) } else { d.log_cdf(x) }
+            };
+            let d = Weibull::new(&a, &b);
+            let g = if upper {
+                d.d_log_ccdf(&x)
+            } else {
+                d.d_log_cdf(&x)
+            }
+            .unwrap();
+            check_gradient("x", &x, &g.x, |x| sum(f(&Weibull::new(&a, &b), x)));
+            check_gradient("alpha", &a, &g.alpha, |p| sum(f(&Weibull::new(p, &b), &x)));
+            check_gradient("beta", &b, &g.beta, |p| sum(f(&Weibull::new(&a, p), &x)));
+        }
+    }
+    let p = v(&[1e-300, 1e-10, 0.2, 0.5, 0.9]);
+    let d = Weibull::new(s(1.5), s(2.0));
+    let x = d.inverse_cdf(&p).unwrap();
+    let back = d.log_cdf(&x).unwrap();
+    let y = d.inverse_ccdf(&p).unwrap();
+    let back_ccdf = d.log_ccdf(&y).unwrap();
+    for i in 0..p.len() {
+        let expected = p.as_slice()[i].ln();
+        assert!((back.as_slice()[i] - expected).abs() < 1e-9 * expected.abs().max(1.0));
+        assert!((back_ccdf.as_slice()[i] - expected).abs() < 1e-9 * expected.abs().max(1.0));
+    }
+}
+
+#[test]
+fn negative_binomial() {
+    for (mu, alpha) in [(4.2, 1.7), (0.5, 30.0), (20.0, 0.4)] {
+        let d = NegativeBinomial::new(s(mu), s(alpha));
+        let i = |k: i64| IntTensor::scalar(k);
+        check_discrete(
+            "negative binomial",
+            |k| at(d.log_prob(&i(k))),
+            |k| at(d.log_cdf(&i(k))),
+            |k| at(d.log_ccdf(&i(k))),
+            (mu * 6.0) as i64 + 20,
+        );
+        let k = IntTensor::vector(vec![0, (mu as i64) / 2, mu as i64 + 3]);
+        let (m, a) = (s(mu), s(alpha));
+        for upper in [false, true] {
+            let f = |d: &NegativeBinomial<'_>, k: &IntTensor| {
+                if upper { d.log_ccdf(k) } else { d.log_cdf(k) }
+            };
+            let d = NegativeBinomial::new(&m, &a);
+            let g = if upper {
+                d.d_log_ccdf(&k)
+            } else {
+                d.d_log_cdf(&k)
+            }
+            .unwrap();
+            check_gradient("mu", &m, &g.mu, |p| {
+                sum(f(&NegativeBinomial::new(p, &a), &k))
+            });
+            check_gradient("alpha", &a, &g.alpha, |p| {
+                sum(f(&NegativeBinomial::new(&m, p), &k))
+            });
+        }
+    }
+}

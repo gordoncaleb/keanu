@@ -429,3 +429,51 @@ fn joint_log_prob_gradient_of_a_multi_node_model_matches_finite_differences() {
         }
     }
 }
+
+#[test]
+fn ordered_logistic_with_latent_eta_and_cutpoints_has_finite_difference_gradients() {
+    // a batch of three observations sharing latent cutpoints, each with its own latent eta
+    let b = GraphBuilder::new();
+    let eta = b.gaussian_with_shape(&[3], 0.0, 1.0);
+    let cutpoints = b.gaussian(v(&[-1.0, 0.5, 2.0]), 0.1);
+    let k = b.ordered_logistic(eta, cutpoints);
+    b.observe(k, IntTensor::vector(vec![0, 2, 3]));
+    b.set_value(eta, v(&[0.2, -0.4, 1.1]));
+    b.set_value(cutpoints, v(&[-1.1, 0.6, 1.8]));
+    let (eta, cutpoints, k) = (eta.id(), cutpoints.id(), k.id());
+    let (graph, mut state) = b.build().unwrap();
+    evaluate(&graph, &mut state);
+    assert_eq!(graph[k].shape(), &[3]);
+    let expected = d::OrderedLogistic::new(v(&[0.2, -0.4, 1.1]), v(&[-1.1, 0.6, 1.8]))
+        .log_prob(&IntTensor::vector(vec![0, 2, 3]))
+        .unwrap()
+        .sum();
+    assert_close(
+        node_log_prob(&graph, &state, k).unwrap(),
+        expected,
+        1e-14,
+        "log prob",
+    );
+    let gradient = log_prob_gradient(&graph, &state, &[k], &[eta, cutpoints]).unwrap();
+    for id in [eta, cutpoints] {
+        let at = state.f64(id).unwrap().clone();
+        let analytic = gradient.get(id).unwrap();
+        for i in 0..at.len() {
+            let f = |h: f64| {
+                let mut data = at.as_slice().to_vec();
+                data[i] += h;
+                let mut s = state.clone();
+                s.set(&graph, id, DoubleTensor::new(at.shape(), data).unwrap())
+                    .unwrap();
+                node_log_prob(&graph, &s, k).unwrap()
+            };
+            let numeric = (f(1e-6) - f(-1e-6)) / 2e-6;
+            assert_close(
+                analytic.as_slice()[i],
+                numeric,
+                1e-6,
+                "ordered logistic gradient",
+            );
+        }
+    }
+}
