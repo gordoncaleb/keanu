@@ -352,6 +352,16 @@ impl<'m> Objective<'m> {
         self.param.latents()
     }
 
+    /// The parameterisation the objective is over.
+    pub(crate) fn parameterisation(&self) -> &Parameterisation<'m> {
+        &self.param
+    }
+
+    /// The parameterisation the objective is over, giving it up.
+    pub(crate) fn into_parameterisation(self) -> Parameterisation<'m> {
+        self.param
+    }
+
     /// The point of the latents' current values: an impossible start if a value has none.
     pub(crate) fn flat_point(&self, state: &State) -> Result<Vec<f64>> {
         start_point(&self.param, state)

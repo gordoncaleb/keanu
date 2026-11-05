@@ -28,6 +28,13 @@ pub enum AlgorithmError {
     /// Variational inference could not evaluate its objective, the evidence lower bound (ELBO), or its gradient:
     /// the message says where.
     NonFiniteElbo(String),
+    /// The Laplace approximation found its mode on the boundary of a latent's support (the latent is named), where
+    /// a Gaussian approximation in unconstrained space is meaningless.
+    ModeOnBoundary(String),
+    /// The Hessian of the log density at the mode the Laplace approximation found is not negative definite (or not
+    /// finite), so there is no Gaussian approximation there: the message names the latents along the offending
+    /// direction and suggests remedies.
+    IndefiniteHessian(String),
 }
 
 impl fmt::Display for AlgorithmError {
@@ -56,6 +63,13 @@ impl fmt::Display for AlgorithmError {
             Self::NonFiniteElbo(message) => {
                 write!(f, "variational inference failed: {message}")
             }
+            Self::ModeOnBoundary(node) => write!(
+                f,
+                "the mode of the Jacobian-adjusted density is on the boundary of the support of {node}; a Laplace \
+                 approximation there is meaningless (sample the posterior instead, or give {node} a prior that keeps \
+                 it away from the boundary)"
+            ),
+            Self::IndefiniteHessian(message) => f.write_str(message),
         }
     }
 }

@@ -1,5 +1,5 @@
 //! Inference algorithms for [Keanu](https://github.com/gordoncaleb/keanu) models: gradient optimizers and a
-//! non-gradient optimizer (BOBYQA) for MAP and maximum likelihood, MCMC samplers (Metropolis–Hastings, NUTS) and simulated annealing, variational inference (ADVI), a particle filter,
+//! non-gradient optimizer (BOBYQA) for MAP and maximum likelihood, MCMC samplers (Metropolis–Hastings, NUTS) and simulated annealing, variational inference (ADVI), the Laplace approximation, a particle filter,
 //! forward sampling from the prior, prior- and posterior-predictive sampling, sample containers, chain statistics and
 //! multi-chain convergence diagnostics.
 //!
@@ -35,6 +35,7 @@
 pub mod diagnostics;
 mod error;
 pub mod forward;
+pub mod laplace;
 pub mod mcmc;
 pub mod optimizer;
 pub mod particle_filter;
@@ -50,6 +51,7 @@ pub use forward::ForwardSampler;
 /// The space NUTS and the gradient optimizers move in (unconstrained by default); see [`mcmc::nuts`] and
 /// [`optimizer`].
 pub use keanu_graph::Space;
+pub use laplace::{Laplace, LaplaceResult};
 pub use predictive::PredictiveSampler;
 pub use samples::{ChainSamples, ChainSummary, NetworkSample, NetworkSamples, Samples, SummaryRow};
 pub use vi::{Advi, AdviResult, VariationalFamily};

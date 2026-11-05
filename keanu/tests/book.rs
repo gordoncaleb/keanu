@@ -377,6 +377,37 @@ fn map_in_unconstrained_space() -> keanu::Result<()> {
 }
 
 #[test]
+fn laplace_approximation() -> keanu::Result<()> {
+    // ANCHOR: laplace
+    // mu ~ N(1, 2), observed four times through y ~ N(mu, 1.5): the posterior of mu is Gaussian
+    let b = GraphBuilder::new();
+    let mu = b.gaussian(1.0, 2.0).label("mu");
+    b.set_value(mu, DoubleTensor::scalar(0.0));
+    let y = b.gaussian_with_shape(&[4], mu, 1.5);
+    b.observe(y, DoubleTensor::vector(vec![2.1, 3.4, 1.7, 2.9]));
+    let mu = mu.id();
+    let (graph, mut state) = b.build()?;
+    let model = Model::new(graph, &state)?;
+
+    let result = Laplace::new()
+        .lbfgs(Lbfgs::default().with_max_iterations(500))
+        .fit(&model, &mut state)?;
+    // for a Gaussian posterior the approximation is exact
+    let precision = 1.0 / 4.0 + 4.0 / 2.25;
+    let mean = (1.0 / 4.0 + 10.1 / 2.25) / precision;
+    assert!((result.get(mu).unwrap().to_scalar().unwrap() - mean).abs() < 1e-6);
+    assert!((result.covariance().as_slice()[0] - 1.0 / precision).abs() < 1e-9);
+
+    // draws are mapped back to the latents' own values, as samples
+    let mut rng = KeanuRng::seed_from_u64(1);
+    let samples = result.sample(&mut state, &[mu], 2000, &mut rng)?;
+    let sample_mean = samples.f64(mu).unwrap().mean()?.to_scalar().unwrap();
+    assert!((sample_mean - mean).abs() < 0.1);
+    // ANCHOR_END: laplace
+    Ok(())
+}
+
+#[test]
 fn posterior_sampling() -> keanu::Result<()> {
     // ANCHOR: sampling_model
     // A and B are around 20; a noisy measurement says A + B is 43. The posterior mean of each is 21.
