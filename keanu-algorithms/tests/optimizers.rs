@@ -652,3 +652,23 @@ fn optimizers_compute_deterministic_nodes_of_constants_first() {
     );
     assert!(state.has_value(sigma));
 }
+
+/// A very narrow posterior, x ~ N(0, 1e-6) started at 10, has a starting gradient of norm 1e13: L-BFGS's first
+/// step, 1 / |g|, is below the line search's absolute minimum step, so it must be judged relative to the initial
+/// step rather than refused.
+#[test]
+fn lbfgs_converges_from_a_huge_gradient() {
+    let b = GraphBuilder::new();
+    let x = b.gaussian(0.0, 1e-6);
+    b.set_value(x, DoubleTensor::scalar(10.0));
+    let x = x.id();
+    let (graph, mut state) = b.build().unwrap();
+    let model = Model::new(graph, &state).unwrap();
+    let result = GradientOptimizer::new(&model)
+        .algorithm(Lbfgs::default())
+        .max_a_posteriori(&mut state)
+        .unwrap();
+    assert!(result.converged);
+    let value = result.get(x).unwrap().to_scalar().unwrap();
+    assert!(value.abs() < 1e-8, "{value}");
+}

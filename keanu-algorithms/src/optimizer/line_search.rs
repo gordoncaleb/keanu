@@ -11,14 +11,16 @@ pub(crate) struct LineSearch {
     pub(crate) c1: f64,
     /// The curvature constant: |φ'(α)| ≤ c2 |φ'(0)|.
     pub(crate) c2: f64,
-    /// Steps, and brackets, shorter than this are given up on.
+    /// Steps, and brackets, shorter than this relative to the initial step are given up on (relative so that a
+    /// short initial step, as for a steep gradient, is still searched).
     pub(crate) min_step: f64,
     /// The maximum number of trial steps (evaluations of φ).
     pub(crate) max_iterations: usize,
 }
 
 impl Default for LineSearch {
-    /// Stan's settings for L-BFGS: c1 = 1e-4, c2 = 0.9, at most 20 trial steps, none shorter than 1e-12.
+    /// Stan's settings for L-BFGS: c1 = 1e-4, c2 = 0.9, at most 20 trial steps, none shorter than 1e-12 times the
+    /// initial step.
     fn default() -> Self {
         Self {
             c1: 1e-4,
@@ -116,6 +118,7 @@ impl LineSearch {
         };
         let armijo = |t: &End| t.value <= value0 + self.c1 * t.alpha * slope0;
         let curvature = |t: &End| t.slope.abs() <= -self.c2 * slope0;
+        let min_step = self.min_step * initial;
 
         // the previous step: always satisfies sufficient decrease, with its trial (none at α = 0)
         let mut previous = End {
@@ -127,7 +130,7 @@ impl LineSearch {
         let mut alpha = initial;
         let mut iterations = 0;
         loop {
-            if iterations >= self.max_iterations || alpha.is_nan() || alpha < self.min_step {
+            if iterations >= self.max_iterations || alpha.is_nan() || alpha < min_step {
                 return Ok(Self::finish(previous_trial));
             }
             let trial = evaluate(alpha)?;
@@ -141,6 +144,7 @@ impl LineSearch {
                     end,
                     value0,
                     slope0,
+                    min_step,
                     iterations,
                     &mut evaluate,
                 );
@@ -155,6 +159,7 @@ impl LineSearch {
                     previous,
                     value0,
                     slope0,
+                    min_step,
                     iterations,
                     &mut evaluate,
                 );
@@ -175,7 +180,7 @@ impl LineSearch {
     }
 
     /// Algorithm 3.6: narrows the bracket between `lo` (satisfying sufficient decrease, with the lowest value so far)
-    /// and `hi`, which may be on either side of it.
+    /// and `hi`, which may be on either side of it, until it is narrower than `min_step`.
     #[allow(clippy::too_many_arguments)]
     fn zoom<T>(
         &self,
@@ -184,12 +189,13 @@ impl LineSearch {
         mut hi: End,
         value0: f64,
         slope0: f64,
+        min_step: f64,
         mut iterations: usize,
         evaluate: &mut impl FnMut(f64) -> Result<Trial<T>>,
     ) -> Result<Outcome<T>> {
         loop {
             let width = hi.alpha - lo.alpha;
-            if iterations >= self.max_iterations || width.is_nan() || width.abs() < self.min_step {
+            if iterations >= self.max_iterations || width.is_nan() || width.abs() < min_step {
                 return Ok(Self::finish(lo_trial));
             }
             // cubic interpolation, kept at least a tenth of the bracket away from its ends (so the bracket keeps
@@ -319,6 +325,20 @@ mod tests {
             })
             .unwrap();
         assert!(accepted(outcome).0 < 0.5);
+    }
+
+    /// A steep φ whose natural initial step is far below the absolute minimum step is still searched: the minimum
+    /// is relative to the initial step.
+    #[test]
+    fn a_tiny_initial_step_is_searched() {
+        let mut count = 0;
+        let (m, initial) = (1e-14, 1e-14);
+        let outcome = LineSearch::default()
+            .search(m * m, -2.0 * m, initial * 0.5, quadratic(m, &mut count))
+            .unwrap();
+        let (alpha, wolfe) = accepted(outcome);
+        assert!(wolfe);
+        assert!(alpha > 0.0 && alpha < 2.0 * m, "{alpha}");
     }
 
     #[test]
