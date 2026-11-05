@@ -359,4 +359,23 @@ impl Model {
             None => (f64::NEG_INFINITY, None),
         })
     }
+
+    /// The gradient of the joint log probability with respect to each continuous latent and its derivatives along
+    /// `b` directions, given as each latent's batched tangent `[b, latent shape...]` (see
+    /// [`log_prob_hvp`](crate::logprob::log_prob_hvp)). Observed deterministic nodes are not checked.
+    pub(crate) fn log_prob_gradient_and_hvp(
+        &self,
+        state: &State,
+        tangents: impl IntoIterator<Item = (NodeId, keanu_tensor::DoubleTensor)>,
+        b: usize,
+    ) -> Result<(LogProbGradient, crate::logprob::LogProbHvp)> {
+        crate::logprob::log_prob_hvp(
+            &self.graph,
+            state,
+            &self.probabilistic_joint,
+            &self.continuous,
+            tangents,
+            b,
+        )
+    }
 }

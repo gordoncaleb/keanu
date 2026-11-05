@@ -1,6 +1,8 @@
 //! Log probabilities of probabilistic nodes and their gradients with respect to latent nodes.
 
-use crate::autodiff::reverse_from_seeds;
+use crate::autodiff::{
+    SecondOrderSeed, accumulate, describe, forward_tangents, reverse_from_seeds, second_order_sweep,
+};
 use crate::error::{GraphError, Result};
 use crate::graph::{Graph, NodeId};
 use crate::op::{DistributionKind, LogProbGradientParts, Op, Support};
@@ -320,6 +322,114 @@ fn gradient_from_parts(
         result.add(latent, partial)
     })?;
     Ok(Some(result))
+}
+
+/// Hessian-vector products of a log probability: by latent id, the derivative of its gradient along each of `b`
+/// directions, shaped `[b, latent shape...]` (None where zero).
+pub(crate) type LogProbHvp = Vec<Option<DoubleTensor>>;
+
+/// The gradient of the total log probability of the probabilistic nodes `of` with respect to the f64 latents in
+/// `wrt` and its derivative along `b` directions (its Hessian-vector products), by forward-over-reverse
+/// differentiation. The directions are given as each latent's batched tangent `[b, latent shape...]` in
+/// `tangents`; a latent without one has a zero tangent. Unlike [`log_prob_gradient`], a node's derivative with
+/// respect to its own value is included only for nodes in `wrt`.
+///
+/// # Errors
+///
+/// [`GraphError::NoSecondOrderRule`] naming the node if a distribution whose log density depends on the directions
+/// (through its value or a parameter) or a deterministic node between such a parameter and a latent has no
+/// second-order rule.
+pub(crate) fn log_prob_hvp(
+    graph: &Graph,
+    state: &State,
+    of: &[NodeId],
+    wrt: &[NodeId],
+    tangents: impl IntoIterator<Item = (NodeId, DoubleTensor)>,
+    b: usize,
+) -> Result<(LogProbGradient, LogProbHvp)> {
+    graph.check_ids(of.iter().chain(wrt))?;
+    let mut is_wrt = vec![false; graph.len()];
+    for &id in wrt {
+        if is_latent_double(graph, state, id) {
+            is_wrt[id.0] = true;
+        }
+    }
+    let seeds: Vec<(NodeId, DoubleTensor)> = tangents
+        .into_iter()
+        .filter(|(id, _)| is_wrt.get(id.0).copied().unwrap_or(false))
+        .collect();
+    let node_tangents = forward_tangents(graph, state, seeds, b)?;
+    let mut gradient = LogProbGradient::with_capacity(graph.len());
+    let mut hvp: LogProbHvp = vec![None; graph.len()];
+    let mut seeds: Vec<SecondOrderSeed> = Vec::new();
+    for &node in of {
+        let (value_gradient, parameter_gradients) = node_gradient_parts(graph, state, node)?;
+        let parents = graph[node].parents();
+        let value_tangent = node_tangents[node.0].as_ref();
+        let parent_tangents: SmallVec<[Option<&DoubleTensor>; 4]> = parents
+            .iter()
+            .map(|p| node_tangents[p.0].as_ref())
+            .collect();
+        // a node whose value and parameters don't move along the directions has no second-order terms
+        let (value_hvp, parameter_hvps) =
+            if value_tangent.is_none() && parent_tangents.iter().all(Option::is_none) {
+                (None, smallvec::smallvec![None; parents.len()])
+            } else {
+                kind(graph, node)?
+                    .log_prob_hvp(
+                        value(state, node)?,
+                        &parameters(graph, state, node)?,
+                        value_tangent,
+                        &parent_tangents,
+                        b,
+                    )
+                    .map_err(|e| match e {
+                        GraphError::NoSecondOrderRule(m) => GraphError::NoSecondOrderRule(format!(
+                            "{m} of node {}",
+                            describe(graph, node)
+                        )),
+                        other => other,
+                    })?
+            };
+        if is_wrt[node.0] {
+            if let Some(dx) = value_gradient {
+                gradient.add(node, dx)?;
+            }
+            if let Some(h) = value_hvp {
+                accumulate(&mut hvp[node.0], h)?;
+            }
+        }
+        for ((&parent, dp), hp) in parents.iter().zip(parameter_gradients).zip(parameter_hvps) {
+            let parent_node = &graph[parent];
+            // a constant can't lead to a latent, so there's nothing to propagate
+            if parent_node.dtype() != DType::F64 || matches!(parent_node.op(), Op::Constant(_)) {
+                continue;
+            }
+            let dp = dp
+                .map(|dp| sum_to_shape(dp, parent_node.shape()))
+                .transpose()?;
+            seeds.push((parent, dp, hp));
+        }
+    }
+    second_order_sweep(
+        graph,
+        state,
+        &node_tangents,
+        seeds,
+        b,
+        &is_wrt,
+        |latent, g, h| {
+            if let Some(g) = g {
+                let shape: Vec<isize> = graph[latent].shape().iter().map(|&d| d as isize).collect();
+                gradient.add(latent, g.into_reshape(&shape)?)?;
+            }
+            if let Some(h) = h {
+                accumulate(&mut hvp[latent.0], h)?;
+            }
+            Ok(())
+        },
+    )?;
+    Ok((gradient, hvp))
 }
 
 /// The gradient of the joint log probability of every probabilistic node with respect to every latent f64 node.

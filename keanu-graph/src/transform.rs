@@ -44,9 +44,11 @@
 //! ```
 //!
 //! First derivatives are provided as Jacobian-vector and vector-Jacobian products of the forward map and the
-//! gradient of the log-Jacobian. Second-order pieces (the forward map's second derivative along a direction and the
-//! log-Jacobian's Hessian-vector product) are not provided yet; they will be added to [`Bijector`] as methods with
-//! default implementations, so implementing the trait now does not break later.
+//! gradient of the log-Jacobian. Second derivatives, which exact Hessian-vector products in unconstrained space need
+//! ([`Parameterisation::hvp`](crate::Parameterisation::hvp)), are the derivative of the vector-Jacobian product
+//! along a direction ([`Bijector::forward_vjp_jvp`]) and the log-Jacobian's Hessian-vector product
+//! ([`Bijector::log_det_jacobian_hvp`]). Every bijector here implements them; for other implementations of the
+//! trait they default to a [`GraphError::NoSecondOrderRule`] error.
 
 use crate::error::{GraphError, Result};
 use crate::op::Support;
@@ -86,6 +88,42 @@ pub trait Bijector: fmt::Debug + Send + Sync {
     /// `y`. Elements of the constrained value that are constant (a Cholesky factor's upper triangle) receive no
     /// gradient.
     fn forward_vjp(&self, y: &[f64], cotangent: &DoubleTensor) -> Result<Vec<f64>>;
+
+    /// The derivative of [`forward_vjp`](Self::forward_vjp) at `y` along `tangent`, with the cotangent held fixed:
+    /// `Σᵢ cᵢ ∇²xᵢ(y) · tangent`, where `xᵢ` are the elements of the constrained value. This is the curvature term of
+    /// the chain rule when a Hessian-vector product is pulled back through the forward map.
+    ///
+    /// The default returns [`GraphError::NoSecondOrderRule`] naming the type, so implementations written before
+    /// second derivatives existed keep compiling; every bijector of this module implements it.
+    fn forward_vjp_jvp(
+        &self,
+        y: &[f64],
+        tangent: &[f64],
+        cotangent: &DoubleTensor,
+    ) -> Result<Vec<f64>> {
+        let _ = (y, tangent, cotangent);
+        Err(no_second_order_rule::<Self>())
+    }
+
+    /// The Hessian-vector product of [`log_det_jacobian`](Self::log_det_jacobian) at `y` along `tangent`.
+    ///
+    /// The default returns [`GraphError::NoSecondOrderRule`] naming the type; every bijector of this module
+    /// implements it.
+    fn log_det_jacobian_hvp(&self, y: &[f64], tangent: &[f64]) -> Result<Vec<f64>> {
+        let _ = (y, tangent);
+        Err(no_second_order_rule::<Self>())
+    }
+}
+
+/// The error of a bijector type without second derivatives.
+fn no_second_order_rule<T: ?Sized>() -> GraphError {
+    GraphError::NoSecondOrderRule(format!("the bijector {}", std::any::type_name::<T>()))
+}
+
+/// Checks the arguments of the second-order methods: `y` and `tangent` of the unconstrained length.
+fn check_second_order(y: &[f64], tangent: &[f64], len: usize) -> Result<()> {
+    check_len("the unconstrained vector", y.len(), len)?;
+    check_len("the tangent", tangent.len(), len)
 }
 
 /// The bijector for values of `shape` in `support`.
@@ -271,6 +309,22 @@ impl Bijector for Identity {
         check_shape("the cotangent", cotangent, &self.shape)?;
         Ok(cotangent.as_slice().to_vec())
     }
+
+    fn forward_vjp_jvp(
+        &self,
+        y: &[f64],
+        tangent: &[f64],
+        cotangent: &DoubleTensor,
+    ) -> Result<Vec<f64>> {
+        check_second_order(y, tangent, self.len())?;
+        check_shape("the cotangent", cotangent, &self.shape)?;
+        Ok(vec![0.0; y.len()])
+    }
+
+    fn log_det_jacobian_hvp(&self, y: &[f64], tangent: &[f64]) -> Result<Vec<f64>> {
+        check_second_order(y, tangent, self.len())?;
+        Ok(vec![0.0; y.len()])
+    }
 }
 
 /// A lower bound, for [`Support::GreaterThan`]: `x = a + exp(y)` element-wise, with log-Jacobian `Σ y`.
@@ -356,6 +410,28 @@ impl Bijector for LowerBound {
             .map(|(y, c)| y.exp() * c)
             .collect())
     }
+
+    fn forward_vjp_jvp(
+        &self,
+        y: &[f64],
+        tangent: &[f64],
+        cotangent: &DoubleTensor,
+    ) -> Result<Vec<f64>> {
+        check_second_order(y, tangent, self.lower.len())?;
+        check_shape("the cotangent", cotangent, &self.shape)?;
+        // the vector-Jacobian product is exp(y) c, element-wise
+        Ok(y.iter()
+            .zip(tangent)
+            .zip(cotangent.as_slice())
+            .map(|((y, t), c)| y.exp() * c * t)
+            .collect())
+    }
+
+    fn log_det_jacobian_hvp(&self, y: &[f64], tangent: &[f64]) -> Result<Vec<f64>> {
+        // log |J| = Σ y is linear
+        check_second_order(y, tangent, self.lower.len())?;
+        Ok(vec![0.0; y.len()])
+    }
 }
 
 /// An upper bound, for [`Support::LessThan`]: `x = b − exp(y)` element-wise, with log-Jacobian `Σ y`.
@@ -440,6 +516,28 @@ impl Bijector for UpperBound {
             .zip(cotangent.as_slice())
             .map(|(y, c)| -y.exp() * c)
             .collect())
+    }
+
+    fn forward_vjp_jvp(
+        &self,
+        y: &[f64],
+        tangent: &[f64],
+        cotangent: &DoubleTensor,
+    ) -> Result<Vec<f64>> {
+        check_second_order(y, tangent, self.upper.len())?;
+        check_shape("the cotangent", cotangent, &self.shape)?;
+        // the vector-Jacobian product is -exp(y) c, element-wise
+        Ok(y.iter()
+            .zip(tangent)
+            .zip(cotangent.as_slice())
+            .map(|((y, t), c)| -y.exp() * c * t)
+            .collect())
+    }
+
+    fn log_det_jacobian_hvp(&self, y: &[f64], tangent: &[f64]) -> Result<Vec<f64>> {
+        // log |J| = Σ y is linear
+        check_second_order(y, tangent, self.upper.len())?;
+        Ok(vec![0.0; y.len()])
     }
 }
 
@@ -556,6 +654,35 @@ impl Bijector for Interval {
             .zip(cotangent.as_slice())
             .zip(self.bounds())
             .map(|((&y, c), (a, b))| (b - a) * logistic(y) * logistic(-y) * c)
+            .collect())
+    }
+
+    fn forward_vjp_jvp(
+        &self,
+        y: &[f64],
+        tangent: &[f64],
+        cotangent: &DoubleTensor,
+    ) -> Result<Vec<f64>> {
+        check_second_order(y, tangent, self.lower.len())?;
+        check_shape("the cotangent", cotangent, &self.shape)?;
+        // x' = (b − a) s (1 − s), so x'' = (b − a) s (1 − s) (1 − 2s)
+        Ok(y.iter()
+            .zip(tangent)
+            .zip(cotangent.as_slice())
+            .zip(self.bounds())
+            .map(|(((&y, t), c), (a, b))| {
+                let (s, r) = (logistic(y), logistic(-y));
+                (b - a) * s * r * (r - s) * c * t
+            })
+            .collect())
+    }
+
+    fn log_det_jacobian_hvp(&self, y: &[f64], tangent: &[f64]) -> Result<Vec<f64>> {
+        check_second_order(y, tangent, self.lower.len())?;
+        // the gradient is 1 − 2s, so the Hessian is diagonal, −2 s (1 − s)
+        Ok(y.iter()
+            .zip(tangent)
+            .map(|(&y, t)| -2.0 * logistic(y) * logistic(-y) * t)
             .collect())
     }
 }
@@ -678,6 +805,40 @@ impl Bijector for Ordered {
             }
         }
         Ok(g)
+    }
+
+    fn forward_vjp_jvp(
+        &self,
+        y: &[f64],
+        tangent: &[f64],
+        cotangent: &DoubleTensor,
+    ) -> Result<Vec<f64>> {
+        check_second_order(y, tangent, self.len())?;
+        check_shape("the cotangent", cotangent, &self.shape)?;
+        let mut g = vec![0.0; self.len()];
+        for (((y, t), c), g) in rows(y, self.k)
+            .zip(rows(tangent, self.k))
+            .zip(rows(cotangent.as_slice(), self.k))
+            .zip(rows_mut(&mut g, self.k))
+        {
+            // the derivative of gⱼ = exp(yⱼ) Σₖ₌ⱼ cₖ (j > 0) along t; g₁ = Σ cₖ is constant
+            let mut suffix = 0.0;
+            for i in (0..y.len()).rev() {
+                suffix += c[i];
+                g[i] = if i == 0 {
+                    0.0
+                } else {
+                    y[i].exp() * t[i] * suffix
+                };
+            }
+        }
+        Ok(g)
+    }
+
+    fn log_det_jacobian_hvp(&self, y: &[f64], tangent: &[f64]) -> Result<Vec<f64>> {
+        // log |J| = Σₖ₌₂ yₖ is linear
+        check_second_order(y, tangent, self.len())?;
+        Ok(vec![0.0; y.len()])
     }
 }
 
@@ -882,6 +1043,56 @@ impl Bijector for Simplex {
             let m: f64 = x.iter().zip(c).map(|(x, c)| x * c).sum();
             for ((g, x), c) in gz.iter_mut().zip(x).zip(c) {
                 *g = x * (c - m);
+            }
+            Self::basis_transpose_times(&gz, &mut g[row * (k - 1)..(row + 1) * (k - 1)]);
+        });
+        Ok(g)
+    }
+
+    fn forward_vjp_jvp(
+        &self,
+        y: &[f64],
+        tangent: &[f64],
+        cotangent: &DoubleTensor,
+    ) -> Result<Vec<f64>> {
+        check_second_order(y, tangent, self.unconstrained_len())?;
+        check_shape("the cotangent", cotangent, &self.shape)?;
+        let k = self.k;
+        let c = cotangent.as_slice();
+        let tangents: Vec<&[f64]> = self.rows(tangent).collect();
+        let mut g = vec![0.0; y.len()];
+        let (mut dz, mut dx, mut gz) = (vec![0.0; k], vec![0.0; k], vec![0.0; k]);
+        self.for_each_row(y, |row, _, x, _| {
+            // the vector-Jacobian product is Vᵀ (x ∘ (c − x·c)); along t, ẋ = x ∘ (ż − x·ż) with ż = V t, and its
+            // derivative is Vᵀ (ẋ ∘ (c − x·c) − x (ẋ·c))
+            let c = &c[row * k..(row + 1) * k];
+            Self::basis_times(tangents[row], &mut dz);
+            let xdz: f64 = x.iter().zip(&dz).map(|(x, d)| x * d).sum();
+            for ((dx, x), dz) in dx.iter_mut().zip(x).zip(&dz) {
+                *dx = x * (dz - xdz);
+            }
+            let m: f64 = x.iter().zip(c).map(|(x, c)| x * c).sum();
+            let dm: f64 = dx.iter().zip(c).map(|(d, c)| d * c).sum();
+            for (((g, x), dx), c) in gz.iter_mut().zip(x).zip(&dx).zip(c) {
+                *g = dx * (c - m) - x * dm;
+            }
+            Self::basis_transpose_times(&gz, &mut g[row * (k - 1)..(row + 1) * (k - 1)]);
+        });
+        Ok(g)
+    }
+
+    fn log_det_jacobian_hvp(&self, y: &[f64], tangent: &[f64]) -> Result<Vec<f64>> {
+        check_second_order(y, tangent, self.unconstrained_len())?;
+        let k = self.k;
+        let tangents: Vec<&[f64]> = self.rows(tangent).collect();
+        let mut g = vec![0.0; y.len()];
+        let (mut dz, mut gz) = (vec![0.0; k], vec![0.0; k]);
+        self.for_each_row(y, |row, _, x, _| {
+            // the gradient is Vᵀ (1 − K x), so the product is Vᵀ (−K ẋ)
+            Self::basis_times(tangents[row], &mut dz);
+            let xdz: f64 = x.iter().zip(&dz).map(|(x, d)| x * d).sum();
+            for ((g, x), dz) in gz.iter_mut().zip(x).zip(&dz) {
+                *g = -(k as f64) * x * (dz - xdz);
             }
             Self::basis_transpose_times(&gz, &mut g[row * (k - 1)..(row + 1) * (k - 1)]);
         });
@@ -1106,6 +1317,64 @@ impl Bijector for CorrelationCholesky {
         });
         Ok(g)
     }
+
+    fn forward_vjp_jvp(
+        &self,
+        y: &[f64],
+        tangent: &[f64],
+        cotangent: &DoubleTensor,
+    ) -> Result<Vec<f64>> {
+        check_second_order(y, tangent, self.unconstrained_len())?;
+        check_shape("the cotangent", cotangent, &self.shape)?;
+        let k = self.k;
+        let c = cotangent.as_slice();
+        let mut g = vec![0.0; y.len()];
+        let mut offset = 0;
+        let mut s_before = vec![Dual::constant(0.0); k];
+        let mut duals = Vec::with_capacity(k);
+        self.for_each_row(y, |m, i, y| {
+            // forward_vjp's recurrences evaluated on dual numbers yⱼ + ε tⱼ: the ε parts are the derivative
+            let cot = &c[(m * k + i) * k..(m * k + i + 1) * k];
+            let t = &tangent[offset..offset + i];
+            let g = &mut g[offset..offset + i];
+            offset += i;
+            duals.clear();
+            duals.extend(y.iter().zip(t).map(|(&y, &t)| {
+                let (z, sech) = (y.tanh(), 1.0 / y.cosh());
+                (Dual(z, (1.0 - z * z) * t), Dual(sech, -sech * z * t))
+            }));
+            let mut s = Dual::constant(1.0);
+            for (j, &(_, sech)) in duals.iter().enumerate() {
+                s_before[j] = s;
+                s = s * sech;
+            }
+            let mut gs = Dual::constant(cot[i]);
+            for j in (0..i).rev() {
+                let (z, sech) = duals[j];
+                let before = s_before[j];
+                let gj = before * sech * sech * cot[j] - gs * before * sech * z;
+                g[j] = gj.1;
+                gs = gs * sech + z * cot[j];
+            }
+        });
+        Ok(g)
+    }
+
+    fn log_det_jacobian_hvp(&self, y: &[f64], tangent: &[f64]) -> Result<Vec<f64>> {
+        check_second_order(y, tangent, self.unconstrained_len())?;
+        let mut h = Vec::with_capacity(y.len());
+        let mut offset = 0;
+        self.for_each_row(y, |_, i, y| {
+            // the gradient is −(i + 1 − j) tanh yᵢⱼ, so the Hessian is diagonal, −(i + 1 − j) sech² yᵢⱼ
+            let t = &tangent[offset..offset + i];
+            offset += i;
+            h.extend(y.iter().zip(t).enumerate().map(|(j, (&y, &t))| {
+                let sech = 1.0 / y.cosh();
+                -((i + 1 - j) as f64) * sech * sech * t
+            }));
+        });
+        Ok(h)
+    }
 }
 
 /// Angles, for [`Support::Circular`], as Stan's unit vectors: each angle has two unconstrained coordinates `(u, v)`
@@ -1209,5 +1478,73 @@ impl Bijector for Circular {
             g.push(p[0] * c / r2);
         }
         Ok(g)
+    }
+
+    fn forward_vjp_jvp(
+        &self,
+        y: &[f64],
+        tangent: &[f64],
+        cotangent: &DoubleTensor,
+    ) -> Result<Vec<f64>> {
+        check_second_order(y, tangent, 2 * self.len())?;
+        check_shape("the cotangent", cotangent, &self.shape)?;
+        let mut g = Vec::with_capacity(y.len());
+        for ((p, t), &c) in y
+            .chunks_exact(2)
+            .zip(tangent.chunks_exact(2))
+            .zip(cotangent.as_slice())
+        {
+            // the derivatives of c (−v, u) / r² along (tu, tv), with the derivative of r² being 2 (u tu + v tv)
+            let r2 = Self::radius_squared(p[0], p[1])?;
+            let dr2 = 2.0 * (p[0] * t[0] + p[1] * t[1]);
+            g.push(c * (-t[1] / r2 + p[1] * dr2 / (r2 * r2)));
+            g.push(c * (t[0] / r2 - p[0] * dr2 / (r2 * r2)));
+        }
+        Ok(g)
+    }
+
+    fn log_det_jacobian_hvp(&self, y: &[f64], tangent: &[f64]) -> Result<Vec<f64>> {
+        // −½ Σ (u² + v²) has Hessian −I
+        check_second_order(y, tangent, 2 * self.len())?;
+        Ok(tangent.iter().map(|t| -t).collect())
+    }
+}
+
+/// A dual number `a + b ε` with `ε² = 0`: the value and directional derivative of a quantity, for derivatives of
+/// scalar recurrences.
+#[derive(Debug, Clone, Copy)]
+struct Dual(f64, f64);
+
+impl Dual {
+    fn constant(value: f64) -> Self {
+        Dual(value, 0.0)
+    }
+}
+
+impl std::ops::Mul for Dual {
+    type Output = Dual;
+    fn mul(self, other: Dual) -> Dual {
+        Dual(self.0 * other.0, self.0 * other.1 + self.1 * other.0)
+    }
+}
+
+impl std::ops::Mul<f64> for Dual {
+    type Output = Dual;
+    fn mul(self, other: f64) -> Dual {
+        Dual(self.0 * other, self.1 * other)
+    }
+}
+
+impl std::ops::Add for Dual {
+    type Output = Dual;
+    fn add(self, other: Dual) -> Dual {
+        Dual(self.0 + other.0, self.1 + other.1)
+    }
+}
+
+impl std::ops::Sub for Dual {
+    type Output = Dual;
+    fn sub(self, other: Dual) -> Dual {
+        Dual(self.0 - other.0, self.1 - other.1)
     }
 }

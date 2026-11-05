@@ -1,6 +1,7 @@
 //! Node operations: what each node computes from its parents' values.
 
 mod distribution;
+mod distribution_hvp;
 pub(crate) mod eval;
 mod mixture;
 mod shape;

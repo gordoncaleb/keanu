@@ -43,10 +43,40 @@
 //!
 //! # Second order
 //!
-//! Hessian-vector products will be added as `hvp(z, v, jacobian)`, reusing this layout: the constrained tangent
-//! of each latent is [`Bijector::forward_jvp`] of its slice of `v`, the model's Hessian-vector product is pulled back
-//! with [`Bijector::forward_vjp`] as [`Parameterisation::pull_back`] does for the gradient, plus the curvature terms
-//! of the bijectors themselves.
+//! [`Parameterisation::hvp`] is the exact product of the Hessian of the log probability (with or without the
+//! Jacobian) with a direction `v`, and [`Parameterisation::hessian`] the whole Hessian. They reuse this layout: the
+//! constrained tangent of each latent is [`Bijector::forward_jvp`] of its slice of `v`; the model's Hessian-vector
+//! product in the constrained values is computed by forward-over-reverse differentiation (a forward sweep of the
+//! tangents through the deterministic nodes, then a reverse sweep carrying each cotangent and its derivative, with
+//! each op's and distribution's second derivatives); it is pulled back with [`Bijector::forward_vjp`] as
+//! [`Parameterisation::pull_back`] does for the gradient; and the curvature of the bijectors is added:
+//! [`Bijector::forward_vjp_jvp`] of the constrained gradient, and with the Jacobian
+//! [`Bijector::log_det_jacobian_hvp`]. Nothing is approximated by finite differences.
+//!
+//! ```
+//! use keanu_graph::{GraphBuilder, Model, Parameterisation};
+//! use keanu_tensor::DoubleTensor;
+//!
+//! let b = GraphBuilder::new();
+//! let mu = b.gaussian(0.0, 2.0);
+//! let y = b.gaussian(mu, 0.5);
+//! b.observe(y, DoubleTensor::scalar(1.0));
+//! let mu = mu.id();
+//! let (graph, mut state) = b.build()?;
+//! state.set(&graph, mu, DoubleTensor::scalar(0.3))?;
+//! let model = Model::new(graph, &state)?;
+//! let param = Parameterisation::new(&model, &state)?;
+//!
+//! // log p = −mu²/8 − 2 (1 − mu)² + const, so the Hessian is −1/4 − 4
+//! let hessian = param.hessian(&[0.3], true, &mut state)?;
+//! assert!((hessian.as_slice()[0] + 4.25).abs() < 1e-12);
+//! # Ok::<(), keanu_graph::GraphError>(())
+//! ```
+//!
+//! Every op of the graph has a second-order rule except lambdas, and so far only the Gaussian and the multivariate
+//! Gaussian distributions do: a model whose log probability depends on the latents through anything else fails
+//! with [`GraphError::NoSecondOrderRule`] naming the node. Eigenvector derivatives assume distinct eigenvalues, as
+//! their first derivatives do.
 
 use crate::error::{GraphError, Result};
 use crate::graph::{Graph, NodeId};
@@ -386,6 +416,133 @@ impl<'m> Parameterisation<'m> {
         Ok((log_prob + log_det, Some(flat)))
     }
 
+    /// Sets the latents to their values at `z` (as [`to_state`](Self::to_state)) and returns the exact product of
+    /// the Hessian of the log probability at `z` (the target of
+    /// [`log_prob_and_gradient`](Self::log_prob_and_gradient), with or without the Jacobian) with the direction `v`:
+    /// the derivative of the gradient along `v`. See the [module documentation](self#second-order).
+    ///
+    /// At a point whose log probability is impossible (−∞) the result is meaningless (typically NaN).
+    ///
+    /// # Errors
+    ///
+    /// [`GraphError::InvalidValue`] if `z` or `v` has the wrong length, [`GraphError::NoSecondOrderRule`] naming the
+    /// node if the model has a distribution or op on the path from a latent to the log probability without a
+    /// second-order rule (a lambda, a custom distribution, or a distribution kind whose rule is not written yet), and
+    /// any error evaluating the model.
+    pub fn hvp(&self, z: &[f64], v: &[f64], jacobian: bool, state: &mut State) -> Result<Vec<f64>> {
+        self.check_len(z)?;
+        if v.len() != self.dimension {
+            return Err(GraphError::InvalidValue(format!(
+                "a direction has {} coordinates, expected the parameterisation's {}",
+                v.len(),
+                self.dimension
+            )));
+        }
+        let mut products = self.hessian_products(z, v, 1, jacobian, state)?;
+        Ok(products.pop().unwrap_or_default())
+    }
+
+    /// Sets the latents to their values at `z` and returns the exact Hessian of the log probability at `z` (with or
+    /// without the Jacobian, as [`hvp`](Self::hvp)), shaped `[n, n]` for the parameterisation's
+    /// [`dimension`](Self::dimension) n. It is symmetric up to rounding.
+    ///
+    /// The n Hessian-vector products along the coordinate axes are computed together, as one forward and one
+    /// reverse sweep whose tangents carry all n directions on their batch axis, rather than as n separate sweeps.
+    ///
+    /// # Errors
+    ///
+    /// As [`hvp`](Self::hvp).
+    pub fn hessian(&self, z: &[f64], jacobian: bool, state: &mut State) -> Result<DoubleTensor> {
+        self.check_len(z)?;
+        let n = self.dimension;
+        let mut identity = vec![0.0; n * n];
+        for i in 0..n {
+            identity[i * n + i] = 1.0;
+        }
+        let columns = self.hessian_products(z, &identity, n, jacobian, state)?;
+        // column k is H eₖ
+        let mut data = vec![0.0; n * n];
+        for (k, column) in columns.iter().enumerate() {
+            for (i, &h) in column.iter().enumerate() {
+                data[i * n + k] = h;
+            }
+        }
+        Ok(DoubleTensor::new(&[n, n], data)?)
+    }
+
+    /// The Hessian-vector products along `b` directions (row-major `[b, dimension]` in `directions`), after setting
+    /// the state to `z`. By the chain rule through x = T(y) for each latent, with ∇ₓ and Hₓ the gradient and
+    /// Hessian of the model's log probability in the constrained values:
+    /// `H v = J_Tᵀ Hₓ (J_T v) + (∂/∂v J_Tᵀ) ∇ₓ + H_log|J| v`.
+    fn hessian_products(
+        &self,
+        z: &[f64],
+        directions: &[f64],
+        b: usize,
+        jacobian: bool,
+        state: &mut State,
+    ) -> Result<Vec<Vec<f64>>> {
+        self.to_state(z, state)?;
+        let n = self.dimension;
+        let graph = self.model.graph();
+        let direction =
+            |k: usize, slot: &Slot| &directions[k * n + slot.range.start..k * n + slot.range.end];
+        let mut tangents = Vec::with_capacity(self.slots.len());
+        for slot in &self.slots {
+            let y = &z[slot.range.clone()];
+            let shape = graph[slot.id].shape();
+            let mut data = Vec::with_capacity(b * shape.iter().product::<usize>());
+            for k in 0..b {
+                let tangent = slot
+                    .bijector
+                    .forward_jvp(y, direction(k, slot))
+                    .map_err(|e| in_latent(graph, slot.id, e))?;
+                data.extend_from_slice(tangent.as_slice());
+            }
+            let batched: Vec<usize> = std::iter::once(b).chain(shape.iter().copied()).collect();
+            tangents.push((slot.id, DoubleTensor::new(&batched, data)?));
+        }
+        let (gradient, hvps) = self.model.log_prob_gradient_and_hvp(state, tangents, b)?;
+        let mut products = vec![vec![0.0; n]; b];
+        let add = |row: &mut [f64], terms: Vec<f64>| {
+            for (r, t) in row.iter_mut().zip(terms) {
+                *r += t;
+            }
+        };
+        for slot in &self.slots {
+            let y = &z[slot.range.clone()];
+            let shape = graph[slot.id].shape();
+            let len: usize = shape.iter().product();
+            let g = gradient.get(slot.id);
+            let h = hvps.get(slot.id.index()).and_then(Option::as_ref);
+            for (k, product) in products.iter_mut().enumerate() {
+                let t = direction(k, slot);
+                let row = &mut product[slot.range.clone()];
+                let in_slot = |e| in_latent(graph, slot.id, e);
+                if let Some(h) = h {
+                    let hk =
+                        DoubleTensor::new(shape, h.as_slice()[k * len..(k + 1) * len].to_vec())?;
+                    add(row, slot.bijector.forward_vjp(y, &hk).map_err(in_slot)?);
+                }
+                if self.space == Space::Unconstrained {
+                    if let Some(g) = g {
+                        add(
+                            row,
+                            slot.bijector.forward_vjp_jvp(y, t, g).map_err(in_slot)?,
+                        );
+                    }
+                    if jacobian {
+                        add(
+                            row,
+                            slot.bijector.log_det_jacobian_hvp(y, t).map_err(in_slot)?,
+                        );
+                    }
+                }
+            }
+        }
+        Ok(products)
+    }
+
     /// A random starting point with every coordinate drawn from Uniform(−2, 2), as Stan initialises its samplers
     /// and optimizers. Opt-in: algorithms start from the values in the state they are given. Apply it with
     /// [`to_state`](Self::to_state). Meant for [`Space::Unconstrained`]; in [`Space::Constrained`] the coordinates
@@ -404,5 +561,109 @@ fn in_latent(graph: &Graph, id: NodeId, error: GraphError) -> GraphError {
             GraphError::Transform(format!("latent {}: {message}", describe(graph, id)))
         }
         other => other,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::GraphBuilder;
+    use crate::transform::{
+        Circular, CorrelationCholesky, Interval, LowerBound, Ordered, Simplex, UpperBound,
+    };
+
+    /// Replaces each latent's bijector, in layout order, recomputing the layout. The bijectors need not match the
+    /// latents' supports: the log probability is just a function of the constrained values, and this exercises
+    /// the second-order chain rule through every bijector with distributions that have a rule.
+    fn with_bijectors(param: &mut Parameterisation<'_>, bijectors: Vec<Box<dyn Bijector>>) {
+        let mut offset = 0;
+        for (slot, bijector) in param.slots.iter_mut().zip(bijectors) {
+            let len = bijector.unconstrained_len();
+            slot.range = offset..offset + len;
+            slot.bijector = bijector;
+            offset += len;
+        }
+        param.dimension = offset;
+    }
+
+    #[test]
+    fn the_hessian_through_every_bijector_matches_finite_differences() {
+        let b = GraphBuilder::new();
+        let eye = || DoubleTensor::eye(3).unwrap();
+        let lower = b.gaussian(0.5, 1.0);
+        let upper = b.gaussian(0.2, 1.5);
+        let interval = b.gaussian_with_shape(&[2], 0.4, 1.0);
+        let simplex =
+            b.multivariate_gaussian(DoubleTensor::vector(vec![0.2, 0.3, 0.5]), eye() * 0.2);
+        let ordered = b.multivariate_gaussian(DoubleTensor::vector(vec![-1.0, 0.0, 1.0]), eye());
+        let cholesky = b.gaussian_with_shape(&[3, 3], 0.1, 1.0);
+        let angle = b.gaussian(0.3, 2.0);
+        let mean = lower * upper
+            + interval.sum()
+            + (simplex * ordered).sum()
+            + cholesky.sum()
+            + angle.sin();
+        let y = b.gaussian(mean, 1.5);
+        b.observe(y, DoubleTensor::scalar(0.4));
+        let (graph, mut state) = b.build().unwrap();
+        let all: Vec<NodeId> = graph.ids().collect();
+        state
+            .lazy_eval(&graph, &all, &mut KeanuRng::seed_from_u64(1))
+            .unwrap();
+        let model = Model::new(graph, &state).unwrap();
+        let mut param = Parameterisation::new(&model, &state).unwrap();
+        with_bijectors(
+            &mut param,
+            vec![
+                Box::new(LowerBound::new(&DoubleTensor::scalar(0.0), &[]).unwrap()),
+                Box::new(UpperBound::new(&DoubleTensor::scalar(1.0), &[]).unwrap()),
+                Box::new(
+                    Interval::new(
+                        &DoubleTensor::scalar(-1.0),
+                        &DoubleTensor::scalar(2.0),
+                        &[2],
+                    )
+                    .unwrap(),
+                ),
+                Box::new(Simplex::new(&[3]).unwrap()),
+                Box::new(Ordered::new(&[3]).unwrap()),
+                Box::new(CorrelationCholesky::new(&[3, 3]).unwrap()),
+                Box::new(Circular::new(&[])),
+            ],
+        );
+        let n = param.dimension();
+        assert_eq!(n, 1 + 1 + 2 + 2 + 3 + 3 + 2);
+        let z: Vec<f64> = (0..n)
+            .map(|i| 0.8 * ((i as f64) * 1.7 + 0.3).sin())
+            .collect();
+        for jacobian in [false, true] {
+            let hessian = param.hessian(&z, jacobian, &mut state).unwrap();
+            let h = hessian.as_slice();
+            for j in 0..n {
+                let step = 1e-5;
+                let mut plus = z.clone();
+                plus[j] += step;
+                let mut minus = z.clone();
+                minus[j] -= step;
+                let gp = param
+                    .log_prob_and_gradient(&plus, jacobian, &mut state)
+                    .unwrap()
+                    .1
+                    .unwrap();
+                let gm = param
+                    .log_prob_and_gradient(&minus, jacobian, &mut state)
+                    .unwrap()
+                    .1
+                    .unwrap();
+                for i in 0..n {
+                    let fd = (gp[i] - gm[i]) / (2.0 * step);
+                    assert!(
+                        (h[i * n + j] - fd).abs() <= 1e-6 * fd.abs().max(1.0),
+                        "jacobian {jacobian}: H[{i}][{j}] = {} vs {fd}",
+                        h[i * n + j]
+                    );
+                }
+            }
+        }
     }
 }

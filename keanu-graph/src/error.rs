@@ -56,6 +56,9 @@ pub enum GraphError {
     /// A constraint transform (see [`transform`](crate::transform)) could not be built for a support, or was given
     /// an input of the wrong size or a value outside its support.
     Transform(String),
+    /// An exact second derivative (a Hessian-vector product) was needed through an op, distribution or bijector
+    /// that has no second-order rule. The message names what lacks the rule and, for graph nodes, the node.
+    NoSecondOrderRule(String),
 }
 
 impl fmt::Display for GraphError {
@@ -92,6 +95,7 @@ impl fmt::Display for GraphError {
             ),
             Self::UnknownNode(id) => write!(f, "node #{} is not a node of this graph", id.index()),
             Self::Transform(m) => write!(f, "transform: {m}"),
+            Self::NoSecondOrderRule(m) => write!(f, "no second-order rule for {m}"),
         }
     }
 }
