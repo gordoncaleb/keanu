@@ -206,6 +206,69 @@ fn truncated_samples_lie_within_the_bounds_and_match_the_truncated_mean() {
     }
 }
 
+/// `n` draws of `kind` with constant `parameters` truncated to [a, b].
+fn truncated_draws(
+    kind: DistributionKind,
+    parameters: &[f64],
+    a: f64,
+    b: f64,
+    n: usize,
+) -> Vec<f64> {
+    let builder = GraphBuilder::new();
+    let ids: Vec<NodeId> = parameters.iter().map(|&p| builder.scalar(p).id()).collect();
+    let x: DoubleVar = builder.truncated(kind, &ids, DoubleTensor::full(&[n], a), b);
+    let id = x.id();
+    let (graph, mut state) = builder.build().unwrap();
+    evaluate(&graph, &mut state, 9);
+    state
+        .value(id)
+        .unwrap()
+        .as_f64()
+        .unwrap()
+        .as_slice()
+        .to_vec()
+}
+
+#[test]
+fn truncated_samples_in_far_tails_are_finite_and_inside_the_bounds() {
+    let n = 4000;
+    // N(0, 1) beyond l has mean φ(l)/Q(l) = l + 1/l − 2/l³ + 10/l⁵ − … and a variance of about 1/l²; the tails
+    // probabilities underflow to 0 as plain numbers
+    for (a, b, sign) in [
+        (38.5, INF, 1.0),
+        (40.0, INF, 1.0),
+        (40.0, 41.0, 1.0),
+        (-INF, -40.0, -1.0),
+    ] {
+        let w = truncated_draws(DistributionKind::Gaussian, &[0.0, 1.0], a, b, n);
+        assert!(
+            w.iter().all(|&x| x.is_finite() && x > a && x < b),
+            "[{a}, {b}]: {:?}",
+            w.iter().find(|&&x| !(x.is_finite() && x > a && x < b))
+        );
+        let l: f64 = if sign > 0.0 { a } else { -b };
+        let expected = sign * (l + 1.0 / l - 2.0 / l.powi(3) + 10.0 / l.powi(5));
+        let se = (1.0 / (l * l) / n as f64).sqrt();
+        let m = mean(&w);
+        assert!(
+            (m - expected).abs() < 5.0 * se,
+            "[{a}, {b}]: mean {m} vs {expected} (se {se})"
+        );
+        // the draws spread out rather than collapsing onto one value
+        assert!(w.iter().any(|&x| (x - w[0]).abs() > 1e-3), "[{a}, {b}]");
+    }
+    // Exponential(1) beyond 800 is 800 plus an Exponential(1), by memorylessness
+    let w = truncated_draws(DistributionKind::Exponential, &[1.0], 800.0, INF, n);
+    assert!(
+        w.iter().all(|&x| x.is_finite() && x > 800.0),
+        "{:?}",
+        &w[..5]
+    );
+    let m = mean(&w);
+    let se = (1.0 / n as f64).sqrt();
+    assert!((m - 801.0).abs() < 5.0 * se, "mean {m}");
+}
+
 #[test]
 fn truncation_without_an_inverse_cdf_samples_by_rejection() {
     // Gamma(theta 1, k 2) truncated to [1, 3]

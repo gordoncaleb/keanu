@@ -606,9 +606,26 @@ fn assemble(values: Vec<f64>, shape: &[usize], discrete: bool) -> Result<Value> 
     })
 }
 
+/// Below this log probability a tail probability is too close to the smallest normal number to interpolate and
+/// invert as a plain number, so the draw is found in log space instead.
+const LOG_TINY: f64 = -700.0;
+
+/// The most iterations of the log-space inversion.
+const LOG_INVERSION_ITERATIONS: usize = 200;
+
+/// ln((1 − w)·eˡᵒ + w·eʰⁱ) for `lo <= hi` and `w` in (0, 1], without leaving log space.
+fn log_interpolate(w: f64, lo: f64, hi: f64) -> f64 {
+    if hi == f64::NEG_INFINITY {
+        return hi;
+    }
+    hi + (w + (1.0 - w) * (lo - hi).exp()).ln()
+}
+
 /// Inverse CDF sampling: u uniform between F(l) and F(u) and x = F⁻¹(u), or between S(u) and S(l) with
 /// x = S⁻¹(u) where the lower bound is in the upper half of the distribution, so tail truncations keep their
-/// precision. None if the base has no closed-form inverse.
+/// precision. Where the tail probabilities are too small to handle as plain numbers (or the closed-form inverse
+/// gives no finite value), the draw solves ln F(x) = t or ln S(x) = t in log space instead, with t interpolated in
+/// log space ([`solve_in_log_space`]). None if the base has no closed-form inverse.
 fn sample_by_inverse(
     bounds: &Bounds<'_, '_>,
     base: &DistributionKind,
@@ -647,6 +664,9 @@ fn sample_by_inverse(
     let mut p = vec![0.5; len];
     let mut q = vec![0.5; len];
     let mut from_cdf = vec![true; len];
+    // the log of the tail probability each draw is at, and whether it must be inverted in log space
+    let mut targets = vec![0.0; len];
+    let mut in_log_space = vec![false; len];
     for i in 0..len {
         if z.log_z[i] == f64::NEG_INFINITY {
             return invalid_bounds(
@@ -654,14 +674,19 @@ fn sample_by_inverse(
             );
         }
         let u = u.as_slice()[i];
-        if cdf_low[i] < -LN_2 {
+        let (lo, hi) = if cdf_low[i] < -LN_2 {
             let (a, b) = (cdf_low[i].exp(), cdf_high[i].exp());
             p[i] = a + u * (b - a);
+            (cdf_low[i], cdf_high[i])
         } else {
             let (a, b) = (ccdf_high[i].exp(), ccdf_low[i].exp());
             q[i] = a + u * (b - a);
             from_cdf[i] = false;
-        }
+            (ccdf_high[i], ccdf_low[i])
+        };
+        // the same draw as above, ln((1 − u)·eˡᵒ + u·eʰⁱ) with u replaced by 1 − u so its weight is never 0
+        targets[i] = log_interpolate(1.0 - u, lo, hi);
+        in_log_space[i] = hi < LOG_TINY;
     }
     let p = DoubleTensor::new(shape, p)?;
     let q = DoubleTensor::new(shape, q)?;
@@ -672,14 +697,120 @@ fn sample_by_inverse(
         return Ok(None);
     };
     let (x_cdf, x_ccdf) = (broadcast(&x_cdf, shape)?, broadcast(&x_ccdf, shape)?);
-    let values = (0..len)
+    let mut values: Vec<f64> = (0..len)
         .map(|i| {
             let x = if from_cdf[i] { x_cdf[i] } else { x_ccdf[i] };
+            if !x.is_finite() {
+                in_log_space[i] = true;
+            }
             // rounding can step just outside the bounds
             x.max(lower[i]).min(upper[i])
         })
         .collect();
+    if in_log_space.iter().any(|&b| b) {
+        let solved = solve_in_log_space(
+            bounds,
+            base,
+            shape,
+            (lower, upper),
+            &from_cdf,
+            &targets,
+            &in_log_space,
+        )?;
+        for i in 0..len {
+            if in_log_space[i] {
+                values[i] = solved[i];
+            }
+        }
+    }
     assemble(values, shape, false).map(Some)
+}
+
+/// Solves ln F(x) = t (where `from_cdf`) or ln S(x) = t for the elements of `todo`, each between its bounds, by
+/// Newton's method on the log tail probability (whose derivative is ±p(x)/F(x) or ±p(x)/S(x), from the base's log
+/// density and log tail probability) safeguarded by bisection of a bracket. An error if an element doesn't converge
+/// to a finite value, never an infinite or clipped one.
+fn solve_in_log_space(
+    bounds: &Bounds<'_, '_>,
+    base: &DistributionKind,
+    shape: &[usize],
+    (lower, upper): (&[f64], &[f64]),
+    from_cdf: &[bool],
+    targets: &[f64],
+    todo: &[bool],
+) -> Result<Vec<f64>> {
+    let len = targets.len();
+    let mut lo = lower.to_vec();
+    let mut hi = upper.to_vec();
+    // start between the bounds, or at the finite one
+    let mut x: Vec<f64> = (0..len)
+        .map(|i| match (lower[i].is_finite(), upper[i].is_finite()) {
+            (true, true) => lower[i] + (upper[i] - lower[i]) / 2.0,
+            (true, false) => lower[i],
+            (false, true) => upper[i],
+            (false, false) => 0.0,
+        })
+        .collect();
+    let mut active: Vec<bool> = todo.to_vec();
+    let evaluate_at = |function, x: &[f64]| -> Result<Vec<f64>> {
+        let at = Value::F64(DoubleTensor::new(shape, x.to_vec())?);
+        Ok(evaluate(base, function, &at, bounds.base, false, shape, None)?.values)
+    };
+    for _ in 0..LOG_INVERSION_ITERATIONS {
+        if !active.iter().any(|&a| a) {
+            break;
+        }
+        let log_cdf = evaluate_at(Univariate::Cdf, &x)?;
+        let log_ccdf = evaluate_at(Univariate::Ccdf, &x)?;
+        let log_density = evaluate_at(Univariate::Density, &x)?;
+        for i in 0..len {
+            if !active[i] {
+                continue;
+            }
+            let (tail, sign) = if from_cdf[i] {
+                (log_cdf[i], 1.0)
+            } else {
+                (log_ccdf[i], -1.0)
+            };
+            let g = tail - targets[i];
+            if g == 0.0 {
+                active[i] = false;
+                continue;
+            }
+            // the log tail increases with x for the CDF and decreases for the survival function
+            if (g > 0.0) == (sign > 0.0) {
+                hi[i] = x[i];
+            } else {
+                lo[i] = x[i];
+            }
+            let slope = sign * (log_density[i] - tail).exp();
+            let mut next = x[i] - g / slope;
+            if !(next > lo[i] && next < hi[i]) {
+                next = match (lo[i].is_finite(), hi[i].is_finite()) {
+                    (true, true) => lo[i] + (hi[i] - lo[i]) / 2.0,
+                    (true, false) => x[i] + x[i].abs().max(1.0),
+                    (false, true) => x[i] - x[i].abs().max(1.0),
+                    (false, false) => f64::NAN,
+                };
+            }
+            let tolerance = 4.0 * f64::EPSILON * next.abs().max(1.0);
+            let converged = (next - x[i]).abs() <= tolerance || hi[i] - lo[i] <= tolerance;
+            x[i] = next;
+            if !next.is_finite() || converged {
+                active[i] = false;
+            }
+        }
+    }
+    for i in (0..len).filter(|&i| todo[i]) {
+        if active[i] || !(x[i] >= lower[i] && x[i] <= upper[i] && x[i].is_finite()) {
+            return invalid_bounds(format!(
+                "could not draw from the truncation to [{}, {}]: its probability is too far in the base \
+                 distribution's tail to invert",
+                lower[i], upper[i]
+            ));
+        }
+    }
+    Ok(x)
 }
 
 /// Draws a censored value of `shape`: a draw from the base, with values beyond a bound recorded as the bound.
