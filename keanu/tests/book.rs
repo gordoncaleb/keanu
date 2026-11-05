@@ -609,6 +609,85 @@ fn sequences() -> keanu::Result<()> {
     Ok(())
 }
 
+#[test]
+fn hidden_markov_models() -> keanu::Result<()> {
+    // ANCHOR: hmm
+    use keanu::graph::op::DistributionKind;
+
+    let observations = vec![
+        -2.1, -1.8, -2.4, 2.9, 3.2, 3.1, 2.7, -1.9, -2.2, 3.0, 3.3, 2.8,
+    ];
+    let b = GraphBuilder::new();
+    // two regimes with unknown means (the trailing axis is the state axis) and a shared noise scale
+    let means = b.gaussian(
+        DoubleTensor::vector(vec![-1.0, 1.0]),
+        DoubleTensor::vector(vec![2.0, 2.0]),
+    );
+    let sigma = b.half_gaussian(1.0);
+    // each row of the transition matrix is on the simplex: one Dirichlet per row, stacked
+    let rows = [
+        b.dirichlet(DoubleTensor::vector(vec![5.0, 1.0])),
+        b.dirichlet(DoubleTensor::vector(vec![1.0, 5.0])),
+    ];
+    let transition = b.stack(0, &rows);
+    let initial = DoubleTensor::vector(vec![0.5, 0.5]);
+    let y: DoubleVar = b.hidden_markov_model(
+        observations.len(),
+        DistributionKind::Gaussian,
+        &[means.id(), sigma.id()],
+        initial,
+        transition,
+    );
+    b.observe(y, DoubleTensor::vector(observations));
+
+    let (means, stay) = (means.id(), rows[0].id());
+    let (graph, mut state) = b.build()?;
+    let model = Model::new(graph, &state)?;
+    let mut rng = KeanuRng::seed_from_u64(1);
+    model.probe_for_non_zero_probability(&mut state, 10, &mut rng)?;
+    // the log likelihood sums over every state path exactly, so NUTS samples the continuous parameters directly
+    let samples = Nuts::default().sample(&model, &mut state, &[means, stay], 300, &mut rng)?;
+    let regime_means = samples.f64(means).unwrap().mean()?;
+    assert!(regime_means.as_slice()[0] < 0.0 && regime_means.as_slice()[1] > 0.0);
+    // ANCHOR_END: hmm
+    Ok(())
+}
+
+#[test]
+fn kalman_filters() -> keanu::Result<()> {
+    // ANCHOR: kalman
+    // a local level model: a random walk level observed with noise, with an unknown level noise scale
+    let b = GraphBuilder::new();
+    let matrix = |v: f64| DoubleTensor::new(&[1, 1], vec![v]);
+    let level_noise = b.half_gaussian(1.0);
+    let level_variance = (level_noise * level_noise).reshape(&[1, 1]);
+    let y = b.linear_gaussian_state_space(
+        6,
+        DoubleTensor::vector(vec![0.0]), // initial mean
+        matrix(10.0)?,                   // initial covariance
+        matrix(1.0)?,                    // transition matrix
+        level_variance,                  // transition noise covariance
+        matrix(1.0)?,                    // observation matrix
+        matrix(0.25)?,                   // observation noise covariance
+    );
+    b.observe(
+        y,
+        DoubleTensor::new(&[6, 1], vec![0.3, 0.9, 1.4, 1.1, 2.0, 2.6])?,
+    );
+
+    let level_noise = level_noise.id();
+    let (graph, mut state) = b.build()?;
+    let model = Model::new(graph, &state)?;
+    model.probe_for_non_zero_probability(&mut state, 10, &mut KeanuRng::seed_from_u64(1))?;
+    // the Kalman filter gives the exact marginal likelihood and its gradient, so the noise scale is optimised
+    // directly with the hidden levels integrated out
+    GradientOptimizer::new(&model).max_a_posteriori(&mut state)?;
+    let scale = state.f64(level_noise).unwrap().to_scalar().unwrap();
+    assert!(scale > 0.0 && scale.is_finite());
+    // ANCHOR_END: kalman
+    Ok(())
+}
+
 #[cfg(feature = "json")]
 #[test]
 fn save_and_load() -> keanu::Result<()> {

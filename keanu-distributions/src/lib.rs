@@ -34,6 +34,7 @@ pub mod kde;
 pub mod multivariate;
 mod param;
 mod rng;
+pub mod timeseries;
 mod util;
 
 pub use continuous::*;
@@ -43,3 +44,7 @@ pub use kde::{Kde, KdeGradient};
 pub use multivariate::*;
 pub use param::{IntoParam, Param};
 pub use rng::KeanuRng;
+pub use timeseries::{
+    HiddenMarkovChain, HiddenMarkovChainGradient, KalmanFilter, LinearGaussianStateSpace,
+    LinearGaussianStateSpaceGradient,
+};

@@ -1603,6 +1603,8 @@ impl serde::Serialize for DistributionKind {
             Self::Truncated => "DISTRIBUTION_KIND_TRUNCATED",
             Self::Censored => "DISTRIBUTION_KIND_CENSORED",
             Self::Mixture => "DISTRIBUTION_KIND_MIXTURE",
+            Self::HiddenMarkovModel => "DISTRIBUTION_KIND_HIDDEN_MARKOV_MODEL",
+            Self::LinearGaussianStateSpace => "DISTRIBUTION_KIND_LINEAR_GAUSSIAN_STATE_SPACE",
         };
         serializer.serialize_str(variant)
     }
@@ -1649,6 +1651,8 @@ impl<'de> serde::Deserialize<'de> for DistributionKind {
             "DISTRIBUTION_KIND_TRUNCATED",
             "DISTRIBUTION_KIND_CENSORED",
             "DISTRIBUTION_KIND_MIXTURE",
+            "DISTRIBUTION_KIND_HIDDEN_MARKOV_MODEL",
+            "DISTRIBUTION_KIND_LINEAR_GAUSSIAN_STATE_SPACE",
         ];
 
         struct GeneratedVisitor;
@@ -1724,6 +1728,8 @@ impl<'de> serde::Deserialize<'de> for DistributionKind {
                     "DISTRIBUTION_KIND_TRUNCATED" => Ok(DistributionKind::Truncated),
                     "DISTRIBUTION_KIND_CENSORED" => Ok(DistributionKind::Censored),
                     "DISTRIBUTION_KIND_MIXTURE" => Ok(DistributionKind::Mixture),
+                    "DISTRIBUTION_KIND_HIDDEN_MARKOV_MODEL" => Ok(DistributionKind::HiddenMarkovModel),
+                    "DISTRIBUTION_KIND_LINEAR_GAUSSIAN_STATE_SPACE" => Ok(DistributionKind::LinearGaussianStateSpace),
                     _ => Err(serde::de::Error::unknown_variant(value, FIELDS)),
                 }
             }

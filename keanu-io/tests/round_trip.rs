@@ -413,19 +413,25 @@ fn distribution_parameters(kind: &DistributionKind) -> Vec<Value> {
         Kde(_) => vec![],
         // each component parameter with a component axis of length 2, then the weights
         Mixture(component) => {
-            let mut parameters: Vec<Value> = distribution_parameters(component)
-                .into_iter()
-                .map(|p| match p {
-                    Value::F64(t) if t.rank() == 0 => {
-                        let v = t.as_slice()[0];
-                        f64s(&[2], &[v, v + 0.25])
-                    }
-                    other => other,
-                })
-                .collect();
+            let mut parameters = with_two_states(component);
             parameters.push(f64s(&[2], &[0.3, 0.7]));
             parameters
         }
+        // each emission parameter with a state axis of length 2, then the initial and transition probabilities
+        HiddenMarkovModel(emission) => {
+            let mut parameters = with_two_states(emission);
+            parameters.push(f64s(&[2], &[0.4, 0.6]));
+            parameters.push(f64s(&[2, 2], &[0.9, 0.1, 0.2, 0.8]));
+            parameters
+        }
+        LinearGaussianStateSpace => vec![
+            f64s(&[2], &[0.0, 1.0]),
+            f64s(&[2, 2], &[1.0, 0.2, 0.2, 2.0]),
+            f64s(&[2, 2], &[0.9, 0.1, 0.0, 0.8]),
+            f64s(&[2, 2], &[0.1, 0.0, 0.0, 0.2]),
+            f64s(&[1, 2], &[1.0, 0.5]),
+            f64s(&[1, 1], &[0.3]),
+        ],
         kind => kind
             .parameter_names()
             .unwrap()
@@ -445,6 +451,20 @@ fn distribution_parameters(kind: &DistributionKind) -> Vec<Value> {
             })
             .collect(),
     }
+}
+
+/// A nested kind's base parameters, with each f64 scalar given a trailing axis of two values.
+fn with_two_states(base: &DistributionKind) -> Vec<Value> {
+    distribution_parameters(base)
+        .into_iter()
+        .map(|p| match p {
+            Value::F64(t) if t.rank() == 0 => {
+                let v = t.as_slice()[0];
+                f64s(&[2], &[v, v + 0.25])
+            }
+            other => other,
+        })
+        .collect()
 }
 
 const DISTRIBUTIONS: &[&str] = &[
@@ -483,6 +503,9 @@ const DISTRIBUTIONS: &[&str] = &[
     "Censored(Poisson)",
     "Mixture(Gaussian)",
     "Mixture(Truncated(Gaussian))",
+    "HiddenMarkovModel(Gaussian)",
+    "HiddenMarkovModel(Poisson)",
+    "LinearGaussianStateSpace",
 ];
 
 fn distribution_kinds() -> Vec<DistributionKind> {
@@ -525,6 +548,9 @@ fn distribution_kinds() -> Vec<DistributionKind> {
         Censored(Arc::new(Poisson)),
         Mixture(Arc::new(Gaussian)),
         Mixture(Arc::new(Truncated(Arc::new(Gaussian)))),
+        HiddenMarkovModel(Arc::new(Gaussian)),
+        HiddenMarkovModel(Arc::new(Poisson)),
+        LinearGaussianStateSpace,
     ]
 }
 
@@ -544,15 +570,28 @@ fn distribution_cases() -> Vec<(String, Graph, State)> {
                 .into_iter()
                 .map(|v| constant(&b, v))
                 .collect();
-            // an LKJ node needs a [K, K] shape
+            // an LKJ node needs a [K, K] shape, and a time series its number of steps
             let lkj = matches!(kind, DistributionKind::LkjCholesky);
+            let series = matches!(
+                kind,
+                DistributionKind::HiddenMarkovModel(_) | DistributionKind::LinearGaussianStateSpace
+            );
+            let requested = if lkj {
+                Some(&[3, 3][..])
+            } else if series {
+                Some(&[3][..])
+            } else {
+                None
+            };
             let latent = b
-                .add_distribution(kind.clone(), lkj.then_some(&[3, 3][..]), &parents)
+                .add_distribution(kind.clone(), requested, &parents)
                 .unwrap_or_else(|e| panic!("can't build {name}: {e}"));
             b.set_label_of(latent, "latent").unwrap();
             let batch = b.shape(latent).unwrap();
             let shape: Vec<usize> = if lkj {
                 vec![2, 3, 3]
+            } else if series {
+                vec![5]
             } else if parents.is_empty() || batch.is_empty() {
                 vec![2]
             } else {

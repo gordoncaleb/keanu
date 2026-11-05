@@ -109,7 +109,7 @@ impl<'p, 'v> Parameters<'p, 'v> {
 }
 
 /// A value with a trailing axis of length 1 added, so that it broadcasts against the component axis.
-fn with_component_axis(value: &Value) -> Result<Value> {
+pub(crate) fn with_component_axis(value: &Value) -> Result<Value> {
     let mut shape: Vec<isize> = value.shape().iter().map(|&d| d as isize).collect();
     shape.push(1);
     Ok(match value {
@@ -119,7 +119,8 @@ fn with_component_axis(value: &Value) -> Result<Value> {
     })
 }
 
-fn broadcast(t: &DoubleTensor, shape: &[usize]) -> Result<Vec<f64>> {
+/// A tensor's elements broadcast to `shape`.
+pub(crate) fn broadcast(t: &DoubleTensor, shape: &[usize]) -> Result<Vec<f64>> {
     Ok(if t.shape() == shape {
         t.as_slice().to_vec()
     } else {
@@ -226,7 +227,10 @@ pub(crate) fn support(component: &DistributionKind, parameters: &[&Value]) -> Re
 }
 
 /// A bound reduced over its last (component) axis; a bound without axes is shared by every component already.
-fn reduce_components(bound: &DoubleTensor, f: fn(f64, f64) -> f64) -> Result<DoubleTensor> {
+pub(crate) fn reduce_components(
+    bound: &DoubleTensor,
+    f: fn(f64, f64) -> f64,
+) -> Result<DoubleTensor> {
     let Some((&count, batch)) = bound.shape().split_last() else {
         return Ok(bound.clone());
     };
@@ -275,6 +279,11 @@ pub(crate) fn sample(
             row * count + pick
         })
         .collect();
+    gather(&draws, shape, &picks)
+}
+
+/// The elements of `draws` at the flat indices `picks`, as a value of `shape`.
+pub(crate) fn gather(draws: &Value, shape: &[usize], picks: &[usize]) -> Result<Value> {
     Ok(match draws {
         Value::F64(t) => Value::F64(DoubleTensor::new(
             shape,

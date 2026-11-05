@@ -1,5 +1,6 @@
 //! Probabilistic nodes: a distribution whose parameters are the node's parents.
 
+use super::hmm;
 use super::mixture;
 use super::wrappers::{self, Wrapper};
 use crate::error::{GraphError, Result};
@@ -151,6 +152,21 @@ pub enum DistributionKind {
     /// or censored one); the value type is the component's. Support: the component's support widened to hold
     /// every component's. See [`GraphBuilder::mixture`](crate::GraphBuilder::mixture).
     Mixture(Arc<DistributionKind>),
+    /// A hidden Markov model whose observations are drawn from the emission kind with the hidden state's
+    /// parameters. Parameters: the emission's parameters, each with a trailing state axis of length K (or 1, or no
+    /// axes at all, to share the value between states), then `initial` (the first state's probabilities, \[K\]) and
+    /// `transition` (the transition probabilities, [K, K], row i the probabilities of moving from state i). Both
+    /// are probabilities, not log probabilities: non-negative, summing to 1 along their last axis (within 1e-5).
+    /// The value is the observation series, [T, ...] with time first; the emission is an element-wise univariate
+    /// kind, as for a mixture, and the value type is the emission's. Support: the emission's support widened to
+    /// hold every state's. See [`GraphBuilder::hidden_markov_model`](crate::GraphBuilder::hidden_markov_model).
+    HiddenMarkovModel(Arc<DistributionKind>),
+    /// Parameters: `initial_mean` \[d\], `initial_covariance` [d, d], `transition_matrix` [d, d],
+    /// `transition_covariance` [d, d], `observation_matrix` [m, d], `observation_covariance` [m, m]; the value is
+    /// the observation series, [T, m]. The covariances must be symmetric positive semidefinite. Support: real. See
+    /// [`keanu_distributions::LinearGaussianStateSpace`] and
+    /// [`GraphBuilder::linear_gaussian_state_space`](crate::GraphBuilder::linear_gaussian_state_space).
+    LinearGaussianStateSpace,
 }
 
 /// A user-defined distribution for a probabilistic node, the equivalent of implementing a custom probabilistic
@@ -290,12 +306,18 @@ macro_rules! distributions {
                         types.extend([DType::F64; mixture::OWN_PARAMETERS]);
                         Some(Cow::Owned(types))
                     }
+                    DistributionKind::HiddenMarkovModel(emission) => {
+                        let mut types = emission.parameter_types()?.into_owned();
+                        types.extend([DType::F64; hmm::OWN_PARAMETERS]);
+                        Some(Cow::Owned(types))
+                    }
                 }
             }
 
             /// The parameter names, in parent order (e.g. `["mu", "sigma"]` for a Gaussian), or None for a variable
             /// number of parameters (Categorical, Custom). A kind built around another one has its base's names
-            /// followed by its own (`lower` and `upper` for a truncated or censored kind, `weights` for a mixture).
+            /// followed by its own (`lower` and `upper` for a truncated or censored kind, `weights` for a mixture,
+            /// `initial` and `transition` for a hidden Markov model).
             pub fn parameter_names(&self) -> Option<Cow<'static, [&'static str]>> {
                 match self {
                     $(DistributionKind::$kind => Some(Cow::Borrowed(&[$(stringify!($param)),+])),)+
@@ -309,6 +331,11 @@ macro_rules! distributions {
                     DistributionKind::Mixture(component) => {
                         let mut names = component.parameter_names()?.into_owned();
                         names.push("weights");
+                        Some(Cow::Owned(names))
+                    }
+                    DistributionKind::HiddenMarkovModel(emission) => {
+                        let mut names = emission.parameter_names()?.into_owned();
+                        names.extend(["initial", "transition"]);
                         Some(Cow::Owned(names))
                     }
                 }
@@ -383,7 +410,8 @@ macro_rules! distributions {
                     DistributionKind::Custom(c) => c.value_type(),
                     DistributionKind::Truncated(base)
                     | DistributionKind::Censored(base)
-                    | DistributionKind::Mixture(base) => base.value_type(),
+                    | DistributionKind::Mixture(base)
+                    | DistributionKind::HiddenMarkovModel(base) => base.value_type(),
                 }
             }
 
@@ -396,6 +424,7 @@ macro_rules! distributions {
                     DistributionKind::Truncated(_) => "truncated",
                     DistributionKind::Censored(_) => "censored",
                     DistributionKind::Mixture(_) => "mixture",
+                    DistributionKind::HiddenMarkovModel(_) => "hidden_markov_model",
                 }
             }
 
@@ -416,6 +445,7 @@ macro_rules! distributions {
                         wrappers::support(base, parameters)?
                     }
                     DistributionKind::Mixture(component) => mixture::support(component, parameters)?,
+                    DistributionKind::HiddenMarkovModel(emission) => hmm::support(emission, parameters)?,
                 })
             }
 
@@ -459,6 +489,7 @@ macro_rules! distributions {
                     DistributionKind::Truncated(base) => wrappers::sample_truncated(base, shape, parameters, rng)?,
                     DistributionKind::Censored(base) => wrappers::sample_censored(base, shape, parameters, rng)?,
                     DistributionKind::Mixture(component) => mixture::sample(component, shape, parameters, rng)?,
+                    DistributionKind::HiddenMarkovModel(emission) => hmm::sample(emission, shape, parameters, rng)?,
                 })
             }
 
@@ -483,6 +514,9 @@ macro_rules! distributions {
                     }
                     DistributionKind::Mixture(component) => {
                         mixture::log_prob(component, value, parameters, false)?.0
+                    }
+                    DistributionKind::HiddenMarkovModel(emission) => {
+                        hmm::log_prob(emission, value, parameters, false)?.0
                     }
                 })
             }
@@ -522,6 +556,10 @@ macro_rules! distributions {
                     }
                     DistributionKind::Mixture(component) => {
                         let (_, gradient) = mixture::log_prob(component, value, parameters, true)?;
+                        gradient.unwrap_or_else(|| no_gradient(parameters.len()))
+                    }
+                    DistributionKind::HiddenMarkovModel(emission) => {
+                        let (_, gradient) = hmm::log_prob(emission, value, parameters, true)?;
                         gradient.unwrap_or_else(|| no_gradient(parameters.len()))
                     }
                 })
@@ -580,6 +618,10 @@ macro_rules! distributions {
                     }
                     DistributionKind::Mixture(component) => {
                         let (log_prob, gradient) = mixture::log_prob(component, value, parameters, true)?;
+                        (log_prob, gradient.filter(|_| !is_impossible(log_prob)))
+                    }
+                    DistributionKind::HiddenMarkovModel(emission) => {
+                        let (log_prob, gradient) = hmm::log_prob(emission, value, parameters, true)?;
                         (log_prob, gradient.filter(|_| !is_impossible(log_prob)))
                     }
                 })
@@ -778,6 +820,14 @@ distributions! {
     MultivariateGaussian "multivariate_gaussian" (mu: F64, covariance: F64) -> F64 =>
         d::MultivariateGaussian::new(mu, covariance),
         support = Support::Real;
+    LinearGaussianStateSpace "linear_gaussian_state_space" (
+        initial_mean: F64, initial_covariance: F64, transition_matrix: F64, transition_covariance: F64,
+        observation_matrix: F64, observation_covariance: F64
+    ) -> F64 => d::LinearGaussianStateSpace::new(
+            initial_mean, initial_covariance, transition_matrix, transition_covariance, observation_matrix,
+            observation_covariance
+        ),
+        support = Support::Real;
     Pareto "pareto" (location: F64, scale: F64) -> F64 => d::Pareto::new(location, scale),
         support = Support::GreaterThan(location.clone()),
         cdf = none;
@@ -935,6 +985,15 @@ impl DistributionOp {
                 )));
             }
         }
+        if let DistributionKind::HiddenMarkovModel(emission) = kind {
+            if !emission.is_elementwise() {
+                return Err(invalid(format!(
+                    "the emission distribution ({}) does not have one value per element with an element-wise \
+                     density, so it cannot be a hidden Markov model's emission",
+                    emission.name()
+                )));
+            }
+        }
         match kind.parameter_types() {
             Some(types) => {
                 if parameters.len() != types.len()
@@ -1006,6 +1065,38 @@ impl DistributionOp {
             DistributionKind::Kde(_) => Ok(Shape::from_slice(requested.unwrap_or(&[]))),
             DistributionKind::Mixture(_) => {
                 mixture::value_shape(requested, parameters).map_err(invalid)
+            }
+            DistributionKind::HiddenMarkovModel(_) => {
+                hmm::value_shape(requested, parameters).map_err(invalid)
+            }
+            DistributionKind::LinearGaussianStateSpace => {
+                let shapes: Vec<&[usize]> = parameters.iter().map(|(_, s)| *s).collect();
+                let (d, m) = match *shapes.as_slice() {
+                    [[d], _, _, _, [m, _], _] => (*d, *m),
+                    _ => {
+                        return Err(invalid(
+                            "the initial mean must be a vector [d] and the observation matrix a matrix [m, d]"
+                                .into(),
+                        ));
+                    }
+                };
+                let expected: [&[usize]; 6] = [&[d], &[d, d], &[d, d], &[d, d], &[m, d], &[m, m]];
+                let names = kind.parameter_names().unwrap_or_default();
+                for ((name, shape), expected) in names.iter().zip(&shapes).zip(expected) {
+                    if *shape != expected {
+                        return Err(invalid(format!(
+                            "{name} has shape {shape:?}, but a state of dimension {d} observed in dimension {m} \
+                             needs {expected:?}"
+                        )));
+                    }
+                }
+                match requested {
+                    Some(&[t]) => Ok(Shape::from_slice(&[t, m])),
+                    Some(&[t, mm]) if mm == m => Ok(Shape::from_slice(&[t, m])),
+                    _ => Err(invalid(format!(
+                        "needs a shape [T] or [T, {m}] for its observations, not {requested:?}"
+                    ))),
+                }
             }
             DistributionKind::OrderedLogistic => {
                 let (eta, cutpoints) = (parameters[0].1, parameters[1].1);

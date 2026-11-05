@@ -31,6 +31,7 @@ fn distribution_name(kind: &DistributionKind) -> String {
         DistributionKind::Truncated(_) => "Truncated".into(),
         DistributionKind::Censored(_) => "Censored".into(),
         DistributionKind::Mixture(_) => "Mixture".into(),
+        DistributionKind::HiddenMarkovModel(_) => "HiddenMarkovModel".into(),
         // the other kinds are unit variants, which format as their name
         kind => format!("{kind:?}"),
     }
@@ -153,6 +154,14 @@ mod tests {
             (
                 DistributionKind::Mixture(Arc::new(DistributionKind::Gaussian)),
                 "Mixture",
+            ),
+            (
+                DistributionKind::HiddenMarkovModel(Arc::new(DistributionKind::Poisson)),
+                "HiddenMarkovModel",
+            ),
+            (
+                DistributionKind::LinearGaussianStateSpace,
+                "LinearGaussianStateSpace",
             ),
             (DistributionKind::Weibull, "Weibull"),
             (DistributionKind::VonMises, "VonMises"),

@@ -99,6 +99,9 @@ macro_rules! distribution_codes {
                 DistributionKind::Truncated(base) => (proto::DistributionKind::Truncated, None, Some(base)),
                 DistributionKind::Censored(base) => (proto::DistributionKind::Censored, None, Some(base)),
                 DistributionKind::Mixture(base) => (proto::DistributionKind::Mixture, None, Some(base)),
+                DistributionKind::HiddenMarkovModel(base) => {
+                    (proto::DistributionKind::HiddenMarkovModel, None, Some(base))
+                }
                 _ => return None,
             };
             let base = match base {
@@ -129,6 +132,7 @@ macro_rules! distribution_codes {
                 proto::DistributionKind::Truncated
                     | proto::DistributionKind::Censored
                     | proto::DistributionKind::Mixture
+                    | proto::DistributionKind::HiddenMarkovModel
             );
             let base = match (&saved.base, nested) {
                 (Some(base), true) => Some(Arc::new(distribution_of_type(base)?)),
@@ -157,11 +161,15 @@ macro_rules! distribution_codes {
                 (proto::DistributionKind::Truncated, Some(base)) => DistributionKind::Truncated(base),
                 (proto::DistributionKind::Censored, Some(base)) => DistributionKind::Censored(base),
                 (proto::DistributionKind::Mixture, Some(base)) => DistributionKind::Mixture(base),
+                (proto::DistributionKind::HiddenMarkovModel, Some(base)) => {
+                    DistributionKind::HiddenMarkovModel(base)
+                }
                 (proto::DistributionKind::Unspecified, _)
                 | (
                     proto::DistributionKind::Truncated
                     | proto::DistributionKind::Censored
-                    | proto::DistributionKind::Mixture,
+                    | proto::DistributionKind::Mixture
+                    | proto::DistributionKind::HiddenMarkovModel,
                     None,
                 ) => return Err(unknown()),
             })
@@ -200,6 +208,7 @@ distribution_codes!(
     VonMises,
     NegativeBinomial,
     OrderedLogistic,
+    LinearGaussianStateSpace,
 );
 
 #[cfg(test)]
@@ -217,7 +226,7 @@ mod tests {
     }
 
     /// The number of distribution kinds in the schema.
-    const DISTRIBUTION_KINDS: i32 = 34;
+    const DISTRIBUTION_KINDS: i32 = 36;
 
     #[test]
     fn every_schema_value_has_a_variant() {
@@ -242,6 +251,7 @@ mod tests {
             proto::DistributionKind::Truncated as i32,
             proto::DistributionKind::Censored as i32,
             proto::DistributionKind::Mixture as i32,
+            proto::DistributionKind::HiddenMarkovModel as i32,
         ];
         for code in 1..=DISTRIBUTION_KINDS {
             let kde = (code == proto::DistributionKind::Kde as i32).then(|| proto::Kde {

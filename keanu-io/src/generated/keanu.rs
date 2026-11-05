@@ -387,7 +387,7 @@ pub struct Distribution {
     #[prost(message, optional, tag = "3")]
     pub kde: ::core::option::Option<Kde>,
     /// The distribution a nested kind is built around (`DISTRIBUTION_KIND_TRUNCATED`, `DISTRIBUTION_KIND_CENSORED`
-    /// and `DISTRIBUTION_KIND_MIXTURE` only, for which it is required). The node's parents are the base's parameters
+    /// `DISTRIBUTION_KIND_MIXTURE` and `DISTRIBUTION_KIND_HIDDEN_MARKOV_MODEL` only, for which it is required). The node's parents are the base's parameters
     /// followed by the nested kind's own.
     #[prost(message, optional, tag = "4")]
     pub base: ::core::option::Option<DistributionType>,
@@ -916,6 +916,9 @@ pub enum DistributionKind {
     Censored = 33,
     /// Parameters: the base's (with a trailing component axis), then `weights`.
     Mixture = 34,
+    /// Parameters: the emission's (with a trailing state axis), then `initial`, `transition`.
+    HiddenMarkovModel = 35,
+    LinearGaussianStateSpace = 36,
 }
 impl DistributionKind {
     /// String value of the enum field names used in the ProtoBuf definition.
@@ -959,6 +962,10 @@ impl DistributionKind {
             Self::Truncated => "DISTRIBUTION_KIND_TRUNCATED",
             Self::Censored => "DISTRIBUTION_KIND_CENSORED",
             Self::Mixture => "DISTRIBUTION_KIND_MIXTURE",
+            Self::HiddenMarkovModel => "DISTRIBUTION_KIND_HIDDEN_MARKOV_MODEL",
+            Self::LinearGaussianStateSpace => {
+                "DISTRIBUTION_KIND_LINEAR_GAUSSIAN_STATE_SPACE"
+            }
         }
     }
     /// Creates an enum from field names used in the ProtoBuf definition.
@@ -999,6 +1006,10 @@ impl DistributionKind {
             "DISTRIBUTION_KIND_TRUNCATED" => Some(Self::Truncated),
             "DISTRIBUTION_KIND_CENSORED" => Some(Self::Censored),
             "DISTRIBUTION_KIND_MIXTURE" => Some(Self::Mixture),
+            "DISTRIBUTION_KIND_HIDDEN_MARKOV_MODEL" => Some(Self::HiddenMarkovModel),
+            "DISTRIBUTION_KIND_LINEAR_GAUSSIAN_STATE_SPACE" => {
+                Some(Self::LinearGaussianStateSpace)
+            }
             _ => None,
         }
     }

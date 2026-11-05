@@ -14,9 +14,10 @@
 //! - the parameter types are the base's followed by the wrapper's own, and the value type is the base's.
 //!
 //! A mixture's base parameters carry a trailing component axis, and its gradient parts for them are shaped like the
-//! parameters broadcast with the value and that axis. Other kinds wrapping a base distribution (hidden Markov model
-//! emissions) use the same layout. The saved schema stores the base as a nested distribution type, recursively, so
-//! any nesting the graph accepts (a mixture of truncated distributions) saves and loads.
+//! parameters broadcast with the value and that axis. A hidden Markov model ([`DistributionKind::HiddenMarkovModel`],
+//! in the hmm module) does the same with its emission's parameters and a trailing state axis. The saved schema
+//! stores the base as a nested distribution type, recursively, so any nesting the graph accepts (a mixture of
+//! truncated distributions) saves and loads.
 
 use super::Support;
 use super::distribution::{DistributionKind, LogProbGradientParts, ParameterGradients, Univariate};

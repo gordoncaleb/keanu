@@ -551,6 +551,144 @@ impl GraphBuilder {
     }
 }
 
+impl GraphBuilder {
+    /// A hidden Markov model over `steps` time steps: a hidden chain of K states, the first drawn from the
+    /// `initial` probabilities (`[K]`) and each later one from the row of the `transition` probabilities ([K, K]) for
+    /// the state before it, and at each step an observation from the `emission` kind with the current state's
+    /// parameters. `parameters` are the emission's parameter nodes, in its order, each with a trailing state axis
+    /// (of length K, or 1, or no axes at all, to share one value between the states); a parameter may also have a
+    /// leading time axis (of length `steps`) for parameters that vary over time.
+    ///
+    /// The initial and transition parameters are probabilities, not log probabilities: non-negative and summing to
+    /// 1 along their last axis (within 1e-5), so a Dirichlet prior (one per transition row) puts them on the
+    /// simplex for the gradient based algorithms. Zeros are allowed and rule out the paths through them.
+    ///
+    /// The emission is an element-wise univariate kind, as for [`Self::mixture`]. The value is the observation
+    /// series, of shape `[steps]`; use [`Self::hidden_markov_model_with_shape`] for several observations per step.
+    /// The log density is the exact marginal likelihood, summed over every state path by the log-space forward
+    /// algorithm in O(T K²), and its gradient with respect to the emission parameters, the probabilities and (for
+    /// a continuous emission) the observations is exact (the forward-backward algorithm). Drawing a value
+    /// simulates the chain and then each step's observation. The support is the emission's, widened to hold
+    /// every state's. The handle type must match the emission's value type ([`DoubleVar`] or [`IntVar`]).
+    ///
+    /// ```
+    /// use keanu_graph::{IntVar, GraphBuilder, op::DistributionKind};
+    /// use keanu_tensor::{DoubleTensor, IntTensor};
+    ///
+    /// let b = GraphBuilder::new();
+    /// // two regimes with Poisson counts of mean 2 and 9
+    /// let rates = b.constant(DoubleTensor::vector(vec![2.0, 9.0]));
+    /// let initial = b.constant(DoubleTensor::vector(vec![0.5, 0.5]));
+    /// let transition = b.constant(DoubleTensor::new(&[2, 2], vec![0.95, 0.05, 0.1, 0.9])?);
+    /// let counts: IntVar =
+    ///     b.hidden_markov_model(6, DistributionKind::Poisson, &[rates.id()], initial, transition);
+    /// b.observe(counts, IntTensor::vector(vec![1, 3, 2, 10, 8, 11]));
+    /// b.build()?;
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
+    pub fn hidden_markov_model<'b, V: Var<'b>>(
+        &'b self,
+        steps: usize,
+        emission: DistributionKind,
+        parameters: &[NodeId],
+        initial: impl IntoDoubleVar<'b>,
+        transition: impl IntoDoubleVar<'b>,
+    ) -> V {
+        self.hidden_markov_model_with_shape(&[steps], emission, parameters, initial, transition)
+    }
+
+    /// Like [`Self::hidden_markov_model`], with observations of the given shape [T, ...]: time first, then the
+    /// shape of each step's observation (all of whose elements are emitted by that step's state). Each emission
+    /// parameter's shape without its state axis must broadcast to `shape`.
+    pub fn hidden_markov_model_with_shape<'b, V: Var<'b>>(
+        &'b self,
+        shape: &[usize],
+        emission: DistributionKind,
+        parameters: &[NodeId],
+        initial: impl IntoDoubleVar<'b>,
+        transition: impl IntoDoubleVar<'b>,
+    ) -> V {
+        let kind = DistributionKind::HiddenMarkovModel(Arc::new(emission));
+        if kind.value_type() != V::DTYPE {
+            self.record(GraphError::InvalidNode {
+                op: "hidden_markov_model",
+                message: format!(
+                    "the emission distribution's values are {:?} but a {:?} node was requested",
+                    kind.value_type(),
+                    V::DTYPE
+                ),
+            });
+        }
+        let mut ids = parameters.to_vec();
+        ids.extend([initial.into_var(self).id(), transition.into_var(self).id()]);
+        V::wrap(self, self.distribution(kind, Some(shape), &ids))
+    }
+
+    /// A linear-Gaussian state-space model over `steps` time steps (the model of the Kalman filter): a hidden
+    /// state x_t of dimension d with x_0 ~ N(`initial_mean`, `initial_covariance`) and
+    /// x_{t+1} = `transition_matrix` x_t + N(0, `transition_covariance`), observed as
+    /// y_t = `observation_matrix` x_t + N(0, `observation_covariance`) in dimension m. The value is the
+    /// observations, of shape [steps, m].
+    ///
+    /// Shapes: `initial_mean` `[d]`, `initial_covariance`, `transition_matrix` and `transition_covariance` [d, d],
+    /// `observation_matrix` [m, d], `observation_covariance` [m, m]; the covariances must be symmetric positive
+    /// semidefinite (with H P Hᵀ + R positive definite at each step, else the observations are impossible). The
+    /// log density is the Kalman filter's exact marginal likelihood, computed with Cholesky solves and the
+    /// Joseph-form covariance update, and its gradient with respect to the observations and every parameter is
+    /// exact; see [`keanu_distributions::LinearGaussianStateSpace`]. Shape mismatches are build errors.
+    ///
+    /// ```
+    /// use keanu_graph::GraphBuilder;
+    /// use keanu_tensor::DoubleTensor;
+    ///
+    /// let b = GraphBuilder::new();
+    /// // a local level model: a random walk observed with noise
+    /// let level_noise = b.half_gaussian(1.0);
+    /// let q = (level_noise * level_noise).reshape(&[1, 1]);
+    /// let one = || b.constant(DoubleTensor::new(&[1, 1], vec![1.0]).unwrap());
+    /// let y = b.linear_gaussian_state_space(
+    ///     4,
+    ///     b.constant(DoubleTensor::vector(vec![0.0])),
+    ///     b.constant(DoubleTensor::new(&[1, 1], vec![10.0])?),
+    ///     one(),
+    ///     q,
+    ///     one(),
+    ///     b.constant(DoubleTensor::new(&[1, 1], vec![0.25])?),
+    /// );
+    /// b.observe(y, DoubleTensor::new(&[4, 1], vec![0.3, 0.9, 1.4, 1.1])?);
+    /// b.build()?;
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
+    #[allow(clippy::too_many_arguments)]
+    pub fn linear_gaussian_state_space<'b>(
+        &'b self,
+        steps: usize,
+        initial_mean: impl IntoDoubleVar<'b>,
+        initial_covariance: impl IntoDoubleVar<'b>,
+        transition_matrix: impl IntoDoubleVar<'b>,
+        transition_covariance: impl IntoDoubleVar<'b>,
+        observation_matrix: impl IntoDoubleVar<'b>,
+        observation_covariance: impl IntoDoubleVar<'b>,
+    ) -> DoubleVar<'b> {
+        let ids = [
+            initial_mean.into_var(self).id(),
+            initial_covariance.into_var(self).id(),
+            transition_matrix.into_var(self).id(),
+            transition_covariance.into_var(self).id(),
+            observation_matrix.into_var(self).id(),
+            observation_covariance.into_var(self).id(),
+        ];
+        DoubleVar::new(
+            self,
+            self.distribution(
+                DistributionKind::LinearGaussianStateSpace,
+                Some(&[steps]),
+                &ids,
+            ),
+        )
+    }
+}
+
 /// Two tensors broadcast to their common shape.
 fn broadcast_pair(
     a: &DoubleTensor,

@@ -3,6 +3,7 @@
 mod distribution;
 mod distribution_hvp;
 pub(crate) mod eval;
+mod hmm;
 mod mixture;
 mod shape;
 mod wrappers;
