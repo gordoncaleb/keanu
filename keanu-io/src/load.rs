@@ -250,10 +250,25 @@ fn add_node(builder: &GraphBuilder, op: &P, parents: &[NodeId]) -> Result<NodeId
         P::Cast(code) => Op::Cast(decode(*code)?),
         P::Where(_) => Op::Where,
         P::Multiplexer(_) => Op::Multiplexer,
-        P::Cpt(p) => Op::Cpt {
-            conditions: usize_of(p.conditions)?,
-            keys: p.keys.iter().map(|k| k.values.clone()).collect(),
-        },
+        P::Cpt(p) => {
+            // checked here as well as by the graph, so a count from the file never reaches arity arithmetic
+            let conditions = usize_of(p.conditions)?;
+            if conditions >= parents.len() {
+                return Err(IoError::Decode(format!(
+                    "a cpt has {conditions} conditions but only {} parents",
+                    parents.len()
+                )));
+            }
+            if p.keys.iter().any(|k| k.values.len() != conditions) {
+                return Err(IoError::Decode(
+                    "every cpt key needs one value per condition".into(),
+                ));
+            }
+            Op::Cpt {
+                conditions,
+                keys: p.keys.iter().map(|k| k.values.clone()).collect(),
+            }
+        }
         P::SetWithMask(_) => Op::SetWithMask,
         P::ReplaceNan(p) => Op::ReplaceNan(p.value),
         P::Assert(p) => Op::Assert(p.message.clone()),

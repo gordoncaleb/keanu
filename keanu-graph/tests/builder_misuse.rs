@@ -230,3 +230,24 @@ fn duplicate_parents_give_a_single_child_entry() {
     assert!(!children.contains(&cube));
     assert!(children.windows(2).all(|w| w[0] < w[1]));
 }
+
+#[test]
+fn a_cpt_with_more_conditions_than_parents_is_an_error_not_a_panic() {
+    let b = GraphBuilder::new();
+    let x = b.scalar(1.0).id();
+    // usize::MAX conditions used to overflow the arity check (and wrap to zero parents in release builds)
+    for (conditions, parents) in [(usize::MAX, vec![]), (usize::MAX, vec![x]), (3, vec![x])] {
+        let op = Op::Cpt {
+            conditions,
+            keys: vec![],
+        };
+        assert!(
+            matches!(
+                b.add_node(op, &parents),
+                Err(GraphError::InvalidNode { .. })
+            ),
+            "{conditions} conditions, {} parents",
+            parents.len()
+        );
+    }
+}

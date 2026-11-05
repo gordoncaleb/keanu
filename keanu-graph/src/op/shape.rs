@@ -124,7 +124,7 @@ pub(crate) fn output_type(op: &Op, parents: &[(DType, &[usize])]) -> Result<(DTy
         }
         Op::Cpt { conditions, keys } => {
             let (conditions, outcomes) = (*conditions, keys.len());
-            if parents.len() != conditions + outcomes + 1 {
+            if conditions >= parents.len() || parents.len() - conditions != outcomes + 1 {
                 return Err(invalid(
                     op,
                     "needs the conditions, one outcome per key and a default",
@@ -225,7 +225,15 @@ fn check_arity(op: &Op, count: usize) -> Result<()> {
         Op::Concat(_) | Op::Stack(_) => (1, None),
         Op::Multiplexer => (2, None),
         Op::Cpt { conditions, keys } => {
-            let n = conditions + keys.len() + 1;
+            let Some(n) = conditions
+                .checked_add(keys.len())
+                .and_then(|n| n.checked_add(1))
+            else {
+                return Err(invalid(
+                    op,
+                    format!("{conditions} conditions is more parents than a node can have"),
+                ));
+            };
             (n, Some(n))
         }
         Op::Scan(body) => {

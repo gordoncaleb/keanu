@@ -1147,6 +1147,39 @@ fn invalid_shapes_and_values_are_decode_errors() {
     ));
 }
 
+#[test]
+fn malformed_cpt_condition_counts_are_errors_not_panics() {
+    let is_error = |result: keanu_io::Result<Loaded>| {
+        matches!(
+            result,
+            Err(IoError::Decode(_)) | Err(IoError::InvalidNode { .. }) | Err(IoError::Graph(_))
+        )
+    };
+    let max = serde_json::json!("18446744073709551615");
+    // more conditions than parents: a huge count (which used to overflow the arity check) and a small one
+    for conditions in [max.clone(), 5.into()] {
+        for parents in [serde_json::json!([]), serde_json::json!([0])] {
+            let cpt = with_node(serde_json::json!({"parents": parents,
+                "cpt": {"conditions": conditions, "keys": []}}));
+            let result = load_json(&cpt).map(|_| ());
+            assert!(
+                matches!(result, Err(IoError::InvalidNode { index: 1, .. })),
+                "conditions {conditions}, parents {parents}: {result:?}"
+            );
+        }
+    }
+    // a key without one value per condition
+    let int = serde_json::json!({"constant": {"shape": [], "i64": {"values": ["1"]}}});
+    let mut model = saved_vector();
+    model["graph"]["nodes"].as_array_mut().unwrap().push(int);
+    model["graph"]["nodes"]
+        .as_array_mut()
+        .unwrap()
+        .push(serde_json::json!({"parents": [1, 0, 0],
+        "cpt": {"conditions": 1, "keys": [{"values": ["1", "2"]}]}}));
+    assert!(is_error(load_json(&model.to_string())));
+}
+
 // ----- DOT -----
 
 #[cfg(feature = "dot")]
