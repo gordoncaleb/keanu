@@ -5,11 +5,10 @@ use keanu_distributions::*;
 use keanu_tensor::{DoubleTensor, IntTensor};
 use std::f64::consts::PI;
 
-const N: usize = 200_000;
+mod common;
+use common::s;
 
-fn s(v: f64) -> DoubleTensor {
-    DoubleTensor::scalar(v)
-}
+const N: usize = 200_000;
 
 fn rng() -> KeanuRng {
     KeanuRng::seed_from_u64(42)

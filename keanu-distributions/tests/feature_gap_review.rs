@@ -4,16 +4,8 @@
 use keanu_distributions::*;
 use keanu_tensor::{DoubleTensor, IntTensor};
 
-fn s(v: f64) -> DoubleTensor {
-    DoubleTensor::scalar(v)
-}
-
-fn close(actual: f64, expected: f64, tolerance: f64, what: &str) {
-    assert!(
-        actual == expected || (actual - expected).abs() <= tolerance * expected.abs().max(1.0),
-        "{what}: {actual} != {expected}"
-    );
-}
+mod common;
+use common::{assert_close_rel, s};
 
 #[test]
 fn negative_binomial_gradients_at_zero_mean() {
@@ -21,15 +13,15 @@ fn negative_binomial_gradients_at_zero_mean() {
     let dist = NegativeBinomial::new(s(0.0), s(alpha));
     // k = 0: log P = -α ln(1 + μ/α), so d/dμ = -1/(1 + μ/α) = -1 and d/dα = -ln(1 + μ/α) + μ/(α + μ) = 0
     let g = dist.d_log_prob(&IntTensor::scalar(0)).unwrap();
-    close(g.mu.as_slice()[0], -1.0, 1e-12, "d/dmu at k = 0");
-    close(g.alpha.as_slice()[0], 0.0, 1e-12, "d/dalpha at k = 0");
+    assert_close_rel(g.mu.as_slice()[0], -1.0, 1e-12, "d/dmu at k = 0");
+    assert_close_rel(g.alpha.as_slice()[0], 0.0, 1e-12, "d/dalpha at k = 0");
     // k > 0 is impossible at μ = 0; log P ≈ k ln μ, so d/dμ → +∞, and d/dα has the finite limit
     // ψ(k + α) - ψ(α) - k/α
     let k = 3.0;
     let g = dist.d_log_prob(&IntTensor::scalar(3)).unwrap();
     assert_eq!(g.mu.as_slice()[0], f64::INFINITY);
     let digamma = keanu_tensor::special::digamma;
-    close(
+    assert_close_rel(
         g.alpha.as_slice()[0],
         digamma(k + alpha) - digamma(alpha) - k / alpha,
         1e-12,
@@ -39,8 +31,8 @@ fn negative_binomial_gradients_at_zero_mean() {
     // 1 - P(X <= k) = O(μ^(k+1)), so both derivatives are 0
     let g = dist.d_log_cdf(&IntTensor::vector(vec![0, 1, 4])).unwrap();
     for (i, expected) in [-1.0, 0.0, 0.0].into_iter().enumerate() {
-        close(g.mu.as_slice()[i], expected, 1e-9, "d log cdf / dmu");
-        close(g.alpha.as_slice()[i], 0.0, 1e-9, "d log cdf / dalpha");
+        assert_close_rel(g.mu.as_slice()[i], expected, 1e-9, "d log cdf / dmu");
+        assert_close_rel(g.alpha.as_slice()[i], 0.0, 1e-9, "d log cdf / dalpha");
     }
     // the survival function is 0 at μ = 0 (log -∞): no NaN
     let g = dist.d_log_ccdf(&IntTensor::vector(vec![0, 1, 4])).unwrap();
@@ -56,14 +48,14 @@ fn weibull_log_cdf_gradient_where_the_cdf_underflows() {
         let dist = Weibull::new(s(a), s(b));
         let g = dist.d_log_cdf(&s(x)).unwrap();
         let what = format!("alpha {a}, beta {b}, x {x}");
-        close(g.x.as_slice()[0], a / x, 1e-9, &format!("d/dx, {what}"));
-        close(
+        assert_close_rel(g.x.as_slice()[0], a / x, 1e-9, &format!("d/dx, {what}"));
+        assert_close_rel(
             g.alpha.as_slice()[0],
             x.ln() - f64::ln(b),
             1e-9,
             &format!("d/dalpha, {what}"),
         );
-        close(
+        assert_close_rel(
             g.beta.as_slice()[0],
             -a / b,
             1e-9,
@@ -94,14 +86,14 @@ fn weibull_log_prob_gradient_at_and_near_zero() {
         let g = dist.d_log_prob(&s(x)).unwrap();
         let [dx, da, db] = expected(a, b, x);
         let what = format!("alpha {a}, beta {b}, x {x}");
-        close(g.x.as_slice()[0], dx, 1e-9, &format!("d/dx, {what}"));
-        close(
+        assert_close_rel(g.x.as_slice()[0], dx, 1e-9, &format!("d/dx, {what}"));
+        assert_close_rel(
             g.alpha.as_slice()[0],
             da,
             1e-9,
             &format!("d/dalpha, {what}"),
         );
-        close(g.beta.as_slice()[0], db, 1e-9, &format!("d/dbeta, {what}"));
+        assert_close_rel(g.beta.as_slice()[0], db, 1e-9, &format!("d/dbeta, {what}"));
     }
     // at x = 0, the limits: d/dx is -1/β for α = 1 and ±∞ (the sign of α - 1) otherwise; d/dα → -∞ (the
     // (α - 1) ln x term); d/dβ = -α/β
@@ -113,7 +105,7 @@ fn weibull_log_prob_gradient_at_and_near_zero() {
         let g = Weibull::new(s(a), s(b)).d_log_prob(&s(0.0)).unwrap();
         assert_eq!(g.x.as_slice()[0], dx, "d/dx at x = 0, alpha {a}");
         assert_eq!(g.alpha.as_slice()[0], f64::NEG_INFINITY, "d/dalpha at 0");
-        close(g.beta.as_slice()[0], -a / b, 1e-12, "d/dbeta at x = 0");
+        assert_close_rel(g.beta.as_slice()[0], -a / b, 1e-12, "d/dbeta at x = 0");
     }
 }
 

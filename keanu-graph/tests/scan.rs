@@ -8,9 +8,8 @@ use keanu_graph::{
 };
 use keanu_tensor::DoubleTensor;
 
-fn t(shape: &[usize], data: &[f64]) -> DoubleTensor {
-    DoubleTensor::new(shape, data.to_vec()).unwrap()
-}
+mod common;
+use common::t;
 
 fn rng() -> KeanuRng {
     KeanuRng::seed_from_u64(7)

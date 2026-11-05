@@ -4,13 +4,8 @@
 use keanu_distributions::*;
 use keanu_tensor::{BoolTensor, DoubleTensor, IntTensor};
 
-fn s(v: f64) -> DoubleTensor {
-    DoubleTensor::scalar(v)
-}
-
-fn v(values: &[f64]) -> DoubleTensor {
-    DoubleTensor::vector(values.to_vec())
-}
+mod common;
+use common::{s, v};
 
 fn ln_gamma(x: f64) -> f64 {
     keanu_tensor::special::ln_gamma(x)

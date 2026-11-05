@@ -6,11 +6,10 @@ use keanu_distributions::*;
 use keanu_tensor::DoubleTensor;
 use keanu_tensor::special::log_beta;
 
-const H: f64 = 1e-6;
+mod common;
+use common::{assert_close_rel, s};
 
-fn s(v: f64) -> DoubleTensor {
-    DoubleTensor::scalar(v)
-}
+const H: f64 = 1e-6;
 
 fn matrix(k: usize, values: &[f64]) -> DoubleTensor {
     DoubleTensor::new(&[k, k], values.to_vec()).unwrap()
@@ -46,13 +45,6 @@ fn factor_4() -> DoubleTensor {
     )
 }
 
-fn assert_close(actual: f64, expected: f64, tolerance: f64, what: &str) {
-    assert!(
-        (actual - expected).abs() <= tolerance * expected.abs().max(1.0),
-        "{what}: {actual} vs {expected}"
-    );
-}
-
 #[test]
 fn k2_log_density_is_the_analytic_correlation_density() {
     // For K = 2 the free coordinate of L is r = L[1, 0] itself (L[1, 1] = √(1 − r²) is determined), so the
@@ -64,7 +56,7 @@ fn k2_log_density_is_the_analytic_correlation_density() {
                 - (2.0 * eta - 1.0) * 2f64.ln()
                 - log_beta(eta, eta);
             let actual = LkjCholesky::new(s(eta)).log_prob(&factor_2(r)).unwrap();
-            assert_close(actual, expected, 1e-12, &format!("eta {eta}, r {r}"));
+            assert_close_rel(actual, expected, 1e-12, &format!("eta {eta}, r {r}"));
         }
     }
 }
@@ -92,7 +84,7 @@ fn k3_density_integrates_to_one() {
             }
         }
         integral *= h * h * h;
-        assert_close(integral, 1.0, 1e-6, &format!("eta {eta}"));
+        assert_close_rel(integral, 1.0, 1e-6, &format!("eta {eta}"));
     }
 }
 
@@ -123,7 +115,7 @@ fn check(
         let numeric = (log_prob(&DoubleTensor::new(at.shape(), up).unwrap())
             - log_prob(&DoubleTensor::new(at.shape(), down).unwrap()))
             / (2.0 * H);
-        assert_close(
+        assert_close_rel(
             analytic.as_slice()[i],
             numeric,
             1e-6,
@@ -174,7 +166,7 @@ fn batches_sum_and_reduce_the_eta_gradient_to_its_shape() {
 
     // a scalar eta is shared by every matrix; its gradient is the sum over the batch
     let shared = LkjCholesky::new(s(1.5));
-    assert_close(
+    assert_close_rel(
         shared.log_prob(&batch).unwrap(),
         separate(1.5, 1.5),
         1e-12,
@@ -190,7 +182,7 @@ fn batches_sum_and_reduce_the_eta_gradient_to_its_shape() {
     // one eta per matrix
     let etas = DoubleTensor::vector(vec![0.8, 2.5]);
     let each = LkjCholesky::new(etas.clone());
-    assert_close(
+    assert_close_rel(
         each.log_prob(&batch).unwrap(),
         separate(0.8, 2.5),
         1e-12,

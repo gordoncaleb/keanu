@@ -8,11 +8,10 @@ use keanu_algorithms::mcmc::proposal::GaussianProposal;
 use keanu_distributions::KeanuRng;
 use keanu_graph::op::DistributionKind;
 use keanu_graph::{DoubleVar, GraphBuilder, Model, NodeId, State};
-use keanu_tensor::{DoubleTensor, IntTensor};
+use keanu_tensor::IntTensor;
 
-fn v(values: &[f64]) -> DoubleTensor {
-    DoubleTensor::vector(values.to_vec())
-}
+mod common;
+use common::v;
 
 /// Runs Metropolis–Hastings with wide Gaussian proposals on `latent` and returns its sampled values (one vector per
 /// sample) and the acceptance rate.

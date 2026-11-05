@@ -7,12 +7,11 @@ use keanu_graph::{
 };
 use keanu_tensor::{DoubleTensor, IntTensor};
 
+mod common;
+use common::t;
+
 fn rng() -> KeanuRng {
     KeanuRng::seed_from_u64(1)
-}
-
-fn t(shape: &[usize], data: &[f64]) -> DoubleTensor {
-    DoubleTensor::new(shape, data.to_vec()).unwrap()
 }
 
 /// A latent of the given value, so it can be differentiated with respect to.

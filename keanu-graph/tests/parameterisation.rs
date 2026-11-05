@@ -2,25 +2,17 @@
 //! a state, and the log probability and its gradient in unconstrained space with or without the Jacobian.
 
 use keanu_distributions::KeanuRng;
-use keanu_graph::{Graph, GraphBuilder, GraphError, Model, NodeId, Parameterisation, Space, State};
+use keanu_graph::{GraphBuilder, GraphError, Model, NodeId, Parameterisation, Space, State};
 use keanu_tensor::DoubleTensor;
 
-fn v(data: &[f64]) -> DoubleTensor {
-    DoubleTensor::vector(data.to_vec())
-}
-
-fn evaluate(graph: &Graph, state: &mut State) {
-    let all: Vec<NodeId> = graph.ids().collect();
-    state
-        .lazy_eval(graph, &all, &mut KeanuRng::seed_from_u64(11))
-        .unwrap();
-}
+mod common;
+use common::{assert_close_rel, evaluate, v};
 
 fn model_of(build: impl FnOnce(&GraphBuilder)) -> (Model, State) {
     let b = GraphBuilder::new();
     build(&b);
     let (graph, mut state) = b.build().unwrap();
-    evaluate(&graph, &mut state);
+    evaluate(&graph, &mut state, 11);
     let model = Model::new(graph, &state).unwrap();
     (model, state)
 }
@@ -46,14 +38,6 @@ fn mixed_model() -> (Model, State) {
     })
 }
 
-fn assert_close(actual: f64, expected: f64, tolerance: f64, what: &str) {
-    let scale = expected.abs().max(1.0);
-    assert!(
-        (actual - expected).abs() <= tolerance * scale,
-        "{what}: {actual} vs {expected}"
-    );
-}
-
 #[test]
 fn without_the_jacobian_the_log_prob_is_the_constrained_log_prob_at_forward_z() {
     let (model, mut state) = mixed_model();
@@ -71,20 +55,20 @@ fn without_the_jacobian_the_log_prob_is_the_constrained_log_prob_at_forward_z() 
     let p = model.find("p").unwrap();
     let w = model.find("w").unwrap();
     assert_eq!(state.f64(mu).unwrap().as_slice(), &[0.3]);
-    assert_close(
+    assert_close_rel(
         state.f64(sigma).unwrap().as_slice()[0],
         (-0.4f64).exp(),
         1e-15,
         "sigma",
     );
-    assert_close(
+    assert_close_rel(
         state.f64(p).unwrap().as_slice()[0],
         logistic(1.2),
         1e-15,
         "p",
     );
     let w_value = state.f64(w).unwrap().as_slice();
-    assert_close(w_value.iter().sum::<f64>(), 1.0, 1e-14, "simplex sum");
+    assert_close_rel(w_value.iter().sum::<f64>(), 1.0, 1e-14, "simplex sum");
     assert!(w_value.iter().all(|&x| x > 0.0));
 }
 
@@ -111,8 +95,8 @@ fn with_the_jacobian_it_adds_the_log_determinant_for_gamma_beta_and_dirichlet() 
     let dirichlet_jacobian = d.as_slice().iter().map(|x| x.ln()).sum::<f64>() + 0.5 * 4f64.ln();
 
     let expected = without + gamma_jacobian + beta_jacobian + dirichlet_jacobian;
-    assert_close(with, expected, 1e-12, "log prob with the Jacobian");
-    assert_close(
+    assert_close_rel(with, expected, 1e-12, "log prob with the Jacobian");
+    assert_close_rel(
         param.log_det_jacobian(&z).unwrap(),
         gamma_jacobian + beta_jacobian + dirichlet_jacobian,
         1e-12,
@@ -155,7 +139,7 @@ fn the_gradient_matches_finite_differences_in_z() {
             let numeric = finite_difference_gradient(&param, &mut state, &z, jacobian);
             assert_eq!(gradient.len(), numeric.len());
             for (i, (a, n)) in gradient.iter().zip(&numeric).enumerate() {
-                assert_close(
+                assert_close_rel(
                     *a,
                     *n,
                     1e-6,
@@ -178,7 +162,7 @@ fn from_state_then_to_state_leaves_the_state_unchanged() {
         match (before.f64(id), state.f64(id)) {
             (Some(a), Some(b)) => {
                 for (x, y) in a.as_slice().iter().zip(b.as_slice()) {
-                    assert_close(*y, *x, 1e-12, &format!("node {}", id.index()));
+                    assert_close_rel(*y, *x, 1e-12, &format!("node {}", id.index()));
                 }
             }
             (a, b) => assert_eq!(a.is_some(), b.is_some()),
@@ -187,7 +171,7 @@ fn from_state_then_to_state_leaves_the_state_unchanged() {
     // and to_state then from_state recovers z
     let z2 = param.from_state(&state).unwrap();
     for (a, b) in z.iter().zip(&z2) {
-        assert_close(*b, *a, 1e-10, "z round trip");
+        assert_close_rel(*b, *a, 1e-10, "z round trip");
     }
 }
 
@@ -269,7 +253,7 @@ fn a_uniform_bounded_by_another_latent_is_rejected_with_a_reparameterisation_hin
     let lo = b.gaussian(0.0, 1.0).label("lo");
     b.uniform(lo, 5.0).label("x");
     let (graph, mut state) = b.build().unwrap();
-    evaluate(&graph, &mut state);
+    evaluate(&graph, &mut state, 11);
     let model = Model::new(graph, &state).unwrap();
     let error = Parameterisation::new(&model, &state).unwrap_err();
     assert!(matches!(error, GraphError::Transform(_)), "{error:?}");
@@ -283,7 +267,7 @@ fn a_uniform_bounded_by_another_latent_is_rejected_with_a_reparameterisation_hin
     let lo = b.gaussian(0.0, 1.0).label("lo");
     b.uniform(-1.0, lo.exp() + 1.0).label("x");
     let (graph, mut state) = b.build().unwrap();
-    evaluate(&graph, &mut state);
+    evaluate(&graph, &mut state, 11);
     let model = Model::new(graph, &state).unwrap();
     assert!(Parameterisation::new(&model, &state).is_err());
 
@@ -405,7 +389,7 @@ fn the_likelihood_gradient_pulls_back_through_the_bijectors() {
         let f_up = model.log_likelihood(&state).unwrap();
         param.to_state(&down, &mut state).unwrap();
         let f_down = model.log_likelihood(&state).unwrap();
-        assert_close(gradient[i], (f_up - f_down) / (2.0 * h), 1e-6, "likelihood");
+        assert_close_rel(gradient[i], (f_up - f_down) / (2.0 * h), 1e-6, "likelihood");
     }
 }
 

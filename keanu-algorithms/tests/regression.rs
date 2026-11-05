@@ -14,6 +14,9 @@ use keanu_distributions::KeanuRng;
 use keanu_parity::{Arg, DType, GoldenTensor, load, number, parse_tensor};
 use keanu_tensor::{BoolTensor, DoubleTensor};
 
+mod common;
+use common::assert_all_close_rel;
+
 // ----- golden references from Java -----
 
 fn f64_arg(arg: &Arg) -> DoubleTensor {
@@ -44,17 +47,6 @@ fn regularization(name: &str) -> Regularization {
         "LASSO" => Regularization::Lasso,
         "RIDGE" => Regularization::Ridge,
         other => panic!("unknown regularization {other}"),
-    }
-}
-
-/// Optimizers stop at slightly different points; compare relative to the size of the value.
-fn assert_close(what: &str, actual: &[f64], expected: &[f64], tolerance: f64) {
-    assert_eq!(actual.len(), expected.len(), "{what}: lengths differ");
-    for (i, (&a, &e)) in actual.iter().zip(expected).enumerate() {
-        assert!(
-            (a - e).abs() <= tolerance * e.abs().max(1.0),
-            "{what}[{i}]: {a} != expected {e}"
-        );
     }
 }
 
@@ -96,17 +88,17 @@ fn assert_fit_matches<O: keanu_algorithms::regression::RegressionOutput>(
     }
     let strictly_better = rust_fitness > java_fitness + tolerance;
     if !strictly_better {
-        assert_close(
-            &format!("{name} weights"),
+        assert_all_close_rel(
             model.weights().as_slice(),
             &java_weights.data,
             2e-3,
+            &format!("{name} weights"),
         );
-        assert_close(
-            &format!("{name} intercept"),
+        assert_all_close_rel(
             &[model.intercept()],
             &[java_intercept],
             2e-3,
+            &format!("{name} intercept"),
         );
     }
     strictly_better
@@ -173,17 +165,17 @@ fn every_regression_golden_case() {
                 );
                 let r2 = coefficient_of_determination(&prediction, &y_test).unwrap();
                 if !better {
-                    assert_close(
-                        &format!("{} prediction", case.name),
+                    assert_all_close_rel(
                         prediction.as_slice(),
                         &expected_prediction.data,
                         2e-3,
+                        &format!("{} prediction", case.name),
                     );
-                    assert_close(
-                        &format!("{} R²", case.name),
+                    assert_all_close_rel(
                         &[r2],
                         &[number(&fit["coefficientOfDetermination"])],
                         1e-3,
+                        &format!("{} R²", case.name),
                     );
                 }
             }
@@ -226,11 +218,11 @@ fn every_regression_golden_case() {
                         "{} prediction",
                         case.name
                     );
-                    assert_close(
-                        &format!("{} accuracy", case.name),
+                    assert_all_close_rel(
                         &[accuracy(&prediction, &y_test).unwrap()],
                         &[number(&fit["accuracy"])],
                         1e-12,
+                        &format!("{} accuracy", case.name),
                     );
                 }
             }
@@ -238,11 +230,11 @@ fn every_regression_golden_case() {
                 let r2 =
                     coefficient_of_determination(&f64_arg(&case.args[0]), &f64_arg(&case.args[1]))
                         .unwrap();
-                assert_close(&case.name, &[r2], &[number(&case.result)], 1e-12);
+                assert_all_close_rel(&[r2], &[number(&case.result)], 1e-12, &case.name);
             }
             "accuracy" => {
                 let a = accuracy(&bool_arg(&case.args[0]), &bool_arg(&case.args[1])).unwrap();
-                assert_close(&case.name, &[a], &[number(&case.result)], 1e-12);
+                assert_all_close_rel(&[a], &[number(&case.result)], 1e-12, &case.name);
             }
             other => panic!("{}: unmapped op {other}", case.name),
         }

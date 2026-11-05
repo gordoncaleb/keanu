@@ -9,22 +9,10 @@ use keanu_graph::{
 };
 use keanu_tensor::{DoubleTensor, IntTensor};
 
+mod common;
+use common::{evaluate, s, v};
+
 const INF: f64 = f64::INFINITY;
-
-fn s(v: f64) -> DoubleTensor {
-    DoubleTensor::scalar(v)
-}
-
-fn v(values: &[f64]) -> DoubleTensor {
-    DoubleTensor::vector(values.to_vec())
-}
-
-fn evaluate(graph: &Graph, state: &mut State, seed: u64) {
-    let all: Vec<NodeId> = graph.ids().collect();
-    state
-        .lazy_eval(graph, &all, &mut KeanuRng::seed_from_u64(seed))
-        .unwrap();
-}
 
 /// A graph with a truncated (or censored) Gaussian(mu, sigma) on [lower, upper], whose parameters and bounds are
 /// constants; returns the node and the parameter nodes.

@@ -6,6 +6,9 @@ use keanu_graph::transform::{self, Bijector};
 use keanu_graph::{GraphError, Support};
 use keanu_tensor::DoubleTensor;
 
+mod common;
+use common::{assert_all_close_1p, t};
+
 /// Extracts the constrained coordinates the log-Jacobian is taken with respect to.
 type Free = fn(&[usize], &DoubleTensor) -> Vec<f64>;
 
@@ -41,10 +44,6 @@ fn lower_free(shape: &[usize], x: &DoubleTensor) -> Vec<f64> {
         }
     }
     out
-}
-
-fn t(shape: &[usize], data: &[f64]) -> DoubleTensor {
-    DoubleTensor::new(shape, data.to_vec()).unwrap()
 }
 
 fn bijector(support: &Support, shape: &[usize]) -> Box<dyn Bijector> {
@@ -140,16 +139,6 @@ fn random_y(rng: &mut KeanuRng, n: usize, scale: f64) -> Vec<f64> {
     (0..n).map(|_| scale * rng.next_gaussian()).collect()
 }
 
-fn assert_close(actual: &[f64], expected: &[f64], tol: f64, what: &str) {
-    assert_eq!(actual.len(), expected.len(), "{what}: lengths");
-    for (i, (a, e)) in actual.iter().zip(expected).enumerate() {
-        assert!(
-            (a - e).abs() <= tol * (1.0 + e.abs()),
-            "{what}: element {i}: {a} vs {e}"
-        );
-    }
-}
-
 /// The forward Jacobian of the free coordinates by central differences, row-major (free x unconstrained).
 fn fd_jacobian(case: &Case, y: &[f64]) -> Vec<Vec<f64>> {
     let shape = case.bijector.constrained_shape().to_vec();
@@ -212,7 +201,7 @@ fn inverse_of_forward_is_the_identity() {
                 case.name
             );
             let back = case.bijector.inverse(&x).unwrap();
-            assert_close(&back, &y, 1e-8, &case.name);
+            assert_all_close_1p(&back, &y, 1e-8, &case.name);
         }
     }
 }
@@ -227,28 +216,28 @@ fn forward_of_inverse_is_the_identity() {
             .bijector
             .forward(&case.bijector.inverse(&x).unwrap())
             .unwrap();
-        assert_close(again.as_slice(), x.as_slice(), 1e-10, &case.name);
+        assert_all_close_1p(again.as_slice(), x.as_slice(), 1e-10, &case.name);
     }
 }
 
 #[test]
 fn inverse_of_hand_written_valid_values() {
     let lower = bijector(&Support::greater_than(1.0), &[3]);
-    assert_close(
+    assert_all_close_1p(
         &lower.inverse(&t(&[3], &[2.0, 1.5, 4.0])).unwrap(),
         &[0.0, 0.5f64.ln(), 3.0f64.ln()],
         1e-12,
         "lower bound",
     );
     let interval = bijector(&Support::interval(0.0, 4.0), &[]);
-    assert_close(
+    assert_all_close_1p(
         &interval.inverse(&DoubleTensor::scalar(2.0)).unwrap(),
         &[0.0],
         1e-12,
         "interval midpoint",
     );
     let ordered = bijector(&Support::Ordered, &[3]);
-    assert_close(
+    assert_all_close_1p(
         &ordered.inverse(&t(&[3], &[-1.0, 0.0, 2.0])).unwrap(),
         &[-1.0, 0.0, 2.0f64.ln()],
         1e-12,
@@ -258,23 +247,23 @@ fn inverse_of_hand_written_valid_values() {
     let x = t(&[3], &[0.2, 0.3, 0.5]);
     let y = simplex.inverse(&x).unwrap();
     assert_eq!(y.len(), 2);
-    assert_close(
+    assert_all_close_1p(
         simplex.forward(&y).unwrap().as_slice(),
         x.as_slice(),
         1e-12,
         "simplex",
     );
     let uniform = simplex.inverse(&t(&[3], &[1.0 / 3.0; 3])).unwrap();
-    assert_close(&uniform, &[0.0, 0.0], 1e-12, "uniform simplex");
+    assert_all_close_1p(&uniform, &[0.0, 0.0], 1e-12, "uniform simplex");
     let corr = bijector(&Support::CorrelationCholesky, &[3, 3]);
     let identity = t(&[3, 3], &[1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0]);
-    assert_close(
+    assert_all_close_1p(
         &corr.inverse(&identity).unwrap(),
         &[0.0; 3],
         1e-12,
         "identity",
     );
-    assert_close(
+    assert_all_close_1p(
         corr.forward(&[0.0; 3]).unwrap().as_slice(),
         identity.as_slice(),
         1e-15,
@@ -317,7 +306,7 @@ fn log_det_jacobian_gradient_matches_finite_differences() {
                     / (2.0 * h)
             })
             .collect();
-        assert_close(&grad, &fd, 1e-6, &case.name);
+        assert_all_close_1p(&grad, &fd, 1e-6, &case.name);
     }
 }
 
@@ -341,7 +330,7 @@ fn jacobian_vector_products_match_finite_differences_and_each_other() {
             .zip(fm.as_slice())
             .map(|(p, m)| (p - m) / (2.0 * h))
             .collect();
-        assert_close(jvp.as_slice(), &fd, 1e-6, &case.name);
+        assert_all_close_1p(jvp.as_slice(), &fd, 1e-6, &case.name);
 
         // <vjp(c), t> = <c, jvp(t)>
         let cotangent = DoubleTensor::from_fn(b.constrained_shape(), |_| rng.next_gaussian());
@@ -430,7 +419,7 @@ fn circular_transform() {
     assert_eq!(b.constrained_shape(), &[3]);
     let y = [1.0, 1.0, -2.0, 0.0, 0.0, -0.5];
     let theta = b.forward(&y).unwrap();
-    assert_close(
+    assert_all_close_1p(
         theta.as_slice(),
         &[
             std::f64::consts::FRAC_PI_4,
@@ -443,7 +432,7 @@ fn circular_transform() {
     let r2: f64 = y.iter().map(|v| v * v).sum();
     assert!((b.log_det_jacobian(&y).unwrap() + 0.5 * r2).abs() < 1e-15);
     let negated: Vec<f64> = y.iter().map(|v| -v).collect();
-    assert_close(
+    assert_all_close_1p(
         &b.log_det_jacobian_gradient(&y).unwrap(),
         &negated,
         0.0,
@@ -453,7 +442,7 @@ fn circular_transform() {
     // The inverse picks the point on the unit circle; forward recovers the angle.
     let angles = t(&[3], &[0.3, -2.0, 3.0]);
     let back = b.inverse(&angles).unwrap();
-    assert_close(
+    assert_all_close_1p(
         &back,
         &[
             0.3f64.cos(),
@@ -466,7 +455,7 @@ fn circular_transform() {
         1e-15,
         "inverse",
     );
-    assert_close(
+    assert_all_close_1p(
         b.forward(&back).unwrap().as_slice(),
         angles.as_slice(),
         1e-14,
@@ -477,7 +466,7 @@ fn circular_transform() {
         .forward(&b.inverse(&t(&[3], &[7.0, 0.0, -4.0])).unwrap())
         .unwrap();
     let tau = std::f64::consts::TAU;
-    assert_close(
+    assert_all_close_1p(
         wrapped.as_slice(),
         &[7.0 - tau, 0.0, -4.0 + tau],
         1e-14,
@@ -500,7 +489,7 @@ fn circular_transform() {
         .zip(b.forward(&minus).unwrap().as_slice())
         .map(|(p, m)| (p - m) / (2.0 * h))
         .collect();
-    assert_close(jvp.as_slice(), &fd, 1e-6, "circular jvp");
+    assert_all_close_1p(jvp.as_slice(), &fd, 1e-6, "circular jvp");
     let cotangent = t(&[3], &[0.5, -1.0, 2.0]);
     let vjp = b.forward_vjp(&y, &cotangent).unwrap();
     let left: f64 = vjp.iter().zip(&tangent).map(|(a, b)| a * b).sum();

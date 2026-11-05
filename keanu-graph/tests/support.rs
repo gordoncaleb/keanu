@@ -1,33 +1,25 @@
 //! Every distribution reports its support, resolving parameter-dependent bounds from the current state.
 
-use keanu_distributions::{Kde, KeanuRng};
+use keanu_distributions::Kde;
 use keanu_graph::{
-    CustomDistribution, DType, DoubleVar, Graph, GraphBuilder, GraphError, NodeId, State, Support,
-    Value, node_support,
+    CustomDistribution, DType, DoubleVar, GraphBuilder, GraphError, NodeId, Support, Value,
+    node_support,
 };
 use keanu_tensor::DoubleTensor;
 
-fn evaluate(graph: &Graph, state: &mut State) {
-    let all: Vec<NodeId> = graph.ids().collect();
-    state
-        .lazy_eval(graph, &all, &mut KeanuRng::seed_from_u64(3))
-        .unwrap();
-}
+mod common;
+use common::{evaluate, v};
 
 /// The support of the node `build` returns, in a freshly built and evaluated graph.
 fn support_of(build: impl FnOnce(&GraphBuilder) -> NodeId) -> Support {
     let b = GraphBuilder::new();
     let id = build(&b);
     let (graph, mut state) = b.build().unwrap();
-    evaluate(&graph, &mut state);
+    evaluate(&graph, &mut state, 3);
     node_support(&graph, &state, id).unwrap()
 }
 
 type Build = fn(&GraphBuilder) -> NodeId;
-
-fn v(data: &[f64]) -> DoubleTensor {
-    DoubleTensor::vector(data.to_vec())
-}
 
 #[test]
 fn every_built_in_reports_its_documented_support() {
@@ -144,7 +136,7 @@ fn parameter_dependent_bounds_follow_the_state() {
     let x = b.uniform(lower, 5.0);
     let (lower, x) = (lower.id(), x.id());
     let (graph, mut state) = b.build().unwrap();
-    evaluate(&graph, &mut state);
+    evaluate(&graph, &mut state, 3);
     assert_eq!(
         node_support(&graph, &state, x).unwrap(),
         Support::interval(2.0, 5.0)
@@ -265,7 +257,7 @@ fn non_probabilistic_and_unknown_nodes_are_errors() {
     let a = b.gaussian(0.0, 1.0);
     let doubled = (a * 2.0).id();
     let (graph, mut state) = b.build().unwrap();
-    evaluate(&graph, &mut state);
+    evaluate(&graph, &mut state, 3);
     assert!(node_support(&graph, &state, doubled).is_err());
     assert!(matches!(
         node_support(&graph, &state, NodeId::from_index(999)),

@@ -5,20 +5,14 @@ use keanu_algorithms::optimizer::bobyqa::prima::{
 };
 use std::ops::ControlFlow;
 
+mod common;
+use common::assert_all_close;
+
 fn rosenbrock(x: &[f64]) -> f64 {
     // PRIMA's chained Rosenbrock (`chrosen` in its tests)
     (0..x.len() - 1)
         .map(|i| 4.0 * (x[i + 1] - x[i] * x[i]).powi(2) + (1.0 - x[i]).powi(2))
         .sum()
-}
-
-fn assert_close(actual: &[f64], expected: &[f64], tol: f64) {
-    for (a, e) in actual.iter().zip(expected) {
-        assert!(
-            (a - e).abs() <= tol,
-            "{actual:?} != {expected:?} within {tol}"
-        );
-    }
 }
 
 #[test]
@@ -29,7 +23,7 @@ fn prima_example_one_bound_active() {
         let out = minimize(f, &[0.0, 0.0], &[-1.0, -1.0], &[4.5, 4.5], &settings);
         assert_eq!(out.status, ExitStatus::SmallTrustRegionRadius);
         assert_eq!(out.x[0], 4.5, "the active bound is hit exactly");
-        assert_close(&out.x, &[4.5, 4.0], 1e-6);
+        assert_all_close(&out.x, &[4.5, 4.0], 1e-6, "point");
         assert!((out.f - 0.25).abs() < 1e-10);
         assert!(out.evaluations < 100);
     }
@@ -47,7 +41,7 @@ fn unconstrained_rosenbrock() {
             &Settings::default().with_rhoend(1e-8),
         );
         assert_eq!(out.status, ExitStatus::SmallTrustRegionRadius, "n = {n}");
-        assert_close(&out.x, &vec![1.0; n], 1e-5);
+        assert_all_close(&out.x, &vec![1.0; n], 1e-5, "point");
         assert!(out.f < 1e-10, "n = {n}: f = {}", out.f);
     }
 }
@@ -86,7 +80,7 @@ fn rosenbrock_with_every_valid_number_of_interpolation_points() {
                 .with_rhoend(1e-8)
                 .with_maxfun(20_000),
         );
-        assert_close(&out.x, &[1.0, 1.0, 1.0], 1e-4);
+        assert_all_close(&out.x, &[1.0, 1.0, 1.0], 1e-4, "point");
         assert!(out.f < 1e-8, "npt = {npt}: f = {}", out.f);
     }
 }
@@ -102,7 +96,7 @@ fn bound_constrained_rosenbrock() {
         &Settings::default().with_rhoend(1e-9),
     );
     assert_eq!(out.x[0], 0.5);
-    assert_close(&out.x, &[0.5, 0.25], 1e-6);
+    assert_all_close(&out.x, &[0.5, 0.25], 1e-6, "point");
     assert!((out.f - 0.25).abs() < 1e-10);
 }
 
@@ -212,7 +206,7 @@ fn one_dimension() {
         &[5.0],
         &Settings::default(),
     );
-    assert_close(&out.x, &[2.0], 1e-5);
+    assert_all_close(&out.x, &[2.0], 1e-5, "point");
     assert!((out.f - 1.0).abs() < 1e-10);
 }
 
@@ -233,7 +227,7 @@ fn nan_values_are_treated_as_large() {
         &[],
         &Settings::default().with_rhobeg(0.3),
     );
-    assert_close(&out.x, &[0.5, 0.5], 1e-5);
+    assert_all_close(&out.x, &[0.5, 0.5], 1e-5, "point");
 }
 
 #[test]
@@ -314,7 +308,7 @@ fn starting_point_outside_the_bounds_is_projected() {
         &[3.0, 3.0],
         &Settings::default(),
     );
-    assert_close(&out.x, &[1.0, 1.0], 1e-5);
+    assert_all_close(&out.x, &[1.0, 1.0], 1e-5, "point");
 }
 
 /// Regression: bound cleaning replaced any bound with |v| >= BOUNDMAX by "no bound", so a lower bound of +infinity
@@ -339,7 +333,7 @@ fn an_infinite_bound_on_the_wrong_side_leaves_no_space() {
         &Settings::default(),
     );
     assert_eq!(out.status, ExitStatus::SmallTrustRegionRadius);
-    assert_close(&out.x, &[0.0, 0.0], 1e-6);
+    assert_all_close(&out.x, &[0.0, 0.0], 1e-6, "point");
 }
 
 /// Regression: checking the number of interpolation points computed 2 · npt, which overflowed for a huge npt.
@@ -356,5 +350,5 @@ fn a_huge_number_of_interpolation_points_falls_back_to_the_default() {
             .with_npt(usize::MAX - 2),
     );
     assert_eq!(out.status, ExitStatus::SmallTrustRegionRadius);
-    assert_close(&out.x, &[0.0, 0.0], 1e-6);
+    assert_all_close(&out.x, &[0.0, 0.0], 1e-6, "point");
 }

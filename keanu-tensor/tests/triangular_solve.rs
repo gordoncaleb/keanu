@@ -2,6 +2,9 @@
 
 use keanu_tensor::{DoubleTensor, TensorError};
 
+mod common;
+use common::assert_all_close_1p;
+
 /// Deterministic uniform values in [-1, 1).
 struct Lcg(u64);
 
@@ -62,16 +65,6 @@ fn masked(t: &DoubleTensor, lower: bool) -> DoubleTensor {
     DoubleTensor::new(t.shape(), data).unwrap()
 }
 
-fn assert_close(actual: &DoubleTensor, expected: &DoubleTensor, tolerance: f64) {
-    assert_eq!(actual.shape(), expected.shape());
-    for (a, e) in actual.as_slice().iter().zip(expected.as_slice()) {
-        assert!(
-            (a - e).abs() <= tolerance * (1.0 + e.abs()),
-            "{a} vs {e} (tolerance {tolerance})"
-        );
-    }
-}
-
 fn reference(t: &DoubleTensor, b: &DoubleTensor, lower: bool, transpose: bool) -> DoubleTensor {
     let op = masked(t, lower);
     let op = if transpose {
@@ -80,6 +73,12 @@ fn reference(t: &DoubleTensor, b: &DoubleTensor, lower: bool, transpose: bool) -
         op
     };
     op.inverse().unwrap().matmul(b).unwrap()
+}
+
+/// [`assert_all_close_1p`] on the elements, after checking the shapes agree.
+fn assert_tensor_close_1p(actual: &DoubleTensor, expected: &DoubleTensor, tolerance: f64) {
+    assert_eq!(actual.shape(), expected.shape());
+    assert_all_close_1p(actual.as_slice(), expected.as_slice(), tolerance, "element");
 }
 
 #[test]
@@ -91,7 +90,7 @@ fn matches_the_inverse_for_every_variant_and_size() {
                 let t = triangular(&mut rng, &[], n, lower);
                 let b = DoubleTensor::new(&[n, 3], rng.values(n * 3)).unwrap();
                 let x = t.solve_triangular(&b, lower, transpose).unwrap();
-                assert_close(&x, &reference(&t, &b, lower, transpose), 1e-10);
+                assert_tensor_close_1p(&x, &reference(&t, &b, lower, transpose), 1e-10);
             }
         }
     }
@@ -105,16 +104,16 @@ fn batch_dimensions_broadcast() {
         let b = DoubleTensor::new(&[3, n, 2], rng.values(3 * n * 2)).unwrap();
         let x = t.solve_triangular(&b, true, true).unwrap();
         assert_eq!(x.shape(), &[2, 3, n, 2]);
-        assert_close(&x, &reference(&t, &b, true, true), 1e-10);
+        assert_tensor_close_1p(&x, &reference(&t, &b, true, true), 1e-10);
 
         // a single matrix against a batch of right-hand sides, and vice versa
         let single = triangular(&mut rng, &[], n, false);
         let x = single.solve_triangular(&b, false, false).unwrap();
-        assert_close(&x, &reference(&single, &b, false, false), 1e-10);
+        assert_tensor_close_1p(&x, &reference(&single, &b, false, false), 1e-10);
         let single_b = DoubleTensor::new(&[n, 1], rng.values(n)).unwrap();
         let x = t.solve_triangular(&single_b, true, false).unwrap();
         assert_eq!(x.shape(), &[2, 1, n, 1]);
-        assert_close(&x, &reference(&t, &single_b, true, false), 1e-10);
+        assert_tensor_close_1p(&x, &reference(&t, &single_b, true, false), 1e-10);
     }
 }
 
@@ -130,7 +129,7 @@ fn vector_right_hand_side() {
     let expected = reference(&t, &column, true, false)
         .reshape(&[2, n as isize])
         .unwrap();
-    assert_close(&x, &expected, 1e-12);
+    assert_tensor_close_1p(&x, &expected, 1e-12);
 }
 
 #[test]
@@ -222,7 +221,7 @@ fn cholesky_inverse_matches_the_inverse_above_the_faer_threshold() {
             .add(&eye)
             .unwrap();
         let inverse = a.cholesky().unwrap().cholesky_inverse().unwrap();
-        assert_close(&inverse, &a.inverse().unwrap(), 1e-12);
+        assert_tensor_close_1p(&inverse, &a.inverse().unwrap(), 1e-12);
         let data = inverse.as_slice();
         for m in 0..2 {
             for i in 0..n {

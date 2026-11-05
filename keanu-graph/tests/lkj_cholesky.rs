@@ -4,17 +4,11 @@
 
 use keanu_distributions::{KeanuRng, LkjCholesky};
 use keanu_graph::op::DistributionKind;
-use keanu_graph::{
-    Graph, GraphBuilder, Model, NodeId, Parameterisation, State, Support, node_support,
-};
+use keanu_graph::{GraphBuilder, Model, NodeId, Parameterisation, State, Support, node_support};
 use keanu_tensor::DoubleTensor;
 
-fn evaluate(graph: &Graph, state: &mut State, seed: u64) {
-    let all: Vec<NodeId> = graph.ids().collect();
-    state
-        .lazy_eval(graph, &all, &mut KeanuRng::seed_from_u64(seed))
-        .unwrap();
-}
+mod common;
+use common::evaluate;
 
 /// Asserts each K × K matrix of `l` is a correlation Cholesky factor.
 fn assert_correlation_cholesky(l: &DoubleTensor, k: usize) {

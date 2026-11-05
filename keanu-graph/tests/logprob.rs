@@ -1,32 +1,16 @@
 //! Node log probabilities and log prob gradients, checked against the distributions and finite differences.
 
 use keanu_distributions as d;
-use keanu_distributions::KeanuRng;
 use keanu_graph::{
-    DoubleVar, Graph, GraphBuilder, NodeId, State, joint_log_prob, joint_log_prob_gradient,
-    log_likelihood, log_prior, log_prob_gradient, node_log_prob,
+    DoubleVar, GraphBuilder, NodeId, joint_log_prob, joint_log_prob_gradient, log_likelihood,
+    log_prior, log_prob_gradient, node_log_prob,
 };
 use keanu_tensor::{BoolTensor, DoubleTensor, IntTensor};
 
+mod common;
+use common::{assert_close_rel, evaluate, v};
+
 const A: f64 = 0.3;
-
-fn v(data: &[f64]) -> DoubleTensor {
-    DoubleTensor::vector(data.to_vec())
-}
-
-fn evaluate(graph: &Graph, state: &mut State) {
-    let all: Vec<NodeId> = graph.ids().collect();
-    state
-        .lazy_eval(graph, &all, &mut KeanuRng::seed_from_u64(3))
-        .unwrap();
-}
-
-fn assert_close(actual: f64, expected: f64, tolerance: f64, what: &str) {
-    assert!(
-        (actual - expected).abs() <= tolerance * expected.abs().max(1.0),
-        "{what}: {actual} != {expected}"
-    );
-}
 
 /// Builds `x ~ distribution(parameters(a))` with a scalar latent `a`, and checks d log p(x) / da against a central
 /// finite difference (moving `a` and cascading to the parameters).
@@ -37,7 +21,7 @@ fn check_parameter_gradient(name: &str, build: impl Fn(&GraphBuilder, DoubleVar)
     let x = build(&b, a);
     let a = a.id();
     let (graph, mut state) = b.build().unwrap();
-    evaluate(&graph, &mut state);
+    evaluate(&graph, &mut state, 3);
 
     let gradient = log_prob_gradient(&graph, &state, &[x], &[a]).unwrap();
     let analytic = gradient
@@ -53,7 +37,7 @@ fn check_parameter_gradient(name: &str, build: impl Fn(&GraphBuilder, DoubleVar)
         node_log_prob(&graph, &s, x).unwrap()
     };
     let numeric = (at(A + h) - at(A - h)) / (2.0 * h);
-    assert_close(analytic.as_slice()[0], numeric, 1e-5, name);
+    assert_close_rel(analytic.as_slice()[0], numeric, 1e-5, name);
 }
 
 /// Checks d log p(x) / dx for an unobserved node against finite differences of each element.
@@ -61,7 +45,7 @@ fn check_value_gradient(name: &str, build: impl Fn(&GraphBuilder) -> NodeId) {
     let b = GraphBuilder::new();
     let x = build(&b);
     let (graph, mut state) = b.build().unwrap();
-    evaluate(&graph, &mut state);
+    evaluate(&graph, &mut state, 3);
     let gradient = log_prob_gradient(&graph, &state, &[x], &[x]).unwrap();
     let analytic = gradient
         .get(x)
@@ -80,7 +64,7 @@ fn check_value_gradient(name: &str, build: impl Fn(&GraphBuilder) -> NodeId) {
             node_log_prob(&graph, &s, x).unwrap()
         };
         let numeric = (at(h) - at(-h)) / (2.0 * h);
-        assert_close(
+        assert_close_rel(
             analytic.as_slice()[i],
             numeric,
             1e-5,
@@ -279,7 +263,7 @@ fn uniform_and_discrete_nodes_contribute_no_gradient_with_respect_to_themselves(
     let (a, uniform, categorical, uniform_int) =
         (a.id(), uniform.id(), categorical.id(), uniform_int.id());
     let (graph, mut state) = b.build().unwrap();
-    evaluate(&graph, &mut state);
+    evaluate(&graph, &mut state, 3);
 
     // inside its support the uniform's gradient with respect to its value is zero, and its bounds get none (as Java)
     let g = log_prob_gradient(&graph, &state, &[uniform], &[a, uniform]).unwrap();
@@ -319,13 +303,13 @@ fn node_log_prob_is_the_summed_element_wise_log_prob_of_the_distribution() {
     b.set_value(half, v(&[0.2, 0.9, 2.1]));
     let (x, p, dir, mvg, half) = (x.id(), p.id(), dir.id(), mvg.id(), half.id());
     let (graph, mut state) = b.build().unwrap();
-    evaluate(&graph, &mut state);
+    evaluate(&graph, &mut state, 3);
 
     let gaussian = d::Gaussian::new(mu, DoubleTensor::scalar(2.0))
         .log_prob(&xv)
         .unwrap()
         .sum();
-    assert_close(
+    assert_close_rel(
         node_log_prob(&graph, &state, x).unwrap(),
         gaussian,
         1e-14,
@@ -335,14 +319,14 @@ fn node_log_prob_is_the_summed_element_wise_log_prob_of_the_distribution() {
         .log_prob(&pv)
         .unwrap()
         .sum();
-    assert_close(
+    assert_close_rel(
         node_log_prob(&graph, &state, p).unwrap(),
         poisson,
         1e-14,
         "poisson",
     );
     let dirichlet = d::Dirichlet::new(concentration).log_prob(&dv).unwrap();
-    assert_close(
+    assert_close_rel(
         node_log_prob(&graph, &state, dir).unwrap(),
         dirichlet,
         1e-14,
@@ -352,7 +336,7 @@ fn node_log_prob_is_the_summed_element_wise_log_prob_of_the_distribution() {
         .log_prob(&v(&[0.2, 0.9, 2.1]))
         .unwrap()
         .sum();
-    assert_close(
+    assert_close_rel(
         node_log_prob(&graph, &state, half).unwrap(),
         half_gaussian,
         1e-14,
@@ -361,7 +345,7 @@ fn node_log_prob_is_the_summed_element_wise_log_prob_of_the_distribution() {
     let multivariate = d::MultivariateGaussian::new(v(&[0.5, -1.0]), covariance)
         .log_prob(&mv)
         .unwrap();
-    assert_close(
+    assert_close_rel(
         node_log_prob(&graph, &state, mvg).unwrap(),
         multivariate,
         1e-14,
@@ -370,7 +354,7 @@ fn node_log_prob_is_the_summed_element_wise_log_prob_of_the_distribution() {
 
     // the totals split into likelihood (observed) and prior (latent)
     let joint = joint_log_prob(&graph, &state).unwrap();
-    assert_close(
+    assert_close_rel(
         log_likelihood(&graph, &state).unwrap() + log_prior(&graph, &state).unwrap(),
         joint,
         1e-14,
@@ -397,7 +381,7 @@ fn joint_log_prob_gradient_of_a_multi_node_model_matches_finite_differences() {
     b.set_value(z, v(&[0.5, 1.5, 2.5]));
     let (a, m, z) = (a.id(), m.id(), z.id());
     let (graph, mut state) = b.build().unwrap();
-    evaluate(&graph, &mut state);
+    evaluate(&graph, &mut state, 3);
 
     let gradient = joint_log_prob_gradient(&graph, &state).unwrap();
     assert_eq!(gradient.len(), 3);
@@ -420,7 +404,7 @@ fn joint_log_prob_gradient_of_a_multi_node_model_matches_finite_differences() {
                 joint_log_prob(&graph, &s).unwrap()
             };
             let numeric = (at(h) - at(-h)) / (2.0 * h);
-            assert_close(
+            assert_close_rel(
                 analytic.as_slice()[i],
                 numeric,
                 1e-5,
@@ -442,13 +426,13 @@ fn ordered_logistic_with_latent_eta_and_cutpoints_has_finite_difference_gradient
     b.set_value(cutpoints, v(&[-1.1, 0.6, 1.8]));
     let (eta, cutpoints, k) = (eta.id(), cutpoints.id(), k.id());
     let (graph, mut state) = b.build().unwrap();
-    evaluate(&graph, &mut state);
+    evaluate(&graph, &mut state, 3);
     assert_eq!(graph[k].shape(), &[3]);
     let expected = d::OrderedLogistic::new(v(&[0.2, -0.4, 1.1]), v(&[-1.1, 0.6, 1.8]))
         .log_prob(&IntTensor::vector(vec![0, 2, 3]))
         .unwrap()
         .sum();
-    assert_close(
+    assert_close_rel(
         node_log_prob(&graph, &state, k).unwrap(),
         expected,
         1e-14,
@@ -468,7 +452,7 @@ fn ordered_logistic_with_latent_eta_and_cutpoints_has_finite_difference_gradient
                 node_log_prob(&graph, &s, k).unwrap()
             };
             let numeric = (f(1e-6) - f(-1e-6)) / 2e-6;
-            assert_close(
+            assert_close_rel(
                 analytic.as_slice()[i],
                 numeric,
                 1e-6,

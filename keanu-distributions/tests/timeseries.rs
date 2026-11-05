@@ -7,16 +7,11 @@ use keanu_distributions::{
 };
 use keanu_tensor::DoubleTensor;
 
+mod common;
+use common::{assert_close_1p, v};
+
 fn m(rows: usize, cols: usize, values: &[f64]) -> DoubleTensor {
     DoubleTensor::new(&[rows, cols], values.to_vec()).unwrap()
-}
-
-fn v(values: &[f64]) -> DoubleTensor {
-    DoubleTensor::vector(values.to_vec())
-}
-
-fn close(a: f64, b: f64, tolerance: f64) -> bool {
-    (a - b).abs() <= tolerance * (1.0 + b.abs())
 }
 
 /// A three-state chain.
@@ -57,10 +52,11 @@ fn the_hmm_log_likelihood_sums_every_state_path() {
         total += p;
     }
     let log_likelihood = chain.log_likelihood(&e).unwrap();
-    assert!(
-        close(log_likelihood, total.ln(), 1e-12),
-        "{log_likelihood} vs {}",
-        total.ln()
+    assert_close_1p(
+        log_likelihood,
+        total.ln(),
+        1e-12,
+        &format!("{log_likelihood} vs {}", total.ln()),
     );
 }
 
@@ -70,11 +66,12 @@ fn hmm_gradients_match_finite_differences() {
     let e = emissions();
     let (log_likelihood, gradient) = chain.log_likelihood_and_gradient(&e).unwrap();
     let gradient = gradient.unwrap();
-    assert!(close(
+    assert_close_1p(
         log_likelihood,
         chain.log_likelihood(&e).unwrap(),
-        1e-14
-    ));
+        1e-14,
+        "value",
+    );
     let h = 1e-6;
     let numeric = |f: &dyn Fn(f64) -> f64| (f(h) - f(-h)) / (2.0 * h);
     for i in 0..3 {
@@ -85,9 +82,11 @@ fn hmm_gradients_match_finite_differences() {
             // chain checks its probabilities: evaluate the unnormalised forward recursion directly instead
             unnormalised(&initial, chain.transition.as_slice(), &e)
         });
-        assert!(
-            close(gradient.initial.as_slice()[i], d, 1e-6),
-            "initial {i}"
+        assert_close_1p(
+            gradient.initial.as_slice()[i],
+            d,
+            1e-6,
+            &format!("initial {i}"),
         );
     }
     for i in 0..9 {
@@ -96,9 +95,11 @@ fn hmm_gradients_match_finite_differences() {
             transition[i] += delta;
             unnormalised(chain.initial.as_slice(), &transition, &e)
         });
-        assert!(
-            close(gradient.transition.as_slice()[i], d, 1e-6),
-            "transition {i}"
+        assert_close_1p(
+            gradient.transition.as_slice()[i],
+            d,
+            1e-6,
+            &format!("transition {i}"),
         );
     }
     for i in 0..12 {
@@ -109,14 +110,16 @@ fn hmm_gradients_match_finite_differences() {
                 .log_likelihood(&DoubleTensor::new(&[4, 3], emission).unwrap())
                 .unwrap()
         });
-        assert!(
-            close(gradient.emission.as_slice()[i], d, 1e-6),
-            "emission {i}"
+        assert_close_1p(
+            gradient.emission.as_slice()[i],
+            d,
+            1e-6,
+            &format!("emission {i}"),
         );
     }
     // the emission gradient is the posterior state marginals: each row sums to 1
     for row in gradient.emission.as_slice().chunks(3) {
-        assert!(close(row.iter().sum(), 1.0, 1e-12));
+        assert_close_1p(row.iter().sum(), 1.0, 1e-12, "value");
     }
 }
 
@@ -144,7 +147,7 @@ fn zero_probabilities_give_finite_gradients() {
     let e = m(3, 2, &[-1.0, -2.0, -0.5, -0.1, -3.0, -0.2]);
     let (log_likelihood, gradient) = chain.log_likelihood_and_gradient(&e).unwrap();
     // the only path is 0, 1, 0
-    assert!(close(log_likelihood, -1.0 - 0.1 - 3.0, 1e-12));
+    assert_close_1p(log_likelihood, -1.0 - 0.1 - 3.0, 1e-12, "value");
     let gradient = gradient.unwrap();
     for g in [&gradient.initial, &gradient.transition, &gradient.emission] {
         assert!(g.as_slice().iter().all(|x| x.is_finite()), "{g:?}");
@@ -310,9 +313,11 @@ fn the_kalman_log_likelihood_is_the_stacked_gaussian_density() {
     .log_prob(&y.reshape(&[10]).unwrap())
     .unwrap();
     let log_likelihood = model.log_prob(&y).unwrap();
-    assert!(
-        close(log_likelihood, stacked, 1e-10),
-        "{log_likelihood} vs {stacked}"
+    assert_close_1p(
+        log_likelihood,
+        stacked,
+        1e-10,
+        &format!("{log_likelihood} vs {stacked}"),
     );
     let filtered = model.filter(&y).unwrap();
     assert_eq!(filtered.log_likelihood, log_likelihood);
@@ -389,14 +394,18 @@ fn kalman_gradients_match_finite_differences() {
             let numeric = (at(h) - at(-h)) / (2.0 * h);
             let g = analytic.as_slice();
             let expected = if mirror != i { g[i] + g[mirror] } else { g[i] };
-            assert!(
-                close(expected, numeric, 1e-5),
-                "{name}[{i}]: {expected} vs {numeric}"
+            assert_close_1p(
+                expected,
+                numeric,
+                1e-5,
+                &format!("{name}[{i}]: {expected} vs {numeric}"),
             );
             if symmetric {
-                assert!(
-                    close(g[i], g[mirror], 1e-12),
-                    "{name} gradient is symmetric"
+                assert_close_1p(
+                    g[i],
+                    g[mirror],
+                    1e-12,
+                    &format!("{name} gradient is symmetric"),
                 );
             }
         }
@@ -410,7 +419,7 @@ fn kalman_gradients_match_finite_differences() {
                 .unwrap()
         };
         let numeric = (at(h) - at(-h)) / (2.0 * h);
-        assert!(close(gradient.x.as_slice()[i], numeric, 1e-5), "x[{i}]");
+        assert_close_1p(gradient.x.as_slice()[i], numeric, 1e-5, &format!("x[{i}]"));
     }
 }
 
@@ -511,9 +520,11 @@ fn kalman_hessian_vector_products_match_finite_differences_of_the_gradient() {
             for i in 0..len {
                 let numeric = (p.as_slice()[i] - m.as_slice()[i]) / (2.0 * h);
                 let exact = actual.as_slice()[k * len + i];
-                assert!(
-                    close(exact, numeric, 1e-6),
-                    "direction {k}, input {u}, element {i}: {exact} vs {numeric}"
+                assert_close_1p(
+                    exact,
+                    numeric,
+                    1e-6,
+                    &format!("direction {k}, input {u}, element {i}: {exact} vs {numeric}"),
                 );
             }
         }
@@ -530,7 +541,7 @@ fn kalman_hessian_vector_products_match_finite_differences_of_the_gradient() {
     let (a, s) = (along(&lopsided), along(&balanced));
     assert_eq!(a, s);
     let r = a.observation_covariance.as_slice();
-    assert!(close(r[1], r[2], 1e-12));
+    assert_close_1p(r[1], r[2], 1e-12, "value");
     // no tangents at all give zeros
     let zero = model.hvp(&y, None, &[None; 6], 3).unwrap();
     assert_eq!(zero.transition_matrix.shape(), &[3, 3, 3]);

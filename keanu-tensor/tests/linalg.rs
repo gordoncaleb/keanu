@@ -2,6 +2,9 @@
 
 use keanu_tensor::{DoubleTensor, TensorError};
 
+mod common;
+use common::assert_all_close_rel;
+
 /// Deterministic uniform values in [-1, 1).
 struct Lcg(u64);
 
@@ -35,19 +38,10 @@ fn symmetric(rng: &mut Lcg, batch: &[usize], n: usize) -> DoubleTensor {
     a.add(&a.transpose().unwrap()).unwrap()
 }
 
-fn assert_close(actual: &DoubleTensor, expected: &DoubleTensor, tolerance: f64) {
+/// [`assert_all_close_rel`] on the elements, after checking the shapes agree.
+fn assert_tensor_close_rel(actual: &DoubleTensor, expected: &DoubleTensor, tolerance: f64) {
     assert_eq!(actual.shape(), expected.shape());
-    for (i, (&a, &e)) in actual
-        .as_slice()
-        .iter()
-        .zip(expected.as_slice())
-        .enumerate()
-    {
-        assert!(
-            (a - e).abs() <= tolerance * e.abs().max(1.0),
-            "element {i}: {a} != {e}"
-        );
-    }
+    assert_all_close_rel(actual.as_slice(), expected.as_slice(), tolerance, "element");
 }
 
 #[test]
@@ -58,7 +52,7 @@ fn solve_satisfies_the_system_batched() {
         let b = rng.tensor(&[2, 3, n, 4]);
         let x = a.solve(&b).unwrap();
         assert_eq!(x.shape(), &[2, 3, n, 4]);
-        assert_close(&a.matmul(&x).unwrap(), &b, 1e-12);
+        assert_tensor_close_rel(&a.matmul(&x).unwrap(), &b, 1e-12);
     }
 }
 
@@ -70,7 +64,7 @@ fn solve_broadcasts_leading_dimensions_and_takes_vectors() {
     let b = rng.tensor(&[4, 2]);
     let x = a.solve(&b).unwrap();
     assert_eq!(x.shape(), &[3, 4, 2]);
-    assert_close(
+    assert_tensor_close_rel(
         &a.matmul(&x).unwrap(),
         &b.broadcast_to(&[3, 4, 2]).unwrap(),
         1e-12,
@@ -80,13 +74,13 @@ fn solve_broadcasts_leading_dimensions_and_takes_vectors() {
     let many = rng.tensor(&[5, 4, 1]);
     let x = single.solve(&many).unwrap();
     assert_eq!(x.shape(), &[5, 4, 1]);
-    assert_close(&single.matmul(&x).unwrap(), &many, 1e-12);
+    assert_tensor_close_rel(&single.matmul(&x).unwrap(), &many, 1e-12);
     // a vector right-hand side
     let v = rng.tensor(&[4]);
     let x = a.solve(&v).unwrap();
     assert_eq!(x.shape(), &[3, 4]);
     let column = x.reshape(&[3, 4, 1]).unwrap();
-    assert_close(
+    assert_tensor_close_rel(
         &a.matmul(&column).unwrap().reshape(&[3, 4]).unwrap(),
         &v.broadcast_to(&[3, 4]).unwrap(),
         1e-12,
@@ -193,9 +187,9 @@ fn eigh_reconstructs_the_matrix_with_ascending_eigenvalues() {
             .mul(&values.reshape(&[2, 2, 1, n as isize]).unwrap())
             .unwrap();
         let rebuilt = scaled.matmul_transposed(&vectors, false, true).unwrap();
-        assert_close(&rebuilt, &a, 1e-10);
+        assert_tensor_close_rel(&rebuilt, &a, 1e-10);
         let gram = vectors.matmul_transposed(&vectors, true, false).unwrap();
-        assert_close(
+        assert_tensor_close_rel(
             &gram,
             &DoubleTensor::eye(n)
                 .unwrap()
@@ -226,9 +220,9 @@ fn eigh_reads_only_the_lower_triangle() {
     let garbage = DoubleTensor::new(&[2, 2], vec![2.0, 99.0, 1.0, 2.0]).unwrap();
     let (values, vectors) = garbage.eigh().unwrap();
     let (expected_values, expected_vectors) = a.eigh().unwrap();
-    assert_close(&values, &expected_values, 1e-14);
-    assert_close(&vectors, &expected_vectors, 1e-14);
-    assert_close(
+    assert_tensor_close_rel(&values, &expected_values, 1e-14);
+    assert_tensor_close_rel(&vectors, &expected_vectors, 1e-14);
+    assert_tensor_close_rel(
         &values,
         &DoubleTensor::new(&[2], vec![1.0, 3.0]).unwrap(),
         1e-14,
@@ -240,12 +234,12 @@ fn eigh_edge_cases() {
     // a diagonal matrix: sorted eigenvalues, permuted unit vectors
     let d = DoubleTensor::new(&[3, 3], vec![3.0, 0.0, 0.0, 0.0, -1.0, 0.0, 0.0, 0.0, 2.0]).unwrap();
     let (values, vectors) = d.eigh().unwrap();
-    assert_close(
+    assert_tensor_close_rel(
         &values,
         &DoubleTensor::new(&[3], vec![-1.0, 2.0, 3.0]).unwrap(),
         1e-14,
     );
-    assert_close(
+    assert_tensor_close_rel(
         &vectors,
         &DoubleTensor::new(&[3, 3], vec![0.0, 0.0, 1.0, 1.0, 0.0, 0.0, 0.0, 1.0, 0.0]).unwrap(),
         1e-14,
@@ -284,12 +278,12 @@ fn eigh_signs_are_stable_when_components_tie_in_magnitude() {
     let exact = vectors(0.0);
     let s = std::f64::consts::FRAC_1_SQRT_2;
     // columns: (1, -1)/√2 for λ = 1 and (1, 1)/√2 for λ = 3, each with its first component positive
-    assert_close(
+    assert_tensor_close_rel(
         &exact,
         &DoubleTensor::new(&[2, 2], vec![s, s, -s, s]).unwrap(),
         1e-12,
     );
     for e in [1e-14, -1e-14, 3e-15, -3e-15] {
-        assert_close(&vectors(e), &exact, 1e-10);
+        assert_tensor_close_rel(&vectors(e), &exact, 1e-10);
     }
 }

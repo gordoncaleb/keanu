@@ -10,16 +10,15 @@ use keanu_graph::{
 };
 use keanu_tensor::DoubleTensor;
 
+mod common;
+use common::t;
+
 /// Computes the parameters of an observed node (which keeps its value), so its log density can be evaluated.
 fn evaluate_parents(graph: &Graph, state: &mut State, observed: NodeId) {
     let parents = graph[observed].parents().to_vec();
     state
         .eval(graph, &parents, &mut KeanuRng::seed_from_u64(1))
         .unwrap();
-}
-
-fn t(shape: &[usize], data: &[f64]) -> DoubleTensor {
-    DoubleTensor::new(shape, data.to_vec()).unwrap()
 }
 
 /// Every kind of kernel with fixed hyperparameters, for inputs with `d` features.

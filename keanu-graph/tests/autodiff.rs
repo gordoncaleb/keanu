@@ -8,6 +8,9 @@ use keanu_graph::{
 };
 use keanu_tensor::DoubleTensor;
 
+mod common;
+use common::t;
+
 /// Builds a graph from input values (as latents) and a function of them, then checks that the forward and reverse
 /// partials of the output with respect to every input match central finite differences.
 fn check(
@@ -100,10 +103,6 @@ fn finite_difference(
     }
     let shape: Vec<usize> = out_shape.iter().chain(value.shape()).copied().collect();
     DoubleTensor::new(&shape, data).unwrap()
-}
-
-fn t(shape: &[usize], data: &[f64]) -> DoubleTensor {
-    DoubleTensor::new(shape, data.to_vec()).unwrap()
 }
 
 fn range(low: f64, high: f64, shape: &[usize]) -> DoubleTensor {

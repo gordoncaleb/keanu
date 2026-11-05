@@ -3,15 +3,10 @@
 use keanu_distributions::*;
 use keanu_tensor::{BoolTensor, DoubleTensor, IntTensor};
 
+mod common;
+use common::{s, v};
+
 const H: f64 = 1e-6;
-
-fn s(v: f64) -> DoubleTensor {
-    DoubleTensor::scalar(v)
-}
-
-fn v(values: &[f64]) -> DoubleTensor {
-    DoubleTensor::vector(values.to_vec())
-}
 
 /// Checks `analytic` against central differences of the summed log prob as `which` is perturbed element-wise.
 /// `log_prob` takes the perturbed tensor; `analytic` must have the shape of the broadcast log prob (element-wise

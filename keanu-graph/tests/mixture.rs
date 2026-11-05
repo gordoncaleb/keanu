@@ -10,15 +10,10 @@ use keanu_graph::{
 use keanu_tensor::{DoubleTensor, IntTensor};
 use std::sync::Arc;
 
+mod common;
+use common::{s, v};
+
 const INF: f64 = f64::INFINITY;
-
-fn s(v: f64) -> DoubleTensor {
-    DoubleTensor::scalar(v)
-}
-
-fn v(values: &[f64]) -> DoubleTensor {
-    DoubleTensor::vector(values.to_vec())
-}
 
 /// A graph with a mixture node of the `component` kind whose parameters and weights are constants.
 struct Mixed {

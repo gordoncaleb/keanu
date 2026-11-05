@@ -11,13 +11,8 @@ use keanu_graph::{
 use keanu_tensor::{DoubleTensor, IntTensor};
 use std::sync::Arc;
 
-fn s(v: f64) -> DoubleTensor {
-    DoubleTensor::scalar(v)
-}
-
-fn v(values: &[f64]) -> DoubleTensor {
-    DoubleTensor::vector(values.to_vec())
-}
+mod common;
+use common::{assert_close_1p, s, v};
 
 fn m(rows: usize, cols: usize, values: &[f64]) -> DoubleTensor {
     DoubleTensor::new(&[rows, cols], values.to_vec()).unwrap()
@@ -112,10 +107,6 @@ fn summed_to(part: &DoubleTensor, shape: &[usize]) -> Vec<f64> {
     out
 }
 
-fn close(a: f64, b: f64, tolerance: f64) -> bool {
-    (a - b).abs() <= tolerance * (1.0 + b.abs())
-}
-
 #[test]
 fn the_hmm_log_likelihood_sums_every_state_path() {
     let (mu, sigma) = ([-1.0, 0.5, 2.0], [0.7, 1.0, 0.4]);
@@ -144,10 +135,11 @@ fn the_hmm_log_likelihood_sums_every_state_path() {
         total += p;
     }
     let log_prob = h.log_prob_at(f(v(&x)));
-    assert!(
-        close(log_prob, total.ln(), 1e-12),
-        "{log_prob} vs {}",
-        total.ln()
+    assert_close_1p(
+        log_prob,
+        total.ln(),
+        1e-12,
+        &format!("{log_prob} vs {}", total.ln()),
     );
 }
 
@@ -163,7 +155,7 @@ fn a_one_state_hmm_is_iid_emissions() {
     );
     let expected = Poisson::new(s(2.5)).log_prob(&counts).unwrap().sum();
     let actual = h.log_prob_at(Value::I64(counts));
-    assert!(close(actual, expected, 1e-12), "{actual} vs {expected}");
+    assert_close_1p(actual, expected, 1e-12, &format!("{actual} vs {expected}"));
     // and its gradient is the emission's
     let gradient = node_log_prob_gradient(&h.graph, &h.state, h.node).unwrap();
     assert!(gradient.value.is_none());
@@ -171,7 +163,7 @@ fn a_one_state_hmm_is_iid_emissions() {
     let d = Poisson::new(s(2.5))
         .d_log_prob(&IntTensor::new(&[5, 2], vec![0, 3, 2, 1, 4, 4, 1, 0, 2, 5]).unwrap())
         .unwrap();
-    assert!(close(rate[0], d.mu.sum(), 1e-12));
+    assert_close_1p(rate[0], d.mu.sum(), 1e-12, "value");
 }
 
 #[test]
@@ -205,9 +197,11 @@ fn hmm_gradients_match_finite_differences() {
                 h.log_prob_with(i, DoubleTensor::new(base.shape(), values).unwrap())
             };
             let numeric = (at(step) - at(-step)) / (2.0 * step);
-            assert!(
-                close(a, numeric, 1e-5),
-                "parameter {i}[{k}]: {a} vs {numeric}"
+            assert_close_1p(
+                a,
+                numeric,
+                1e-5,
+                &format!("parameter {i}[{k}]: {a} vs {numeric}"),
             );
         }
     }
@@ -221,7 +215,7 @@ fn hmm_gradients_match_finite_differences() {
             node_log_prob(&h.graph, &state, h.node).unwrap()
         };
         let numeric = (at(step) - at(-step)) / (2.0 * step);
-        assert!(close(dx.as_slice()[k], numeric, 1e-5), "x[{k}]");
+        assert_close_1p(dx.as_slice()[k], numeric, 1e-5, &format!("x[{k}]"));
     }
 }
 

@@ -5,15 +5,10 @@
 use keanu_distributions::*;
 use keanu_tensor::{DoubleTensor, IntTensor};
 
+mod common;
+use common::{s, v};
+
 const H: f64 = 1e-6;
-
-fn s(v: f64) -> DoubleTensor {
-    DoubleTensor::scalar(v)
-}
-
-fn v(values: &[f64]) -> DoubleTensor {
-    DoubleTensor::vector(values.to_vec())
-}
 
 fn logaddexp(a: f64, b: f64) -> f64 {
     let m = a.max(b);

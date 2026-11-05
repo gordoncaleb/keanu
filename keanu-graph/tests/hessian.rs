@@ -23,12 +23,11 @@ use keanu_tensor::{DoubleTensor, IntTensor};
 use std::collections::BTreeSet;
 use std::sync::Arc;
 
+mod common;
+use common::{t, v};
+
 // ---------------------------------------------------------------------------------------------------------------
 // the finite-difference checker
-
-fn t(shape: &[usize], data: &[f64]) -> DoubleTensor {
-    DoubleTensor::new(shape, data.to_vec()).unwrap()
-}
 
 fn model_of(build: impl FnOnce(&GraphBuilder)) -> (Model, State) {
     named_model("a model", build)
@@ -987,10 +986,6 @@ fn probabilities<'b>(b: &'b GraphBuilder, values: &[f64]) -> DoubleVar<'b> {
     latent_vector(b, &logits).sigmoid()
 }
 
-fn vector(values: &[f64]) -> DoubleTensor {
-    DoubleTensor::vector(values.to_vec())
-}
-
 fn ints(values: &[i64]) -> IntTensor {
     IntTensor::vector(values.to_vec())
 }
@@ -1055,9 +1050,9 @@ fn censored_location_scale(b: &GraphBuilder, base: DistributionKind) {
     let location = scalar_latent(b, 0.2);
     let scale = positive(b, 0.8);
     let params = [location.id(), scale.id()];
-    let lower = b.constant(vector(&[-0.4, -0.4, -0.4]));
+    let lower = b.constant(v(&[-0.4, -0.4, -0.4]));
     let y: DoubleVar<'_> = b.censored(base.clone(), &params, lower, 1.6);
-    b.observe(y, vector(&[-0.4, 0.3, 1.6]));
+    b.observe(y, v(&[-0.4, 0.3, 1.6]));
     let (l, u) = bounds(b, -0.4, 2.0);
     let x: DoubleVar<'_> = b.censored(base, &params, l, u);
     b.set_value(x, DoubleTensor::scalar(0.5));
@@ -1078,9 +1073,9 @@ fn truncated_positive(b: &GraphBuilder, base: DistributionKind) {
 /// A censored positive base with two positive parameters.
 fn censored_positive(b: &GraphBuilder, base: DistributionKind) {
     let params = [positive(b, 1.6).id(), positive(b, 1.2).id()];
-    let lower = b.constant(vector(&[0.5, 0.5, 0.5]));
+    let lower = b.constant(v(&[0.5, 0.5, 0.5]));
     let y: DoubleVar<'_> = b.censored(base.clone(), &params, lower, 2.5);
-    b.observe(y, vector(&[0.5, 1.3, 2.5]));
+    b.observe(y, v(&[0.5, 1.3, 2.5]));
     let (l, u) = positive_bounds(b, 0.5, 2.0);
     let x: DoubleVar<'_> = b.censored(base, &params, l, u);
     b.set_value(x, DoubleTensor::scalar(1.2));
@@ -1094,7 +1089,7 @@ fn distribution_cases() -> Vec<DistributionCase> {
             let x = b.half_gaussian(sigma);
             b.set_value(x, DoubleTensor::scalar(0.6));
             let y = b.half_gaussian_with_shape(&[2], sigma * 1.5);
-            b.observe(y, vector(&[0.3, 1.1]));
+            b.observe(y, v(&[0.3, 1.1]));
         }),
         case("cauchy", |b| {
             let location = scalar_latent(b, 0.2);
@@ -1102,21 +1097,21 @@ fn distribution_cases() -> Vec<DistributionCase> {
             let x = b.cauchy(location, scale);
             b.set_value(x, DoubleTensor::scalar(0.9));
             let y = b.cauchy_with_shape(&[3], location * scale, scale);
-            b.observe(y, vector(&[-0.5, 0.4, 2.0]));
+            b.observe(y, v(&[-0.5, 0.4, 2.0]));
         }),
         case("half_cauchy", |b| {
             let scale = positive(b, 0.9);
             let x = b.half_cauchy(scale);
             b.set_value(x, DoubleTensor::scalar(0.4));
             let y = b.half_cauchy_with_shape(&[2], scale + 0.3);
-            b.observe(y, vector(&[0.2, 1.7]));
+            b.observe(y, v(&[0.2, 1.7]));
         }),
         case("beta", |b| {
             let (alpha, beta) = (positive(b, 1.7), positive(b, 2.4));
             let x = b.beta(alpha, beta);
             b.set_value(x, DoubleTensor::scalar(0.35));
             let y = b.beta_with_shape(&[2], alpha * 0.5, beta);
-            b.observe(y, vector(&[0.2, 0.8]));
+            b.observe(y, v(&[0.2, 0.8]));
         }),
         case("chi_squared", |b| {
             let x = b.chi_squared(3);
@@ -1127,49 +1122,49 @@ fn distribution_cases() -> Vec<DistributionCase> {
             let x = b.exponential(rate);
             b.set_value(x, DoubleTensor::scalar(0.8));
             let y = b.exponential_with_shape(&[2], rate * 2.0);
-            b.observe(y, vector(&[0.3, 2.0]));
+            b.observe(y, v(&[0.3, 2.0]));
         }),
         case("gamma", |b| {
             let (theta, k) = (positive(b, 0.9), positive(b, 2.3));
             let x = b.gamma(theta, k);
             b.set_value(x, DoubleTensor::scalar(1.4));
             let y = b.gamma_with_shape(&[2], theta, k * 0.5);
-            b.observe(y, vector(&[0.5, 3.0]));
+            b.observe(y, v(&[0.5, 3.0]));
         }),
         case("inverse_gamma", |b| {
             let (alpha, beta) = (positive(b, 2.1), positive(b, 1.2));
             let x = b.inverse_gamma(alpha, beta);
             b.set_value(x, DoubleTensor::scalar(0.7));
             let y = b.inverse_gamma_with_shape(&[2], alpha, beta * 2.0);
-            b.observe(y, vector(&[0.4, 1.9]));
+            b.observe(y, v(&[0.4, 1.9]));
         }),
         case("laplace", |b| {
             let (mu, beta) = (scalar_latent(b, 0.1), positive(b, 0.8));
             let x = b.laplace(mu, beta);
             b.set_value(x, DoubleTensor::scalar(0.9));
             let y = b.laplace_with_shape(&[3], mu, beta);
-            b.observe(y, vector(&[-0.7, 0.5, 1.3]));
+            b.observe(y, v(&[-0.7, 0.5, 1.3]));
         }),
         case("logistic", |b| {
             let (mu, s) = (scalar_latent(b, 0.1), positive(b, 0.8));
             let x = b.logistic(mu, s);
             b.set_value(x, DoubleTensor::scalar(0.9));
             let y = b.logistic_with_shape(&[3], mu, s * 1.5);
-            b.observe(y, vector(&[-0.7, 0.5, 3.3]));
+            b.observe(y, v(&[-0.7, 0.5, 3.3]));
         }),
         case("log_normal", |b| {
             let (mu, sigma) = (scalar_latent(b, 0.2), positive(b, 0.6));
             let x = b.log_normal(mu, sigma);
             b.set_value(x, DoubleTensor::scalar(1.3));
             let y = b.log_normal_with_shape(&[2], mu, sigma);
-            b.observe(y, vector(&[0.5, 2.2]));
+            b.observe(y, v(&[0.5, 2.2]));
         }),
         case("pareto", |b| {
             let (location, scale) = (positive(b, 0.8), positive(b, 1.7));
             let x = b.pareto(location, scale);
             b.set_value(x, DoubleTensor::scalar(1.5));
             let y = b.pareto_with_shape(&[2], location, scale * 0.7);
-            b.observe(y, vector(&[1.0, 2.5]));
+            b.observe(y, v(&[1.0, 2.5]));
         }),
         case("student_t", |b| {
             let x = b.student_t(4);
@@ -1182,9 +1177,9 @@ fn distribution_cases() -> Vec<DistributionCase> {
             let c = x_min + width * scalar_latent(b, 0.1).sigmoid();
             // one value below the mode and one above it
             let x = b.triangular_with_shape(&[2], x_min, x_max, c);
-            b.set_value(x, vector(&[-0.1, 1.0]));
+            b.set_value(x, v(&[-0.1, 1.0]));
             let y = b.triangular_with_shape(&[2], x_min, x_max, c);
-            b.observe(y, vector(&[1.3, 0.2]));
+            b.observe(y, v(&[1.3, 0.2]));
         }),
         case("uniform", |b| {
             let x_min = scalar_latent(b, -0.3);
@@ -1192,36 +1187,36 @@ fn distribution_cases() -> Vec<DistributionCase> {
             let x = b.uniform(x_min, x_max);
             b.set_value(x, DoubleTensor::scalar(0.4));
             let y = b.uniform_with_shape(&[2], x_min, x_max);
-            b.observe(y, vector(&[0.0, 1.0]));
+            b.observe(y, v(&[0.0, 1.0]));
         }),
         case("weibull", |b| {
             let (alpha, beta) = (positive(b, 1.6), positive(b, 1.2));
             let x = b.weibull(alpha, beta);
             b.set_value(x, DoubleTensor::scalar(0.9));
             let y = b.weibull_with_shape(&[2], alpha, beta);
-            b.observe(y, vector(&[0.4, 2.1]));
+            b.observe(y, v(&[0.4, 2.1]));
         }),
         case("von_mises", |b| {
             let (mu, kappa) = (scalar_latent(b, 0.3), positive(b, 1.8));
             let x = b.von_mises(mu, kappa);
             b.set_value(x, DoubleTensor::scalar(0.9));
             let y = b.von_mises_with_shape(&[2], mu, kappa);
-            b.observe(y, vector(&[-1.0, 2.0]));
+            b.observe(y, v(&[-1.0, 2.0]));
             // a small concentration
             let z = b.von_mises_with_shape(&[2], mu, kappa * 0.01);
-            b.observe(z, vector(&[-1.0, 2.0]));
+            b.observe(z, v(&[-1.0, 2.0]));
         }),
         unconstrained("dirichlet", |b| {
             let concentration = positive_vector(b, &[1.5, 2.5, 0.8]);
             let x = b.dirichlet(concentration);
-            b.set_value(x, vector(&[0.2, 0.5, 0.3]));
+            b.set_value(x, v(&[0.2, 0.5, 0.3]));
             let y = b.dirichlet(concentration * 2.0);
-            b.observe(y, vector(&[0.1, 0.6, 0.3]));
+            b.observe(y, v(&[0.1, 0.6, 0.3]));
         }),
         case("kde", |b| {
             let kde = keanu_distributions::Kde::new(vec![-0.5, 0.2, 0.4, 1.5], 0.6).unwrap();
             let x = b.kde(kde, &[2]);
-            b.set_value(x, vector(&[0.1, 0.9]));
+            b.set_value(x, v(&[0.1, 0.9]));
         }),
         unconstrained("lkj_cholesky", |b| {
             let factor = |r10: f64, r20: f64, r21: f64| {
@@ -1299,7 +1294,7 @@ fn distribution_cases() -> Vec<DistributionCase> {
             let transition = latent(b, t(&[2, 2], &[0.8, -0.3, 0.1, 0.6])).softmax(1);
             let y: DoubleVar<'_> =
                 b.hidden_markov_model(4, K::Gaussian, &params, initial, transition);
-            b.observe(y, vector(&[-0.8, 0.2, 1.4, 0.9]));
+            b.observe(y, v(&[-0.8, 0.2, 1.4, 0.9]));
             // a latent series, with two observations per step
             let x: DoubleVar<'_> = b.hidden_markov_model_with_shape(
                 &[3, 2],
@@ -1367,7 +1362,7 @@ fn distribution_cases() -> Vec<DistributionCase> {
             let x: DoubleVar<'_> = b.mixture(K::Gaussian, &params, weights);
             b.set_value(x, DoubleTensor::scalar(0.4));
             let y: DoubleVar<'_> = b.mixture_with_shape(&[3], K::Gaussian, &params, weights);
-            b.observe(y, vector(&[-1.0, 0.2, 1.5]));
+            b.observe(y, v(&[-1.0, 0.2, 1.5]));
         }),
         case("a mixture of gammas sharing their scale", |b| {
             let params = [positive(b, 0.9).id(), positive_vector(b, &[1.5, 4.0]).id()];
@@ -1375,7 +1370,7 @@ fn distribution_cases() -> Vec<DistributionCase> {
             let x: DoubleVar<'_> = b.mixture(K::Gamma, &params, weights);
             b.set_value(x, DoubleTensor::scalar(1.2));
             let y: DoubleVar<'_> = b.mixture_with_shape(&[2], K::Gamma, &params, weights);
-            b.observe(y, vector(&[0.5, 4.0]));
+            b.observe(y, v(&[0.5, 4.0]));
         }),
         case("a mixture of Poissons", |b| {
             let rates = positive_vector(b, &[1.0, 4.0, 2.5]);
@@ -1403,7 +1398,7 @@ fn distribution_cases() -> Vec<DistributionCase> {
                 b.scalar(0.5).id(),
                 b.scalar(3.0).id(),
             ];
-            let weights = b.constant(vector(&[0.4, 0.6]));
+            let weights = b.constant(v(&[0.4, 0.6]));
             let kind = K::Truncated(Arc::new(K::Gamma));
             let y: DoubleVar<'_> = b.mixture(kind, &params, weights);
             b.observe(y, DoubleTensor::scalar(1.2));
@@ -1541,32 +1536,32 @@ fn distribution_cases() -> Vec<DistributionCase> {
         case("censored weibull", |b| censored_positive(b, K::Weibull)),
         case("censored exponential", |b| {
             let rate = [positive(b, 1.3).id()];
-            let lower = b.constant(vector(&[0.5, 0.5, 0.5]));
+            let lower = b.constant(v(&[0.5, 0.5, 0.5]));
             let y: DoubleVar<'_> = b.censored(K::Exponential, &rate, lower, 2.5);
-            b.observe(y, vector(&[0.5, 1.3, 2.5]));
+            b.observe(y, v(&[0.5, 1.3, 2.5]));
         }),
         case("censored uniform", |b| {
             let params = [b.scalar(-1.0).id(), b.scalar(2.0).id()];
-            let lower = b.constant(vector(&[-0.4, -0.4, -0.4]));
+            let lower = b.constant(v(&[-0.4, -0.4, -0.4]));
             let y: DoubleVar<'_> = b.censored(K::Uniform, &params, lower, 1.6);
-            b.observe(y, vector(&[-0.4, 0.3, 1.6]));
+            b.observe(y, v(&[-0.4, 0.3, 1.6]));
             let (l, u) = bounds(b, -0.4, 2.0);
             let x: DoubleVar<'_> = b.censored(K::Uniform, &params, l, u);
             b.set_value(x, DoubleTensor::scalar(0.5));
         }),
         case("censored gamma with a fixed shape", |b| {
             let params = [positive(b, 0.9).id(), b.scalar(2.3).id()];
-            let lower = b.constant(vector(&[0.5, 0.5, 0.5]));
+            let lower = b.constant(v(&[0.5, 0.5, 0.5]));
             let y: DoubleVar<'_> = b.censored(K::Gamma, &params, lower, 2.5);
-            b.observe(y, vector(&[0.5, 1.3, 2.5]));
+            b.observe(y, v(&[0.5, 1.3, 2.5]));
         }),
         case(
             "censored gamma with a latent shape and no value at a bound",
             |b| {
                 let params = [positive(b, 0.9).id(), positive(b, 2.3).id()];
-                let lower = b.constant(vector(&[0.5, 0.5]));
+                let lower = b.constant(v(&[0.5, 0.5]));
                 let y: DoubleVar<'_> = b.censored(K::Gamma, &params, lower, 2.5);
-                b.observe(y, vector(&[0.7, 1.3]));
+                b.observe(y, v(&[0.7, 1.3]));
             },
         ),
         case("censored gamma with a latent shape", |b| {
@@ -1574,26 +1569,26 @@ fn distribution_cases() -> Vec<DistributionCase> {
         }),
         case("censored beta with fixed shapes", |b| {
             let params = [b.scalar(1.7).id(), b.scalar(2.4).id()];
-            let lower = b.constant(vector(&[0.2, 0.2, 0.2]));
+            let lower = b.constant(v(&[0.2, 0.2, 0.2]));
             let y: DoubleVar<'_> = b.censored(K::Beta, &params, lower, 0.8);
-            b.observe(y, vector(&[0.2, 0.5, 0.8]));
+            b.observe(y, v(&[0.2, 0.5, 0.8]));
             let (l, u) = (scalar_latent(b, 0.2), scalar_latent(b, 0.8));
             let x: DoubleVar<'_> = b.censored(K::Beta, &params, l, u);
             b.set_value(x, DoubleTensor::scalar(0.5));
         }),
         case("censored beta with latent shapes", |b| {
             let params = [positive(b, 1.7).id(), positive(b, 2.4).id()];
-            let lower = b.constant(vector(&[0.2, 0.2, 0.2]));
+            let lower = b.constant(v(&[0.2, 0.2, 0.2]));
             let y: DoubleVar<'_> = b.censored(K::Beta, &params, lower, 0.8);
-            b.observe(y, vector(&[0.2, 0.5, 0.8]));
+            b.observe(y, v(&[0.2, 0.5, 0.8]));
         }),
         case("censored student_t", |b| {
-            let v = [b.int_constant(IntTensor::scalar(4)).id()];
-            let lower = b.constant(vector(&[-0.4, -0.4, -0.4]));
-            let y: DoubleVar<'_> = b.censored(K::StudentT, &v, lower, 1.6);
-            b.observe(y, vector(&[-0.4, 0.3, 1.6]));
+            let dof = [b.int_constant(IntTensor::scalar(4)).id()];
+            let lower = b.constant(v(&[-0.4, -0.4, -0.4]));
+            let y: DoubleVar<'_> = b.censored(K::StudentT, &dof, lower, 1.6);
+            b.observe(y, v(&[-0.4, 0.3, 1.6]));
             let (l, u) = bounds(b, -0.4, 2.0);
-            let x: DoubleVar<'_> = b.censored(K::StudentT, &v, l, u);
+            let x: DoubleVar<'_> = b.censored(K::StudentT, &dof, l, u);
             b.set_value(x, DoubleTensor::scalar(0.5));
         }),
         case("censored poisson", |b| {
