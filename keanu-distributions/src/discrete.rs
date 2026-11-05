@@ -597,6 +597,9 @@ impl<'a> NegativeBinomial<'a> {
     }
 
     /// The element-wise derivatives of [`Self::log_prob`] with respect to each parameter.
+    ///
+    /// At mu = 0 they are the limits as mu → 0: for k = 0 (probability 1) -1 and 0; for k > 0 (probability 0)
+    /// +infinity with respect to mu (the log probability is ≈ k ln mu) and a finite value with respect to alpha.
     pub fn d_log_prob(&self, k: &IntTensor) -> Result<NegativeBinomialGradient> {
         let [mu, alpha] = map_n((k, &*self.mu, &*self.alpha), |(k, mu, alpha)| {
             if k < 0 {
@@ -604,8 +607,10 @@ impl<'a> NegativeBinomial<'a> {
             }
             let k = k as f64;
             let total = alpha + mu;
+            // the k ln μ term, which contributes nothing for k = 0 (also at μ = 0)
+            let d_ln_mu = if k == 0.0 { 0.0 } else { k / mu };
             [
-                k / mu - (k + alpha) / total,
+                d_ln_mu - (k + alpha) / total,
                 digamma(k + alpha) - digamma(alpha) - (mu / alpha).ln_1p() + (mu - k) / total,
             ]
         })?;

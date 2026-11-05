@@ -781,11 +781,17 @@ impl NegativeBinomial<'_> {
                 return [0.0; 2];
             }
             let log_f = Self::log_cdf_at(k, mu, alpha, upper);
+            if log_f == f64::NEG_INFINITY {
+                // unspecified (see the module docs); 0, like `ratio`, rather than the NaN the incomplete beta
+                // derivatives give there (the survival function at μ = 0)
+                return [0.0; 2];
+            }
             let k = k as f64 + 1.0;
             let total = alpha + mu;
             let (p, q) = (alpha / total, mu / total);
-            // the Beta(α, k + 1) density at p, which is d I_p(α, k + 1) / dp
-            let log_density = (alpha - 1.0) * p.ln() + (k - 1.0) * q.ln() - log_beta(alpha, k);
+            // the Beta(α, k + 1) density at p, which is d I_p(α, k + 1) / dp (with q^0 = 1 at μ = 0, q = 0)
+            let log_density =
+                safe_ln_times(p, alpha - 1.0) + safe_ln_times(q, k - 1.0) - log_beta(alpha, k);
             let density = ratio(log_density, log_f);
             // dp/dμ = -α / (α + μ)², dp/dα = μ / (α + μ)²
             let (dp_dmu, dp_dalpha) = (-alpha / (total * total), mu / (total * total));
