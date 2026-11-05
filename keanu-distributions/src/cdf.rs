@@ -2,10 +2,12 @@
 //!
 //! For a univariate distribution, `log_cdf(x)` is ln P(X <= x) and `log_ccdf(x)` is ln P(X > x), element-wise and
 //! broadcasting x with the parameters like `log_prob`. Both are computed so that they stay finite and accurate
-//! in the tail where the probability is small (from ln Φ for the Gaussian family, and by computing whichever of
-//! the CDF and survival function is the smaller directly). `d_log_cdf` and `d_log_ccdf` return the same gradient
-//! struct as `d_log_prob`, holding the derivatives of the log CDF (or survival function) with respect to x and
-//! each parameter. They are unspecified where the log CDF (or survival function) is -infinity.
+//! in the tail where the probability is small, even where it underflows (from ln Φ for the Gaussian family, and
+//! for the incomplete gamma and beta families by computing whichever of the CDF and survival function is the
+//! smaller directly, in log space). `d_log_cdf` and `d_log_ccdf` return the same gradient struct as `d_log_prob`,
+//! holding the derivatives of the log CDF (or survival function) with respect to x and each parameter, formed as
+//! ratios that stay finite in those tails. They are unspecified where the log CDF (or survival function) is
+//! -infinity.
 //!
 //! Continuous distributions whose quantile function has a closed form also provide `inverse_cdf(p)`, the x with
 //! P(X <= x) = p, and `inverse_ccdf(q)`, the x with P(X > x) = q, each accurate for small probabilities.
@@ -21,16 +23,21 @@ use crate::{
     UniformGradient, Weibull, WeibullGradient,
 };
 use keanu_tensor::special::{
-    gamma_p, gamma_p_da, gamma_q, inc_beta, inc_beta_da, inc_beta_db, log_beta, log_ndtr, log1mexp,
-    logit, ndtri,
+    log_beta, log_gamma_p, log_gamma_p_da, log_gamma_q, log_gamma_q_da, log_inc_beta,
+    log_inc_beta_da, log_inc_beta_db, log_ndtr, log1mexp, logit, ndtri,
 };
 use keanu_tensor::{DoubleTensor, IntTensor};
 use std::f64::consts::{LN_2, PI};
 
-/// ln p given both p and its complement q = 1 - p, from whichever keeps the precision.
+/// ln p given ln p and (lazily) ln q for its complement q = 1 - p, each computed directly: ln p itself while
+/// p < ½, where it keeps its precision, and ln(1 - q) beyond. Working with logs keeps far tails finite.
 #[inline]
-pub(crate) fn ln_complement(p: f64, q: f64) -> f64 {
-    if p < 0.5 { p.ln() } else { (-q).ln_1p() }
+fn log_complement(log_p: f64, log_q: impl FnOnce() -> f64) -> f64 {
+    if log_p < -LN_2 {
+        log_p
+    } else {
+        log1mexp(log_q())
+    }
 }
 
 /// e^(log_numerator - log_denominator), taken to be 0 where either is -infinity (where a log CDF gradient is
@@ -298,11 +305,10 @@ impl Gamma<'_> {
             return if upper { 0.0 } else { f64::NEG_INFINITY };
         }
         let y = x / theta;
-        let (p, q) = (gamma_p(k, y), gamma_q(k, y));
         if upper {
-            ln_complement(q, p)
+            log_gamma_q(k, y)
         } else {
-            ln_complement(p, q)
+            log_gamma_p(k, y)
         }
     }
 
@@ -331,7 +337,12 @@ impl Gamma<'_> {
             let sign = if upper { -1.0 } else { 1.0 };
             // d P(k, x/θ) / dx is the density
             let d_x = sign * ratio(gamma_log_pdf(x, t, k), log_f);
-            let d_k = sign * gamma_p_da(k, x / t) / log_f.exp();
+            // ∂ ln P/∂k or ∂ ln Q/∂k, formed stably in the tails
+            let d_k = if upper {
+                log_gamma_q_da(k, x / t)
+            } else {
+                log_gamma_p_da(k, x / t)
+            };
             [d_x, -x / t * d_x, d_k]
         })?;
         Ok(GammaGradient { x, theta, k })
@@ -365,12 +376,7 @@ impl Beta<'_> {
             return upper_end;
         }
         let (a, b, y) = if upper { (b, a, 1.0 - y) } else { (a, b, y) };
-        let i = inc_beta(a, b, y);
-        if i < 0.5 {
-            i.ln()
-        } else {
-            (-inc_beta(b, a, 1.0 - y)).ln_1p()
-        }
+        log_complement(log_inc_beta(a, b, y), || log_inc_beta(b, a, 1.0 - y))
     }
 
     /// The element-wise log CDF, ln P(X <= x) = ln Iᵧ(α, β) with y = (x - x_min) / (x_max - x_min), broadcasting
@@ -400,21 +406,20 @@ impl Beta<'_> {
                     return [0.0; 3];
                 }
                 let log_f = Self::log_cdf_at(y, a, b, upper);
-                let f = log_f.exp();
                 let log_pdf =
                     (a - 1.0) * y.ln() + (b - 1.0) * (1.0 - y).ln() - log_beta(a, b) - range.ln();
                 if upper {
                     // S = I₁₋ᵧ(β, α)
                     [
                         -ratio(log_pdf, log_f),
-                        inc_beta_db(b, a, 1.0 - y) / f,
-                        inc_beta_da(b, a, 1.0 - y) / f,
+                        log_inc_beta_db(b, a, 1.0 - y),
+                        log_inc_beta_da(b, a, 1.0 - y),
                     ]
                 } else {
                     [
                         ratio(log_pdf, log_f),
-                        inc_beta_da(a, b, y) / f,
-                        inc_beta_db(a, b, y) / f,
+                        log_inc_beta_da(a, b, y),
+                        log_inc_beta_db(a, b, y),
                     ]
                 }
             },
@@ -451,8 +456,12 @@ fn student_t_log_cdf(t: f64, v: f64) -> f64 {
     if t == f64::NEG_INFINITY {
         return f64::NEG_INFINITY;
     }
-    let tail = 0.5 * inc_beta(v / 2.0, 0.5, v / (v + t * t));
-    if t <= 0.0 { tail.ln() } else { (-tail).ln_1p() }
+    let log_tail = log_inc_beta(v / 2.0, 0.5, v / (v + t * t)) - LN_2;
+    if t <= 0.0 {
+        log_tail
+    } else {
+        log1mexp(log_tail)
+    }
 }
 
 impl StudentT<'_> {
@@ -565,11 +574,10 @@ impl Poisson<'_> {
             return if upper { 0.0 } else { f64::NEG_INFINITY };
         }
         let a = k as f64 + 1.0;
-        let (p, q) = (gamma_p(a, mu), gamma_q(a, mu));
         if upper {
-            ln_complement(p, q)
+            log_gamma_p(a, mu)
         } else {
-            ln_complement(q, p)
+            log_gamma_q(a, mu)
         }
     }
 
@@ -625,12 +633,12 @@ impl Binomial<'_> {
             return above;
         }
         let (k, n) = (k as f64, n as f64);
-        let cdf = inc_beta(n - k, k + 1.0, 1.0 - p);
-        let survival = inc_beta(k + 1.0, n - k, p);
+        let cdf = || log_inc_beta(n - k, k + 1.0, 1.0 - p);
+        let survival = || log_inc_beta(k + 1.0, n - k, p);
         if upper {
-            ln_complement(survival, cdf)
+            log_complement(survival(), cdf)
         } else {
-            ln_complement(cdf, survival)
+            log_complement(cdf(), survival)
         }
     }
 
@@ -744,11 +752,12 @@ impl NegativeBinomial<'_> {
         }
         let k = k as f64 + 1.0;
         let (p, q) = (alpha / (alpha + mu), mu / (alpha + mu));
-        let (cdf, survival) = (inc_beta(alpha, k, p), inc_beta(k, alpha, q));
+        let cdf = || log_inc_beta(alpha, k, p);
+        let survival = || log_inc_beta(k, alpha, q);
         if upper {
-            ln_complement(survival, cdf)
+            log_complement(survival(), cdf)
         } else {
-            ln_complement(cdf, survival)
+            log_complement(cdf(), survival)
         }
     }
 
@@ -772,7 +781,6 @@ impl NegativeBinomial<'_> {
                 return [0.0; 2];
             }
             let log_f = Self::log_cdf_at(k, mu, alpha, upper);
-            let f = log_f.exp();
             let k = k as f64 + 1.0;
             let total = alpha + mu;
             let (p, q) = (alpha / total, mu / total);
@@ -785,12 +793,12 @@ impl NegativeBinomial<'_> {
                 // S = I_q(k + 1, α), q = 1 - p
                 [
                     -density * dp_dmu,
-                    inc_beta_db(k, alpha, q) / f - density * dp_dalpha,
+                    log_inc_beta_db(k, alpha, q) - density * dp_dalpha,
                 ]
             } else {
                 [
                     density * dp_dmu,
-                    inc_beta_da(alpha, k, p) / f + density * dp_dalpha,
+                    log_inc_beta_da(alpha, k, p) + density * dp_dalpha,
                 ]
             }
         })?;

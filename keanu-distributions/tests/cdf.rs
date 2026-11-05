@@ -704,3 +704,164 @@ fn negative_binomial() {
         }
     }
 }
+
+/// Asserts a log CDF in a far tail (where the probability underflows) matches its mpmath value to 1e-10 relative.
+fn assert_tail(name: &str, actual: f64, expected: f64) {
+    assert!(
+        ((actual - expected) / expected).abs() < 1e-10,
+        "{name}: {actual} vs mpmath {expected}"
+    );
+}
+
+/// Asserts every element of a gradient is finite.
+fn assert_finite(name: &str, gradient: &DoubleTensor) {
+    assert!(
+        gradient.as_slice().iter().all(|g| g.is_finite()),
+        "{name}: {:?}",
+        gradient.as_slice()
+    );
+}
+
+#[test]
+fn log_cdfs_of_incomplete_gamma_distributions_in_the_far_tails() {
+    // reference values ln P(a, x) and ln Q(a, x) from mpmath (50 digits); the probabilities underflow, and the
+    // log CDFs used to be -infinity with NaN gradients
+    let mu = s(1.0);
+    let k = IntTensor::scalar(200);
+    let poisson = Poisson::new(&mu);
+    assert_tail(
+        "Poisson(1) ccdf at 200",
+        at(poisson.log_ccdf(&k)),
+        -869.5303294330408,
+    );
+    let g = poisson.d_log_ccdf(&k).unwrap();
+    assert_finite("Poisson ccdf mu", &g.mu);
+    check_gradient("mu", &mu, &g.mu, |p| sum(Poisson::new(p).log_ccdf(&k)));
+
+    let mu = s(1000.0);
+    let k = IntTensor::scalar(10);
+    let poisson = Poisson::new(&mu);
+    assert_tail(
+        "Poisson(1000) cdf at 10",
+        at(poisson.log_cdf(&k)),
+        -946.0168196296328,
+    );
+    let g = poisson.d_log_cdf(&k).unwrap();
+    assert_finite("Poisson cdf mu", &g.mu);
+    check_gradient("mu", &mu, &g.mu, |p| sum(Poisson::new(p).log_cdf(&k)));
+
+    for (theta, k, x, upper, expected) in [
+        (1.0, 2.0, 800.0, true, -793.3141390529316),
+        (0.5, 300.0, 0.5, false, -1415.9025221917655),
+    ] {
+        let (th, kk, xx) = (s(theta), s(k), s(x));
+        let f = |d: &Gamma<'_>, x: &DoubleTensor| {
+            if upper { d.log_ccdf(x) } else { d.log_cdf(x) }
+        };
+        let d = Gamma::new(&th, &kk);
+        assert_tail("Gamma", at(f(&d, &xx)), expected);
+        let g = if upper {
+            d.d_log_ccdf(&xx)
+        } else {
+            d.d_log_cdf(&xx)
+        }
+        .unwrap();
+        for (name, gradient) in [("x", &g.x), ("theta", &g.theta), ("k", &g.k)] {
+            assert_finite(name, gradient);
+        }
+        check_gradient("x", &xx, &g.x, |x| sum(f(&Gamma::new(&th, &kk), x)));
+        check_gradient("theta", &th, &g.theta, |p| sum(f(&Gamma::new(p, &kk), &xx)));
+        check_gradient("k", &kk, &g.k, |p| sum(f(&Gamma::new(&th, p), &xx)));
+    }
+}
+
+#[test]
+fn log_cdfs_of_incomplete_beta_distributions_in_the_far_tails() {
+    // reference values from mpmath (50 digits) of ln I_x(a, b) for the parameters each CDF maps to
+    for (mu, alpha, k, upper, expected) in [
+        (2.0, 3.0, 1000, true, -905.0999862937989),
+        (1e4, 200.0, 0, false, -786.3651265448651),
+    ] {
+        let (m, a, kk) = (s(mu), s(alpha), IntTensor::scalar(k));
+        let f = |d: &NegativeBinomial<'_>, k: &IntTensor| {
+            if upper { d.log_ccdf(k) } else { d.log_cdf(k) }
+        };
+        let d = NegativeBinomial::new(&m, &a);
+        assert_tail("negative binomial", at(f(&d, &kk)), expected);
+        let g = if upper {
+            d.d_log_ccdf(&kk)
+        } else {
+            d.d_log_cdf(&kk)
+        }
+        .unwrap();
+        assert_finite("mu", &g.mu);
+        assert_finite("alpha", &g.alpha);
+        check_gradient("mu", &m, &g.mu, |p| {
+            sum(f(&NegativeBinomial::new(p, &a), &kk))
+        });
+        check_gradient("alpha", &a, &g.alpha, |p| {
+            sum(f(&NegativeBinomial::new(&m, p), &kk))
+        });
+    }
+
+    for (a, b, x, upper, expected) in [
+        (2.0, 3.0, 1e-200, false, -919.2422777283903),
+        (300.0, 2.0, 0.01, false, -1375.853962309922),
+        (2.0, 300.0, 0.99, true, -1375.8539623099218),
+    ] {
+        let (aa, bb, lo, hi, xx) = (s(a), s(b), s(0.0), s(1.0), s(x));
+        let f = |d: &Beta<'_>, x: &DoubleTensor| {
+            if upper { d.log_ccdf(x) } else { d.log_cdf(x) }
+        };
+        let d = Beta::new(&aa, &bb, &lo, &hi);
+        assert_tail("Beta", at(f(&d, &xx)), expected);
+        let g = if upper {
+            d.d_log_ccdf(&xx)
+        } else {
+            d.d_log_cdf(&xx)
+        }
+        .unwrap();
+        for (name, gradient) in [("x", &g.x), ("alpha", &g.alpha), ("beta", &g.beta)] {
+            assert_finite(name, gradient);
+        }
+        if x > 1e-100 {
+            check_gradient("x", &xx, &g.x, |x| {
+                sum(f(&Beta::new(&aa, &bb, &lo, &hi), x))
+            });
+        }
+        check_gradient("alpha", &aa, &g.alpha, |p| {
+            sum(f(&Beta::new(p, &bb, &lo, &hi), &xx))
+        });
+        check_gradient("beta", &bb, &g.beta, |p| {
+            sum(f(&Beta::new(&aa, p, &lo, &hi), &xx))
+        });
+    }
+
+    for (p, k, upper, expected) in [
+        (0.001, 900, true, -5904.271493662422),
+        (0.999, 100, false, -5895.1664025790915),
+    ] {
+        let (pp, nn, kk) = (s(p), IntTensor::scalar(1000), IntTensor::scalar(k));
+        let f = |d: &Binomial<'_>, k: &IntTensor| {
+            if upper { d.log_ccdf(k) } else { d.log_cdf(k) }
+        };
+        let d = Binomial::new(&pp, &nn);
+        assert_tail("binomial", at(f(&d, &kk)), expected);
+        let g = if upper {
+            d.d_log_ccdf(&kk)
+        } else {
+            d.d_log_cdf(&kk)
+        }
+        .unwrap();
+        assert_finite("p", &g.p);
+        check_gradient("p", &pp, &g.p, |q| sum(f(&Binomial::new(q, &nn), &kk)));
+    }
+
+    let t = StudentT::new(IntTensor::scalar(5));
+    let x = s(-1e70);
+    assert_tail("Student t", at(t.log_cdf(&x)), -803.6545263121025);
+    assert_tail("Student t", at(t.log_ccdf(&s(1e70))), -803.6545263121025);
+    // d/dx ln P(T <= x) ~ -v/x in the lower tail (P ~ |x|^-v)
+    let g = t.d_log_cdf(&x).unwrap().x.as_slice()[0];
+    assert!((g - 5e-70).abs() < 1e-6 * 5e-70, "{g}");
+}
