@@ -7,8 +7,8 @@ use crate::proto;
 use keanu_distributions::Kde;
 use keanu_graph::DType;
 use keanu_graph::op::{
-    ArgOp, BinaryOp, CompareOp, CumulativeOp, DistributionKind, LogicOp, Predicate, ReduceOp,
-    UnaryOp,
+    ArgOp, BinaryOp, CompareOp, CumulativeOp, DistributionKind, LogicOp, Nested, Predicate,
+    ReduceOp, UnaryOp,
 };
 use std::sync::Arc;
 
@@ -81,6 +81,33 @@ codes! {
     "type": DType => DType { F64, I64, Bool }
 }
 
+/// The schema value of each way of building a kind around another one (see [`DistributionKind::nested`]).
+const NESTED_CODES: [(Nested, proto::DistributionKind); 4] = [
+    (Nested::Truncated, proto::DistributionKind::Truncated),
+    (Nested::Censored, proto::DistributionKind::Censored),
+    (Nested::Mixture, proto::DistributionKind::Mixture),
+    (
+        Nested::HiddenMarkovModel,
+        proto::DistributionKind::HiddenMarkovModel,
+    ),
+];
+
+/// The schema value of a way of nesting, or None for one without a saved form.
+fn nested_code(nested: Nested) -> Option<proto::DistributionKind> {
+    NESTED_CODES
+        .iter()
+        .find(|(n, _)| *n == nested)
+        .map(|(_, code)| *code)
+}
+
+/// The way of nesting a schema value saves, or None if it isn't a nested kind.
+fn nested_of_code(code: proto::DistributionKind) -> Option<Nested> {
+    NESTED_CODES
+        .iter()
+        .find(|(_, c)| *c == code)
+        .map(|(nested, _)| *nested)
+}
+
 /// The distributions whose kind carries no data, by the same name in Keanu and the schema.
 macro_rules! distribution_codes {
     ($($kind:ident),+ $(,)?) => {
@@ -97,13 +124,10 @@ macro_rules! distribution_codes {
                     }),
                     None,
                 ),
-                DistributionKind::Truncated(base) => (proto::DistributionKind::Truncated, None, Some(base)),
-                DistributionKind::Censored(base) => (proto::DistributionKind::Censored, None, Some(base)),
-                DistributionKind::Mixture(base) => (proto::DistributionKind::Mixture, None, Some(base)),
-                DistributionKind::HiddenMarkovModel(base) => {
-                    (proto::DistributionKind::HiddenMarkovModel, None, Some(base))
+                _ => {
+                    let (nested, base) = kind.nested()?;
+                    (nested_code(nested)?, None, Some(base))
                 }
-                _ => return None,
             };
             let base = match base {
                 Some(base) => Some(Box::new(distribution_type(base)?)),
@@ -128,14 +152,8 @@ macro_rules! distribution_codes {
                     kind.as_str_name()
                 )));
             }
-            let nested = matches!(
-                kind,
-                proto::DistributionKind::Truncated
-                    | proto::DistributionKind::Censored
-                    | proto::DistributionKind::Mixture
-                    | proto::DistributionKind::HiddenMarkovModel
-            );
-            let base = match (&saved.base, nested) {
+            let nested = nested_of_code(kind);
+            let base = match (&saved.base, nested.is_some()) {
                 (Some(base), true) => Some(Arc::new(distribution_of_type(base)?)),
                 (None, false) => None,
                 (None, true) => {
@@ -159,20 +177,10 @@ macro_rules! distribution_codes {
                         .map_err(|e| IoError::Decode(format!("invalid KDE: {e}")))?;
                     DistributionKind::Kde(Arc::new(kde))
                 }
-                (proto::DistributionKind::Truncated, Some(base)) => DistributionKind::Truncated(base),
-                (proto::DistributionKind::Censored, Some(base)) => DistributionKind::Censored(base),
-                (proto::DistributionKind::Mixture, Some(base)) => DistributionKind::Mixture(base),
-                (proto::DistributionKind::HiddenMarkovModel, Some(base)) => {
-                    DistributionKind::HiddenMarkovModel(base)
-                }
-                (proto::DistributionKind::Unspecified, _)
-                | (
-                    proto::DistributionKind::Truncated
-                    | proto::DistributionKind::Censored
-                    | proto::DistributionKind::Mixture
-                    | proto::DistributionKind::HiddenMarkovModel,
-                    None,
-                ) => return Err(unknown()),
+                (_, base) => match (nested, base) {
+                    (Some(nested), Some(base)) => nested.wrap(base),
+                    _ => return Err(unknown()),
+                },
             })
         }
     };
@@ -248,12 +256,7 @@ mod tests {
             }
         };
         let gaussian = || saved(proto::DistributionKind::Gaussian as i32, None, None);
-        let nested = [
-            proto::DistributionKind::Truncated as i32,
-            proto::DistributionKind::Censored as i32,
-            proto::DistributionKind::Mixture as i32,
-            proto::DistributionKind::HiddenMarkovModel as i32,
-        ];
+        let nested = NESTED_CODES.map(|(_, code)| code as i32);
         for code in 1..=DISTRIBUTION_KINDS {
             let kde = (code == proto::DistributionKind::Kde as i32).then(|| proto::Kde {
                 samples: vec![1.0],

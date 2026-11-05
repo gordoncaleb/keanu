@@ -5,6 +5,7 @@ mod distribution_hvp;
 pub(crate) mod eval;
 mod hmm;
 mod mixture;
+mod nested;
 mod scan;
 mod shape;
 mod wrappers;
@@ -14,6 +15,7 @@ pub use distribution::{
     CustomDistribution, CustomGradient, DistributionKind, DistributionOp, Support,
 };
 pub(crate) use eval::eval;
+pub use nested::Nested;
 pub use scan::ScanBody;
 pub(crate) use shape::output_type;
 

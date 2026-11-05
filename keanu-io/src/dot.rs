@@ -25,13 +25,13 @@ fn describe(op: &Op) -> String {
 
 /// The name of a distribution (its `DistributionKind` variant), without formatting its data (a KDE's samples).
 fn distribution_name(kind: &DistributionKind) -> String {
+    if let Some((nested, _)) = kind.nested() {
+        // `Nested` variants are named as the kinds they tag
+        return format!("{nested:?}");
+    }
     match kind {
         DistributionKind::Kde(_) => "Kde".into(),
         DistributionKind::Custom(_) => "Custom".into(),
-        DistributionKind::Truncated(_) => "Truncated".into(),
-        DistributionKind::Censored(_) => "Censored".into(),
-        DistributionKind::Mixture(_) => "Mixture".into(),
-        DistributionKind::HiddenMarkovModel(_) => "HiddenMarkovModel".into(),
         // the other kinds are unit variants, which format as their name
         kind => format!("{kind:?}"),
     }

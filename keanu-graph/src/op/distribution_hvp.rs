@@ -27,7 +27,8 @@
 pub(crate) mod rules;
 
 use super::distribution::{DistributionKind, Univariate};
-use super::wrappers::{self, Wrapper};
+use super::nested::{Nested, nested_kinds};
+use super::wrappers;
 use crate::autodiff::{batched_shape, fit, lift, reduce_to};
 use crate::error::{GraphError, Result};
 use crate::value::Value;
@@ -88,9 +89,7 @@ impl DistributionKind {
             | K::Geometric
             | K::Poisson
             | K::NegativeBinomial
-            | K::UniformInt
-            | K::Truncated(_)
-            | K::Censored(_) => elementwise_hvp(
+            | K::UniformInt => elementwise_hvp(
                 self,
                 value,
                 parameters,
@@ -166,16 +165,8 @@ impl DistributionKind {
             // the categorical log density has no gradient with respect to its probabilities (see
             // `DistributionKind::log_prob_gradient`), so it has no second derivatives either
             K::Categorical => Ok((None, smallvec::smallvec![None; parameters.len()])),
-            K::Mixture(component) => super::mixture::log_prob_hvp(
-                component,
-                value,
-                parameters,
-                value_tangent,
-                parameter_tangents,
-                b,
-            ),
-            K::HiddenMarkovModel(emission) => super::hmm::log_prob_hvp(
-                emission,
+            nested_kinds!() => Nested::log_prob_hvp(
+                self,
                 value,
                 parameters,
                 value_tangent,
@@ -219,30 +210,10 @@ pub(crate) fn elementwise(
     b: usize,
     shape: &[usize],
 ) -> Result<Elementwise> {
-    match kind {
-        DistributionKind::Truncated(base) => {
-            return wrappers::second_order(
-                Wrapper::Truncated,
-                base,
-                x,
-                parameters,
-                tangents,
-                b,
-                shape,
-            );
+    if let Some((nested, inner)) = kind.nested() {
+        if let Some(wrapper) = nested.wrapper() {
+            return wrappers::second_order(wrapper, inner, x, parameters, tangents, b, shape);
         }
-        DistributionKind::Censored(base) => {
-            return wrappers::second_order(
-                Wrapper::Censored,
-                base,
-                x,
-                parameters,
-                tangents,
-                b,
-                shape,
-            );
-        }
-        _ => {}
     }
     let Some(rule) = rules::density_rule(kind) else {
         return Err(GraphError::NoSecondOrderRule(format!(
@@ -363,7 +334,7 @@ pub(crate) fn reduce(
 
 /// An element-wise kind's Hessian-vector products, from [`elementwise`] over the broadcast of the value and the
 /// parameters, summed to each input's shape.
-fn elementwise_hvp(
+pub(super) fn elementwise_hvp(
     kind: &DistributionKind,
     value: &Value,
     parameters: &[&Value],

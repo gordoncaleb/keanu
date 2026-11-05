@@ -2,7 +2,7 @@
 
 use super::hmm;
 use super::mixture;
-use super::wrappers::{self, Wrapper};
+use super::nested::nested_kinds;
 use crate::error::{GraphError, Result};
 use crate::value::{DType, Value};
 use keanu_distributions as d;
@@ -296,20 +296,9 @@ macro_rules! distributions {
                     $(DistributionKind::$kind => Some(Cow::Borrowed(&[$(DType::$ptype),+])),)+
                     DistributionKind::Kde(_) => Some(Cow::Borrowed(&[])),
                     DistributionKind::Categorical | DistributionKind::Custom(_) => None,
-                    DistributionKind::Truncated(base) | DistributionKind::Censored(base) => {
-                        let mut types = base.parameter_types()?.into_owned();
-                        types.extend([DType::F64; wrappers::OWN_PARAMETERS]);
-                        Some(Cow::Owned(types))
-                    }
-                    DistributionKind::Mixture(component) => {
-                        let mut types = component.parameter_types()?.into_owned();
-                        types.extend([DType::F64; mixture::OWN_PARAMETERS]);
-                        Some(Cow::Owned(types))
-                    }
-                    DistributionKind::HiddenMarkovModel(emission) => {
-                        let mut types = emission.parameter_types()?.into_owned();
-                        types.extend([DType::F64; hmm::OWN_PARAMETERS]);
-                        Some(Cow::Owned(types))
+                    nested_kinds!() => {
+                        let (nested, inner) = self.nested_parts();
+                        nested.parameter_types(inner)
                     }
                 }
             }
@@ -323,20 +312,9 @@ macro_rules! distributions {
                     $(DistributionKind::$kind => Some(Cow::Borrowed(&[$(stringify!($param)),+])),)+
                     DistributionKind::Kde(_) => Some(Cow::Borrowed(&[])),
                     DistributionKind::Categorical | DistributionKind::Custom(_) => None,
-                    DistributionKind::Truncated(base) | DistributionKind::Censored(base) => {
-                        let mut names = base.parameter_names()?.into_owned();
-                        names.extend(["lower", "upper"]);
-                        Some(Cow::Owned(names))
-                    }
-                    DistributionKind::Mixture(component) => {
-                        let mut names = component.parameter_names()?.into_owned();
-                        names.push("weights");
-                        Some(Cow::Owned(names))
-                    }
-                    DistributionKind::HiddenMarkovModel(emission) => {
-                        let mut names = emission.parameter_names()?.into_owned();
-                        names.extend(["initial", "transition"]);
-                        Some(Cow::Owned(names))
+                    nested_kinds!() => {
+                        let (nested, inner) = self.nested_parts();
+                        nested.parameter_names(inner)
                     }
                 }
             }
@@ -354,7 +332,7 @@ macro_rules! distributions {
             pub(crate) fn is_elementwise(&self) -> bool {
                 match self {
                     $(DistributionKind::$kind => is_elementwise!([$($cdf)?]),)+
-                    DistributionKind::Truncated(_) | DistributionKind::Censored(_) => true,
+                    nested_kinds!() => self.nested_parts().0.is_elementwise(),
                     _ => false,
                 }
             }
@@ -375,11 +353,12 @@ macro_rules! distributions {
                         [$($cdf)?], self, function, x, parameters, gradient, $vtype,
                         [$($param: $ptype),+], [$($gradient)?], $build
                     ),)+
-                    DistributionKind::Truncated(base) if function == Univariate::Density => {
-                        wrappers::elementwise(Wrapper::Truncated, base, x, parameters, gradient)?
-                    }
-                    DistributionKind::Censored(base) if function == Univariate::Density => {
-                        wrappers::elementwise(Wrapper::Censored, base, x, parameters, gradient)?
+                    nested_kinds!() if function == Univariate::Density => {
+                        let (nested, inner) = self.nested_parts();
+                        match nested.elementwise(inner, x, parameters, gradient) {
+                            Some(result) => result?,
+                            None => return Err(self.no_cdf()),
+                        }
                     }
                     _ => return Err(self.no_cdf()),
                 })
@@ -408,10 +387,7 @@ macro_rules! distributions {
                     DistributionKind::Kde(_) => DType::F64,
                     DistributionKind::Categorical => DType::I64,
                     DistributionKind::Custom(c) => c.value_type(),
-                    DistributionKind::Truncated(base)
-                    | DistributionKind::Censored(base)
-                    | DistributionKind::Mixture(base)
-                    | DistributionKind::HiddenMarkovModel(base) => base.value_type(),
+                    nested_kinds!() => self.nested_parts().1.value_type(),
                 }
             }
 
@@ -421,10 +397,7 @@ macro_rules! distributions {
                     DistributionKind::Kde(_) => "kde",
                     DistributionKind::Categorical => "categorical",
                     DistributionKind::Custom(_) => "custom",
-                    DistributionKind::Truncated(_) => "truncated",
-                    DistributionKind::Censored(_) => "censored",
-                    DistributionKind::Mixture(_) => "mixture",
-                    DistributionKind::HiddenMarkovModel(_) => "hidden_markov_model",
+                    nested_kinds!() => self.nested_parts().0.name(),
                 }
             }
 
@@ -441,11 +414,10 @@ macro_rules! distributions {
                     DistributionKind::Kde(_) => Support::Real,
                     DistributionKind::Categorical => Support::Discrete,
                     DistributionKind::Custom(c) => c.support(parameters).map_err(GraphError::Custom)?,
-                    DistributionKind::Truncated(base) | DistributionKind::Censored(base) => {
-                        wrappers::support(base, parameters)?
+                    nested_kinds!() => {
+                        let (nested, inner) = self.nested_parts();
+                        nested.support(inner, parameters)?
                     }
-                    DistributionKind::Mixture(component) => mixture::support(component, parameters)?,
-                    DistributionKind::HiddenMarkovModel(emission) => hmm::support(emission, parameters)?,
                 })
             }
 
@@ -486,10 +458,10 @@ macro_rules! distributions {
                         }
                         value
                     }
-                    DistributionKind::Truncated(base) => wrappers::sample_truncated(base, shape, parameters, rng)?,
-                    DistributionKind::Censored(base) => wrappers::sample_censored(base, shape, parameters, rng)?,
-                    DistributionKind::Mixture(component) => mixture::sample(component, shape, parameters, rng)?,
-                    DistributionKind::HiddenMarkovModel(emission) => hmm::sample(emission, shape, parameters, rng)?,
+                    nested_kinds!() => {
+                        let (nested, inner) = self.nested_parts();
+                        nested.sample(inner, shape, parameters, rng)?
+                    }
                 })
             }
 
@@ -506,17 +478,9 @@ macro_rules! distributions {
                         d::Categorical::new(f64_tensors(parameters)?)?.log_prob(value.i64()?)?.sum()
                     }
                     DistributionKind::Custom(c) => c.log_prob(value, parameters).map_err(GraphError::Custom)?,
-                    DistributionKind::Truncated(base) => {
-                        wrappers::log_prob(Wrapper::Truncated, base, value, parameters, false)?.0
-                    }
-                    DistributionKind::Censored(base) => {
-                        wrappers::log_prob(Wrapper::Censored, base, value, parameters, false)?.0
-                    }
-                    DistributionKind::Mixture(component) => {
-                        mixture::log_prob(component, value, parameters, false)?.0
-                    }
-                    DistributionKind::HiddenMarkovModel(emission) => {
-                        hmm::log_prob(emission, value, parameters, false)?.0
+                    nested_kinds!() => {
+                        let (nested, inner) = self.nested_parts();
+                        nested.log_prob(inner, value, parameters, false)?.0
                     }
                 })
             }
@@ -548,18 +512,10 @@ macro_rules! distributions {
                             None => no_gradient(parameters.len()),
                         }
                     }
-                    DistributionKind::Truncated(base) => {
-                        wrapper_gradient(Wrapper::Truncated, base, value, parameters)?
-                    }
-                    DistributionKind::Censored(base) => {
-                        wrapper_gradient(Wrapper::Censored, base, value, parameters)?
-                    }
-                    DistributionKind::Mixture(component) => {
-                        let (_, gradient) = mixture::log_prob(component, value, parameters, true)?;
-                        gradient.unwrap_or_else(|| no_gradient(parameters.len()))
-                    }
-                    DistributionKind::HiddenMarkovModel(emission) => {
-                        let (_, gradient) = hmm::log_prob(emission, value, parameters, true)?;
+                    // the gradient even where the log probability is impossible
+                    nested_kinds!() => {
+                        let (nested, inner) = self.nested_parts();
+                        let (_, gradient) = nested.log_prob(inner, value, parameters, true)?;
                         gradient.unwrap_or_else(|| no_gradient(parameters.len()))
                     }
                 })
@@ -606,22 +562,9 @@ macro_rules! distributions {
                         }
                         (log_prob, Some(self.log_prob_gradient(value, parameters)?))
                     }
-                    DistributionKind::Truncated(base) => {
-                        let (log_prob, gradient) =
-                            wrappers::log_prob(Wrapper::Truncated, base, value, parameters, true)?;
-                        (log_prob, gradient.filter(|_| !is_impossible(log_prob)))
-                    }
-                    DistributionKind::Censored(base) => {
-                        let (log_prob, gradient) =
-                            wrappers::log_prob(Wrapper::Censored, base, value, parameters, true)?;
-                        (log_prob, gradient.filter(|_| !is_impossible(log_prob)))
-                    }
-                    DistributionKind::Mixture(component) => {
-                        let (log_prob, gradient) = mixture::log_prob(component, value, parameters, true)?;
-                        (log_prob, gradient.filter(|_| !is_impossible(log_prob)))
-                    }
-                    DistributionKind::HiddenMarkovModel(emission) => {
-                        let (log_prob, gradient) = hmm::log_prob(emission, value, parameters, true)?;
+                    nested_kinds!() => {
+                        let (nested, inner) = self.nested_parts();
+                        let (log_prob, gradient) = nested.log_prob(inner, value, parameters, true)?;
                         (log_prob, gradient.filter(|_| !is_impossible(log_prob)))
                     }
                 })
@@ -755,18 +698,6 @@ pub(crate) enum Univariate {
     Cdf,
     /// The log survival function, ln P(X > x).
     Ccdf,
-}
-
-/// A wrapper's log prob gradient (the separate method, which [`DistributionKind::log_prob_gradient`] returns even
-/// where the log probability is impossible).
-fn wrapper_gradient(
-    wrapper: Wrapper,
-    base: &DistributionKind,
-    value: &Value,
-    parameters: &[&Value],
-) -> Result<LogProbGradientParts> {
-    let (_, gradient) = wrappers::log_prob(wrapper, base, value, parameters, true)?;
-    Ok(gradient.unwrap_or_else(|| no_gradient(parameters.len())))
 }
 
 /// Whether a log probability makes the state impossible: -infinity or NaN.
@@ -968,31 +899,8 @@ impl DistributionOp {
         if let DistributionKind::Custom(_) = kind {
             return Ok(Shape::from_slice(requested.unwrap_or(&[])));
         }
-        if let DistributionKind::Truncated(base) | DistributionKind::Censored(base) = kind {
-            if !base.has_cdf() {
-                return Err(invalid(format!(
-                    "the base distribution ({}) has no CDF, so it cannot be truncated or censored",
-                    base.name()
-                )));
-            }
-        }
-        if let DistributionKind::Mixture(component) = kind {
-            if !component.is_elementwise() {
-                return Err(invalid(format!(
-                    "the component distribution ({}) does not have one value per element with an element-wise \
-                     density, so it cannot be mixed",
-                    component.name()
-                )));
-            }
-        }
-        if let DistributionKind::HiddenMarkovModel(emission) = kind {
-            if !emission.is_elementwise() {
-                return Err(invalid(format!(
-                    "the emission distribution ({}) does not have one value per element with an element-wise \
-                     density, so it cannot be a hidden Markov model's emission",
-                    emission.name()
-                )));
-            }
+        if let Some((nested, inner)) = kind.nested() {
+            nested.check_inner(inner).map_err(invalid)?;
         }
         match kind.parameter_types() {
             Some(types) => {
