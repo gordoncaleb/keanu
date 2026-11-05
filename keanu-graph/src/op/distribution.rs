@@ -566,7 +566,9 @@ macro_rules! distributions {
                         distribution_gradient!(dist, x, $vtype, [$($param: $ptype),+], [$($gradient)?])
                     })+
                     DistributionKind::Kde(kde) => (Some(kde.d_log_prob(value.f64()?)?.x), smallvec::smallvec![]),
-                    DistributionKind::Categorical => no_gradient(parameters.len()),
+                    DistributionKind::Categorical => {
+                        super::distribution_hvp::categorical_gradient(value.i64()?, parameters)?
+                    }
                     DistributionKind::Custom(c) => {
                         match c.log_prob_gradient(value, parameters).map_err(GraphError::Custom)? {
                             Some(g) => {

@@ -79,8 +79,8 @@
 //! in [`keanu_tensor::special`]; the linear Gaussian state space model differentiates its Kalman filter.) A model
 //! whose log probability depends on the latents through a lambda or a custom distribution fails with
 //! [`GraphError::NoSecondOrderRule`] naming the node. Second derivatives follow the
-//! first-order gradients' conventions (the uniform has none with respect to its bounds, the categorical none with
-//! respect to its probabilities, and the Laplace density takes the almost-everywhere value at its kink).
+//! first-order gradients' conventions (the uniform has none with respect to its bounds, and the Laplace density
+//! takes the almost-everywhere value at its kink).
 //! Eigenvector derivatives assume distinct eigenvalues, as their first derivatives do.
 
 use crate::error::{GraphError, Result};

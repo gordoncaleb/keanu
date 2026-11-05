@@ -309,8 +309,10 @@ fn chain_samples_summarise_every_element_of_every_f64_node() {
     }
     assert_eq!(table.lines().count(), 3, "{table}");
 
-    // asking for an int node, an unsampled node or a bad index is an error
-    assert!(samples.element(n, &[]).is_err());
+    // an int node's element is its values as f64; an unsampled node or a bad index is an error
+    let ints = samples.element(n, &[]).unwrap();
+    assert_eq!(ints.len(), samples.num_chains());
+    assert!(ints.iter().flatten().all(|&x| x == 1.0));
     assert!(samples.element(NodeId::from_index(99), &[]).is_err());
     assert!(samples.element(x, &[5]).is_err());
 }

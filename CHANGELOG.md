@@ -190,6 +190,37 @@ Work from `docs/plans/2026-11-05-001-feat-applied-modelling-gaps-plan.md`.
   2), for integer latents with infinitely many values (Poisson, negative binomial, geometric) or any other integer
   latent except a multinomial. keanu-graph gained `DistributionKind::finite_support` (the values each element can
   take, given the parameters) and `DistributionKind::has_finite_support`.
+- keanu-algorithms: **compound sampler** (`mcmc::compound::Compound`, `CompoundStep`, `CompoundSampler` and
+  `CompoundStatistics`; `Compound` also in the `keanu` prelude): a cycle of steps over disjoint blocks of the latents
+  (NUTS in block mode, Gibbs, discrete Metropolis and Metropolis–Hastings), built with
+  `Compound::new().gibbs(..).nuts(..)` or chosen by `Compound::for_model`, which takes Gibbs for discrete latents
+  with at most 1000 values per element, the random walk for other integer latents, Metropolis–Hastings for anything
+  else, and NUTS last for the continuous latents when the log probability is differentiable with respect to them
+  (the new `select::is_differentiable_wrt`, which ignores operations that depend only on other latents).
+  `with_nuts_settings` replaces the NUTS steps' settings. Every latent must belong to exactly one step. NUTS adapts
+  over the compound chain's first `adapt_count` steps, its statistics are returned in `CompoundStatistics::nuts`,
+  and chains run in parallel with `sample_chains` as for the other samplers.
+  **Default sampler change:** `Sampler::for_model` (with the new variants `Sampler::Gibbs` and
+  `Sampler::Compound`) now returns `Gibbs` for a model whose latents are all discrete with finite supports, and the
+  compound sampler for any other model with a discrete latent; both used to get Metropolis–Hastings for every
+  latent, so their draws change. All-continuous models still get NUTS (or Metropolis–Hastings when not
+  differentiable), and `MetropolisHastings` asked for explicitly is unchanged. `ChainSamples::element`, and with it
+  `rhat`, `ess_bulk`, `ess_tail`, `mcse_mean` and `summarize`, now accepts integer and boolean nodes (as 0 and 1),
+  so discrete latents can be checked for convergence. keanu-graph: the **categorical distribution now has a
+  gradient** (and second derivatives) with respect to its probabilities, which gradient based samplers need when
+  the probabilities are latent (a mixture's weights with explicit assignments); before, that term was silently left
+  out of the gradient. The coal mining disasters, text messaging and cheating students (Bernoulli form) examples
+  use the default compound sampler with four chains (the first two) instead of Metropolis–Hastings. Re-baselined
+  tests: `coal_mining_disasters_switch_year` (now also every R-hat below 1.01 and the posterior means within four
+  Monte Carlo standard errors of the exact conjugate posterior), `text_messaging_switch_point_and_rates` (the same
+  checks; the late rate's mode, meaningful only for Metropolis–Hastings' repeated values, became its mean) and
+  `cheating_students_with_bernoulli` (against the exact posterior mean on a grid) in `keanu/tests/examples.rs`;
+  `metropolis_hastings_samples_a_discrete_posterior_exactly` (asks for Metropolis–Hastings explicitly, and checks
+  that the default is now Gibbs) in `keanu-algorithms/tests/mcmc_metropolis.rs`;
+  `chain_samples_summarise_every_element_of_every_f64_node` (an integer node's element is no longer an error) in
+  `keanu-algorithms/tests/diagnostics.rs`; and
+  `uniform_and_discrete_nodes_contribute_no_gradient_with_respect_to_themselves` (the categorical's gradient) in
+  `keanu-graph/tests/logprob.rs`. The guide's sampling chapter has a new section on discrete latents.
 
 ### Code review fixes
 

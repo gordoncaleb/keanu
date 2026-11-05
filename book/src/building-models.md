@@ -132,8 +132,10 @@ Handles (`DoubleVar`, `IntVar`, `BoolVar`) support:
   - `cpt(conditions, cases, default)` for conditional probability tables
 - **Arbitrary functions:** `lambda`, with `lambda_with_jacobian` for a differentiable one.
 
-floor, ceil, round, sign, comparisons and casts aren't differentiable, so a model whose latents flow through them is
-sampled with Metropolis–Hastings rather than NUTS (see `Sampler::for_model`).
+floor, ceil, round, sign, comparisons and casts aren't differentiable, so a model whose continuous latents flow
+through them is sampled with Metropolis–Hastings rather than NUTS (see `Sampler::for_model`). Only the paths from
+continuous latents matter: comparing a discrete latent with a constant (a change point with the time) is fine, and
+such models get a compound sampler, NUTS for the continuous latents with Gibbs steps for the discrete ones.
 
 ## Indexing
 

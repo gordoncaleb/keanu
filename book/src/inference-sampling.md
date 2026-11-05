@@ -37,7 +37,8 @@ Settings on `MetropolisHastings`:
 
 The No-U-Turn sampler is Hamiltonian Monte Carlo that tunes its own trajectory length. It uses gradients, so it
 mixes far better than Metropolis–Hastings on continuous models, especially with correlated latents. It needs every
-latent to be continuous and the graph to be differentiable.
+latent to be continuous and the graph to be differentiable; models with discrete latents use it for their continuous
+latents inside a compound sampler (below).
 
 ```rust,ignore
 {{#include ../../keanu/tests/book.rs:nuts}}
@@ -118,7 +119,57 @@ recorded, whatever `save_statistics` says:
 Both are per step. With `SamplingOptions` dropping `d` steps and recording every `k`-th, draw `i` is step
 `d + i·k`. With several chains (below), check every chain.
 
+## Discrete latents: Gibbs and compound sampling
+
+Discrete latents (a change point, a mixture assignment, an inclusion indicator) have no gradients, so NUTS can't
+move them. A **compound sampler** (`Compound`) splits the latents into blocks and cycles through one step per block,
+each updating its block with everything else held fixed, as PyMC's compound steps do:
+
+- **NUTS** for a block of continuous latents. In this block mode NUTS treats the other latents as constants and,
+  whenever another step has changed them, refreshes its position, log probability and gradient before its next
+  trajectory. Its step size and mass matrix adapt over its first `adapt_count` steps as usual, which are the compound
+  sampler's first `adapt_count` steps, so drop them from the draws.
+- **`Gibbs`** for discrete latents whose elements have finitely many values: Bernoulli, binomial, categorical,
+  ordered logistic and discrete uniform (and truncated counts with a finite upper bound). It updates one element at a
+  time, evaluating the log probability at every value the element can take and drawing from those exact
+  conditional probabilities. Only the latent's Markov blanket (its own log probability, its children's and the
+  factors it reaches) is evaluated. An element with more than `max_support_size` values (1000) is an error.
+- **`DiscreteMetropolis`** for integer latents with infinitely many values (Poisson, negative binomial, geometric):
+  a random walk that moves each element by ±1 or ±2 and accepts with the Metropolis probability.
+- **Metropolis–Hastings** for anything else.
+
+```rust,ignore
+{{#include ../../keanu/tests/book.rs:compound}}
+```
+
+`Compound::for_model` chooses the steps as above, with NUTS last; `with_nuts_settings` changes the settings of its
+NUTS step. Every latent must belong to exactly one step. `sample_with_statistics` returns `CompoundStatistics`,
+whose `nuts` holds each NUTS step's `NutsStatistics` (divergences, energies, adaptation; pass it to `CmdStanCsv`
+like plain NUTS's) and `discrete_acceptance_rate` each random walk's acceptance rate. `ChainSamples::rhat` and the
+other diagnostics accept integer and boolean nodes too, so discrete latents can be checked for convergence.
+
+Gibbs and `DiscreteMetropolis` can also sample a model of discrete latents alone:
+
+```rust,ignore
+{{#include ../../keanu/tests/book.rs:gibbs}}
+```
+
+Each element update evaluates the whole of each node in the latent's Markov blanket, so a sweep over a latent of n
+elements costs about n such evaluations per value tried. Where a discrete latent can be summed out of the model
+instead, the result (sampled by NUTS alone) usually mixes better still.
+
 ## Choosing automatically
+
+`Sampler::for_model` picks a sampler from the kinds of latent:
+
+- every latent continuous: NUTS if the log probability is differentiable with respect to them, otherwise
+  Metropolis–Hastings;
+- every latent discrete, with finitely many values per element: `Gibbs`;
+- otherwise: `Compound::for_model` (typically Gibbs or `DiscreteMetropolis` for the discrete latents and NUTS for
+  the continuous ones).
+
+Before the compound sampler existed, any model with a discrete latent got Metropolis–Hastings for every latent;
+`MetropolisHastings` asked for explicitly still works as before.
 
 ```rust,ignore
 {{#include ../../keanu/tests/book.rs:choose_sampler}}
@@ -127,7 +178,7 @@ Both are per step. With `SamplingOptions` dropping `d` steps and recording every
 ## Several chains
 
 Because the graph is shared and each chain has its own state, `algorithms::mcmc::chains::run_chains` runs
-independent, seeded chains. With the `parallel` feature they run on rayon's thread pool, with the same results as
+independent, seeded chains (`sample_chains` collects their draws into `ChainSamples`), with any of the samplers. With the `parallel` feature they run on rayon's thread pool, with the same results as
 running them one after another.
 
 ## Predictive sampling

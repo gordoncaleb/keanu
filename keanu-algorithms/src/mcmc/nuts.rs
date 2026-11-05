@@ -397,8 +397,8 @@ impl Nuts {
 
     /// A chain over some of the model's continuous latents, `latents` (a block), starting from the current state
     /// and recording the values of `nodes`; every other latent, continuous or discrete, is held at its value in the
-    /// state. This is NUTS as one step of a compound sampler, where other steps update the other latents between
-    /// its steps.
+    /// state. This is NUTS as one step of a [`Compound`](crate::mcmc::compound::Compound) sampler, where other steps
+    /// update the other latents between its steps.
     ///
     /// Each step first checks whether the state still holds the values the chain left it at, for the block and for
     /// every other latent. If something else changed them, the chain [refreshes](NutsSampler::refresh) its position,

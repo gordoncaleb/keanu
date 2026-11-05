@@ -534,7 +534,7 @@ fn posterior_sampling() -> keanu::Result<()> {
     // ANCHOR_END: nuts_transforms
 
     // ANCHOR: choose_sampler
-    // NUTS if every latent is continuous and differentiable, otherwise Metropolis–Hastings
+    // here every latent is continuous and differentiable, so NUTS
     let sampler = Sampler::for_model(&model, &state);
     assert!(matches!(sampler, Sampler::Nuts(_)));
     let samples = sampler.sample(
@@ -555,6 +555,80 @@ fn posterior_sampling() -> keanu::Result<()> {
     let effective = chain.effective_sample_size(&[])?;
     assert!(effective > 0.0 && effective <= 1000.0 * 3.0);
     // ANCHOR_END: autocorrelation
+    Ok(())
+}
+
+#[test]
+fn compound_sampling() -> keanu::Result<()> {
+    use keanu::algorithms::mcmc::chains::sample_chains;
+    use keanu::algorithms::mcmc::compound::CompoundStep;
+    // ANCHOR: compound
+    // a change point: counts with one rate before an unknown switch time and another after it
+    let counts = vec![4, 5, 4, 6, 3, 1, 0, 2, 1, 0, 1, 2];
+    let b = GraphBuilder::new();
+    let switch = b.uniform_int(0, 13).label("switch");
+    let early = b.exponential(1.0).label("early");
+    let late = b.exponential(1.0).label("late");
+    let time = b.int_constant(IntTensor::vector((0..12).collect()));
+    let y = b.poisson(b.where_(switch.gt(time), early, late));
+    b.observe(y, IntTensor::vector(counts));
+    let (switch, early, late) = (switch.id(), early.id(), late.id());
+    let (graph, state) = b.build()?;
+    let model = Model::new(graph, &state)?;
+
+    // discrete and continuous latents: Gibbs for the switch, NUTS for the rates
+    let sampler = Sampler::for_model(&model, &state);
+    let Sampler::Compound(compound) = &sampler else {
+        unreachable!("a model with both kinds of latent gets the compound sampler")
+    };
+    assert!(matches!(
+        compound.steps(),
+        [CompoundStep::Gibbs(_), CompoundStep::Nuts { .. }]
+    ));
+
+    // or spelt out, with shorter NUTS adaptation
+    let compound = Compound::new()
+        .gibbs(&[switch])
+        .nuts_with(Nuts::default().with_adapt_count(500), &[early, late]);
+    let chains = sample_chains(4, 1, &state, |state, rng| {
+        let (samples, statistics) = compound.sample_with_statistics(
+            &model,
+            state,
+            &[switch, early, late],
+            1500,
+            SamplingOptions::default().with_drop(500),
+            rng,
+        )?;
+        assert_eq!(statistics.nuts[0].divergence_count(), 0);
+        Ok(samples)
+    })?;
+    // R-hat works for the discrete switch too
+    for node in [switch, early, late] {
+        assert!(chains.rhat(node, &[])? < 1.01);
+    }
+    // ANCHOR_END: compound
+    let switch_mean = chains.summarize(switch, &[])?.mean;
+    assert!((3.0..=7.0).contains(&switch_mean), "{switch_mean}");
+
+    // ANCHOR: gibbs
+    // an all-discrete model gets Gibbs sampling: each element drawn from its exact conditional distribution
+    let b = GraphBuilder::new();
+    let z = b.bernoulli_with_shape(&[3], 0.3);
+    let y = b.gaussian_with_shape(&[3], z.to_double_mask() * 2.0, 1.0);
+    b.observe(y, DoubleTensor::vector(vec![1.8, 0.1, 2.4]));
+    let z = z.id();
+    let (graph, mut state) = b.build()?;
+    let model = Model::new(graph, &state)?;
+    let sampler = Sampler::for_model(&model, &state);
+    assert!(matches!(sampler, Sampler::Gibbs(_)));
+    let mut rng = KeanuRng::seed_from_u64(2);
+    let samples = Gibbs::new(&[z]).sample(&model, &mut state, &[z], 2000, &mut rng)?;
+    let first_is_true = samples.bool(z).unwrap().probability(|z| z.as_slice()[0]);
+    // ANCHOR_END: gibbs
+    assert!(
+        first_is_true > 0.4 && first_is_true < 0.8,
+        "{first_is_true}"
+    );
     Ok(())
 }
 

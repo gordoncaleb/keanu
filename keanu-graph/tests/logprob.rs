@@ -270,15 +270,16 @@ fn uniform_and_discrete_nodes_contribute_no_gradient_with_respect_to_themselves(
     assert_eq!(g.get(uniform).unwrap().as_slice(), &[0.0]);
     assert!(g.get(a).is_none());
 
-    // categorical and uniform int have no gradient at all; integer latents are not valid targets
-    let g = log_prob_gradient(
-        &graph,
-        &state,
-        &[categorical, uniform_int],
-        &[a, uniform_int],
-    )
-    .unwrap();
+    // uniform int has no gradient at all, and integer latents are not valid targets; the categorical has one with
+    // respect to its probabilities: d/da ln(e^2a / (e^a + e^2a)) = 2 - (e^a + 2 e^2a) / (e^a + e^2a)
+    let g = log_prob_gradient(&graph, &state, &[uniform_int], &[a, uniform_int]).unwrap();
     assert!(g.is_empty());
+    let g = log_prob_gradient(&graph, &state, &[categorical], &[a, uniform_int]).unwrap();
+    let (e1, e2) = (A.exp(), (2.0 * A).exp());
+    let expected = 2.0 - (e1 + 2.0 * e2) / (e1 + e2);
+    let actual = g.get(a).unwrap().to_scalar().unwrap();
+    assert!((actual - expected).abs() < 1e-12, "{actual} vs {expected}");
+    assert!(g.get(uniform_int).is_none());
 }
 
 #[test]

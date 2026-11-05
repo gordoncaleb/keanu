@@ -118,8 +118,12 @@ fn metropolis_hastings_samples_a_discrete_posterior_exactly() {
     let model = Model::new(graph, &state).unwrap();
 
     assert!(!is_differentiable_wrt_latents(&model, &state));
-    let sampler = Sampler::for_model(&model, &state);
-    assert!(matches!(sampler, Sampler::MetropolisHastings(_)));
+    // an all-discrete model defaults to Gibbs sampling; Metropolis–Hastings, asked for explicitly, is unchanged
+    assert!(matches!(
+        Sampler::for_model(&model, &state),
+        Sampler::Gibbs(_)
+    ));
+    let sampler = Sampler::MetropolisHastings(MetropolisHastings::default());
     let samples = sampler
         .sample(
             &model,

@@ -4,7 +4,9 @@
 //! number generator those chain lengths don't converge reliably (checked over many seeds), so these tests run
 //! chains 20 times longer than the Java defaults and assert the same tolerances. Where Metropolis–Hastings with
 //! prior proposals can't mix (the Challenger model's strongly correlated parameters), the posterior is checked with
-//! NUTS and the Java-style run is only checked to complete.
+//! NUTS and the Java-style run is only checked to complete. The examples with discrete latents (coal mining
+//! disasters, text messaging and the Bernoulli form of cheating students) use the default compound sampler and are
+//! checked against their exact posteriors instead, computed in closed form or on a grid.
 //!
 //! The hierarchical examples with no Java counterpart (eight schools, radon) are checked against published or
 //! independently computed posteriors, with multi-chain R-hat and divergence counts; each passed over seeds 1 to 8.
@@ -47,24 +49,114 @@ fn assert_close(actual: f64, expected: f64, within: f64, what: &str) {
     );
 }
 
+/// The exact posterior of a Poisson change-point model with Exponential(`prior_rate`) priors on both rates and a
+/// uniform prior on the switch τ (times before τ have the early rate), which is conjugate given τ: each segment's
+/// marginal likelihood is b Γ(S + 1) / (n + b)^(S + 1) for n counts summing to S, and its rate's posterior mean is
+/// (S + 1) / (n + b). Returns the posterior means of τ and the two rates, and the posterior mode of τ.
+fn exact_change_point(
+    times: &[i64],
+    counts: &[i64],
+    switches: &[i64],
+    prior_rate: f64,
+) -> [f64; 4] {
+    use keanu::tensor::special::ln_gamma;
+    let segment = |n: f64, sum: f64| {
+        prior_rate.ln() + ln_gamma(sum + 1.0) - (sum + 1.0) * (n + prior_rate).ln()
+    };
+    let mut rows = Vec::new();
+    for &tau in switches {
+        let (mut n1, mut s1, mut n2, mut s2) = (0.0, 0.0, 0.0, 0.0);
+        for (&t, &y) in times.iter().zip(counts) {
+            if t < tau {
+                n1 += 1.0;
+                s1 += y as f64;
+            } else {
+                n2 += 1.0;
+                s2 += y as f64;
+            }
+        }
+        let log_weight = segment(n1, s1) + segment(n2, s2);
+        rows.push((
+            tau as f64,
+            log_weight,
+            (s1 + 1.0) / (n1 + prior_rate),
+            (s2 + 1.0) / (n2 + prior_rate),
+        ));
+    }
+    let max = rows.iter().map(|r| r.1).fold(f64::NEG_INFINITY, f64::max);
+    let total: f64 = rows.iter().map(|r| (r.1 - max).exp()).sum();
+    let mut means = [0.0; 3];
+    for &(tau, log_weight, early, late) in &rows {
+        let p = (log_weight - max).exp() / total;
+        means[0] += p * tau;
+        means[1] += p * early;
+        means[2] += p * late;
+    }
+    let mode = rows.iter().max_by(|a, b| a.1.total_cmp(&b.1)).unwrap().0;
+    [means[0], means[1], means[2], mode]
+}
+
+/// Checks a sampled change-point model: every R-hat below 1.01, and each posterior mean within four Monte Carlo
+/// standard errors of the exact one.
+fn check_change_point(
+    chains: &keanu::algorithms::ChainSamples,
+    nodes: [keanu::graph::NodeId; 3],
+    exact: [f64; 4],
+) {
+    for (i, (node, what)) in nodes
+        .into_iter()
+        .zip(["switch", "early rate", "late rate"])
+        .enumerate()
+    {
+        let summary = chains.summarize(node, &[]).unwrap();
+        assert!(summary.r_hat < 1.01, "{what}: R-hat {}", summary.r_hat);
+        assert_close(summary.mean, exact[i], 4.0 * summary.mcse_mean, what);
+    }
+}
+
 #[test]
 fn coal_mining_disasters_switch_year() {
-    // Java asserts exactly 1890 for its seed; the posterior's mode is at 1890 with neighbouring years close behind
-    let year =
-        coal_mining_disasters::run(1, coal_mining_disasters::DEFAULT_SAMPLES * LONGER).unwrap();
-    assert!((1888..=1892).contains(&year), "switch year {year}");
+    // AE2: the default (compound) sampler, four chains, every R-hat below 1.01. The draws were Metropolis–Hastings'
+    // and are now the compound sampler's, so the checks are against the exact posterior; Java asserted exactly 1890
+    // for its seed, and the posterior's mode is at 1890 with neighbouring years close behind
+    let r = coal_mining_disasters::run(1, coal_mining_disasters::DEFAULT_SAMPLES).unwrap();
+    assert!(
+        (1888..=1892).contains(&r.switch_year_mode),
+        "switch year {}",
+        r.switch_year_mode
+    );
+    let data = coal_mining_disasters::data();
+    let (years, counts): (Vec<i64>, Vec<i64>) = data.into_iter().unzip();
+    let switches: Vec<i64> = (years[0]..=years[years.len() - 1] + 1).collect();
+    let exact = exact_change_point(&years, &counts, &switches, 1.0);
+    assert_eq!(exact[3], 1890.0);
+    check_change_point(
+        &r.chains,
+        [r.switch_point, r.early_rate, r.late_rate],
+        exact,
+    );
 }
 
 #[test]
 fn text_messaging_switch_point_and_rates() {
-    let r = text_messaging::run(1, text_messaging::DEFAULT_SAMPLES * LONGER).unwrap();
+    // the compound sampler's draws, checked against the exact posterior (the late rate's mode, meaningful for
+    // Metropolis–Hastings' repeated values, is replaced by its mean)
+    let r = text_messaging::run(1, text_messaging::DEFAULT_SAMPLES).unwrap();
     assert!(
         (41..=45).contains(&r.switch_point_mode),
         "switch point {}",
         r.switch_point_mode
     );
+    let (days, messages) = text_messaging::data();
+    let switches: Vec<i64> = (0..days.len() as i64).collect();
+    let exact = exact_change_point(&days, &messages, &switches, 0.1);
+    check_change_point(
+        &r.chains,
+        [r.switch_point, r.early_rate, r.late_rate],
+        exact,
+    );
     assert_close(r.early_rate_mean, 18.0, 2.0, "early rate mean");
-    assert_close(r.late_rate_mode, 23.0, 2.0, "late rate mode");
+    assert_close(r.late_rate_mean, 23.0, 2.0, "late rate mean");
 }
 
 #[test]
@@ -76,8 +168,34 @@ fn ab_testing_posteriors() {
 
 #[test]
 fn cheating_students_with_bernoulli() {
-    let p = cheating_students::run_with_bernoulli(100, 35.0, 1, 2000 * LONGER).unwrap();
-    assert_close(p, 0.2, 0.05, "probability of cheating");
+    // The compound sampler's draws (they were Metropolis–Hastings'), checked against the exact posterior mean of p:
+    // the number of true answers is Binomial(100, p / 2 + 1 / 4) and the total is observed with N(0, 1) noise, so
+    // p(p | y) ∝ Σ_a Binomial(a; 100, p / 2 + 1 / 4) N(35; a, 1), integrated on a grid
+    let estimate = cheating_students::run_with_bernoulli(100, 35.0, 1, 2000).unwrap();
+    let grid = 4000;
+    let (mut total, mut first) = (0.0, 0.0);
+    for i in 0..grid {
+        let p = (i as f64 + 0.5) / grid as f64;
+        let q: f64 = 0.5 * p + 0.25;
+        let mut log_binomial = 100.0 * (1.0 - q).ln();
+        let mut density = 0.0;
+        for a in 0..=100 {
+            if a > 0 {
+                log_binomial += ((101 - a) as f64 / a as f64).ln() + (q / (1.0 - q)).ln();
+            }
+            density += (log_binomial - 0.5 * (35.0 - a as f64).powi(2)).exp();
+        }
+        total += density;
+        first += p * density;
+    }
+    let exact = first / total;
+    assert_close(
+        estimate.mean,
+        exact,
+        4.0 * estimate.mcse,
+        "posterior mean of p",
+    );
+    assert_close(estimate.mean, 0.2, 0.05, "probability of cheating");
 }
 
 #[test]

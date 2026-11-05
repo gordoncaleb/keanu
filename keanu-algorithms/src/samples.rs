@@ -522,20 +522,24 @@ impl ChainSamples {
         self.chains[0].nodes()
     }
 
-    /// One element of an f64 node in each chain: one series of draws per chain. A scalar node's element is `&[]`.
-    /// Fails if the node was not sampled, is not an f64 node, or the index is out of range.
+    /// One element of a node in each chain: one series of draws per chain, as f64 (an integer node's values
+    /// converted, and a boolean node's as 0 and 1, so that the diagnostics can be applied to discrete latents too).
+    /// A scalar node's element is `&[]`. Fails if the node was not sampled or the index is out of range.
     pub fn element(&self, id: NodeId, index: &[usize]) -> Result<Vec<Vec<f64>>> {
         self.chains
             .iter()
             .map(|chain| {
-                chain
-                    .f64(id)
-                    .ok_or_else(|| {
-                        AlgorithmError::InvalidArgument(format!(
-                            "node {id:?} is not a sampled f64 node"
-                        ))
-                    })?
-                    .element(index)
+                if let Some(samples) = chain.f64(id) {
+                    samples.element(index)
+                } else if let Some(samples) = chain.i64(id) {
+                    discrete_element(samples.as_slice(), index, |x| x as f64)
+                } else if let Some(samples) = chain.bool(id) {
+                    discrete_element(samples.as_slice(), index, |x| f64::from(u8::from(x)))
+                } else {
+                    Err(AlgorithmError::InvalidArgument(format!(
+                        "node {id:?} was not sampled"
+                    )))
+                }
             })
             .collect()
     }
@@ -581,6 +585,26 @@ impl ChainSamples {
         }
         Ok(ChainSummary { rows })
     }
+}
+
+/// One element of each of an integer or boolean node's draws, as f64.
+fn discrete_element<T: Element>(
+    values: &[Tensor<T>],
+    index: &[usize],
+    to_f64: impl Fn(T) -> f64,
+) -> Result<Vec<f64>> {
+    let shape = values.first().map(|v| v.shape()).unwrap_or(&[]);
+    let index: &[usize] = if shape.is_empty() { &[] } else { index };
+    values
+        .iter()
+        .map(|v| {
+            v.get(index).map(&to_f64).ok_or_else(|| {
+                AlgorithmError::InvalidArgument(format!(
+                    "index {index:?} is out of range for shape {shape:?}"
+                ))
+            })
+        })
+        .collect()
 }
 
 /// Every index into a tensor of this shape, in row-major order (one empty index for a scalar).

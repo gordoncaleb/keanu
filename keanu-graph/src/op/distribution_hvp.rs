@@ -17,8 +17,8 @@
 //!   [`keanu_distributions::LinearGaussianStateSpace::hvp`]).
 //!
 //! A rule's derivatives are those of the first-order gradient it sits next to, including where that gradient
-//! follows a convention: the uniform has no derivative with respect to its bounds and the categorical none with
-//! respect to its probabilities, so their second derivatives are zero too, and the Laplace density's kink at its
+//! follows a convention: the uniform has no derivative with respect to its bounds, so its second derivatives are
+//! zero too, and the Laplace density's kink at its
 //! location takes the almost-everywhere second derivative 0. The second derivatives of a gamma, beta or negative
 //! binomial CDF with respect to a shape parameter come from the second shape derivatives of the regularised
 //! incomplete gamma and beta functions, and the linear Gaussian state space model differentiates the Kalman
@@ -161,9 +161,7 @@ impl DistributionKind {
                     .transpose()?,
                 SmallVec::new(),
             )),
-            // the categorical log density has no gradient with respect to its probabilities (see
-            // `DistributionKind::log_prob_gradient`), so it has no second derivatives either
-            K::Categorical => Ok((None, smallvec::smallvec![None; parameters.len()])),
+            K::Categorical => categorical_hvp(value.i64()?, parameters, parameter_tangents, b),
             nested_kinds!() => Nested::log_prob_hvp(
                 self,
                 value,
@@ -569,6 +567,96 @@ fn ordered_logistic_hvp(
             reduce(Some(hc), b, &cut_shape, cutpoints.shape())?,
         ],
     ))
+}
+
+/// A categorical distribution's broadcast shape, its probabilities spread to that shape (one flat vector per
+/// category), and each element's category (`None` where the value is not a category).
+type CategoricalParts = (Shape, Vec<Vec<f64>>, Vec<Option<usize>>);
+
+/// The probabilities of a categorical distribution broadcast to the shape of the value and every probability,
+/// flattened, with that shape, and each element's category (`None` where it is not a category).
+fn categorical_parts(
+    x: &keanu_tensor::IntTensor,
+    parameters: &[&Value],
+) -> Result<CategoricalParts> {
+    let mut shape = Shape::from_slice(x.shape());
+    for p in parameters {
+        shape = broadcast_shape(&shape, p.shape())?;
+    }
+    let probabilities = parameters
+        .iter()
+        .map(|p| spread(p.f64()?, &shape))
+        .collect::<Result<Vec<_>>>()?;
+    let categories = x
+        .broadcast_to(&shape)?
+        .into_vec()
+        .into_iter()
+        .map(|c| usize::try_from(c).ok().filter(|&c| c < parameters.len()))
+        .collect();
+    Ok((shape, probabilities, categories))
+}
+
+/// The gradient of the categorical log probability ln(p_x / Σ_j p_j) with respect to each probability:
+/// [j = x] / p_x − 1 / Σ p, element-wise, summed to each probability's shape (zero where x is not a category).
+pub(super) fn categorical_gradient(
+    x: &keanu_tensor::IntTensor,
+    parameters: &[&Value],
+) -> Result<super::distribution::LogProbGradientParts> {
+    let (shape, probabilities, categories) = categorical_parts(x, parameters)?;
+    let len = categories.len();
+    let mut gradients = vec![vec![0.0; len]; parameters.len()];
+    for (i, category) in categories.iter().enumerate() {
+        let Some(c) = *category else { continue };
+        let total: f64 = probabilities.iter().map(|p| p[i]).sum();
+        for (j, gradient) in gradients.iter_mut().enumerate() {
+            gradient[i] = f64::from(u8::from(j == c)) / probabilities[c][i] - 1.0 / total;
+        }
+    }
+    let mut parts = SmallVec::new();
+    for (gradient, p) in gradients.into_iter().zip(parameters) {
+        let summed = reduce(Some(gradient), 1, &shape, p.shape())?.expect("a gradient was given");
+        parts.push(Some(summed.reshape(
+            &p.shape().iter().map(|&d| d as isize).collect::<Vec<_>>(),
+        )?));
+    }
+    Ok((None, parts))
+}
+
+/// The categorical log probability's second derivatives in its probabilities, −[j = k = x] / p_x² + 1 / (Σ p)²,
+/// contracted with the probabilities' tangents.
+fn categorical_hvp(
+    x: &keanu_tensor::IntTensor,
+    parameters: &[&Value],
+    tangents: &[Option<&DoubleTensor>],
+    b: usize,
+) -> Result<LogProbHvpParts> {
+    let (shape, probabilities, categories) = categorical_parts(x, parameters)?;
+    let len = categories.len();
+    let tangents = tangents
+        .iter()
+        .map(|t| spread_tangent(*t, b, &shape))
+        .collect::<Result<Vec<_>>>()?;
+    let mut products = vec![vec![0.0; b * len]; parameters.len()];
+    for (i, category) in categories.iter().enumerate() {
+        let Some(c) = *category else { continue };
+        let total: f64 = probabilities.iter().map(|p| p[i]).sum();
+        for s in 0..b {
+            let tangent = |j: usize| tangents[j].as_ref().map_or(0.0, |t| t[s * len + i]);
+            let shared = (0..parameters.len()).map(tangent).sum::<f64>() / (total * total);
+            for (j, product) in products.iter_mut().enumerate() {
+                product[s * len + i] = shared;
+                if j == c {
+                    product[s * len + i] -=
+                        tangent(c) / (probabilities[c][i] * probabilities[c][i]);
+                }
+            }
+        }
+    }
+    let mut parts = SmallVec::new();
+    for (product, p) in products.into_iter().zip(parameters) {
+        parts.push(reduce(Some(product), b, &shape, p.shape())?);
+    }
+    Ok((None, parts))
 }
 
 /// The KDE log density ln Σ_s exp(−d_s²/2) + c with d_s = (x − s)/h, whose second derivative is

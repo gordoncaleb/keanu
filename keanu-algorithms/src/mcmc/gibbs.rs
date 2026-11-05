@@ -7,8 +7,8 @@
 //! element of a vector latent recomputes the whole of each affected node, so a sweep over a latent of n elements
 //! costs about n evaluations of those nodes per value tried.
 //!
-//! Either can sample a model of discrete latents on its own, or be a step of a compound sampler that updates the
-//! continuous latents with NUTS between them.
+//! Either can sample a model of discrete latents on its own, or be a step of a
+//! [`Compound`](crate::mcmc::compound::Compound) sampler that updates the continuous latents with NUTS between them.
 //!
 //! ```
 //! use keanu_algorithms::mcmc::gibbs::Gibbs;
