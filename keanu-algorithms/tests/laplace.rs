@@ -228,11 +228,33 @@ fn settings_and_bad_models_are_checked() {
         invalid.fit(&model, &mut state),
         Err(AlgorithmError::InvalidSetting(_))
     ));
-    // a tight L-BFGS configuration is used
-    let result = Laplace::new()
+    // the L-BFGS configuration is used: on a non-quadratic log density (a Gamma latent in log space), stopping
+    // L-BFGS after one iteration leaves the Newton polish too far from the mode to converge
+    let gamma = || {
+        let b = GraphBuilder::new();
+        let x = b.gamma(0.5, 3.0);
+        b.set_value(x, DoubleTensor::scalar(40.0));
+        let (graph, state) = b.build().unwrap();
+        (Model::new(graph, &state).unwrap(), state)
+    };
+    let (gamma_model, mut gamma_state) = gamma();
+    let full = Laplace::new().fit(&gamma_model, &mut gamma_state).unwrap();
+    let (gamma_model, mut gamma_state) = gamma();
+    let one_iteration = Laplace::new()
         .with_lbfgs(Lbfgs::default().with_max_iterations(1))
-        .fit(&model, &mut state);
-    assert!(result.is_ok());
+        .fit(&gamma_model, &mut gamma_state)
+        .unwrap();
+    // from x = 40 the full run converges in 26 evaluations; after one L-BFGS iteration (16 evaluations, with the
+    // Newton steps) the five Newton steps don't reach the mode
+    assert!(full.converged());
+    assert!((full.mode()[0] - 1.5f64.ln()).abs() < 1e-9);
+    assert!(!one_iteration.converged());
+    assert!(
+        one_iteration.evaluations() < full.evaluations(),
+        "{} vs {} evaluations",
+        one_iteration.evaluations(),
+        full.evaluations()
+    );
 
     let b = GraphBuilder::new();
     let y = b.gaussian(0.0, 1.0);
