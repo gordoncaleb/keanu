@@ -368,6 +368,7 @@ Phases run in letter order. U18's occupancy example needs U10 and U17. U23 needs
 - **Requirements:** R17. **Files:** `keanu/examples/occupancy.rs`, `keanu/tests/examples.rs`, `book/src/examples.md`.
 - **Approach:** simulated site-occupancy data (N sites × J surveys), written once with a Bernoulli occupancy latent sampled by the compound sampler and once marginalised; both agree.
 - **Test scenarios:** both formulations recover ψ and p within 90% intervals and agree with each other.
+- **Implementation note:** a third formulation, `run_zero_inflated`, writes each site's detection count as a zero-inflated binomial (the count is sufficient for a constant p, so the likelihood is the same up to a constant); all three also report the posterior number of occupied sites (from the latents' draws, from `recover_marginals`, and in closed form from ψ and p), which the test compares too. The test runs 4 chains of 500 draws after 500 warm-up steps for each form, about 8 s together, and passed for data seeds 1 to 6.
 
 ### Phase F: state space
 

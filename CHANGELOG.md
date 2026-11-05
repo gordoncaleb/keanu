@@ -317,6 +317,12 @@ Work from `docs/plans/2026-11-05-001-feat-applied-modelling-gaps-plan.md`.
   CDF rule at an infinite bound's placeholder point (which only the beta-binomial's tail rule made nonzero). The
   save schema gained `DISTRIBUTION_KIND_BETA_BINOMIAL`, `_BERNOULLI_LOGIT`, `_BINOMIAL_LOGIT`, `_POISSON_LOG`,
   `_CATEGORICAL_LOGIT`, `_ZERO_INFLATED` and `_HURDLE`, and the guide's "Building models" chapter a section on them.
+- keanu: **occupancy example** (`occupancy`), a site-occupancy model (MacKenzie et al., 2002) on 120 simulated
+  sites with 4 visits each, written three ways: Bernoulli occupancy latents under the default compound sampler
+  (Gibbs steps for the occupancies, NUTS for ψ and p), the occupancies marginalised with `marginalize` and recovered
+  with `recover_marginals`, and each site's detection count as a zero-inflated binomial. Its test checks that each
+  form covers the true ψ and p with its 90% interval and that the three agree on ψ, p and the posterior number of
+  occupied sites; the guide's examples chapter describes it.
 
 ### Code review fixes
 

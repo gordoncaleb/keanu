@@ -35,6 +35,8 @@ mod gp_regression;
 mod hmm;
 #[path = "../examples/multi_state.rs"]
 mod multi_state;
+#[path = "../examples/occupancy.rs"]
+mod occupancy;
 #[path = "../examples/pharmacokinetics.rs"]
 mod pharmacokinetics;
 #[path = "../examples/radon.rs"]
@@ -854,4 +856,50 @@ fn multi_state_recovers_the_simulated_intensities() {
         4.0 * s.sd + 4.0 * s.mcse_mean,
         "P(dead in 5 years)",
     );
+}
+
+#[test]
+fn occupancy_formulations_recover_psi_and_p_and_agree() {
+    // the occupancy latents under the compound sampler, marginalised under NUTS, and the zero-inflated binomial
+    // under NUTS: each covers the true ψ and p with its 90% interval and converges, the posterior means agree within
+    // their Monte Carlo errors (plus a hundredth for the differences in the forms' adaptation), and so does the
+    // posterior number of occupied sites
+    let surveys = occupancy::data(3);
+    let fits = [
+        occupancy::run_latent(&surveys, 4, 500, 11).unwrap(),
+        occupancy::run_marginalized(&surveys, 4, 500, 11).unwrap(),
+        occupancy::run_zero_inflated(&surveys, 4, 500, 11).unwrap(),
+    ];
+    let names = ["latent", "marginalised", "zero-inflated"];
+    for (fit, name) in fits.iter().zip(names) {
+        for (node, truth, what) in [
+            (fit.psi, occupancy::TRUE_PSI, "psi"),
+            (fit.p, occupancy::TRUE_P, "p"),
+        ] {
+            let s = fit.chains.summarize(node, &[]).unwrap();
+            assert!(s.r_hat < 1.02, "{name} {what}: R-hat {}", s.r_hat);
+            assert!(
+                s.q5 < truth && truth < s.q95,
+                "{name} {what}: {truth} outside [{}, {}]",
+                s.q5,
+                s.q95
+            );
+        }
+    }
+    for (fit, name) in fits[1..].iter().zip(&names[1..]) {
+        for (a, b, what) in [(fits[0].psi, fit.psi, "psi"), (fits[0].p, fit.p, "p")] {
+            let (x, y) = (
+                fits[0].chains.summarize(a, &[]).unwrap(),
+                fit.chains.summarize(b, &[]).unwrap(),
+            );
+            let within = 4.0 * (x.mcse_mean.powi(2) + y.mcse_mean.powi(2)).sqrt() + 0.01;
+            assert_close(x.mean, y.mean, within, &format!("{what}: latent vs {name}"));
+        }
+        assert_close(
+            fits[0].occupied_sites,
+            fit.occupied_sites,
+            2.0,
+            &format!("occupied sites: latent vs {name}"),
+        );
+    }
 }

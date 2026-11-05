@@ -17,6 +17,7 @@ their results against the functions or parameters their synthetic data were gene
 | `eight_schools` | How much do coaching effects differ between schools? Centred and non-centred forms, compared by PSIS-LOO |
 | `radon` | How much does indoor radon vary between Minnesota counties? A varying-intercept model |
 | `gaussian_mixture` | Which of two groups does each measurement come from, and what are the groups like? |
+| `occupancy` | Which sites does a species occupy, when surveys sometimes miss it? Occupancy latents sampled, marginalised and written as a zero-inflated binomial |
 | `gp_regression` | What smooth function produced noisy measurements? Gaussian process hyperparameters by NUTS, exactly and with an HSGP |
 | `stochastic_volatility` | How volatile are daily returns, and how persistent is the volatility? A scan over latent innovations |
 | `hmm` | When does a series switch regime, and how often? A two-state hidden Markov model |
@@ -84,6 +85,23 @@ each measurement's group probabilities with `recover_marginals`.
 
 ```rust,ignore
 {{#include ../../keanu/examples/gaussian_mixture.rs}}
+```
+
+## Site occupancy
+
+A species occupies each of 120 simulated sites with probability ψ, and each of 4 visits to an occupied site detects
+it with probability p, so a site with no detections may be empty or occupied and missed every time (MacKenzie et
+al., 2002). `run_latent` keeps each site's occupancy as a Bernoulli latent, which the default compound sampler
+updates with Gibbs steps between NUTS steps on ψ and p (see
+[Discrete latents: Gibbs and compound sampling](inference-sampling.md#discrete-latents-gibbs-and-compound-sampling)); `run_marginalized` sums the occupancies out with
+`marginalize` and recovers each site's probability of being occupied with `recover_marginals`; and
+`run_zero_inflated` writes each site's number of detections directly as a
+[zero-inflated](building-models.md#zero-inflated-hurdle-and-logit-counts) binomial, 0 for an empty site with
+probability 1 − ψ. Its test checks that each form covers the true ψ and p with its 90% interval and that the three
+agree, on ψ, p and the posterior number of occupied sites.
+
+```rust,ignore
+{{#include ../../keanu/examples/occupancy.rs}}
 ```
 
 ## Gaussian process regression
