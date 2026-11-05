@@ -53,6 +53,9 @@ pub enum GraphError {
     /// A node id that isn't a node of the graph, builder or state it was used with (out of range, e.g. from another
     /// graph or made with [`NodeId::from_index`]).
     UnknownNode(NodeId),
+    /// A constraint transform (see [`transform`](crate::transform)) could not be built for a support, or was given
+    /// an input of the wrong size or a value outside its support.
+    Transform(String),
 }
 
 impl fmt::Display for GraphError {
@@ -88,6 +91,7 @@ impl fmt::Display for GraphError {
                 id.index()
             ),
             Self::UnknownNode(id) => write!(f, "node #{} is not a node of this graph", id.index()),
+            Self::Transform(m) => write!(f, "transform: {m}"),
         }
     }
 }

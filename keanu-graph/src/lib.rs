@@ -42,6 +42,7 @@ mod model;
 pub mod op;
 pub mod sequence;
 mod state;
+pub mod transform;
 mod value;
 mod vars;
 
