@@ -22,12 +22,15 @@
 
 use super::Support;
 use super::distribution::{DistributionKind, LogProbGradientParts, ParameterGradients, Univariate};
+use super::distribution_hvp::{LogProbHvpParts, elementwise, reduce, spread_tangent};
 use super::mixture::{broadcast, gather, reduce_components, with_component_axis};
 use super::wrappers;
+use crate::autodiff::{batched_shape, reduce_to};
 use crate::error::{GraphError, Result};
 use crate::value::{DType, Value};
 use keanu_distributions::{DistributionError, HiddenMarkovChain, KeanuRng};
 use keanu_tensor::{DoubleTensor, Shape, broadcast_shape};
+use smallvec::SmallVec;
 
 /// The number of parameters a hidden Markov model adds after its emission's: `initial` and `transition`.
 pub(crate) const OWN_PARAMETERS: usize = 2;
@@ -233,4 +236,244 @@ pub(crate) fn sample(
         .map(|i| i * count + states[i / inner.max(1)])
         .collect();
     gather(&draws, shape, &picks)
+}
+
+/// log Σ exp(terms), −∞ for no terms or all −∞.
+fn log_sum_exp(terms: impl Iterator<Item = f64> + Clone) -> f64 {
+    let max = terms.clone().fold(f64::NEG_INFINITY, f64::max);
+    if !max.is_finite() {
+        return max;
+    }
+    max + terms.map(|t| (t - max).exp()).sum::<f64>().ln()
+}
+
+/// `exp(log_weight)` for a term of a log-sum-exp, 0 where the term or the total is −∞ (so that a zero weight
+/// never multiplies an infinite tangent).
+fn weight(term: f64, total: f64) -> f64 {
+    if term == f64::NEG_INFINITY || total == f64::NEG_INFINITY {
+        0.0
+    } else {
+        (term - total).exp()
+    }
+}
+
+/// `dp / p`, the tangent of `ln p`, taken as 0 where p is 0 (where every term it enters has zero weight).
+fn log_tangent(dp: f64, p: f64) -> f64 {
+    if p == 0.0 { 0.0 } else { dp / p }
+}
+
+/// The Hessian-vector products of a hidden Markov model's log density along `b` directions (see
+/// [`DistributionKind::log_prob_hvp`]), by forward-mode differentiation of the forward-backward algorithm.
+///
+/// The log density is L(e, π, A) with e_tj the emission log density of step t under state j (summed over the
+/// step's elements), and its gradient is (γ_tj, ∂L/∂π_j, ∂L/∂A_ij) with γ the posterior state marginals. Along a
+/// direction, the forward variables move by α̇_0j = π̇_j/π_j + ė_0j and
+/// α̇_tj = Σ_i s_tij (α̇_{t−1,i} + Ȧ_ij/A_ij) + ė_tj (s the softmax weights of the forward recursion), the backward
+/// variables likewise, and L̇ = Σ_j softmax(α_{T−1})_j α̇_{T−1,j}; then γ̇ = γ (α̇ + β̇ − L̇), and the derivatives
+/// with respect to π and A, each the exponential of a sum of forward, emission and backward terms minus L, move by
+/// themselves times that sum's tangent. The emission parameters' (and the value's) products are, as for a mixture,
+/// Σ_j γ_tj ∇²e_tj v + ∇e_tj γ̇_tj, with the emission's own element-wise rule.
+pub(crate) fn log_prob_hvp(
+    emission: &DistributionKind,
+    value: &Value,
+    parameters: &[&Value],
+    value_tangent: Option<&DoubleTensor>,
+    parameter_tangents: &[Option<&DoubleTensor>],
+    b: usize,
+) -> Result<LogProbHvpParts> {
+    let p = Parameters::new(parameters)?;
+    let k = p.count;
+    let m = p.emission.len();
+    let Some(&steps) = value.shape().first().filter(|&&t| t > 0) else {
+        return invalid(format!(
+            "the observations must have a time axis with at least one step, not shape {:?}",
+            value.shape()
+        ));
+    };
+    let x = with_component_axis(value)?;
+    let full = with_states(value.shape(), k);
+    let value_tangent = value_tangent
+        .map(|t| -> Result<DoubleTensor> {
+            let mut shape: Vec<isize> = t.shape().iter().map(|&d| d as isize).collect();
+            shape.push(1);
+            Ok(t.reshape(&shape)?)
+        })
+        .transpose()?;
+    let tangents: Vec<Option<Vec<f64>>> = std::iter::once(value_tangent.as_ref())
+        .chain(parameter_tangents[..m].iter().copied())
+        .map(|t| spread_tangent(t, b, &full))
+        .collect::<Result<_>>()?;
+    let parts = elementwise(emission, &x, p.emission, &tangents, b, &full)?;
+    let len = parts.values.len();
+    let inner = len / (steps * k);
+    // the (step, state) cell of each element
+    let cell = |i: usize| (i / k) / inner * k + i % k;
+    let mut e = vec![0.0; steps * k];
+    for (i, v) in parts.values.iter().enumerate() {
+        e[cell(i)] += v;
+    }
+    let pi = p.chain.initial.as_slice();
+    let a = p.chain.transition.as_slice();
+    let log_a: Vec<f64> = a.iter().map(|p| p.ln()).collect();
+    let pi_tangent = spread_tangent(parameter_tangents[m], b, &[k])?;
+    let a_tangent = spread_tangent(parameter_tangents[m + 1], b, &[k, k])?;
+
+    // the forward and backward variables, and the log density
+    let mut alpha = vec![0.0; steps * k];
+    for j in 0..k {
+        alpha[j] = pi[j].ln() + e[j];
+    }
+    for t in 1..steps {
+        for j in 0..k {
+            alpha[t * k + j] =
+                log_sum_exp((0..k).map(|i| alpha[(t - 1) * k + i] + log_a[i * k + j]))
+                    + e[t * k + j];
+        }
+    }
+    let last = &alpha[(steps - 1) * k..];
+    let total = log_sum_exp(last.iter().copied());
+    if !total.is_finite() {
+        // an impossible point, whose gradient is undefined too
+        return Ok((None, smallvec::smallvec![None; parameters.len()]));
+    }
+    let mut beta = vec![0.0; steps * k];
+    for t in (0..steps - 1).rev() {
+        for i in 0..k {
+            beta[t * k + i] = log_sum_exp(
+                (0..k).map(|j| log_a[i * k + j] + e[(t + 1) * k + j] + beta[(t + 1) * k + j]),
+            );
+        }
+    }
+    let posterior: Vec<f64> = (0..steps * k)
+        .map(|c| weight(alpha[c] + beta[c], total))
+        .collect();
+
+    let mut outputs: Vec<Option<Vec<f64>>> = parts
+        .hvps
+        .iter()
+        .map(|h| h.as_ref().map(|_| vec![0.0; b * len]))
+        .collect();
+    let mut pi_output = vec![0.0; b * k];
+    let mut a_output = vec![0.0; b * k * k];
+    let (mut e_dot, mut alpha_dot, mut beta_dot) = (
+        vec![0.0; steps * k],
+        vec![0.0; steps * k],
+        vec![0.0; steps * k],
+    );
+    for s in 0..b {
+        let dpi = |j: usize| pi_tangent.as_ref().map_or(0.0, |t| t[s * k + j]);
+        let da = |ij: usize| {
+            a_tangent
+                .as_ref()
+                .map_or(0.0, |t| log_tangent(t[s * k * k + ij], a[ij]))
+        };
+        e_dot.iter_mut().for_each(|d| *d = 0.0);
+        for i in 0..len {
+            let mut d = 0.0;
+            for (g, t) in parts.gradients.iter().zip(&tangents) {
+                if let (Some(g), Some(t)) = (g, t) {
+                    d += g[i] * t[s * len + i];
+                }
+            }
+            e_dot[cell(i)] += d;
+        }
+        for j in 0..k {
+            alpha_dot[j] = log_tangent(dpi(j), pi[j]) + e_dot[j];
+        }
+        for t in 1..steps {
+            for j in 0..k {
+                let lse = alpha[t * k + j] - e[t * k + j];
+                let mut d = e_dot[t * k + j];
+                for i in 0..k {
+                    let w = weight(alpha[(t - 1) * k + i] + log_a[i * k + j], lse);
+                    if w != 0.0 {
+                        d += w * (alpha_dot[(t - 1) * k + i] + da(i * k + j));
+                    }
+                }
+                alpha_dot[t * k + j] = d;
+            }
+        }
+        let total_dot: f64 = (0..k)
+            .map(|j| {
+                let w = weight(last[j], total);
+                if w == 0.0 {
+                    0.0
+                } else {
+                    w * alpha_dot[(steps - 1) * k + j]
+                }
+            })
+            .sum();
+        beta_dot[(steps - 1) * k..]
+            .iter_mut()
+            .for_each(|d| *d = 0.0);
+        for t in (0..steps - 1).rev() {
+            for i in 0..k {
+                let mut d = 0.0;
+                for j in 0..k {
+                    let next = (t + 1) * k + j;
+                    let w = weight(log_a[i * k + j] + e[next] + beta[next], beta[t * k + i]);
+                    if w != 0.0 {
+                        d += w * (da(i * k + j) + e_dot[next] + beta_dot[next]);
+                    }
+                }
+                beta_dot[t * k + i] = d;
+            }
+        }
+        // ∂L/∂π_j = exp(e_0j + β_0j − L)
+        for j in 0..k {
+            let g = weight(e[j] + beta[j], total);
+            if g != 0.0 {
+                pi_output[s * k + j] = g * (e_dot[j] + beta_dot[j] - total_dot);
+            }
+        }
+        // ∂L/∂A_ij = Σ_t exp(α_ti + e_{t+1,j} + β_{t+1,j} − L)
+        for t in 0..steps - 1 {
+            for i in 0..k {
+                for j in 0..k {
+                    let next = (t + 1) * k + j;
+                    let xi = weight(alpha[t * k + i] + e[next] + beta[next], total);
+                    if xi != 0.0 {
+                        a_output[s * k * k + i * k + j] +=
+                            xi * (alpha_dot[t * k + i] + e_dot[next] + beta_dot[next] - total_dot);
+                    }
+                }
+            }
+        }
+        for i in 0..len {
+            let c = cell(i);
+            let gamma = posterior[c];
+            if gamma == 0.0 {
+                continue;
+            }
+            let gamma_dot = gamma * (alpha_dot[c] + beta_dot[c] - total_dot);
+            for (u, out) in outputs.iter_mut().enumerate() {
+                let (Some(out), Some(g), Some(h)) = (out, &parts.gradients[u], &parts.hvps[u])
+                else {
+                    continue;
+                };
+                let j = s * len + i;
+                out[j] = gamma * h[j] + g[i] * gamma_dot;
+            }
+        }
+    }
+    let mut outputs = outputs.into_iter();
+    // the value's products, summed over the state axis
+    let value_hvp = outputs
+        .next()
+        .flatten()
+        .map(|h| -> Result<DoubleTensor> {
+            let summed: Vec<f64> = h.chunks(k).map(|row| row.iter().sum()).collect();
+            reduce_to(
+                DoubleTensor::new(&batched_shape(b, value.shape()), summed)?,
+                value.shape(),
+            )
+        })
+        .transpose()?;
+    let mut hvps: SmallVec<[Option<DoubleTensor>; 4]> = SmallVec::new();
+    for (h, parameter) in outputs.zip(p.emission) {
+        hvps.push(reduce(h, b, &full, parameter.shape())?);
+    }
+    hvps.push(Some(DoubleTensor::new(&[b, k], pi_output)?));
+    hvps.push(Some(DoubleTensor::new(&[b, k, k], a_output)?));
+    Ok((value_hvp, hvps))
 }

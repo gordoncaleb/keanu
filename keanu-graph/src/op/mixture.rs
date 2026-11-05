@@ -21,11 +21,14 @@
 
 use super::Support;
 use super::distribution::{DistributionKind, LogProbGradientParts, ParameterGradients, Univariate};
+use super::distribution_hvp::{LogProbHvpParts, elementwise, reduce, spread_tangent};
 use super::wrappers;
+use crate::autodiff::{batched_shape, reduce_to};
 use crate::error::{GraphError, Result};
 use crate::value::{DType, Value};
 use keanu_distributions::{DistributionError, KeanuRng};
 use keanu_tensor::{DoubleTensor, Shape, broadcast_shape};
+use smallvec::SmallVec;
 
 /// The number of parameters a mixture adds after its component's: `weights`.
 pub(crate) const OWN_PARAMETERS: usize = 1;
@@ -298,4 +301,138 @@ pub(crate) fn gather(draws: &Value, shape: &[usize], picks: &[usize]) -> Result<
             picks.iter().map(|&i| t.as_slice()[i]).collect(),
         )?),
     })
+}
+
+/// The Hessian-vector products of a mixture's log density along `b` directions (see
+/// [`DistributionKind::log_prob_hvp`]). With l_c = ln w_c + ln p_c(x) for each component and L = logsumexp_c l_c,
+/// the Hessian of L is Σ_c r_c (∇²l_c + ∇l_c ∇l_cᵀ) − ∇L ∇Lᵀ with ∇L = Σ_c r_c ∇l_c, so along a direction with
+/// l̇_c = ∇l_c · v and L̇ = Σ_c r_c l̇_c the product is Σ_c r_c (∇²l_c v + ∇l_c (l̇_c − L̇)). The components' own
+/// gradients and products come from the component kind's element-wise rule; ln w_c adds 1/w_c and −1/w_c² for
+/// w_c.
+pub(crate) fn log_prob_hvp(
+    component: &DistributionKind,
+    value: &Value,
+    parameters: &[&Value],
+    value_tangent: Option<&DoubleTensor>,
+    parameter_tangents: &[Option<&DoubleTensor>],
+    b: usize,
+) -> Result<LogProbHvpParts> {
+    let p = Parameters::new(parameters)?;
+    let x = with_component_axis(value)?;
+    let m = p.components.len();
+    let count = p.count;
+    let mut full = Shape::from_slice(x.shape());
+    for parameter in p.components {
+        full = broadcast_shape(&full, parameter.shape())?;
+    }
+    full = broadcast_shape(&full, p.weights.shape())?;
+    if full.last() != Some(&count) {
+        return invalid(format!(
+            "the component parameters don't broadcast to the {count} components of the weights"
+        ));
+    }
+    let value_tangent = value_tangent
+        .map(|t| -> Result<DoubleTensor> {
+            let mut shape: Vec<isize> = t.shape().iter().map(|&d| d as isize).collect();
+            shape.push(1);
+            Ok(t.reshape(&shape)?)
+        })
+        .transpose()?;
+    let tangents: Vec<Option<Vec<f64>>> = std::iter::once(value_tangent.as_ref())
+        .chain(parameter_tangents[..m].iter().copied())
+        .map(|t| spread_tangent(t, b, &full))
+        .collect::<Result<_>>()?;
+    let parts = elementwise(component, &x, p.components, &tangents, b, &full)?;
+    let weights = broadcast(p.weights, &full)?;
+    let weight_tangent = spread_tangent(parameter_tangents[m], b, &full)?;
+    let len = weights.len();
+    // the responsibilities r_c
+    let mut responsibilities = vec![0.0; len];
+    for row in (0..len).step_by(count) {
+        let range = row..row + count;
+        let terms: Vec<f64> = range
+            .clone()
+            .map(|i| weights[i].ln() + parts.values[i])
+            .collect();
+        let max = terms.iter().copied().fold(f64::NEG_INFINITY, f64::max);
+        if !max.is_finite() {
+            continue;
+        }
+        let total = max + terms.iter().map(|t| (t - max).exp()).sum::<f64>().ln();
+        for (c, i) in range.enumerate() {
+            responsibilities[i] = (terms[c] - total).exp();
+        }
+    }
+    let mut outputs: Vec<Option<Vec<f64>>> = parts
+        .hvps
+        .iter()
+        .map(|h| h.as_ref().map(|_| vec![0.0; b * len]))
+        .collect();
+    let mut weight_output = vec![0.0; b * len];
+    let mut directional = vec![0.0; count];
+    for k in 0..b {
+        for row in (0..len).step_by(count) {
+            // l̇_c, and L̇
+            let mut mean = 0.0;
+            for (c, d) in directional.iter_mut().enumerate() {
+                let i = row + c;
+                let j = k * len + i;
+                let r = responsibilities[i];
+                *d = 0.0;
+                if r == 0.0 {
+                    continue;
+                }
+                *d = weight_tangent.as_ref().map_or(0.0, |t| t[j] / weights[i]);
+                for (g, t) in parts.gradients.iter().zip(&tangents) {
+                    if let (Some(g), Some(t)) = (g, t) {
+                        *d += g[i] * t[j];
+                    }
+                }
+                mean += r * *d;
+            }
+            for (c, &d) in directional.iter().enumerate() {
+                let i = row + c;
+                let j = k * len + i;
+                let r = responsibilities[i];
+                if r == 0.0 {
+                    continue;
+                }
+                let spread = d - mean;
+                for (u, out) in outputs.iter_mut().enumerate() {
+                    let (Some(out), Some(g)) = (out, &parts.gradients[u]) else {
+                        continue;
+                    };
+                    let own = parts.hvps[u].as_ref().map_or(0.0, |h| h[j]);
+                    out[j] = r * (own + g[i] * spread);
+                }
+                let w = weights[i];
+                let dw = weight_tangent.as_ref().map_or(0.0, |t| t[j]);
+                weight_output[j] = r * (-dw / (w * w) + spread / w);
+            }
+        }
+    }
+    let mut outputs = outputs.into_iter();
+    // the value's products, summed over the component axis
+    let value_hvp = outputs
+        .next()
+        .flatten()
+        .map(|h| -> Result<DoubleTensor> {
+            let summed: Vec<f64> = h.chunks(count).map(|row| row.iter().sum()).collect();
+            let batch = &full[..full.len() - 1];
+            reduce_to(
+                DoubleTensor::new(&batched_shape(b, batch), summed)?,
+                value.shape(),
+            )
+        })
+        .transpose()?;
+    let mut parameter_hvps: LogProbHvpParts = (value_hvp, SmallVec::new());
+    for (h, parameter) in outputs.zip(p.components) {
+        parameter_hvps
+            .1
+            .push(reduce(h, b, &full, parameter.shape())?);
+    }
+    parameter_hvps
+        .1
+        .push(reduce(Some(weight_output), b, &full, p.weights.shape())?);
+    Ok(parameter_hvps)
 }

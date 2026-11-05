@@ -21,6 +21,8 @@
 
 use super::Support;
 use super::distribution::{DistributionKind, LogProbGradientParts, ParameterGradients, Univariate};
+use super::distribution_hvp::rules::{self, Hessian, MAX_INPUTS};
+use super::distribution_hvp::{self, Elementwise};
 use crate::error::{GraphError, Result};
 use crate::value::{DType, Value};
 use keanu_distributions::{DistributionError, KeanuRng};
@@ -698,4 +700,280 @@ pub(crate) fn sample_censored(
         .map(|(i, &x)| x.max(lower[i]).min(upper[i]))
         .collect();
     assemble(values, shape, bounds.discrete)
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// second derivatives
+
+/// The second-order parts of a truncated or censored distribution at `value` broadcast to `shape`, along the
+/// inputs' `tangents` (the value's, each base parameter's, then the bounds'; see
+/// [`distribution_hvp::elementwise`]).
+///
+/// Inside the bounds, a truncated log density is ln p(x) − ln Z with Z = e^P − e^Q, P and Q the base's log CDF at
+/// the upper and lower bound (or its log survival function at the lower and upper bound, as [`normaliser`]
+/// chooses). With w_P = e^P / Z and w_Q = e^Q / Z, ∇ ln Z = w_P ∇P − w_Q ∇Q and
+/// ∇² ln Z = w_P (∇²P + ∇P ∇Pᵀ) − w_Q (∇²Q + ∇Q ∇Qᵀ) − ∇ ln Z ∇ ln Zᵀ, where P and Q depend on the base parameters
+/// and their own bound. A censored value at a bound has the base's log CDF (or log survival function) there, a
+/// function of the base parameters and that bound. The log CDFs' second derivatives come from
+/// [`rules::cdf_rule`].
+///
+/// # Errors
+///
+/// [`GraphError::NoSecondOrderRule`] naming the base and the parameter if a shape parameter whose CDF second
+/// derivative has no closed form has a tangent and a log CDF is needed (always for a truncated distribution, and
+/// for a censored one with a value at a bound).
+pub(crate) fn second_order(
+    wrapper: Wrapper,
+    base: &DistributionKind,
+    value: &Value,
+    parameters: &[&Value],
+    tangents: &[Option<Vec<f64>>],
+    b: usize,
+    shape: &[usize],
+) -> Result<Elementwise> {
+    let bounds = Bounds::new(base, parameters)?;
+    let m = bounds.base.len();
+    let (lower_index, upper_index) = (m + 1, m + 2);
+    let (Some(density_rule), Some((cdf_rule, no_rule))) =
+        (rules::density_rule(base), rules::cdf_rule(base))
+    else {
+        return Err(GraphError::NoSecondOrderRule(format!(
+            "the {} distribution's CDF",
+            base.name()
+        )));
+    };
+    let (values, parts) = elementwise(wrapper, base, value, parameters, true)?;
+    let values = distribution_hvp::spread(&values, shape)?;
+    let (x_gradient, parameter_gradients) =
+        parts.unwrap_or_else(|| (None, smallvec::smallvec![None; parameters.len()]));
+    let gradients: Vec<Option<Vec<f64>>> = std::iter::once(x_gradient)
+        .chain(parameter_gradients)
+        .map(|g| g.map(|g| distribution_hvp::spread(&g, shape)).transpose())
+        .collect::<Result<_>>()?;
+    let len = values.len();
+    let x = broadcast(&value_as_f64(value)?, shape)?;
+    let base_inputs: Vec<Vec<f64>> = bounds
+        .base
+        .iter()
+        .map(|p| broadcast(&distribution_hvp::as_f64(p), shape))
+        .collect::<Result<_>>()?;
+    let lower = broadcast(bounds.lower, shape)?;
+    let upper = broadcast(bounds.upper, shape)?;
+    let eval = |function, at: &Value, infinite| {
+        evaluate(base, function, at, bounds.base, true, shape, infinite)
+    };
+    let points = |at: &Value| broadcast(&distribution_hvp::as_f64(at), shape);
+
+    // the log CDFs needed, with their points and the input of the bound each is at
+    struct Side {
+        evaluated: Evaluated,
+        points: Vec<f64>,
+        bound: usize,
+        upper: bool,
+    }
+    let shift = if bounds.discrete { -1.0 } else { 0.0 };
+    #[derive(Clone, Copy, PartialEq)]
+    enum Case {
+        Outside,
+        Lower,
+        Upper,
+        Inside,
+    }
+    let (sides, cases, needs_cdf) = match wrapper {
+        Wrapper::Truncated => {
+            let low = bound_points(bounds.lower, shift, bounds.discrete);
+            let high = bound_points(bounds.upper, 0.0, bounds.discrete);
+            let side = |function, at: &Value, bound, upper, infinite| -> Result<Side> {
+                Ok(Side {
+                    evaluated: eval(function, at, Some(infinite))?,
+                    points: points(at)?,
+                    bound,
+                    upper,
+                })
+            };
+            // at an infinite lower bound F = 0 and S = 1, at an infinite upper bound F = 1 and S = 0
+            let sides = vec![
+                side(
+                    Univariate::Cdf,
+                    &low,
+                    lower_index,
+                    false,
+                    (bounds.lower, f64::NEG_INFINITY),
+                )?,
+                side(
+                    Univariate::Ccdf,
+                    &low,
+                    lower_index,
+                    true,
+                    (bounds.lower, 0.0),
+                )?,
+                side(
+                    Univariate::Cdf,
+                    &high,
+                    upper_index,
+                    false,
+                    (bounds.upper, 0.0),
+                )?,
+                side(
+                    Univariate::Ccdf,
+                    &high,
+                    upper_index,
+                    true,
+                    (bounds.upper, f64::NEG_INFINITY),
+                )?,
+            ];
+            let cases = (0..len)
+                .map(|i| {
+                    if x[i] >= lower[i] && x[i] <= upper[i] {
+                        Case::Inside
+                    } else {
+                        Case::Outside
+                    }
+                })
+                .collect::<Vec<_>>();
+            (sides, cases, true)
+        }
+        Wrapper::Censored => {
+            let low = bound_points(bounds.lower, 0.0, bounds.discrete);
+            let high = bound_points(bounds.upper, shift, bounds.discrete);
+            let sides = vec![
+                Side {
+                    evaluated: eval(Univariate::Cdf, &low, None)?,
+                    points: points(&low)?,
+                    bound: lower_index,
+                    upper: false,
+                },
+                Side {
+                    evaluated: eval(Univariate::Ccdf, &high, None)?,
+                    points: points(&high)?,
+                    bound: upper_index,
+                    upper: true,
+                },
+            ];
+            let cases: Vec<Case> = (0..len)
+                .map(|i| {
+                    if x[i] == lower[i] {
+                        Case::Lower
+                    } else if x[i] == upper[i] {
+                        Case::Upper
+                    } else if x[i] > lower[i] && x[i] < upper[i] {
+                        Case::Inside
+                    } else {
+                        Case::Outside
+                    }
+                })
+                .collect();
+            let needs_cdf = cases.iter().any(|&c| c == Case::Lower || c == Case::Upper);
+            (sides, cases, needs_cdf)
+        }
+    };
+    let mut differentiable: Vec<bool> = gradients.iter().map(Option::is_some).collect();
+    if needs_cdf {
+        for &j in no_rule {
+            if tangents[j + 1].is_some() {
+                let names = base.parameter_names().unwrap_or_default();
+                return Err(GraphError::NoSecondOrderRule(format!(
+                    "the second derivative of the {} distribution's CDF with respect to {} (a shape parameter of a \
+                     regularised incomplete gamma or beta function, which has no closed form)",
+                    base.name(),
+                    names.get(j).copied().unwrap_or("a shape parameter")
+                )));
+            }
+            // its products would lack the CDF's terms, and nothing reads them without a tangent
+            differentiable[j + 1] = false;
+        }
+    }
+
+    let n = m + 3;
+    let mut point = vec![0.0; m];
+    let mut cdf = Hessian::new(m + 1);
+    let mut cdf_gradient = vec![0.0; m + 1];
+    // a side's gradient at element i over the wrapper's inputs, and its Hessian (into `cdf`, inputs 0..=m with 0
+    // the point)
+    let mut side_derivatives =
+        |side: &Side, i: usize, point: &[f64], cdf: &mut Hessian| -> [f64; MAX_INPUTS] {
+            let mut g = [0.0; MAX_INPUTS];
+            let e = &side.evaluated;
+            cdf_gradient[0] = e.x.as_ref().map_or(0.0, |d| d[i]);
+            g[side.bound] = cdf_gradient[0];
+            for j in 0..m {
+                cdf_gradient[j + 1] = e.parameters[j].as_ref().map_or(0.0, |d| d[i]);
+                g[j + 1] = cdf_gradient[j + 1];
+            }
+            cdf.clear();
+            if e.values[i].is_finite() {
+                cdf_rule(side.points[i], point, side.upper, &cdf_gradient, cdf);
+            }
+            g
+        };
+    // adds `scale` times a side's Hessian, with its point moved to its bound
+    let embed = |h: &mut Hessian, cdf: &Hessian, bound: usize, scale: f64| {
+        let at = |a: usize| if a == 0 { bound } else { a };
+        for a in 0..=m {
+            for c in a..=m {
+                h.add(at(a), at(c), scale * cdf.get(a, c));
+            }
+        }
+    };
+    let hvps = distribution_hvp::contract(&differentiable, tangents, len, b, |i, h| {
+        for (p, input) in point.iter_mut().zip(&base_inputs) {
+            *p = input[i];
+        }
+        match (wrapper, cases[i]) {
+            (_, Case::Outside) => {}
+            (Wrapper::Censored, Case::Inside) => density_rule(x[i], &point, h),
+            (Wrapper::Censored, case) => {
+                let side = &sides[usize::from(case == Case::Upper)];
+                side_derivatives(side, i, &point, &mut cdf);
+                embed(h, &cdf, side.bound, 1.0);
+            }
+            (Wrapper::Truncated, _) => {
+                // as in `normaliser`: from the CDF where the lower bound is in the lower half
+                let (big, small) = if sides[0].evaluated.values[i] < -LN_2 {
+                    (&sides[2], &sides[0])
+                } else {
+                    (&sides[1], &sides[3])
+                };
+                let (p, q) = (big.evaluated.values[i], small.evaluated.values[i]);
+                let log_z = if p == f64::NEG_INFINITY {
+                    f64::NEG_INFINITY
+                } else {
+                    p + log1mexp((q - p).min(0.0))
+                };
+                if log_z == f64::NEG_INFINITY {
+                    return Ok(());
+                }
+                density_rule(x[i], &point, h);
+                let mut g = [0.0; MAX_INPUTS];
+                for (side, weight, sign) in [
+                    (big, (p - log_z).exp(), 1.0),
+                    (small, (q - log_z).exp(), -1.0),
+                ] {
+                    if weight == 0.0 {
+                        continue;
+                    }
+                    let gs = side_derivatives(side, i, &point, &mut cdf);
+                    // − (±w (∇²G + ∇G ∇Gᵀ))
+                    embed(h, &cdf, side.bound, -sign * weight);
+                    for a in 0..n {
+                        for c in a..n {
+                            h.add(a, c, -sign * weight * gs[a] * gs[c]);
+                        }
+                        g[a] += sign * weight * gs[a];
+                    }
+                }
+                for a in 0..n {
+                    for c in a..n {
+                        h.add(a, c, g[a] * g[c]);
+                    }
+                }
+            }
+        }
+        Ok(())
+    })?;
+    Ok(Elementwise {
+        values,
+        gradients,
+        hvps,
+    })
 }

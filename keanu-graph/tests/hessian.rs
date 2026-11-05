@@ -4,8 +4,13 @@
 //! The table-driven test builds one small model per op family, with Gaussian latents set to chosen points and every
 //! deterministic output observed through a Gaussian likelihood, so each op's second-order rule (and the first-order
 //! rule applied to the tangent channel) is exercised. It checks that the table covers every op of the graph.
+//!
+//! A second table does the same for every distribution kind: each case makes the value (where it is continuous) and
+//! every continuous parameter depend on latents, through simple transforms that keep them valid, and the test checks
+//! that the cases cover every kind (and every base of a truncated or censored distribution).
 
 use keanu_distributions::KeanuRng;
+use keanu_graph::op::{DistributionKind, Op};
 use keanu_graph::transform::{
     Bijector, Circular, CorrelationCholesky, Identity, Interval, LowerBound, Ordered, Simplex,
     UpperBound,
@@ -16,6 +21,7 @@ use keanu_graph::{
 };
 use keanu_tensor::{DoubleTensor, IntTensor};
 use std::collections::BTreeSet;
+use std::sync::Arc;
 
 // ---------------------------------------------------------------------------------------------------------------
 // the finite-difference checker
@@ -537,14 +543,13 @@ fn general_cases() -> Vec<Case> {
             Expect::Matches,
         ),
         (
-            "a distribution without a second-order rule",
+            "a custom distribution without a second-order rule",
             |b| {
-                let g = b.gamma(1.5, 2.0);
-                b.set_value(g, DoubleTensor::scalar(0.8));
-                let y = b.gaussian(g, 1.0);
+                let mu = latent(b, DoubleTensor::scalar(0.3));
+                let y: DoubleVar<'_> = b.custom(UnitGaussian, &[], &[mu.id()]);
                 b.observe(y, DoubleTensor::scalar(0.4));
             },
-            Expect::NoRule("gamma"),
+            Expect::NoRule("custom"),
         ),
     ]
 }
@@ -758,29 +763,29 @@ fn a_model_without_continuous_latents_has_an_empty_hessian() {
 
 #[test]
 fn a_distribution_needs_a_rule_only_where_it_depends_on_the_latents() {
-    // a discrete Poisson latent whose rate depends on a continuous latent: its log density is a function of the
-    // continuous latent through the rate, so it needs a rule
+    // a custom distribution whose parameter depends on a continuous latent: its log density is a function of the
+    // latent, so it needs a rule
     let (model, mut state) = model_of(|b| {
         let x = latent(b, DoubleTensor::scalar(0.3));
-        let k = b.poisson(x.exp());
-        b.set_value(k, keanu_tensor::IntTensor::scalar(2));
+        let y: DoubleVar<'_> = b.custom(UnitGaussian, &[], &[x.exp().id()]);
+        b.observe(y, DoubleTensor::scalar(0.4));
     });
     let param = Parameterisation::new(&model, &state).unwrap();
     let z = param.from_state(&state).unwrap();
     match param.hessian(&z, true, &mut state) {
-        Err(GraphError::NoSecondOrderRule(message)) => assert!(message.contains("poisson")),
+        Err(GraphError::NoSecondOrderRule(message)) => assert!(message.contains("custom")),
         other => panic!("expected a no-second-order-rule error, got {other:?}"),
     }
-    // the same Poisson with a constant rate doesn't depend on the continuous latent, so needs no rule
+    // the same distribution with a constant parameter doesn't depend on the continuous latent, so needs no rule
     let (model, mut state) = model_of(|b| {
         let x = latent(b, DoubleTensor::scalar(0.3));
-        let k = b.poisson(2.0);
-        b.set_value(k, keanu_tensor::IntTensor::scalar(2));
-        let y = b.gaussian(x, 1.0);
-        b.observe(y, DoubleTensor::scalar(0.1));
+        let y: DoubleVar<'_> = b.custom(UnitGaussian, &[], &[b.scalar(2.0).id()]);
+        b.observe(y, DoubleTensor::scalar(0.4));
+        let w = b.gaussian(x, 1.0);
+        b.observe(w, DoubleTensor::scalar(0.1));
     });
     check_hessian(
-        "constant Poisson",
+        "constant custom distribution",
         &model,
         &mut state,
         Space::Unconstrained,
@@ -964,4 +969,815 @@ fn a_bijector_without_second_order_methods_reports_no_rule() {
         b.forward_vjp_jvp(&[0.0], &[1.0], &DoubleTensor::vector(vec![1.0])),
         Err(GraphError::NoSecondOrderRule(_))
     ));
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// the distribution table
+
+/// A Gaussian with unit scale, written as a custom distribution (which has no second-order rule).
+#[derive(Debug)]
+struct UnitGaussian;
+
+impl keanu_graph::CustomDistribution for UnitGaussian {
+    fn log_prob(&self, value: &Value, parameters: &[&Value]) -> Result<f64, String> {
+        let (x, mu) = (
+            value.as_f64().unwrap().as_slice()[0],
+            parameters[0].as_f64().unwrap().as_slice()[0],
+        );
+        Ok(-0.5 * (x - mu) * (x - mu))
+    }
+
+    fn log_prob_gradient(
+        &self,
+        value: &Value,
+        parameters: &[&Value],
+    ) -> Result<Option<keanu_graph::CustomGradient>, String> {
+        let (x, mu) = (
+            value.as_f64().unwrap().as_slice()[0],
+            parameters[0].as_f64().unwrap().as_slice()[0],
+        );
+        Ok(Some(keanu_graph::CustomGradient {
+            value: Some(DoubleTensor::scalar(mu - x)),
+            parameters: vec![Some(DoubleTensor::scalar(x - mu))],
+        }))
+    }
+}
+
+fn scalar_latent(b: &GraphBuilder, value: f64) -> DoubleVar<'_> {
+    latent(b, DoubleTensor::scalar(value))
+}
+
+/// A positive scalar that depends on a latent: exp of a latent set to ln `value`.
+fn positive(b: &GraphBuilder, value: f64) -> DoubleVar<'_> {
+    scalar_latent(b, value.ln()).exp()
+}
+
+fn positive_vector<'b>(b: &'b GraphBuilder, values: &[f64]) -> DoubleVar<'b> {
+    let logs: Vec<f64> = values.iter().map(|v| v.ln()).collect();
+    latent_vector(b, &logs).exp()
+}
+
+/// Probabilities that depend on latents: the sigmoid of latents set to the logits of `values`.
+fn probabilities<'b>(b: &'b GraphBuilder, values: &[f64]) -> DoubleVar<'b> {
+    let logits: Vec<f64> = values.iter().map(|p| (p / (1.0 - p)).ln()).collect();
+    latent_vector(b, &logits).sigmoid()
+}
+
+fn vector(values: &[f64]) -> DoubleTensor {
+    DoubleTensor::vector(values.to_vec())
+}
+
+fn ints(values: &[i64]) -> IntTensor {
+    IntTensor::vector(values.to_vec())
+}
+
+/// Bounds that depend on latents: `lower` and `lower + width`.
+fn bounds(b: &GraphBuilder, lower: f64, width: f64) -> (DoubleVar<'_>, DoubleVar<'_>) {
+    let l = scalar_latent(b, lower);
+    (l, l + positive(b, width))
+}
+
+/// Positive bounds that depend on latents: `lower` and `lower + width`.
+fn positive_bounds(b: &GraphBuilder, lower: f64, width: f64) -> (DoubleVar<'_>, DoubleVar<'_>) {
+    let l = positive(b, lower);
+    (l, l + positive(b, width))
+}
+
+/// A distribution case: a model, the space its Hessian is checked in, and what is expected.
+struct DistributionCase {
+    name: &'static str,
+    build: fn(&GraphBuilder),
+    space: Space,
+    expect: Expect,
+}
+
+fn case(name: &'static str, build: fn(&GraphBuilder)) -> DistributionCase {
+    DistributionCase {
+        name,
+        build,
+        space: Space::Constrained,
+        expect: Expect::Matches,
+    }
+}
+
+/// A case checked in unconstrained space (with the Jacobian), for values whose support a finite difference step in
+/// constrained space would leave.
+fn unconstrained(name: &'static str, build: fn(&GraphBuilder)) -> DistributionCase {
+    DistributionCase {
+        space: Space::Unconstrained,
+        ..case(name, build)
+    }
+}
+
+fn no_rule(name: &'static str, build: fn(&GraphBuilder), text: &'static str) -> DistributionCase {
+    DistributionCase {
+        expect: Expect::NoRule(text),
+        ..case(name, build)
+    }
+}
+
+/// A truncated location-scale base whose parameters and bounds depend on latents: a latent value between the
+/// bounds, an observation, and an observation with an infinite upper bound.
+fn truncated_location_scale(b: &GraphBuilder, base: DistributionKind) {
+    let location = scalar_latent(b, 0.2);
+    let scale = positive(b, 0.8);
+    let (lower, upper) = bounds(b, -0.4, 2.0);
+    let params = [location.id(), scale.id()];
+    let x: DoubleVar<'_> = b.truncated(base.clone(), &params, lower, upper);
+    b.set_value(x, DoubleTensor::scalar(0.5));
+    let shifted = [(location * 0.5).id(), (scale + 0.3).id()];
+    let y: DoubleVar<'_> = b.truncated(base.clone(), &shifted, lower, upper);
+    b.observe(y, DoubleTensor::scalar(-0.2));
+    let z: DoubleVar<'_> = b.truncated(base, &params, lower, f64::INFINITY);
+    b.observe(z, DoubleTensor::scalar(2.5));
+}
+
+/// A censored location-scale base: observations at the lower bound, inside and at the upper bound (fixed bounds,
+/// so that the values stay at them), and a latent value inside bounds that depend on latents.
+fn censored_location_scale(b: &GraphBuilder, base: DistributionKind) {
+    let location = scalar_latent(b, 0.2);
+    let scale = positive(b, 0.8);
+    let params = [location.id(), scale.id()];
+    let lower = b.constant(vector(&[-0.4, -0.4, -0.4]));
+    let y: DoubleVar<'_> = b.censored(base.clone(), &params, lower, 1.6);
+    b.observe(y, vector(&[-0.4, 0.3, 1.6]));
+    let (l, u) = bounds(b, -0.4, 2.0);
+    let x: DoubleVar<'_> = b.censored(base, &params, l, u);
+    b.set_value(x, DoubleTensor::scalar(0.5));
+}
+
+/// A truncated positive base with two positive parameters.
+fn truncated_positive(b: &GraphBuilder, base: DistributionKind) {
+    let params = [positive(b, 1.6).id(), positive(b, 1.2).id()];
+    let (lower, upper) = positive_bounds(b, 0.5, 2.0);
+    let x: DoubleVar<'_> = b.truncated(base.clone(), &params, lower, upper);
+    b.set_value(x, DoubleTensor::scalar(1.2));
+    let y: DoubleVar<'_> = b.truncated(base.clone(), &params, lower, upper);
+    b.observe(y, DoubleTensor::scalar(2.1));
+    let z: DoubleVar<'_> = b.truncated(base, &params, lower, f64::INFINITY);
+    b.observe(z, DoubleTensor::scalar(3.0));
+}
+
+/// A censored positive base with two positive parameters.
+fn censored_positive(b: &GraphBuilder, base: DistributionKind) {
+    let params = [positive(b, 1.6).id(), positive(b, 1.2).id()];
+    let lower = b.constant(vector(&[0.5, 0.5, 0.5]));
+    let y: DoubleVar<'_> = b.censored(base.clone(), &params, lower, 2.5);
+    b.observe(y, vector(&[0.5, 1.3, 2.5]));
+    let (l, u) = positive_bounds(b, 0.5, 2.0);
+    let x: DoubleVar<'_> = b.censored(base, &params, l, u);
+    b.set_value(x, DoubleTensor::scalar(1.2));
+}
+
+fn distribution_cases() -> Vec<DistributionCase> {
+    use DistributionKind as K;
+    vec![
+        case("half_gaussian", |b| {
+            let sigma = positive(b, 0.8);
+            let x = b.half_gaussian(sigma);
+            b.set_value(x, DoubleTensor::scalar(0.6));
+            let y = b.half_gaussian_with_shape(&[2], sigma * 1.5);
+            b.observe(y, vector(&[0.3, 1.1]));
+        }),
+        case("cauchy", |b| {
+            let location = scalar_latent(b, 0.2);
+            let scale = positive(b, 0.7);
+            let x = b.cauchy(location, scale);
+            b.set_value(x, DoubleTensor::scalar(0.9));
+            let y = b.cauchy_with_shape(&[3], location * scale, scale);
+            b.observe(y, vector(&[-0.5, 0.4, 2.0]));
+        }),
+        case("half_cauchy", |b| {
+            let scale = positive(b, 0.9);
+            let x = b.half_cauchy(scale);
+            b.set_value(x, DoubleTensor::scalar(0.4));
+            let y = b.half_cauchy_with_shape(&[2], scale + 0.3);
+            b.observe(y, vector(&[0.2, 1.7]));
+        }),
+        case("beta", |b| {
+            let (alpha, beta) = (positive(b, 1.7), positive(b, 2.4));
+            let x = b.beta(alpha, beta);
+            b.set_value(x, DoubleTensor::scalar(0.35));
+            let y = b.beta_with_shape(&[2], alpha * 0.5, beta);
+            b.observe(y, vector(&[0.2, 0.8]));
+        }),
+        case("chi_squared", |b| {
+            let x = b.chi_squared(3);
+            b.set_value(x, DoubleTensor::scalar(1.7));
+        }),
+        case("exponential", |b| {
+            let rate = positive(b, 1.3);
+            let x = b.exponential(rate);
+            b.set_value(x, DoubleTensor::scalar(0.8));
+            let y = b.exponential_with_shape(&[2], rate * 2.0);
+            b.observe(y, vector(&[0.3, 2.0]));
+        }),
+        case("gamma", |b| {
+            let (theta, k) = (positive(b, 0.9), positive(b, 2.3));
+            let x = b.gamma(theta, k);
+            b.set_value(x, DoubleTensor::scalar(1.4));
+            let y = b.gamma_with_shape(&[2], theta, k * 0.5);
+            b.observe(y, vector(&[0.5, 3.0]));
+        }),
+        case("inverse_gamma", |b| {
+            let (alpha, beta) = (positive(b, 2.1), positive(b, 1.2));
+            let x = b.inverse_gamma(alpha, beta);
+            b.set_value(x, DoubleTensor::scalar(0.7));
+            let y = b.inverse_gamma_with_shape(&[2], alpha, beta * 2.0);
+            b.observe(y, vector(&[0.4, 1.9]));
+        }),
+        case("laplace", |b| {
+            let (mu, beta) = (scalar_latent(b, 0.1), positive(b, 0.8));
+            let x = b.laplace(mu, beta);
+            b.set_value(x, DoubleTensor::scalar(0.9));
+            let y = b.laplace_with_shape(&[3], mu, beta);
+            b.observe(y, vector(&[-0.7, 0.5, 1.3]));
+        }),
+        case("logistic", |b| {
+            let (mu, s) = (scalar_latent(b, 0.1), positive(b, 0.8));
+            let x = b.logistic(mu, s);
+            b.set_value(x, DoubleTensor::scalar(0.9));
+            let y = b.logistic_with_shape(&[3], mu, s * 1.5);
+            b.observe(y, vector(&[-0.7, 0.5, 3.3]));
+        }),
+        case("log_normal", |b| {
+            let (mu, sigma) = (scalar_latent(b, 0.2), positive(b, 0.6));
+            let x = b.log_normal(mu, sigma);
+            b.set_value(x, DoubleTensor::scalar(1.3));
+            let y = b.log_normal_with_shape(&[2], mu, sigma);
+            b.observe(y, vector(&[0.5, 2.2]));
+        }),
+        case("pareto", |b| {
+            let (location, scale) = (positive(b, 0.8), positive(b, 1.7));
+            let x = b.pareto(location, scale);
+            b.set_value(x, DoubleTensor::scalar(1.5));
+            let y = b.pareto_with_shape(&[2], location, scale * 0.7);
+            b.observe(y, vector(&[1.0, 2.5]));
+        }),
+        case("student_t", |b| {
+            let x = b.student_t(4);
+            b.set_value(x, DoubleTensor::scalar(0.7));
+        }),
+        case("triangular", |b| {
+            let x_min = scalar_latent(b, -0.5);
+            let width = positive(b, 2.0);
+            let x_max = x_min + width;
+            let c = x_min + width * scalar_latent(b, 0.1).sigmoid();
+            // one value below the mode and one above it
+            let x = b.triangular_with_shape(&[2], x_min, x_max, c);
+            b.set_value(x, vector(&[-0.1, 1.0]));
+            let y = b.triangular_with_shape(&[2], x_min, x_max, c);
+            b.observe(y, vector(&[1.3, 0.2]));
+        }),
+        case("uniform", |b| {
+            let x_min = scalar_latent(b, -0.3);
+            let x_max = x_min + positive(b, 1.5);
+            let x = b.uniform(x_min, x_max);
+            b.set_value(x, DoubleTensor::scalar(0.4));
+            let y = b.uniform_with_shape(&[2], x_min, x_max);
+            b.observe(y, vector(&[0.0, 1.0]));
+        }),
+        case("weibull", |b| {
+            let (alpha, beta) = (positive(b, 1.6), positive(b, 1.2));
+            let x = b.weibull(alpha, beta);
+            b.set_value(x, DoubleTensor::scalar(0.9));
+            let y = b.weibull_with_shape(&[2], alpha, beta);
+            b.observe(y, vector(&[0.4, 2.1]));
+        }),
+        case("von_mises", |b| {
+            let (mu, kappa) = (scalar_latent(b, 0.3), positive(b, 1.8));
+            let x = b.von_mises(mu, kappa);
+            b.set_value(x, DoubleTensor::scalar(0.9));
+            let y = b.von_mises_with_shape(&[2], mu, kappa);
+            b.observe(y, vector(&[-1.0, 2.0]));
+            // a small concentration
+            let z = b.von_mises_with_shape(&[2], mu, kappa * 0.01);
+            b.observe(z, vector(&[-1.0, 2.0]));
+        }),
+        unconstrained("dirichlet", |b| {
+            let concentration = positive_vector(b, &[1.5, 2.5, 0.8]);
+            let x = b.dirichlet(concentration);
+            b.set_value(x, vector(&[0.2, 0.5, 0.3]));
+            let y = b.dirichlet(concentration * 2.0);
+            b.observe(y, vector(&[0.1, 0.6, 0.3]));
+        }),
+        case("kde", |b| {
+            let kde = keanu_distributions::Kde::new(vec![-0.5, 0.2, 0.4, 1.5], 0.6).unwrap();
+            let x = b.kde(kde, &[2]);
+            b.set_value(x, vector(&[0.1, 0.9]));
+        }),
+        unconstrained("lkj_cholesky", |b| {
+            let factor = |r10: f64, r20: f64, r21: f64| {
+                let d1 = (1.0 - r10 * r10).sqrt();
+                let d2 = (1.0 - r20 * r20 - r21 * r21).sqrt();
+                t(&[3, 3], &[1.0, 0.0, 0.0, r10, d1, 0.0, r20, r21, d2])
+            };
+            let eta = positive(b, 1.7);
+            let l = b.lkj_cholesky(3, eta);
+            b.set_value(l, factor(0.3, -0.2, 0.4));
+            let y = b.lkj_cholesky(3, eta * 2.0);
+            b.observe(y, factor(-0.5, 0.1, 0.3));
+        }),
+        case("bernoulli", |b| {
+            let p = probabilities(b, &[0.3, 0.7]);
+            let y = b.bernoulli(p);
+            b.observe(y, keanu_tensor::BoolTensor::vector(vec![true, false]));
+        }),
+        case("binomial", |b| {
+            let p = probabilities(b, &[0.3, 0.6]);
+            let y = b.binomial(p, 5);
+            b.observe(y, ints(&[2, 5]));
+        }),
+        case("geometric", |b| {
+            let p = probabilities(b, &[0.3, 0.6]);
+            let y = b.geometric(p);
+            b.observe(y, ints(&[1, 4]));
+        }),
+        case("poisson", |b| {
+            let rate = positive_vector(b, &[1.3, 2.0]);
+            let y = b.poisson(rate);
+            b.observe(y, ints(&[0, 3]));
+        }),
+        case("negative_binomial", |b| {
+            let mu = positive_vector(b, &[1.5, 3.0]);
+            let alpha = positive(b, 2.0);
+            let y = b.negative_binomial(mu, alpha);
+            b.observe(y, ints(&[0, 4]));
+        }),
+        case("categorical", |b| {
+            let p = [positive(b, 0.2), positive(b, 0.5), positive(b, 0.3)];
+            let y = b.categorical(&[2], &p);
+            b.observe(y, ints(&[2, 0]));
+        }),
+        case("multinomial", |b| {
+            let p = positive_vector(b, &[0.2, 0.5, 0.3]);
+            let y = b.multinomial(6, p);
+            b.observe(y, ints(&[1, 3, 2]));
+            let q = latent_vector(b, &[0.4, -0.3, 0.1]).softmax(0);
+            let z = b.multinomial(4, q);
+            b.observe(z, ints(&[0, 4, 0]));
+        }),
+        case("ordered_logistic", |b| {
+            let eta = latent_vector(b, &[0.2, -0.5, 1.0, 0.4]);
+            let raw = latent_vector(b, &[-0.5, 0.8f64.ln(), 1.2f64.ln()]);
+            let cutpoints = b
+                .concat(0, &[raw.slice("0:1"), raw.slice("1:").exp()])
+                .cumsum(0);
+            // the first category, the two in the middle and the last
+            let y = b.ordered_logistic(eta, cutpoints);
+            b.observe(y, ints(&[0, 1, 2, 3]));
+        }),
+        case("uniform_int (no continuous parameters)", |b| {
+            let y = b.uniform_int(0, 5);
+            b.observe(y, IntTensor::scalar(2));
+            observe(b, scalar_latent(b, 0.3).sin());
+        }),
+        // time series
+        case("a hidden Markov model with Gaussian emissions", |b| {
+            let params = [
+                latent_vector(b, &[-0.5, 1.0]).id(),
+                positive_vector(b, &[0.7, 1.3]).id(),
+            ];
+            let initial = latent_vector(b, &[0.3, -0.2]).softmax(0);
+            let transition = latent(b, t(&[2, 2], &[0.8, -0.3, 0.1, 0.6])).softmax(1);
+            let y: DoubleVar<'_> =
+                b.hidden_markov_model(4, K::Gaussian, &params, initial, transition);
+            b.observe(y, vector(&[-0.8, 0.2, 1.4, 0.9]));
+            // a latent series, with two observations per step
+            let x: DoubleVar<'_> = b.hidden_markov_model_with_shape(
+                &[3, 2],
+                K::Gaussian,
+                &params,
+                initial,
+                transition,
+            );
+            b.set_value(x, t(&[3, 2], &[0.1, -0.4, 1.2, 0.8, -0.6, 0.3]));
+        }),
+        case("a hidden Markov model with Poisson emissions", |b| {
+            let rates = positive_vector(b, &[1.0, 4.0]);
+            let initial = latent_vector(b, &[0.3, -0.2]).softmax(0);
+            let transition = latent(b, t(&[2, 2], &[0.8, -0.3, 0.1, 0.6])).softmax(1);
+            let y: IntVar<'_> =
+                b.hidden_markov_model(5, K::Poisson, &[rates.id()], initial, transition);
+            b.observe(y, ints(&[0, 2, 5, 3, 1]));
+        }),
+        no_rule(
+            "a linear Gaussian state space model",
+            |b| {
+                let eye = DoubleTensor::eye(1).unwrap();
+                let y = b.linear_gaussian_state_space(
+                    3,
+                    latent_vector(b, &[0.2]),
+                    eye.clone(),
+                    eye.clone(),
+                    eye.clone(),
+                    eye.clone(),
+                    eye,
+                );
+                b.observe(y, t(&[3, 1], &[0.1, 0.5, -0.2]));
+            },
+            "linear_gaussian_state_space",
+        ),
+        // mixtures
+        case("a mixture of Gaussians", |b| {
+            let params = [
+                latent_vector(b, &[-0.5, 1.0]).id(),
+                positive_vector(b, &[0.7, 1.3]).id(),
+            ];
+            let weights = latent_vector(b, &[0.3, -0.2]).softmax(0);
+            let x: DoubleVar<'_> = b.mixture(K::Gaussian, &params, weights);
+            b.set_value(x, DoubleTensor::scalar(0.4));
+            let y: DoubleVar<'_> = b.mixture_with_shape(&[3], K::Gaussian, &params, weights);
+            b.observe(y, vector(&[-1.0, 0.2, 1.5]));
+        }),
+        case("a mixture of gammas sharing their scale", |b| {
+            let params = [positive(b, 0.9).id(), positive_vector(b, &[1.5, 4.0]).id()];
+            let weights = latent_vector(b, &[0.3, -0.2]).softmax(0);
+            let x: DoubleVar<'_> = b.mixture(K::Gamma, &params, weights);
+            b.set_value(x, DoubleTensor::scalar(1.2));
+            let y: DoubleVar<'_> = b.mixture_with_shape(&[2], K::Gamma, &params, weights);
+            b.observe(y, vector(&[0.5, 4.0]));
+        }),
+        case("a mixture of Poissons", |b| {
+            let rates = positive_vector(b, &[1.0, 4.0, 2.5]);
+            let weights = latent_vector(b, &[0.3, -0.2, 0.1]).softmax(0);
+            let y: IntVar<'_> = b.mixture_with_shape(&[3], K::Poisson, &[rates.id()], weights);
+            b.observe(y, ints(&[0, 2, 5]));
+        }),
+        case("a mixture of truncated Gaussians", |b| {
+            let (lower, upper) = bounds(b, -1.0, 3.0);
+            let params = [
+                latent_vector(b, &[-0.5, 1.0]).id(),
+                positive_vector(b, &[0.7, 1.3]).id(),
+                lower.id(),
+                upper.id(),
+            ];
+            let weights = latent_vector(b, &[0.3, -0.2]).softmax(0);
+            let kind = K::Truncated(Arc::new(K::Gaussian));
+            let x: DoubleVar<'_> = b.mixture(kind, &params, weights);
+            b.set_value(x, DoubleTensor::scalar(0.4));
+        }),
+        no_rule(
+            "a mixture of truncated gammas with a latent shape",
+            |b| {
+                let params = [
+                    positive(b, 0.9).id(),
+                    positive_vector(b, &[1.5, 4.0]).id(),
+                    b.scalar(0.5).id(),
+                    b.scalar(3.0).id(),
+                ];
+                let weights = b.constant(vector(&[0.4, 0.6]));
+                let kind = K::Truncated(Arc::new(K::Gamma));
+                let y: DoubleVar<'_> = b.mixture(kind, &params, weights);
+                b.observe(y, DoubleTensor::scalar(1.2));
+            },
+            "gamma distribution's CDF with respect to k",
+        ),
+        // truncated distributions, one for each base with a CDF
+        case("truncated gaussian", |b| {
+            truncated_location_scale(b, K::Gaussian)
+        }),
+        case("truncated cauchy", |b| {
+            truncated_location_scale(b, K::Cauchy)
+        }),
+        case("truncated laplace", |b| {
+            truncated_location_scale(b, K::Laplace)
+        }),
+        case("truncated logistic", |b| {
+            truncated_location_scale(b, K::Logistic)
+        }),
+        case("truncated log_normal", |b| {
+            let params = [scalar_latent(b, 0.2).id(), positive(b, 0.6).id()];
+            let (lower, upper) = positive_bounds(b, 0.5, 2.0);
+            let x: DoubleVar<'_> = b.truncated(K::LogNormal, &params, lower, upper);
+            b.set_value(x, DoubleTensor::scalar(1.2));
+            let z: DoubleVar<'_> = b.truncated(K::LogNormal, &params, lower, f64::INFINITY);
+            b.observe(z, DoubleTensor::scalar(3.0));
+        }),
+        case("truncated exponential", |b| {
+            let rate = [positive(b, 1.3).id()];
+            let (lower, upper) = positive_bounds(b, 0.5, 2.0);
+            let x: DoubleVar<'_> = b.truncated(K::Exponential, &rate, lower, upper);
+            b.set_value(x, DoubleTensor::scalar(1.2));
+            let z: DoubleVar<'_> = b.truncated(K::Exponential, &rate, lower, f64::INFINITY);
+            b.observe(z, DoubleTensor::scalar(3.0));
+            let w: DoubleVar<'_> = b.truncated(K::Exponential, &rate, 0.0, upper);
+            b.observe(w, DoubleTensor::scalar(0.3));
+        }),
+        case("truncated weibull", |b| truncated_positive(b, K::Weibull)),
+        case("truncated uniform", |b| {
+            // the uniform has no derivatives with respect to its own bounds, so they are fixed here
+            let (lower, upper) = bounds(b, -0.4, 2.0);
+            let params = [b.scalar(-1.0).id(), b.scalar(2.0).id()];
+            let x: DoubleVar<'_> = b.truncated(K::Uniform, &params, lower, upper);
+            b.set_value(x, DoubleTensor::scalar(0.5));
+        }),
+        case("truncated gamma with a fixed shape", |b| {
+            let params = [positive(b, 0.9).id(), b.scalar(2.3).id()];
+            let (lower, upper) = positive_bounds(b, 0.5, 2.0);
+            let x: DoubleVar<'_> = b.truncated(K::Gamma, &params, lower, upper);
+            b.set_value(x, DoubleTensor::scalar(1.2));
+            let z: DoubleVar<'_> = b.truncated(K::Gamma, &params, lower, f64::INFINITY);
+            b.observe(z, DoubleTensor::scalar(3.0));
+        }),
+        case("truncated beta with fixed shapes", |b| {
+            let lower = scalar_latent(b, -1.4).sigmoid();
+            let upper = lower + (-lower + 1.0) * scalar_latent(b, 1.0).sigmoid();
+            let params = [b.scalar(1.7).id(), b.scalar(2.4).id()];
+            let x: DoubleVar<'_> = b.truncated(K::Beta, &params, lower, upper);
+            b.set_value(x, DoubleTensor::scalar(0.5));
+        }),
+        case("truncated student_t", |b| {
+            let v = [b.int_constant(IntTensor::scalar(4)).id()];
+            let (lower, upper) = bounds(b, -0.4, 2.0);
+            let x: DoubleVar<'_> = b.truncated(K::StudentT, &v, lower, upper);
+            b.set_value(x, DoubleTensor::scalar(0.5));
+            let z: DoubleVar<'_> = b.truncated(K::StudentT, &v, lower, f64::INFINITY);
+            b.observe(z, DoubleTensor::scalar(2.5));
+        }),
+        case("truncated poisson", |b| {
+            let rate = [positive_vector(b, &[2.5, 2.5, 2.5]).id()];
+            let y: IntVar<'_> = b.truncated(K::Poisson, &rate, 1.0, 6.0);
+            b.observe(y, ints(&[1, 3, 6]));
+            let z: IntVar<'_> = b.truncated(K::Poisson, &rate, 1.0, f64::INFINITY);
+            b.observe(z, ints(&[1, 3, 9]));
+        }),
+        case("truncated binomial", |b| {
+            let p = probabilities(b, &[0.4, 0.4, 0.4]);
+            let params = [p.id(), b.int_constant(IntTensor::scalar(8)).id()];
+            let y: IntVar<'_> = b.truncated(K::Binomial, &params, 1.0, 6.0);
+            b.observe(y, ints(&[1, 4, 6]));
+        }),
+        case("truncated negative_binomial with a fixed dispersion", |b| {
+            let params = [
+                positive_vector(b, &[2.5, 2.5, 2.5]).id(),
+                b.scalar(2.0).id(),
+            ];
+            let y: IntVar<'_> = b.truncated(K::NegativeBinomial, &params, 0.0, 7.0);
+            b.observe(y, ints(&[0, 3, 7]));
+        }),
+        no_rule(
+            "truncated gamma with a latent shape",
+            |b| {
+                let params = [positive(b, 0.9).id(), positive(b, 2.3).id()];
+                let y: DoubleVar<'_> = b.truncated(K::Gamma, &params, 0.5, 2.5);
+                b.observe(y, DoubleTensor::scalar(1.2));
+            },
+            "gamma distribution's CDF with respect to k",
+        ),
+        no_rule(
+            "truncated beta with a latent shape",
+            |b| {
+                let params = [positive(b, 1.7).id(), b.scalar(2.4).id()];
+                let y: DoubleVar<'_> = b.truncated(K::Beta, &params, 0.2, 0.8);
+                b.observe(y, DoubleTensor::scalar(0.5));
+            },
+            "beta distribution's CDF with respect to alpha",
+        ),
+        no_rule(
+            "truncated negative_binomial with a latent dispersion",
+            |b| {
+                let params = [b.scalar(2.5).id(), positive(b, 2.0).id()];
+                let y: IntVar<'_> = b.truncated(K::NegativeBinomial, &params, 0.0, 7.0);
+                b.observe(y, IntTensor::scalar(3));
+            },
+            "negative_binomial distribution's CDF with respect to alpha",
+        ),
+        // censored distributions, one for each base with a CDF
+        case("censored gaussian", |b| {
+            censored_location_scale(b, K::Gaussian)
+        }),
+        case("censored cauchy", |b| censored_location_scale(b, K::Cauchy)),
+        case("censored laplace", |b| {
+            censored_location_scale(b, K::Laplace)
+        }),
+        case("censored logistic", |b| {
+            censored_location_scale(b, K::Logistic)
+        }),
+        case("censored log_normal", |b| {
+            censored_positive(b, K::LogNormal)
+        }),
+        case("censored weibull", |b| censored_positive(b, K::Weibull)),
+        case("censored exponential", |b| {
+            let rate = [positive(b, 1.3).id()];
+            let lower = b.constant(vector(&[0.5, 0.5, 0.5]));
+            let y: DoubleVar<'_> = b.censored(K::Exponential, &rate, lower, 2.5);
+            b.observe(y, vector(&[0.5, 1.3, 2.5]));
+        }),
+        case("censored uniform", |b| {
+            let params = [b.scalar(-1.0).id(), b.scalar(2.0).id()];
+            let lower = b.constant(vector(&[-0.4, -0.4, -0.4]));
+            let y: DoubleVar<'_> = b.censored(K::Uniform, &params, lower, 1.6);
+            b.observe(y, vector(&[-0.4, 0.3, 1.6]));
+            let (l, u) = bounds(b, -0.4, 2.0);
+            let x: DoubleVar<'_> = b.censored(K::Uniform, &params, l, u);
+            b.set_value(x, DoubleTensor::scalar(0.5));
+        }),
+        case("censored gamma with a fixed shape", |b| {
+            let params = [positive(b, 0.9).id(), b.scalar(2.3).id()];
+            let lower = b.constant(vector(&[0.5, 0.5, 0.5]));
+            let y: DoubleVar<'_> = b.censored(K::Gamma, &params, lower, 2.5);
+            b.observe(y, vector(&[0.5, 1.3, 2.5]));
+        }),
+        case(
+            "censored gamma with a latent shape and no value at a bound",
+            |b| {
+                let params = [positive(b, 0.9).id(), positive(b, 2.3).id()];
+                let lower = b.constant(vector(&[0.5, 0.5]));
+                let y: DoubleVar<'_> = b.censored(K::Gamma, &params, lower, 2.5);
+                b.observe(y, vector(&[0.7, 1.3]));
+            },
+        ),
+        no_rule(
+            "censored gamma with a latent shape and a value at a bound",
+            |b| {
+                let params = [positive(b, 0.9).id(), positive(b, 2.3).id()];
+                let lower = b.constant(vector(&[0.5, 0.5]));
+                let y: DoubleVar<'_> = b.censored(K::Gamma, &params, lower, 2.5);
+                b.observe(y, vector(&[0.7, 2.5]));
+            },
+            "gamma distribution's CDF with respect to k",
+        ),
+        case("censored beta with fixed shapes", |b| {
+            let params = [b.scalar(1.7).id(), b.scalar(2.4).id()];
+            let lower = b.constant(vector(&[0.2, 0.2, 0.2]));
+            let y: DoubleVar<'_> = b.censored(K::Beta, &params, lower, 0.8);
+            b.observe(y, vector(&[0.2, 0.5, 0.8]));
+            let (l, u) = (scalar_latent(b, 0.2), scalar_latent(b, 0.8));
+            let x: DoubleVar<'_> = b.censored(K::Beta, &params, l, u);
+            b.set_value(x, DoubleTensor::scalar(0.5));
+        }),
+        case("censored student_t", |b| {
+            let v = [b.int_constant(IntTensor::scalar(4)).id()];
+            let lower = b.constant(vector(&[-0.4, -0.4, -0.4]));
+            let y: DoubleVar<'_> = b.censored(K::StudentT, &v, lower, 1.6);
+            b.observe(y, vector(&[-0.4, 0.3, 1.6]));
+            let (l, u) = bounds(b, -0.4, 2.0);
+            let x: DoubleVar<'_> = b.censored(K::StudentT, &v, l, u);
+            b.set_value(x, DoubleTensor::scalar(0.5));
+        }),
+        case("censored poisson", |b| {
+            let rate = [positive_vector(b, &[2.5, 2.5, 2.5]).id()];
+            let y: IntVar<'_> = b.censored(K::Poisson, &rate, 1.0, 6.0);
+            b.observe(y, ints(&[1, 3, 6]));
+        }),
+        case("censored binomial", |b| {
+            let p = probabilities(b, &[0.4, 0.4, 0.4]);
+            let params = [p.id(), b.int_constant(IntTensor::scalar(8)).id()];
+            let y: IntVar<'_> = b.censored(K::Binomial, &params, 1.0, 6.0);
+            b.observe(y, ints(&[1, 4, 6]));
+        }),
+        case("censored negative_binomial with a fixed dispersion", |b| {
+            let params = [
+                positive_vector(b, &[2.5, 2.5, 2.5]).id(),
+                b.scalar(2.0).id(),
+            ];
+            let y: IntVar<'_> = b.censored(K::NegativeBinomial, &params, 0.0, 7.0);
+            b.observe(y, ints(&[0, 3, 7]));
+        }),
+    ]
+}
+
+/// Every distribution kind but the custom one, by the name its `Debug` form starts with.
+const EVERY_KIND: &[&str] = &[
+    "Gaussian",
+    "HalfGaussian",
+    "Cauchy",
+    "HalfCauchy",
+    "Beta",
+    "ChiSquared",
+    "Dirichlet",
+    "Exponential",
+    "Gamma",
+    "InverseGamma",
+    "Laplace",
+    "Logistic",
+    "LogNormal",
+    "LkjCholesky",
+    "MultivariateGaussian",
+    "Pareto",
+    "StudentT",
+    "Triangular",
+    "Uniform",
+    "Weibull",
+    "VonMises",
+    "Kde",
+    "Bernoulli",
+    "Binomial",
+    "Categorical",
+    "Geometric",
+    "Multinomial",
+    "Poisson",
+    "NegativeBinomial",
+    "OrderedLogistic",
+    "UniformInt",
+    "Truncated",
+    "Censored",
+    "Mixture",
+    "HiddenMarkovModel",
+    "LinearGaussianStateSpace",
+];
+
+/// The bases with a CDF, each of which a truncated and a censored case must cover.
+const CDF_BASES: &[&str] = &[
+    "Gaussian",
+    "Cauchy",
+    "Beta",
+    "Exponential",
+    "Gamma",
+    "Laplace",
+    "Logistic",
+    "LogNormal",
+    "StudentT",
+    "Uniform",
+    "Weibull",
+    "Binomial",
+    "Poisson",
+    "NegativeBinomial",
+];
+
+/// The distribution kinds of a model's probabilistic nodes, by their `Debug` form ("Truncated(Gaussian)") and the
+/// variant name it starts with ("Truncated").
+fn kinds_of(model: &Model, kinds: &mut BTreeSet<String>) {
+    let graph = model.graph();
+    for id in graph.ids() {
+        if let Op::Distribution(d) = graph[id].op() {
+            let kind = format!("{:?}", d.kind);
+            kinds.insert(kind.split('(').next().unwrap().to_string());
+            kinds.insert(kind);
+        }
+    }
+}
+
+fn assert_symmetric(name: &str, model: &Model, state: &mut State, space: Space, jacobian: bool) {
+    let param = Parameterisation::with_space(model, state, space).unwrap();
+    let z = param.from_state(state).unwrap();
+    let n = z.len();
+    let hessian = param.hessian(&z, jacobian, state).unwrap();
+    let h = hessian.as_slice();
+    for i in 0..n {
+        for j in 0..i {
+            let (a, b) = (h[i * n + j], h[j * n + i]);
+            assert!(
+                (a - b).abs() <= 1e-8 * a.abs().max(1.0),
+                "{name}: H[{i}][{j}] = {a} but H[{j}][{i}] = {b}"
+            );
+        }
+    }
+}
+
+#[test]
+fn every_distribution_kind_matches_finite_differences_of_the_gradient() {
+    let mut kinds = BTreeSet::new();
+    for case in distribution_cases() {
+        let (model, mut state) = named_model(case.name, case.build);
+        kinds_of(&model, &mut kinds);
+        let jacobian = case.space == Space::Unconstrained;
+        match case.expect {
+            Expect::Matches => {
+                check_hessian(case.name, &model, &mut state, case.space, jacobian);
+                assert_symmetric(case.name, &model, &mut state, case.space, jacobian);
+            }
+            Expect::NoRule(text) => {
+                let param = Parameterisation::with_space(&model, &state, case.space).unwrap();
+                let z = param.from_state(&state).unwrap();
+                match param.hessian(&z, jacobian, &mut state) {
+                    Err(GraphError::NoSecondOrderRule(message)) => assert!(
+                        message.contains(text),
+                        "{}: the error {message:?} does not mention {text:?}",
+                        case.name
+                    ),
+                    other => panic!(
+                        "{}: expected a no-second-order-rule error, got {other:?}",
+                        case.name
+                    ),
+                }
+            }
+        }
+    }
+    // the Gaussian and multivariate Gaussian cases are in the op table
+    for (name, build, _) in &general_cases() {
+        let (model, _) = named_model(name, build);
+        kinds_of(&model, &mut kinds);
+    }
+    let missing: Vec<&str> = EVERY_KIND
+        .iter()
+        .copied()
+        .filter(|k| !kinds.contains(*k))
+        .collect();
+    assert!(
+        missing.is_empty(),
+        "distribution kinds without a case: {missing:?}"
+    );
+    for wrapper in ["Truncated", "Censored"] {
+        let missing: Vec<&str> = CDF_BASES
+            .iter()
+            .copied()
+            .filter(|base| !kinds.contains(&format!("{wrapper}({base})")))
+            .collect();
+        assert!(
+            missing.is_empty(),
+            "{wrapper} bases without a case: {missing:?}"
+        );
+    }
 }

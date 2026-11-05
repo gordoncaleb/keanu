@@ -73,10 +73,15 @@
 //! # Ok::<(), keanu_graph::GraphError>(())
 //! ```
 //!
-//! Every op of the graph has a second-order rule except lambdas, and so far only the Gaussian and the multivariate
-//! Gaussian distributions do: a model whose log probability depends on the latents through anything else fails
-//! with [`GraphError::NoSecondOrderRule`] naming the node. Eigenvector derivatives assume distinct eigenvalues, as
-//! their first derivatives do.
+//! Every op of the graph has a second-order rule except lambdas, and every distribution kind except custom
+//! distributions and the linear Gaussian state space model (a known gap: its rule would differentiate the Kalman
+//! recursion). A truncated or censored gamma, beta or negative binomial whose shape parameter (`k`, `alpha` or
+//! `beta`, or the dispersion `alpha`) depends on the latents has none either, since the second derivative of its
+//! CDF with respect to the shape has no closed form. A model whose log probability depends on the latents through
+//! any of these fails with [`GraphError::NoSecondOrderRule`] naming the node. Second derivatives follow the
+//! first-order gradients' conventions (the uniform has none with respect to its bounds, the categorical none with
+//! respect to its probabilities, and the Laplace density takes the almost-everywhere value at its kink).
+//! Eigenvector derivatives assume distinct eigenvalues, as their first derivatives do.
 
 use crate::error::{GraphError, Result};
 use crate::graph::{Graph, NodeId};
@@ -427,7 +432,8 @@ impl<'m> Parameterisation<'m> {
     ///
     /// [`GraphError::InvalidValue`] if `z` or `v` has the wrong length, [`GraphError::NoSecondOrderRule`] naming the
     /// node if the model has a distribution or op on the path from a latent to the log probability without a
-    /// second-order rule (a lambda, a custom distribution, or a distribution kind whose rule is not written yet), and
+    /// second-order rule (a lambda, a custom distribution, a linear Gaussian state space model, or a truncated or censored distribution's shape parameter
+    /// whose CDF has no closed-form second derivative; see the [module documentation](self#second-order)), and
     /// any error evaluating the model.
     pub fn hvp(&self, z: &[f64], v: &[f64], jacobian: bool, state: &mut State) -> Result<Vec<f64>> {
         self.check_len(z)?;

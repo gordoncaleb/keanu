@@ -2,14 +2,38 @@
 //! for exact Hessian-vector products of a joint log probability (see
 //! [`Parameterisation::hvp`](crate::Parameterisation::hvp)).
 //!
-//! Kept apart from the distribution table so that each kind's rule can be added without touching it. Kinds without
-//! a rule return [`GraphError::NoSecondOrderRule`].
+//! Kept apart from the distribution table so that each kind's rule can be added without touching it. Every kind
+//! but a custom distribution and the linear Gaussian state space model has a rule:
+//!
+//! - element-wise kinds (one value per element, with an element-wise log density) contract a per-element Hessian
+//!   in the value and the parameters, from the scalar rules in [`rules`], with the tangents;
+//! - truncated and censored kinds add the second derivatives of the base's log CDF and log survival function (see
+//!   the wrappers module), a mixture those of a logsumexp of its components (see the mixture module), and a
+//!   hidden Markov model those of the forward-backward algorithm (see the hmm module), all on top of the
+//!   element-wise contraction of their base, component or emission;
+//! - the multivariate kinds (multivariate Gaussian, Dirichlet, LKJ Cholesky, multinomial, ordered logistic, KDE)
+//!   have closed forms of their own here.
+//!
+//! A rule's derivatives are those of the first-order gradient it sits next to, including where that gradient
+//! follows a convention: the uniform has no derivative with respect to its bounds and the categorical none with
+//! respect to its probabilities, so their second derivatives are zero too, and the Laplace density's kink at its
+//! location takes the almost-everywhere second derivative 0. The second derivatives of a gamma, beta or negative
+//! binomial CDF with respect to a shape parameter have no closed form, so a truncated or censored distribution
+//! whose shape depends on the latents returns [`GraphError::NoSecondOrderRule`] naming the kind and the
+//! parameter; so does a custom distribution. The linear Gaussian state space model is a known gap: an exact rule
+//! would differentiate the Kalman recursion in forward mode, which isn't written yet, so it returns
+//! [`GraphError::NoSecondOrderRule`] naming the kind wherever its log density depends on the latents.
 
-use super::distribution::DistributionKind;
+pub(crate) mod rules;
+
+use super::distribution::{DistributionKind, Univariate};
+use super::wrappers::{self, Wrapper};
 use crate::autodiff::{batched_shape, fit, lift, reduce_to};
 use crate::error::{GraphError, Result};
 use crate::value::Value;
-use keanu_tensor::DoubleTensor;
+use keanu_tensor::special::trigamma;
+use keanu_tensor::{DoubleTensor, Shape, broadcast_shape};
+use rules::Hessian;
 use smallvec::SmallVec;
 
 /// Hessian-vector products of a node's log density along `b` directions: with respect to its value (None for
@@ -26,8 +50,10 @@ impl DistributionKind {
     ///
     /// # Errors
     ///
-    /// [`GraphError::NoSecondOrderRule`] naming the kind for a distribution without a rule (every kind but the
-    /// Gaussian and the multivariate Gaussian, for now).
+    /// [`GraphError::NoSecondOrderRule`] naming the kind for a custom distribution or a linear Gaussian state space
+    /// model, and naming the kind and the
+    /// parameter for a truncated or censored distribution whose CDF's second derivative along a shape parameter's
+    /// tangent has no closed form (see the [module documentation](self)).
     pub(crate) fn log_prob_hvp(
         &self,
         value: &Value,
@@ -36,21 +62,43 @@ impl DistributionKind {
         parameter_tangents: &[Option<&DoubleTensor>],
         b: usize,
     ) -> Result<LogProbHvpParts> {
+        use DistributionKind as K;
+        // exhaustive, so that a new kind needs a rule (or an explicit error) to compile
         match self {
-            DistributionKind::Gaussian => {
-                let &[mu, sigma] = parameters else {
-                    return Err(self.wrong_parameters());
-                };
-                gaussian_hvp(
-                    value.f64()?,
-                    mu.f64()?,
-                    sigma.f64()?,
-                    value_tangent,
-                    parameter_tangents,
-                    b,
-                )
-            }
-            DistributionKind::MultivariateGaussian => {
+            K::Gaussian
+            | K::HalfGaussian
+            | K::Cauchy
+            | K::HalfCauchy
+            | K::Beta
+            | K::ChiSquared
+            | K::Exponential
+            | K::Gamma
+            | K::InverseGamma
+            | K::Laplace
+            | K::Logistic
+            | K::LogNormal
+            | K::Pareto
+            | K::StudentT
+            | K::Triangular
+            | K::Uniform
+            | K::Weibull
+            | K::VonMises
+            | K::Bernoulli
+            | K::Binomial
+            | K::Geometric
+            | K::Poisson
+            | K::NegativeBinomial
+            | K::UniformInt
+            | K::Truncated(_)
+            | K::Censored(_) => elementwise_hvp(
+                self,
+                value,
+                parameters,
+                value_tangent,
+                parameter_tangents,
+                b,
+            ),
+            K::MultivariateGaussian => {
                 let &[mu, covariance] = parameters else {
                     return Err(self.wrong_parameters());
                 };
@@ -62,7 +110,85 @@ impl DistributionKind {
                     parameter_tangents,
                 )
             }
-            _ => Err(GraphError::NoSecondOrderRule(format!(
+            K::Dirichlet => {
+                let &[concentration] = parameters else {
+                    return Err(self.wrong_parameters());
+                };
+                dirichlet_hvp(
+                    value.f64()?,
+                    concentration.f64()?,
+                    value_tangent,
+                    parameter_tangents[0],
+                    b,
+                )
+            }
+            K::LkjCholesky => {
+                let &[eta] = parameters else {
+                    return Err(self.wrong_parameters());
+                };
+                lkj_cholesky_hvp(
+                    value.f64()?,
+                    eta.f64()?,
+                    value_tangent,
+                    parameter_tangents[0],
+                    b,
+                )
+            }
+            K::Multinomial => {
+                let &[_, p] = parameters else {
+                    return Err(self.wrong_parameters());
+                };
+                multinomial_hvp(
+                    &value.i64()?.to_double(),
+                    p.f64()?,
+                    parameter_tangents[1],
+                    b,
+                )
+            }
+            K::OrderedLogistic => {
+                let &[eta, cutpoints] = parameters else {
+                    return Err(self.wrong_parameters());
+                };
+                ordered_logistic_hvp(
+                    value.i64()?,
+                    eta.f64()?,
+                    cutpoints.f64()?,
+                    parameter_tangents,
+                    b,
+                )
+            }
+            K::Kde(kde) => Ok((
+                value_tangent
+                    .map(|t| kde_hvp(kde, value.f64()?, t, b))
+                    .transpose()?,
+                SmallVec::new(),
+            )),
+            // the categorical log density has no gradient with respect to its probabilities (see
+            // `DistributionKind::log_prob_gradient`), so it has no second derivatives either
+            K::Categorical => Ok((None, smallvec::smallvec![None; parameters.len()])),
+            K::Mixture(component) => super::mixture::log_prob_hvp(
+                component,
+                value,
+                parameters,
+                value_tangent,
+                parameter_tangents,
+                b,
+            ),
+            K::HiddenMarkovModel(emission) => super::hmm::log_prob_hvp(
+                emission,
+                value,
+                parameters,
+                value_tangent,
+                parameter_tangents,
+                b,
+            ),
+            // a known gap: an exact rule would differentiate the Kalman recursion (Cholesky solves and the
+            // Joseph-form update) in forward mode on top of its reverse-mode gradient
+            K::LinearGaussianStateSpace => Err(GraphError::NoSecondOrderRule(format!(
+                "the {} distribution (second derivatives through the Kalman filter are not implemented)",
+                self.name()
+            ))),
+            K::Custom(_) => Err(GraphError::NoSecondOrderRule(format!(
                 "the {} distribution",
                 self.name()
             ))),
@@ -70,51 +196,444 @@ impl DistributionKind {
     }
 }
 
-/// A batched tangent `[b, s...]` broadcast to `[b, shape...]`, or zeros for a zero tangent.
-fn broadcast_tangent(t: Option<&DoubleTensor>, b: usize, shape: &[usize]) -> Result<DoubleTensor> {
-    match t {
-        Some(t) => fit(t.clone(), b, shape),
-        None => Ok(DoubleTensor::zeros(&batched_shape(b, shape))),
+/// An element-wise kind's log density and its first and second derivatives at each element of a broadcast shape.
+pub(crate) struct Elementwise {
+    /// The log density at each element.
+    pub(crate) values: Vec<f64>,
+    /// The gradient with respect to each input (the value, then each parameter) at each element, None where there
+    /// is none.
+    pub(crate) gradients: Vec<Option<Vec<f64>>>,
+    /// The Hessian-vector products with respect to each input, `[b, shape...]` flattened, None exactly where the
+    /// gradient is.
+    pub(crate) hvps: Vec<Option<Vec<f64>>>,
+}
+
+/// The second-order parts of an [element-wise](DistributionKind::is_elementwise) kind at `x` broadcast with the
+/// parameters to `shape`, along the inputs' `tangents` (the value's, then each parameter's, each `[b, shape...]`
+/// flattened, None for a zero tangent).
+pub(crate) fn elementwise(
+    kind: &DistributionKind,
+    x: &Value,
+    parameters: &[&Value],
+    tangents: &[Option<Vec<f64>>],
+    b: usize,
+    shape: &[usize],
+) -> Result<Elementwise> {
+    match kind {
+        DistributionKind::Truncated(base) => {
+            return wrappers::second_order(
+                Wrapper::Truncated,
+                base,
+                x,
+                parameters,
+                tangents,
+                b,
+                shape,
+            );
+        }
+        DistributionKind::Censored(base) => {
+            return wrappers::second_order(
+                Wrapper::Censored,
+                base,
+                x,
+                parameters,
+                tangents,
+                b,
+                shape,
+            );
+        }
+        _ => {}
+    }
+    let Some(rule) = rules::density_rule(kind) else {
+        return Err(GraphError::NoSecondOrderRule(format!(
+            "the {} distribution",
+            kind.name()
+        )));
+    };
+    let (values, parts) = if kind.is_elementwise() {
+        let (values, parts) = kind.univariate(Univariate::Density, x, parameters, true)?;
+        (spread(&values, shape)?, parts)
+    } else {
+        // an element-wise density that can't be a mixture component (the Bernoulli), whose values are never read
+        let len = shape.iter().product();
+        (vec![0.0; len], Some(kind.log_prob_gradient(x, parameters)?))
+    };
+    let (x_gradient, parameter_gradients) =
+        parts.unwrap_or_else(|| (None, smallvec::smallvec![None; parameters.len()]));
+    let gradients: Vec<Option<Vec<f64>>> = std::iter::once(x_gradient)
+        .chain(parameter_gradients)
+        .map(|g| g.map(|g| spread(&g, shape)).transpose())
+        .collect::<Result<_>>()?;
+    let inputs: Vec<Vec<f64>> = std::iter::once(x)
+        .chain(parameters.iter().copied())
+        .map(|v| spread(&as_f64(v), shape))
+        .collect::<Result<_>>()?;
+    let differentiable: Vec<bool> = gradients.iter().map(Option::is_some).collect();
+    let mut point = vec![0.0; parameters.len()];
+    let hvps = contract(&differentiable, tangents, values.len(), b, |i, h| {
+        for (p, input) in point.iter_mut().zip(&inputs[1..]) {
+            *p = input[i];
+        }
+        rule(inputs[0][i], &point, h);
+        Ok(())
+    })?;
+    Ok(Elementwise {
+        values,
+        gradients,
+        hvps,
+    })
+}
+
+/// The Hessian-vector products of a log density over `len` elements given each element's Hessian over the
+/// inputs (filled by `hessian`, which gets a zeroed one): for each `differentiable` input u, `[b, len]` flattened
+/// with `Σᵥ H_uv t_v` at [k, i]; None for the other inputs.
+pub(crate) fn contract(
+    differentiable: &[bool],
+    tangents: &[Option<Vec<f64>>],
+    len: usize,
+    b: usize,
+    mut hessian: impl FnMut(usize, &mut Hessian) -> Result<()>,
+) -> Result<Vec<Option<Vec<f64>>>> {
+    let n = differentiable.len();
+    let mut out: Vec<Option<Vec<f64>>> = differentiable
+        .iter()
+        .map(|&d| d.then(|| vec![0.0; b * len]))
+        .collect();
+    let moving: Vec<(usize, &Vec<f64>)> = tangents
+        .iter()
+        .enumerate()
+        .filter_map(|(v, t)| t.as_ref().map(|t| (v, t)))
+        .collect();
+    if moving.is_empty() {
+        return Ok(out);
+    }
+    let mut h = Hessian::new(n);
+    for i in 0..len {
+        h.clear();
+        hessian(i, &mut h)?;
+        for (u, o) in out.iter_mut().enumerate() {
+            let Some(o) = o else { continue };
+            for k in 0..b {
+                let j = k * len + i;
+                o[j] = moving.iter().map(|&(v, t)| h.get(u, v) * t[j]).sum();
+            }
+        }
+    }
+    Ok(out)
+}
+
+/// A tensor broadcast to `shape`, flattened.
+pub(crate) fn spread(t: &DoubleTensor, shape: &[usize]) -> Result<Vec<f64>> {
+    Ok(if t.shape() == shape {
+        t.as_slice().to_vec()
+    } else {
+        t.broadcast_to(shape)?.into_vec()
+    })
+}
+
+/// A batched tangent `[b, s...]` broadcast to `[b, shape...]`, flattened.
+pub(crate) fn spread_tangent(
+    t: Option<&DoubleTensor>,
+    b: usize,
+    shape: &[usize],
+) -> Result<Option<Vec<f64>>> {
+    t.map(|t| Ok(fit(t.clone(), b, shape)?.into_vec()))
+        .transpose()
+}
+
+/// A value as f64s (1 and 0 for booleans).
+pub(crate) fn as_f64(value: &Value) -> DoubleTensor {
+    match value {
+        Value::F64(t) => t.clone(),
+        Value::I64(t) => t.to_double(),
+        Value::Bool(t) => t.to_double_mask(),
     }
 }
 
-/// The Gaussian, element-wise with u = (x − μ)/σ: the gradient is (−u/σ, u/σ, (u² − 1)/σ) in (x, μ, σ), and its
-/// derivatives are ∂²/∂x² = ∂²/∂μ² = −1/σ², ∂²/∂x∂μ = 1/σ², ∂²/∂x∂σ = −∂²/∂μ∂σ = 2u/σ² and
-/// ∂²/∂σ² = (1 − 3u²)/σ².
-fn gaussian_hvp(
+/// A flattened `[b, shape...]` Hessian-vector product summed to `[b, target...]`.
+pub(crate) fn reduce(
+    h: Option<Vec<f64>>,
+    b: usize,
+    shape: &[usize],
+    target: &[usize],
+) -> Result<Option<DoubleTensor>> {
+    h.map(|h| reduce_to(DoubleTensor::new(&batched_shape(b, shape), h)?, target))
+        .transpose()
+}
+
+/// An element-wise kind's Hessian-vector products, from [`elementwise`] over the broadcast of the value and the
+/// parameters, summed to each input's shape.
+fn elementwise_hvp(
+    kind: &DistributionKind,
+    value: &Value,
+    parameters: &[&Value],
+    value_tangent: Option<&DoubleTensor>,
+    parameter_tangents: &[Option<&DoubleTensor>],
+    b: usize,
+) -> Result<LogProbHvpParts> {
+    let mut shape = Shape::from_slice(value.shape());
+    for p in parameters {
+        shape = broadcast_shape(&shape, p.shape())?;
+    }
+    let tangents: Vec<Option<Vec<f64>>> = std::iter::once(value_tangent)
+        .chain(parameter_tangents.iter().copied())
+        .map(|t| spread_tangent(t, b, &shape))
+        .collect::<Result<_>>()?;
+    let parts = elementwise(kind, value, parameters, &tangents, b, &shape)?;
+    let mut hvps = parts.hvps.into_iter();
+    let value_hvp = reduce(hvps.next().flatten(), b, &shape, value.shape())?;
+    let parameter_hvps = hvps
+        .zip(parameters)
+        .map(|(h, p)| reduce(h, b, &shape, p.shape()))
+        .collect::<Result<_>>()?;
+    Ok((value_hvp, parameter_hvps))
+}
+
+/// The Dirichlet over the whole value (as its log density and gradient are): the gradient is ((c − 1)/x,
+/// ln x − ψ(c) + ψ(Σc)) in (x, c), so the products are −(c − 1)/x² ẋ + ċ/x and ẋ/x − ψ₁(c) ċ + ψ₁(Σc) Σċ.
+fn dirichlet_hvp(
     x: &DoubleTensor,
-    mu: &DoubleTensor,
-    sigma: &DoubleTensor,
+    concentration: &DoubleTensor,
     x_tangent: Option<&DoubleTensor>,
-    tangents: &[Option<&DoubleTensor>],
+    c_tangent: Option<&DoubleTensor>,
     b: usize,
 ) -> Result<LogProbHvpParts> {
     let shape = x.shape();
-    let (mu_b, sigma_b) = (mu.broadcast_to(shape)?, sigma.broadcast_to(shape)?);
-    let tx = broadcast_tangent(x_tangent, b, shape)?;
-    let tm = broadcast_tangent(tangents[0], b, shape)?;
-    let ts = broadcast_tangent(tangents[1], b, shape)?;
+    let c = spread(concentration, shape)?;
+    let tx = spread_tangent(x_tangent, b, shape)?;
+    let tc = spread_tangent(c_tangent, b, shape)?;
     let n = x.len();
-    let (xs, ms, ss) = (x.as_slice(), mu_b.as_slice(), sigma_b.as_slice());
-    let (txs, tms, tss) = (tx.as_slice(), tm.as_slice(), ts.as_slice());
+    let xs = x.as_slice();
+    let total = trigamma(c.iter().sum());
     let mut hx = vec![0.0; b * n];
-    let mut hs = vec![0.0; b * n];
+    let mut hc = vec![0.0; b * n];
     for k in 0..b {
+        let row = k * n..(k + 1) * n;
+        let c_sum: f64 = tc.as_ref().map_or(0.0, |t| t[row.clone()].iter().sum());
         for i in 0..n {
             let j = k * n + i;
-            let s = ss[i];
-            let u = (xs[i] - ms[i]) / s;
-            let s2 = s * s;
-            let (dr, ds) = (txs[j] - tms[j], tss[j]);
-            hx[j] = (-dr + 2.0 * u * ds) / s2;
-            hs[j] = (2.0 * u * dr + (1.0 - 3.0 * u * u) * ds) / s2;
+            let (dx, dc) = (
+                tx.as_ref().map_or(0.0, |t| t[j]),
+                tc.as_ref().map_or(0.0, |t| t[j]),
+            );
+            hx[j] = -(c[i] - 1.0) / (xs[i] * xs[i]) * dx + dc / xs[i];
+            hc[j] = dx / xs[i] - trigamma(c[i]) * dc + total * c_sum;
         }
     }
-    let batched = batched_shape(b, shape);
-    let hx = DoubleTensor::new(&batched, hx)?;
-    let hm = reduce_to(hx.neg(), mu.shape())?;
-    let hs = reduce_to(DoubleTensor::new(&batched, hs)?, sigma.shape())?;
-    Ok((Some(hx), smallvec::smallvec![Some(hm), Some(hs)]))
+    Ok((
+        reduce(Some(hx), b, shape, shape)?,
+        smallvec::smallvec![reduce(Some(hc), b, shape, concentration.shape())?],
+    ))
+}
+
+/// The LKJ Cholesky density Σ_{i≥1} (K − i − 1 + 2η − 2) ln L_ii − ln N(K, η) per factor: the gradient is
+/// (power_i / L_ii, 2 Σ ln L_ii − d ln N/dη), so the products are −power_i/L_ii² L̇_ii + 2η̇/L_ii on the
+/// diagonal and Σ 2 L̇_ii/L_ii − d² ln N/dη² η̇, with
+/// ln N = Σ_m m((2η − 2 + m) ln 2 + ln B(β_m, β_m)), β_m = η + (m − 1)/2, so
+/// d² ln N/dη² = Σ_m 2m(ψ₁(β_m) − 2ψ₁(2β_m)).
+fn lkj_cholesky_hvp(
+    x: &DoubleTensor,
+    eta: &DoubleTensor,
+    x_tangent: Option<&DoubleTensor>,
+    eta_tangent: Option<&DoubleTensor>,
+    b: usize,
+) -> Result<LogProbHvpParts> {
+    let shape = x.shape();
+    let (batch, k) = match shape {
+        [batch @ .., rows, _] => (batch, *rows),
+        _ => return Err(DistributionKind::LkjCholesky.wrong_parameters()),
+    };
+    let etas = spread(eta, batch)?;
+    let tx = spread_tangent(x_tangent, b, shape)?;
+    let te = spread_tangent(eta_tangent, b, batch)?;
+    let (n, factors) = (x.len(), etas.len());
+    let xs = x.as_slice();
+    let mut hx = vec![0.0; b * n];
+    let mut he = vec![0.0; b * factors];
+    for (f, &eta) in etas.iter().enumerate() {
+        let d2_normaliser: f64 = (1..k)
+            .map(|level| {
+                let m = (k - level) as f64;
+                let beta = eta + (m - 1.0) / 2.0;
+                2.0 * m * (trigamma(beta) - 2.0 * trigamma(2.0 * beta))
+            })
+            .sum();
+        for s in 0..b {
+            let de = te.as_ref().map_or(0.0, |t| t[s * factors + f]);
+            let mut acc = -d2_normaliser * de;
+            for i in 1..k {
+                let at = f * k * k + i * k + i;
+                let diagonal = xs[at];
+                let power = (k - i - 1) as f64 + 2.0 * eta - 2.0;
+                let dx = tx.as_ref().map_or(0.0, |t| t[s * n + at]);
+                hx[s * n + at] = -power / (diagonal * diagonal) * dx + 2.0 * de / diagonal;
+                acc += 2.0 * dx / diagonal;
+            }
+            he[s * factors + f] = acc;
+        }
+    }
+    Ok((
+        reduce(Some(hx), b, shape, shape)?,
+        smallvec::smallvec![reduce(Some(he), b, batch, eta.shape())?],
+    ))
+}
+
+/// The multinomial in its probabilities, over the last axis: the gradient is x_i/p_i − Σx/Σp, so the product is
+/// −x_i/p_i² ṗ_i + Σx/(Σp)² Σṗ (with 0/p taken as 0, as in first order).
+fn multinomial_hvp(
+    x: &DoubleTensor,
+    p: &DoubleTensor,
+    p_tangent: Option<&DoubleTensor>,
+    b: usize,
+) -> Result<LogProbHvpParts> {
+    let shape = broadcast_shape(x.shape(), p.shape())?;
+    let Some(tp) = spread_tangent(p_tangent, b, &shape)? else {
+        return Ok((None, smallvec::smallvec![None, None]));
+    };
+    let xs = spread(x, &shape)?;
+    let ps = spread(p, &shape)?;
+    let count = shape.last().copied().unwrap_or(1).max(1);
+    let len = xs.len();
+    let mut hp = vec![0.0; b * len];
+    for row in (0..len).step_by(count) {
+        let range = row..row + count;
+        let x_sum: f64 = xs[range.clone()].iter().sum();
+        let p_sum: f64 = ps[range.clone()].iter().sum();
+        let shared = x_sum / (p_sum * p_sum);
+        for k in 0..b {
+            let t = &tp[k * len..(k + 1) * len];
+            let dp_sum: f64 = t[range.clone()].iter().sum();
+            for i in range.clone() {
+                let own = if xs[i] == 0.0 {
+                    0.0
+                } else {
+                    -xs[i] / (ps[i] * ps[i]) * t[i]
+                };
+                hp[k * len + i] = own + shared * dp_sum;
+            }
+        }
+    }
+    Ok((
+        None,
+        smallvec::smallvec![None, reduce(Some(hp), b, &shape, p.shape())?],
+    ))
+}
+
+/// The ordered logistic: each element's log probability is f(a, b) with a = η − c_{k−1} and b = η − c_k, the
+/// cutpoints either side of category k (one of them only at the ends). With g = 1/(e^(a−b) − 1):
+/// f = ln σ(a) + ln σ(−b) + ln(1 − e^(b−a)), f_aa = −σ(a)σ(−a) − g(1 + g), f_ab = g(1 + g),
+/// f_bb = −σ(b)σ(−b) − g(1 + g); f = ln σ(−a) at k = 0 and ln σ(a) at the last category, each with second
+/// derivative −σ(a)σ(−a).
+fn ordered_logistic_hvp(
+    k: &keanu_tensor::IntTensor,
+    eta: &DoubleTensor,
+    cutpoints: &DoubleTensor,
+    tangents: &[Option<&DoubleTensor>],
+    b: usize,
+) -> Result<LogProbHvpParts> {
+    let Some((&count, leading)) = cutpoints.shape().split_last() else {
+        return Err(DistributionKind::OrderedLogistic.wrong_parameters());
+    };
+    let batch = broadcast_shape(&broadcast_shape(k.shape(), eta.shape())?, leading)?;
+    let mut cut_shape = batch.to_vec();
+    cut_shape.push(count);
+    let ks = k.broadcast_to(&batch)?.into_vec();
+    let etas = spread(eta, &batch)?;
+    let cuts = spread(cutpoints, &cut_shape)?;
+    let te = spread_tangent(tangents[0], b, &batch)?;
+    let tc = spread_tangent(tangents[1], b, &cut_shape)?;
+    let len = ks.len();
+    let mut he = vec![0.0; b * len];
+    let mut hc = vec![0.0; b * len * count];
+    let sigmoid = |z: f64| 1.0 / (1.0 + (-z).exp());
+    for i in 0..len {
+        let Ok(category) = usize::try_from(ks[i]) else {
+            continue;
+        };
+        if category > count {
+            continue;
+        }
+        let c = &cuts[i * count..(i + 1) * count];
+        // (cutpoint index, its coordinate's second derivative) for a and b, and f_ab
+        let (lower, upper, cross) = if category == 0 {
+            let a = etas[i] - c[0];
+            (None, Some((0, -sigmoid(a) * sigmoid(-a))), 0.0)
+        } else if category == count {
+            let a = etas[i] - c[count - 1];
+            (Some((count - 1, -sigmoid(a) * sigmoid(-a))), None, 0.0)
+        } else {
+            let (a, bb) = (etas[i] - c[category - 1], etas[i] - c[category]);
+            let g = 1.0 / (a - bb).exp_m1();
+            let gg = g * (1.0 + g);
+            (
+                Some((category - 1, -sigmoid(a) * sigmoid(-a) - gg)),
+                Some((category, -sigmoid(bb) * sigmoid(-bb) - gg)),
+                gg,
+            )
+        };
+        for s in 0..b {
+            let de = te.as_ref().map_or(0.0, |t| t[s * len + i]);
+            let dc = |j: usize| tc.as_ref().map_or(0.0, |t| t[(s * len + i) * count + j]);
+            // the tangents of the two coordinates, η̇ − ċ_j
+            let da = lower.map_or(0.0, |(j, _)| de - dc(j));
+            let db = upper.map_or(0.0, |(j, _)| de - dc(j));
+            let mut eta_out = 0.0;
+            if let Some((j, faa)) = lower {
+                let out = faa * da + cross * db;
+                eta_out += out;
+                hc[(s * len + i) * count + j] = -out;
+            }
+            if let Some((j, fbb)) = upper {
+                let out = cross * da + fbb * db;
+                eta_out += out;
+                hc[(s * len + i) * count + j] = -out;
+            }
+            he[s * len + i] = eta_out;
+        }
+    }
+    Ok((
+        None,
+        smallvec::smallvec![
+            reduce(Some(he), b, &batch, eta.shape())?,
+            reduce(Some(hc), b, &cut_shape, cutpoints.shape())?,
+        ],
+    ))
+}
+
+/// The KDE log density ln Σ_s exp(−d_s²/2) + c with d_s = (x − s)/h, whose second derivative is
+/// (Σ w_s (d_s² − 1) − (Σ w_s d_s)²)/h² with the normalised weights w_s.
+fn kde_hvp(
+    kde: &keanu_distributions::Kde,
+    x: &DoubleTensor,
+    tangent: &DoubleTensor,
+    b: usize,
+) -> Result<DoubleTensor> {
+    let h = kde.bandwidth;
+    let second: Vec<f64> = x
+        .as_slice()
+        .iter()
+        .map(|&x| {
+            let exponents: Vec<f64> = kde
+                .samples
+                .iter()
+                .map(|&s| -0.5 * ((x - s) / h).powi(2))
+                .collect();
+            let max = exponents.iter().copied().fold(f64::NEG_INFINITY, f64::max);
+            let (mut total, mut first, mut squares) = (0.0, 0.0, 0.0);
+            for (&s, &e) in kde.samples.iter().zip(&exponents) {
+                let w = (e - max).exp();
+                let d = (x - s) / h;
+                total += w;
+                first += w * d;
+                squares += w * (d * d - 1.0);
+            }
+            let mean = first / total;
+            (squares / total - mean * mean) / (h * h)
+        })
+        .collect();
+    let second = DoubleTensor::new(x.shape(), second)?;
+    let t = fit(tangent.clone(), b, x.shape())?;
+    Ok(lift(&t, x.rank())?.mul(&second)?)
 }
 
 /// The multivariate Gaussian, with r = x − μ, P = Σ⁻¹ and a = P r: the gradient is (−a, a, ½(a aᵀ − P)) in
