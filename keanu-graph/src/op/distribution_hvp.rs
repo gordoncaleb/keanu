@@ -3,7 +3,7 @@
 //! [`Parameterisation::hvp`](crate::Parameterisation::hvp)).
 //!
 //! Kept apart from the distribution table so that each kind's rule can be added without touching it. Every kind
-//! but a custom distribution and the linear Gaussian state space model has a rule:
+//! but a custom distribution has a rule:
 //!
 //! - element-wise kinds (one value per element, with an element-wise log density) contract a per-element Hessian
 //!   in the value and the parameters, from the scalar rules in [`rules`], with the tangents;
@@ -12,7 +12,9 @@
 //!   hidden Markov model those of the forward-backward algorithm (see the hmm module), all on top of the
 //!   element-wise contraction of their base, component or emission;
 //! - the multivariate kinds (multivariate Gaussian, Dirichlet, LKJ Cholesky, multinomial, ordered logistic, KDE)
-//!   have closed forms of their own here.
+//!   have closed forms of their own here;
+//! - the linear Gaussian state space model differentiates the Kalman filter's reverse pass in forward mode (see
+//!   [`keanu_distributions::LinearGaussianStateSpace::hvp`]).
 //!
 //! A rule's derivatives are those of the first-order gradient it sits next to, including where that gradient
 //! follows a convention: the uniform has no derivative with respect to its bounds and the categorical none with
@@ -20,9 +22,7 @@
 //! location takes the almost-everywhere second derivative 0. The second derivatives of a gamma, beta or negative
 //! binomial CDF with respect to a shape parameter have no closed form, so a truncated or censored distribution
 //! whose shape depends on the latents returns [`GraphError::NoSecondOrderRule`] naming the kind and the
-//! parameter; so does a custom distribution. The linear Gaussian state space model is a known gap: an exact rule
-//! would differentiate the Kalman recursion in forward mode, which isn't written yet, so it returns
-//! [`GraphError::NoSecondOrderRule`] naming the kind wherever its log density depends on the latents.
+//! parameter; so does a custom distribution.
 
 pub(crate) mod rules;
 
@@ -51,8 +51,7 @@ impl DistributionKind {
     ///
     /// # Errors
     ///
-    /// [`GraphError::NoSecondOrderRule`] naming the kind for a custom distribution or a linear Gaussian state space
-    /// model, and naming the kind and the
+    /// [`GraphError::NoSecondOrderRule`] naming the kind for a custom distribution, and naming the kind and the
     /// parameter for a truncated or censored distribution whose CDF's second derivative along a shape parameter's
     /// tangent has no closed form (see the [module documentation](self)).
     pub(crate) fn log_prob_hvp(
@@ -173,12 +172,13 @@ impl DistributionKind {
                 parameter_tangents,
                 b,
             ),
-            // a known gap: an exact rule would differentiate the Kalman recursion (Cholesky solves and the
-            // Joseph-form update) in forward mode on top of its reverse-mode gradient
-            K::LinearGaussianStateSpace => Err(GraphError::NoSecondOrderRule(format!(
-                "the {} distribution (second derivatives through the Kalman filter are not implemented)",
-                self.name()
-            ))),
+            K::LinearGaussianStateSpace => linear_gaussian_state_space_hvp(
+                value.f64()?,
+                parameters,
+                value_tangent,
+                parameter_tangents,
+                b,
+            ),
             K::Custom(_) => Err(GraphError::NoSecondOrderRule(format!(
                 "the {} distribution",
                 self.name()
@@ -605,6 +605,49 @@ fn kde_hvp(
     let second = DoubleTensor::new(x.shape(), second)?;
     let t = fit(tangent.clone(), b, x.shape())?;
     Ok(lift(&t, x.rank())?.mul(&second)?)
+}
+
+/// The linear Gaussian state space model: the Kalman filter's gradient differentiated in forward mode (see
+/// [`keanu_distributions::LinearGaussianStateSpace::hvp`]), with covariance tangents taken to be symmetric.
+fn linear_gaussian_state_space_hvp(
+    x: &DoubleTensor,
+    parameters: &[&Value],
+    x_tangent: Option<&DoubleTensor>,
+    tangents: &[Option<&DoubleTensor>],
+    b: usize,
+) -> Result<LogProbHvpParts> {
+    let &[m0, p0, f, q, h, r] = parameters else {
+        return Err(DistributionKind::LinearGaussianStateSpace.wrong_parameters());
+    };
+    let model = keanu_distributions::LinearGaussianStateSpace::new(
+        m0.f64()?,
+        p0.f64()?,
+        f.f64()?,
+        q.f64()?,
+        h.f64()?,
+        r.f64()?,
+    );
+    let x_tangent = x_tangent
+        .map(|t| fit(t.clone(), b, x.shape()))
+        .transpose()?;
+    let tangents: Vec<Option<DoubleTensor>> = tangents
+        .iter()
+        .zip(parameters)
+        .map(|(t, p)| t.map(|t| fit(t.clone(), b, p.shape())).transpose())
+        .collect::<Result<_>>()?;
+    let tangents: Vec<Option<&DoubleTensor>> = tangents.iter().map(Option::as_ref).collect();
+    let g = model.hvp(x, x_tangent.as_ref(), &tangents, b)?;
+    Ok((
+        Some(g.x),
+        smallvec::smallvec![
+            Some(g.initial_mean),
+            Some(g.initial_covariance),
+            Some(g.transition_matrix),
+            Some(g.transition_covariance),
+            Some(g.observation_matrix),
+            Some(g.observation_covariance),
+        ],
+    ))
 }
 
 /// The multivariate Gaussian, with r = x − μ, P = Σ⁻¹ and a = P r: the gradient is (−a, a, ½(a aᵀ − P)) in

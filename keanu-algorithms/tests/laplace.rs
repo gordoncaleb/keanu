@@ -358,3 +358,71 @@ fn discrete_latents_and_impossible_starts_are_errors() {
         AlgorithmError::ImpossibleStart
     );
 }
+
+/// A local level model (a random walk observed with noise) with latent level and observation noise scales: the
+/// Laplace approximation needs the exact Hessian through the Kalman filter, which matches finite differences of
+/// the exact gradient at the mode.
+#[test]
+fn a_kalman_filter_model_has_the_exact_hessian() {
+    let b = GraphBuilder::new();
+    let level_sd = b.half_gaussian(1.0).label("level_sd");
+    let noise_sd = b.half_gaussian(1.0).label("noise_sd");
+    b.set_value(level_sd, DoubleTensor::scalar(0.5));
+    b.set_value(noise_sd, DoubleTensor::scalar(0.5));
+    let q = (level_sd * level_sd).reshape(&[1, 1]);
+    let r = (noise_sd * noise_sd).reshape(&[1, 1]);
+    let one = || b.constant(DoubleTensor::new(&[1, 1], vec![1.0]).unwrap());
+    let ys = [0.3, 0.9, 1.4, 1.1, 1.9, 2.6, 2.2, 3.1, 2.7, 3.5];
+    let y = b.linear_gaussian_state_space(
+        ys.len(),
+        b.constant(DoubleTensor::vector(vec![0.0])),
+        b.constant(DoubleTensor::new(&[1, 1], vec![4.0]).unwrap()),
+        one(),
+        q,
+        one(),
+        r,
+    );
+    b.observe(y, DoubleTensor::new(&[ys.len(), 1], ys.to_vec()).unwrap());
+    let (level_sd, noise_sd) = (level_sd.id(), noise_sd.id());
+    let (graph, mut state) = b.build().unwrap();
+    let model = Model::new(graph, &state).unwrap();
+
+    let result = Laplace::new().fit(&model, &mut state).unwrap();
+    assert!(result.converged());
+    let param = result.parameterisation();
+    let mode = result.mode().to_vec();
+    let n = mode.len();
+    assert_eq!(n, 2);
+    let mut gradient = |z: &[f64]| {
+        let (_, g) = param.log_prob_and_gradient(z, true, &mut state).unwrap();
+        g.unwrap()
+    };
+    // the gradient vanishes at the mode
+    assert!(gradient(&mode).iter().all(|g| g.abs() < 1e-6));
+    let hessian = result.hessian().as_slice();
+    let h = 1e-5;
+    for j in 0..n {
+        let (mut plus, mut minus) = (mode.clone(), mode.clone());
+        plus[j] += h;
+        minus[j] -= h;
+        let (gp, gm) = (gradient(&plus), gradient(&minus));
+        for i in 0..n {
+            let expected = (gp[i] - gm[i]) / (2.0 * h);
+            let actual = hessian[i * n + j];
+            assert!(
+                (actual - expected).abs() <= 1e-6 * expected.abs().max(1.0),
+                "H[{i}][{j}] = {actual}, finite differences give {expected}"
+            );
+        }
+    }
+    assert!((hessian[1] - hessian[n]).abs() < 1e-10);
+    let draws = result
+        .sample(
+            &mut state,
+            &[level_sd, noise_sd],
+            100,
+            &mut KeanuRng::seed_from_u64(2),
+        )
+        .unwrap();
+    assert_eq!(draws.len(), 100);
+}

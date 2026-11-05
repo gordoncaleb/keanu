@@ -58,8 +58,10 @@ x_{t+1} = F x_t + N(0, Q), observed as y_t = H x_t + N(0, R) in dimension m. The
   positive definite makes the observations impossible.
 - The log likelihood uses Cholesky solves of the innovation covariance and the Joseph-form covariance update, which
   stays symmetric positive semidefinite over long series and near-deterministic models. Its gradient with respect to
-  the observations and every parameter is exact (the filter differentiated in reverse mode). Covariance gradients are
-  symmetric, as for the multivariate Gaussian.
+  the observations and every parameter is exact (the filter differentiated in reverse mode), and so are its second
+  derivatives (that reverse pass differentiated in forward mode), so Kalman models work with the Laplace
+  approximation and anything else that needs Hessians. Covariance gradients are symmetric, as for the multivariate
+  Gaussian.
 - `keanu_distributions::LinearGaussianStateSpace::filter` returns the filtered means and covariances at each step.
 
 ## Scan: a loop in one node

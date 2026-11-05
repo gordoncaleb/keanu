@@ -1385,22 +1385,44 @@ fn distribution_cases() -> Vec<DistributionCase> {
                 b.hidden_markov_model(5, K::Poisson, &[rates.id()], initial, transition);
             b.observe(y, ints(&[0, 2, 5, 3, 1]));
         }),
-        no_rule(
-            "a linear Gaussian state space model",
+        case(
+            "a linear Gaussian state space model in every parameter",
             |b| {
-                let eye = DoubleTensor::eye(1).unwrap();
+                let eye = b.constant(DoubleTensor::eye(2).unwrap());
+                // each covariance L Lᵀ + I/2 with a latent L
+                let covariance = |values: &[f64]| {
+                    let l = latent(b, t(&[2, 2], values));
+                    l.matmul_transposed(l, false, true) + eye * 0.5
+                };
                 let y = b.linear_gaussian_state_space(
-                    3,
-                    latent_vector(b, &[0.2]),
-                    eye.clone(),
-                    eye.clone(),
-                    eye.clone(),
-                    eye.clone(),
-                    eye,
+                    4,
+                    latent_vector(b, &[0.2, -0.4]),
+                    covariance(&[0.9, 0.0, 0.3, 0.7]),
+                    latent(b, t(&[2, 2], &[0.8, 0.2, -0.1, 0.7])),
+                    covariance(&[0.5, 0.0, -0.2, 0.4]),
+                    latent(b, t(&[2, 2], &[1.0, 0.3, -0.2, 0.9])),
+                    covariance(&[0.6, 0.0, 0.1, 0.5]),
                 );
-                b.observe(y, t(&[3, 1], &[0.1, 0.5, -0.2]));
+                b.observe(y, t(&[4, 2], &[0.1, 0.5, -0.2, 0.9, 0.4, -0.3, 1.1, 0.2]));
             },
-            "linear_gaussian_state_space",
+        ),
+        case(
+            "a linear Gaussian state space model in its observations",
+            |b| {
+                // a state of dimension 2 observed in dimension 1, with latent observations, dynamics and noise
+                let r = positive(b, 0.3).reshape(&[1, 1]);
+                let q = positive_vector(b, &[0.4, 0.2]).diag();
+                let y = b.linear_gaussian_state_space(
+                    4,
+                    DoubleTensor::vector(vec![0.0, 0.5]),
+                    DoubleTensor::eye(2).unwrap(),
+                    latent(b, t(&[2, 2], &[0.9, 0.1, -0.2, 0.6])),
+                    q,
+                    latent(b, t(&[1, 2], &[1.0, 0.4])),
+                    r,
+                );
+                b.set_value(y, t(&[4, 1], &[0.3, -0.1, 0.8, 0.5]));
+            },
         ),
         // mixtures
         case("a mixture of Gaussians", |b| {

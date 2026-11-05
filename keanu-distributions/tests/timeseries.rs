@@ -414,6 +414,159 @@ fn kalman_gradients_match_finite_differences() {
     }
 }
 
+/// The gradient's fields in the order (x, then each parameter as in `LinearGaussianStateSpace::new`).
+fn gradient_fields(
+    g: &keanu_distributions::LinearGaussianStateSpaceGradient,
+) -> [&DoubleTensor; 7] {
+    [
+        &g.x,
+        &g.initial_mean,
+        &g.initial_covariance,
+        &g.transition_matrix,
+        &g.transition_covariance,
+        &g.observation_matrix,
+        &g.observation_covariance,
+    ]
+}
+
+/// A direction for an input of `shape`, made symmetric for a covariance.
+fn direction(shape: &[usize], seed: f64, symmetric: bool) -> Vec<f64> {
+    let len: usize = shape.iter().product();
+    let mut v: Vec<f64> = (0..len).map(|i| ((i as f64) * 0.7 + seed).sin()).collect();
+    if symmetric {
+        let n = shape[1];
+        for i in 0..n {
+            for j in 0..i {
+                v[j * n + i] = v[i * n + j];
+            }
+        }
+    }
+    v
+}
+
+#[test]
+fn kalman_hessian_vector_products_match_finite_differences_of_the_gradient() {
+    let model = model();
+    let y = observations();
+    let mut inputs = vec![y.clone()];
+    inputs.extend(parameters_of(&model));
+    let symmetric = [false, false, true, false, true, false, true];
+    let b = 2;
+    // two directions, moving every input at once
+    let directions: Vec<Vec<Vec<f64>>> = (0..b)
+        .map(|k| {
+            inputs
+                .iter()
+                .zip(symmetric)
+                .enumerate()
+                .map(|(u, (t, s))| direction(t.shape(), 0.3 + u as f64 + 1.7 * k as f64, s))
+                .collect()
+        })
+        .collect();
+    let tangents: Vec<DoubleTensor> = inputs
+        .iter()
+        .enumerate()
+        .map(|(u, t)| {
+            let mut shape = vec![b];
+            shape.extend_from_slice(t.shape());
+            let data = (0..b).flat_map(|k| directions[k][u].clone()).collect();
+            DoubleTensor::new(&shape, data).unwrap()
+        })
+        .collect();
+    let parameter_tangents: Vec<Option<&DoubleTensor>> = tangents[1..].iter().map(Some).collect();
+    let hvp = model
+        .hvp(&y, Some(&tangents[0]), &parameter_tangents, b)
+        .unwrap();
+    let gradient_at = |k: usize, step: f64| {
+        let moved: Vec<DoubleTensor> = inputs
+            .iter()
+            .zip(&directions[k])
+            .map(|(t, d)| {
+                let values = t
+                    .as_slice()
+                    .iter()
+                    .zip(d)
+                    .map(|(x, d)| x + step * d)
+                    .collect();
+                DoubleTensor::new(t.shape(), values).unwrap()
+            })
+            .collect();
+        let [x, a, bb, c, d, e, f] = <[DoubleTensor; 7]>::try_from(moved).unwrap();
+        LinearGaussianStateSpace::new(a, bb, c, d, e, f)
+            .d_log_prob(&x)
+            .unwrap()
+    };
+    let h = 1e-5;
+    for k in 0..b {
+        let (plus, minus) = (gradient_at(k, h), gradient_at(k, -h));
+        for (u, ((actual, p), m)) in gradient_fields(&hvp)
+            .into_iter()
+            .zip(gradient_fields(&plus))
+            .zip(gradient_fields(&minus))
+            .enumerate()
+        {
+            let len = p.len();
+            assert_eq!(actual.shape()[0], b);
+            assert_eq!(&actual.shape()[1..], p.shape(), "input {u}");
+            for i in 0..len {
+                let numeric = (p.as_slice()[i] - m.as_slice()[i]) / (2.0 * h);
+                let exact = actual.as_slice()[k * len + i];
+                assert!(
+                    close(exact, numeric, 1e-6),
+                    "direction {k}, input {u}, element {i}: {exact} vs {numeric}"
+                );
+            }
+        }
+    }
+
+    // a covariance tangent's symmetric part is used, and the covariance products are symmetric
+    let lopsided = DoubleTensor::new(&[1, 2, 2], vec![0.4, 1.0, 0.0, -0.3]).unwrap();
+    let balanced = DoubleTensor::new(&[1, 2, 2], vec![0.4, 0.5, 0.5, -0.3]).unwrap();
+    let along = |r: &DoubleTensor| {
+        let mut t: Vec<Option<&DoubleTensor>> = vec![None; 6];
+        t[5] = Some(r);
+        model.hvp(&y, None, &t, 1).unwrap()
+    };
+    let (a, s) = (along(&lopsided), along(&balanced));
+    assert_eq!(a, s);
+    let r = a.observation_covariance.as_slice();
+    assert!(close(r[1], r[2], 1e-12));
+    // no tangents at all give zeros
+    let zero = model.hvp(&y, None, &[None; 6], 3).unwrap();
+    assert_eq!(zero.transition_matrix.shape(), &[3, 3, 3]);
+    assert!(
+        gradient_fields(&zero)
+            .iter()
+            .all(|t| t.as_slice().iter().all(|&v| v == 0.0))
+    );
+}
+
+#[test]
+fn bad_kalman_tangents_are_errors() {
+    let model = model();
+    let y = observations();
+    assert!(model.hvp(&y, None, &[None; 5], 1).is_err());
+    let wrong = DoubleTensor::zeros(&[2, 3]);
+    let mut t: Vec<Option<&DoubleTensor>> = vec![None; 6];
+    t[0] = Some(&wrong);
+    assert!(model.hvp(&y, None, &t, 1).is_err());
+    assert!(model.hvp(&y, Some(&wrong), &[None; 6], 1).is_err());
+    // an impossible innovation covariance
+    let degenerate = LinearGaussianStateSpace::new(
+        v(&[0.0]),
+        m(1, 1, &[0.0]),
+        m(1, 1, &[1.0]),
+        m(1, 1, &[0.0]),
+        m(1, 1, &[1.0]),
+        m(1, 1, &[0.0]),
+    );
+    assert!(
+        degenerate
+            .hvp(&m(1, 1, &[0.5]), None, &[None; 6], 1)
+            .is_err()
+    );
+}
+
 fn parameters_of(model: &LinearGaussianStateSpace<'_>) -> Vec<DoubleTensor> {
     [
         &model.initial_mean,

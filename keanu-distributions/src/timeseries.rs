@@ -9,14 +9,15 @@
 //!   gradient by the backward algorithm. The emission distribution is left to the caller (the graph's
 //!   `HiddenMarkovModel` evaluates any element-wise distribution kind with per-state parameters).
 //! - [`LinearGaussianStateSpace`] gives the log likelihood of observations by the Kalman filter, with Cholesky
-//!   solves of the innovation covariance and the Joseph-form covariance update, and its gradient by reverse-mode
-//!   differentiation of the filter, written out by hand.
+//!   solves of the innovation covariance and the Joseph-form covariance update, its gradient by reverse-mode
+//!   differentiation of the filter, written out by hand, and its Hessian-vector products by differentiating that
+//!   reverse pass in forward mode. The matrix algebra is keanu-tensor's.
 
 use crate::error::{DistributionError, Result, invalid_parameter};
 use crate::param::{IntoParam, Param};
 use crate::rng::KeanuRng;
 use keanu_tensor::special::log_sum_exp;
-use keanu_tensor::{DoubleTensor, IntTensor};
+use keanu_tensor::{DoubleTensor, IntTensor, TensorError};
 use std::f64::consts::PI;
 
 /// How far each set of probabilities may sum from 1.
@@ -241,208 +242,158 @@ fn pick(probabilities: &[f64], rng: &mut KeanuRng) -> usize {
     probabilities.iter().rposition(|&p| p > 0.0).unwrap_or(0)
 }
 
-/// A dense row-major matrix, for the Kalman filter's small d × d and m × m algebra.
-#[derive(Debug, Clone, PartialEq)]
-struct Mat {
-    rows: usize,
-    cols: usize,
-    data: Vec<f64>,
+/// The matrix algebra the Kalman filter and its reverse pass are written in, so that one implementation of each
+/// serves both plain matrices ([`DoubleTensor`]s: the log density and its gradient) and matrices carrying `b`
+/// tangents ([`Dual`]: the gradient's directional derivatives, i.e. Hessian-vector products, by forward-mode
+/// differentiation of the reverse pass). The numerical kernels are keanu-tensor's.
+trait Algebra: Clone + Sized {
+    /// op(self) op(other), with op the transpose where asked.
+    fn mm(&self, other: &Self, transpose_left: bool, transpose_right: bool) -> Result<Self>;
+    fn plus(&self, other: &Self) -> Result<Self>;
+    fn minus(&self, other: &Self) -> Result<Self>;
+    fn times(&self, s: f64) -> Self;
+    fn tr(&self) -> Result<Self>;
+    /// The matrix itself, without any tangents.
+    fn value(&self) -> &DoubleTensor;
+    /// A zero matrix (with as many zero tangents as self has).
+    fn zeros(&self, rows: usize, cols: usize) -> Self;
+    /// The inverse of a symmetric positive definite matrix, by its Cholesky factor, and the log of its
+    /// determinant; None if the matrix is not positive definite (or has NaNs).
+    fn spd_inverse(&self) -> Result<Option<(Self, f64)>>;
 }
 
-impl Mat {
-    fn zeros(rows: usize, cols: usize) -> Self {
-        Self {
-            rows,
-            cols,
-            data: vec![0.0; rows * cols],
-        }
+/// (A + Aᵀ) / 2.
+fn sym<A: Algebra>(a: &A) -> Result<A> {
+    Ok(a.plus(&a.tr()?)?.times(0.5))
+}
+
+impl Algebra for DoubleTensor {
+    fn mm(&self, other: &Self, transpose_left: bool, transpose_right: bool) -> Result<Self> {
+        Ok(self.matmul_transposed(other, transpose_left, transpose_right)?)
     }
 
-    fn identity(n: usize) -> Self {
-        let mut m = Self::zeros(n, n);
-        for i in 0..n {
-            m.data[i * n + i] = 1.0;
-        }
-        m
+    fn plus(&self, other: &Self) -> Result<Self> {
+        Ok(self.add(other)?)
     }
 
-    fn of(t: &DoubleTensor) -> Self {
-        let (rows, cols) = match *t.shape() {
-            [r, c] => (r, c),
-            [r] => (r, 1),
-            _ => unreachable!("shapes are checked before conversion"),
+    fn minus(&self, other: &Self) -> Result<Self> {
+        Ok(self.sub(other)?)
+    }
+
+    fn times(&self, s: f64) -> Self {
+        self * s
+    }
+
+    fn tr(&self) -> Result<Self> {
+        Ok(self.transpose()?)
+    }
+
+    fn value(&self) -> &DoubleTensor {
+        self
+    }
+
+    fn zeros(&self, rows: usize, cols: usize) -> Self {
+        DoubleTensor::zeros(&[rows, cols])
+    }
+
+    fn spd_inverse(&self) -> Result<Option<(Self, f64)>> {
+        let l = match self.cholesky() {
+            Ok(l) => l,
+            Err(TensorError::NotPositiveDefinite) => return Ok(None),
+            Err(e) => return Err(e.into()),
         };
+        let diagonal = l.diag_part()?;
+        if diagonal.as_slice().iter().any(|v| v.is_nan() || *v <= 0.0) {
+            return Ok(None);
+        }
+        let log_det = 2.0 * diagonal.as_slice().iter().map(|v| v.ln()).sum::<f64>();
+        Ok(Some((l.cholesky_inverse()?, log_det)))
+    }
+}
+
+/// A matrix [r, c] with `b` tangents [b, r, c]: each operation carries the tangents along by the product rule.
+#[derive(Debug, Clone)]
+struct Dual {
+    value: DoubleTensor,
+    tangent: DoubleTensor,
+}
+
+impl Dual {
+    /// A matrix with the given tangents ([b, r, c]), or zero tangents.
+    fn new(value: DoubleTensor, tangent: Option<DoubleTensor>, b: usize) -> Self {
+        let tangent = tangent.unwrap_or_else(|| {
+            let shape = value.shape();
+            DoubleTensor::zeros(&[b, shape[0], shape[1]])
+        });
+        Self { value, tangent }
+    }
+}
+
+impl Algebra for Dual {
+    fn mm(&self, other: &Self, transpose_left: bool, transpose_right: bool) -> Result<Self> {
+        let product = |a: &DoubleTensor, b: &DoubleTensor| -> Result<DoubleTensor> {
+            Ok(a.matmul_transposed(b, transpose_left, transpose_right)?)
+        };
+        Ok(Self {
+            value: product(&self.value, &other.value)?,
+            tangent: product(&self.tangent, &other.value)?
+                .add(&product(&self.value, &other.tangent)?)?,
+        })
+    }
+
+    fn plus(&self, other: &Self) -> Result<Self> {
+        Ok(Self {
+            value: self.value.add(&other.value)?,
+            tangent: self.tangent.add(&other.tangent)?,
+        })
+    }
+
+    fn minus(&self, other: &Self) -> Result<Self> {
+        Ok(Self {
+            value: self.value.sub(&other.value)?,
+            tangent: self.tangent.sub(&other.tangent)?,
+        })
+    }
+
+    fn times(&self, s: f64) -> Self {
         Self {
-            rows,
-            cols,
-            data: t.as_slice().to_vec(),
+            value: &self.value * s,
+            tangent: &self.tangent * s,
         }
     }
 
-    fn column(data: &[f64]) -> Self {
-        Self {
-            rows: data.len(),
-            cols: 1,
-            data: data.to_vec(),
-        }
+    fn tr(&self) -> Result<Self> {
+        Ok(Self {
+            value: self.value.transpose()?,
+            tangent: self.tangent.transpose()?,
+        })
     }
 
-    fn at(&self, i: usize, j: usize) -> f64 {
-        self.data[i * self.cols + j]
+    fn value(&self) -> &DoubleTensor {
+        &self.value
     }
 
-    fn t(&self) -> Self {
-        let mut out = Self::zeros(self.cols, self.rows);
-        for i in 0..self.rows {
-            for j in 0..self.cols {
-                out.data[j * self.rows + i] = self.at(i, j);
-            }
-        }
-        out
+    fn zeros(&self, rows: usize, cols: usize) -> Self {
+        Self::new(
+            DoubleTensor::zeros(&[rows, cols]),
+            None,
+            self.tangent.shape()[0],
+        )
     }
 
-    fn mul(&self, other: &Self) -> Self {
-        debug_assert_eq!(self.cols, other.rows);
-        let mut out = Self::zeros(self.rows, other.cols);
-        for i in 0..self.rows {
-            for l in 0..self.cols {
-                let a = self.at(i, l);
-                if a == 0.0 {
-                    continue;
-                }
-                for j in 0..other.cols {
-                    out.data[i * other.cols + j] += a * other.at(l, j);
-                }
-            }
-        }
-        out
-    }
-
-    fn zip(&self, other: &Self, f: impl Fn(f64, f64) -> f64) -> Self {
-        debug_assert_eq!((self.rows, self.cols), (other.rows, other.cols));
-        Self {
-            rows: self.rows,
-            cols: self.cols,
-            data: self
-                .data
-                .iter()
-                .zip(&other.data)
-                .map(|(&a, &b)| f(a, b))
-                .collect(),
-        }
-    }
-
-    fn add(&self, other: &Self) -> Self {
-        self.zip(other, |a, b| a + b)
-    }
-
-    fn sub(&self, other: &Self) -> Self {
-        self.zip(other, |a, b| a - b)
-    }
-
-    fn scale(&self, s: f64) -> Self {
-        Self {
-            rows: self.rows,
-            cols: self.cols,
-            data: self.data.iter().map(|x| x * s).collect(),
-        }
-    }
-
-    fn add_assign(&mut self, other: &Self) {
-        for (a, b) in self.data.iter_mut().zip(&other.data) {
-            *a += b;
-        }
-    }
-
-    /// (A + Aᵀ) / 2.
-    fn symmetric(&self) -> Self {
-        self.add(&self.t()).scale(0.5)
-    }
-
-    /// The lower Cholesky factor of a symmetric positive definite matrix, reading its lower triangle; None if
-    /// it is not positive definite (or has NaNs).
-    fn cholesky(&self) -> Option<Self> {
-        let n = self.rows;
-        let mut l = Self::zeros(n, n);
-        for j in 0..n {
-            let mut pivot = self.at(j, j);
-            for k in 0..j {
-                pivot -= l.at(j, k) * l.at(j, k);
-            }
-            if pivot.is_nan() || pivot <= 0.0 {
-                return None;
-            }
-            let pivot = pivot.sqrt();
-            l.data[j * n + j] = pivot;
-            for i in j + 1..n {
-                let mut s = self.at(i, j);
-                for k in 0..j {
-                    s -= l.at(i, k) * l.at(j, k);
-                }
-                l.data[i * n + j] = s / pivot;
-            }
-        }
-        Some(l)
-    }
-
-    /// A factor L with L Lᵀ = A for a symmetric positive semidefinite matrix (columns of zero where A is
-    /// singular), for sampling; an error if A is clearly not positive semidefinite.
-    fn psd_factor(&self, what: &str) -> Result<Self> {
-        let n = self.rows;
-        let scale = (0..n).map(|i| self.at(i, i).abs()).fold(0.0, f64::max);
-        let tolerance = 1e-12 * scale.max(f64::MIN_POSITIVE);
-        let mut l = Self::zeros(n, n);
-        for j in 0..n {
-            let mut pivot = self.at(j, j);
-            for k in 0..j {
-                pivot -= l.at(j, k) * l.at(j, k);
-            }
-            if pivot.is_nan() || pivot < -tolerance * 1e3 {
-                return invalid_parameter(format!("{what} must be positive semidefinite"));
-            }
-            if pivot <= tolerance {
-                continue;
-            }
-            let pivot = pivot.sqrt();
-            l.data[j * n + j] = pivot;
-            for i in j + 1..n {
-                let mut s = self.at(i, j);
-                for k in 0..j {
-                    s -= l.at(i, k) * l.at(j, k);
-                }
-                l.data[i * n + j] = s / pivot;
-            }
-        }
-        Ok(l)
-    }
-
-    /// The inverse (L Lᵀ)⁻¹ from a lower Cholesky factor L, by solving against the identity.
-    fn cholesky_inverse(l: &Self) -> Self {
-        let n = l.rows;
-        let mut out = Self::zeros(n, n);
-        for c in 0..n {
-            // L y = e_c, then Lᵀ x = y
-            let mut y = vec![0.0; n];
-            for i in 0..n {
-                let mut s = if i == c { 1.0 } else { 0.0 };
-                for (k, y) in y.iter().enumerate().take(i) {
-                    s -= l.at(i, k) * y;
-                }
-                y[i] = s / l.at(i, i);
-            }
-            for i in (0..n).rev() {
-                let mut s = y[i];
-                for k in i + 1..n {
-                    s -= l.at(k, i) * out.data[k * n + c];
-                }
-                out.data[i * n + c] = s / l.at(i, i);
-            }
-        }
-        out.symmetric()
-    }
-
-    fn into_tensor(self, shape: &[usize]) -> Result<DoubleTensor> {
-        Ok(DoubleTensor::new(shape, self.data)?)
+    /// The tangent of S⁻¹ is −S⁻¹ Ṡ S⁻¹ (Ṡ is symmetric here, as every covariance tangent is).
+    fn spd_inverse(&self) -> Result<Option<(Self, f64)>> {
+        let Some((inverse, log_det)) = self.value.spd_inverse()? else {
+            return Ok(None);
+        };
+        let tangent = inverse.matmul(&self.tangent)?.matmul(&inverse)?.neg();
+        Ok(Some((
+            Self {
+                value: inverse,
+                tangent,
+            },
+            log_det,
+        )))
     }
 }
 
@@ -461,7 +412,8 @@ impl Mat {
 /// solve of the innovation covariance (no inverse of it is used for the density), and the filtered covariance
 /// is updated in the Joseph form P⁺ = (I − KH) P (I − KH)ᵀ + K R Kᵀ, which keeps it symmetric positive
 /// semidefinite over long series and near-deterministic models. The gradient is exact: the filter's recursion
-/// differentiated in reverse mode.
+/// differentiated in reverse mode. So are the Hessian-vector products ([`Self::hvp`]): that reverse pass
+/// differentiated in forward mode.
 ///
 /// Gradients with respect to a covariance follow the convention of [`crate::MultivariateGaussian`]: a symmetric
 /// matrix G whose (i, j) and (j, i) entries are each half the derivative of moving both entries together.
@@ -481,7 +433,9 @@ pub struct LinearGaussianStateSpace<'a> {
     pub observation_covariance: Param<'a>,
 }
 
-/// Derivatives of [`LinearGaussianStateSpace::log_prob`], each shaped like the corresponding input.
+/// Derivatives of [`LinearGaussianStateSpace::log_prob`], each shaped like the corresponding input (from
+/// [`LinearGaussianStateSpace::d_log_prob`]), or Hessian-vector products along `b` directions, each shaped
+/// [b, input shape...] (from [`LinearGaussianStateSpace::hvp`]).
 #[derive(Debug, Clone, PartialEq)]
 pub struct LinearGaussianStateSpaceGradient {
     /// With respect to the observations.
@@ -514,26 +468,223 @@ pub struct KalmanFilter {
 }
 
 /// One step of the filter, kept for the reverse pass.
-struct Step {
+struct Step<A> {
     /// The predicted mean and covariance of x_t given y_0..t−1.
-    mean: Mat,
-    covariance: Mat,
+    mean: A,
+    covariance: A,
     /// The innovation e = y − H m, its covariance's inverse S⁻¹ and S⁻¹ e.
-    innovation: Mat,
-    innovation_precision: Mat,
-    weighted_innovation: Mat,
+    innovation: A,
+    innovation_precision: A,
+    weighted_innovation: A,
     /// The gain K = P Hᵀ S⁻¹ and I − K H.
-    gain: Mat,
-    complement: Mat,
+    gain: A,
+    complement: A,
     /// The filtered mean and covariance.
-    filtered_mean: Mat,
-    filtered_covariance: Mat,
+    filtered_mean: A,
+    filtered_covariance: A,
 }
 
 /// The forward pass over a series: the log likelihood and each step, stopping at the first impossible one.
-struct Forward {
+struct Forward<A> {
     log_likelihood: f64,
-    steps: Vec<Step>,
+    steps: Vec<Step<A>>,
+}
+
+/// The model's parameters as matrices (the initial mean a column [d, 1]), and the identity [d, d].
+struct Matrices<A> {
+    initial_mean: A,
+    initial_covariance: A,
+    f: A,
+    q: A,
+    h: A,
+    r: A,
+    identity: A,
+}
+
+/// The derivatives of the log likelihood with respect to each observation (a column [m, 1] per step) and each
+/// parameter (the initial mean a column [d, 1]).
+struct Adjoints<A> {
+    x: Vec<A>,
+    initial_mean: A,
+    initial_covariance: A,
+    f: A,
+    q: A,
+    h: A,
+    r: A,
+}
+
+/// The Kalman filter over the observations (a column [m, 1] each), with Cholesky solves of the innovation
+/// covariance and the Joseph-form covariance update. It stops at the first innovation covariance that is not
+/// positive definite (the log likelihood then -∞), and, unless `keep_going`, at a NaN log likelihood.
+fn kalman_forward<A: Algebra>(
+    p: &Matrices<A>,
+    observations: impl Iterator<Item = Result<A>>,
+    keep_going: bool,
+) -> Result<Forward<A>> {
+    let obs = p.h.value().shape()[0];
+    let log_2pi = (2.0 * PI).ln();
+    let mut mean = p.initial_mean.clone();
+    let mut covariance = p.initial_covariance.clone();
+    let mut log_likelihood = 0.0;
+    let mut steps = Vec::with_capacity(observations.size_hint().0);
+    for y in observations {
+        let ph = covariance.mm(&p.h, false, true)?;
+        let s = p.h.mm(&ph, false, false)?.plus(&p.r)?;
+        let Some((precision, log_det)) = s.spd_inverse()? else {
+            log_likelihood = f64::NEG_INFINITY;
+            break;
+        };
+        let innovation = y?.minus(&p.h.mm(&mean, false, false)?)?;
+        let weighted = precision.mm(&innovation, false, false)?;
+        let quadratic: f64 = innovation
+            .value()
+            .as_slice()
+            .iter()
+            .zip(weighted.value().as_slice())
+            .map(|(a, b)| a * b)
+            .sum();
+        log_likelihood -= 0.5 * (obs as f64 * log_2pi + log_det + quadratic);
+        let gain = ph.mm(&precision, false, false)?;
+        let complement = p.identity.minus(&gain.mm(&p.h, false, false)?)?;
+        let filtered_mean = mean.plus(&gain.mm(&innovation, false, false)?)?;
+        let filtered_covariance = sym(&complement
+            .mm(&covariance, false, false)?
+            .mm(&complement, false, true)?
+            .plus(&gain.mm(&p.r, false, false)?.mm(&gain, false, true)?)?)?;
+        let next_mean = p.f.mm(&filtered_mean, false, false)?;
+        let next_covariance = sym(&p
+            .f
+            .mm(&filtered_covariance, false, false)?
+            .mm(&p.f, false, true)?
+            .plus(&p.q)?)?;
+        steps.push(Step {
+            mean,
+            covariance,
+            innovation,
+            innovation_precision: precision,
+            weighted_innovation: weighted,
+            gain,
+            complement,
+            filtered_mean,
+            filtered_covariance,
+        });
+        mean = next_mean;
+        covariance = next_covariance;
+        if !keep_going && log_likelihood.is_nan() {
+            break;
+        }
+    }
+    Ok(Forward {
+        log_likelihood,
+        steps,
+    })
+}
+
+/// Reverse-mode differentiation of a complete [`kalman_forward`] pass. Covariance derivatives are symmetrised.
+fn kalman_reverse<A: Algebra>(p: &Matrices<A>, steps: &[Step<A>]) -> Result<Adjoints<A>> {
+    let (obs, d) = (p.h.value().shape()[0], p.h.value().shape()[1]);
+    let (f, h, r) = (&p.f, &p.h, &p.r);
+    let mut df = f.zeros(d, d);
+    let mut dq = f.zeros(d, d);
+    let mut dh = f.zeros(obs, d);
+    let mut dr = f.zeros(obs, obs);
+    let mut dx = Vec::with_capacity(steps.len());
+    // adjoints of the predicted mean and covariance of the step after the current one
+    let mut d_mean = f.zeros(d, 1);
+    let mut d_covariance = f.zeros(d, d);
+    for step in steps.iter().rev() {
+        // prediction: m' = F m⁺, P' = sym(F P⁺ Fᵀ + Q)
+        let d_next = sym(&d_covariance)?;
+        df = df.plus(&d_mean.mm(&step.filtered_mean, false, true)?)?;
+        df = df.plus(
+            &d_next
+                .mm(f, false, false)?
+                .mm(&step.filtered_covariance, false, false)?
+                .times(2.0),
+        )?;
+        dq = dq.plus(&d_next)?;
+        let d_filtered_mean = f.mm(&d_mean, true, false)?;
+        let d_filtered_covariance = sym(&f.mm(&d_next, true, false)?.mm(f, false, false)?)?;
+        // Joseph update: P⁺ = sym(A P Aᵀ + K R Kᵀ), A = I − K H
+        let (cov, k, a) = (&step.covariance, &step.gain, &step.complement);
+        let twice = d_filtered_covariance.times(2.0);
+        let d_a = twice.mm(a, false, false)?.mm(cov, false, false)?;
+        let mut d_p = a
+            .mm(&d_filtered_covariance, true, false)?
+            .mm(a, false, false)?;
+        let mut d_k = twice.mm(k, false, false)?.mm(r, false, false)?;
+        dr = dr.plus(
+            &k.mm(&d_filtered_covariance, true, false)?
+                .mm(k, false, false)?,
+        )?;
+        d_k = d_k.minus(&d_a.mm(h, false, true)?)?;
+        dh = dh.minus(&k.mm(&d_a, true, false)?)?;
+        // mean update: m⁺ = m + K e
+        let mut d_m = d_filtered_mean.clone();
+        d_k = d_k.plus(&d_filtered_mean.mm(&step.innovation, false, true)?)?;
+        let mut d_e = k.mm(&d_filtered_mean, true, false)?;
+        // log density: −½ (log det S + eᵀ S⁻¹ e)
+        let (precision, weighted) = (&step.innovation_precision, &step.weighted_innovation);
+        d_e = d_e.minus(weighted)?;
+        let mut d_s = precision
+            .minus(&weighted.mm(weighted, false, true)?)?
+            .times(-0.5);
+        // gain: K = P Hᵀ S⁻¹
+        d_p = d_p.plus(&d_k.mm(precision, false, false)?.mm(h, false, false)?)?;
+        dh = dh.plus(&precision.mm(&d_k, false, true)?.mm(cov, false, false)?)?;
+        d_s = d_s.minus(&k.mm(&d_k, true, false)?.mm(precision, false, false)?)?;
+        // innovation: e = y − H m
+        dh = dh.minus(&d_e.mm(&step.mean, false, true)?)?;
+        d_m = d_m.minus(&h.mm(&d_e, true, false)?)?;
+        dx.push(d_e);
+        // innovation covariance: S = H P Hᵀ + R
+        dr = dr.plus(&d_s)?;
+        d_p = d_p.plus(&h.mm(&d_s, true, false)?.mm(h, false, false)?)?;
+        dh = dh.plus(
+            &d_s.plus(&d_s.tr()?)?
+                .mm(h, false, false)?
+                .mm(cov, false, false)?,
+        )?;
+        d_mean = d_m;
+        d_covariance = d_p;
+    }
+    dx.reverse();
+    Ok(Adjoints {
+        x: dx,
+        initial_mean: d_mean,
+        initial_covariance: sym(&d_covariance)?,
+        f: df,
+        q: sym(&dq)?,
+        h: dh,
+        r: sym(&dr)?,
+    })
+}
+
+/// A factor L with L Lᵀ = A for a symmetric positive semidefinite n × n matrix (row-major; columns of zero where
+/// A is singular), for sampling; an error if A is clearly not positive semidefinite. keanu-tensor's Cholesky
+/// factorisation needs a positive definite matrix, and sampling allows singular covariances.
+fn psd_factor(a: &DoubleTensor, what: &str) -> Result<DoubleTensor> {
+    let n = a.shape()[0];
+    let a = a.as_slice();
+    let scale = (0..n).map(|i| a[i * n + i].abs()).fold(0.0, f64::max);
+    let tolerance = 1e-12 * scale.max(f64::MIN_POSITIVE);
+    let mut l = vec![0.0; n * n];
+    for j in 0..n {
+        let pivot = a[j * n + j] - (0..j).map(|k| l[j * n + k] * l[j * n + k]).sum::<f64>();
+        if pivot.is_nan() || pivot < -tolerance * 1e3 {
+            return invalid_parameter(format!("{what} must be positive semidefinite"));
+        }
+        if pivot <= tolerance {
+            continue;
+        }
+        let pivot = pivot.sqrt();
+        l[j * n + j] = pivot;
+        for i in j + 1..n {
+            let s = a[i * n + j] - (0..j).map(|k| l[i * n + k] * l[j * n + k]).sum::<f64>();
+            l[i * n + j] = s / pivot;
+        }
+    }
+    Ok(DoubleTensor::new(&[n, n], l)?)
 }
 
 impl<'a> LinearGaussianStateSpace<'a> {
@@ -571,29 +722,7 @@ impl<'a> LinearGaussianStateSpace<'a> {
         if d == 0 || m == 0 {
             return invalid_parameter("the state and observation dimensions must be at least 1");
         }
-        for (what, shape, expected) in [
-            (
-                "initial covariance",
-                self.initial_covariance.shape(),
-                [d, d],
-            ),
-            ("transition matrix", self.transition_matrix.shape(), [d, d]),
-            (
-                "transition covariance",
-                self.transition_covariance.shape(),
-                [d, d],
-            ),
-            (
-                "observation matrix",
-                self.observation_matrix.shape(),
-                [m, d],
-            ),
-            (
-                "observation covariance",
-                self.observation_covariance.shape(),
-                [m, m],
-            ),
-        ] {
+        for (what, shape, expected) in self.parameter_shapes(d, m) {
             if shape != expected {
                 return invalid_parameter(format!(
                     "the {what} must have shape {expected:?} for a state of dimension {d} observed in dimension \
@@ -604,7 +733,39 @@ impl<'a> LinearGaussianStateSpace<'a> {
         Ok((d, m))
     }
 
-    /// Checks the observations' shape [T, m], returning T.
+    /// Each parameter's name, shape and expected shape, in the order of [`Self::new`].
+    fn parameter_shapes(&self, d: usize, m: usize) -> [(&'static str, &[usize], Vec<usize>); 6] {
+        [
+            ("initial mean", self.initial_mean.shape(), vec![d]),
+            (
+                "initial covariance",
+                self.initial_covariance.shape(),
+                vec![d, d],
+            ),
+            (
+                "transition matrix",
+                self.transition_matrix.shape(),
+                vec![d, d],
+            ),
+            (
+                "transition covariance",
+                self.transition_covariance.shape(),
+                vec![d, d],
+            ),
+            (
+                "observation matrix",
+                self.observation_matrix.shape(),
+                vec![m, d],
+            ),
+            (
+                "observation covariance",
+                self.observation_covariance.shape(),
+                vec![m, m],
+            ),
+        ]
+    }
+
+    /// Checks the observations' shape [T, m], returning (T, d, m).
     fn steps(&self, x_shape: &[usize]) -> Result<(usize, usize, usize)> {
         let (d, m) = self.dimensions()?;
         match *x_shape {
@@ -615,67 +776,27 @@ impl<'a> LinearGaussianStateSpace<'a> {
         }
     }
 
-    fn forward(&self, x: &DoubleTensor, keep_going: bool) -> Result<Forward> {
-        let (t_len, d, obs) = self.steps(x.shape())?;
-        let f = Mat::of(&self.transition_matrix);
-        let q = Mat::of(&self.transition_covariance);
-        let h = Mat::of(&self.observation_matrix);
-        let r = Mat::of(&self.observation_covariance);
-        let identity = Mat::identity(d);
-        let log_2pi = (2.0 * PI).ln();
-        let mut mean = Mat::column(self.initial_mean.as_slice());
-        let mut covariance = Mat::of(&self.initial_covariance);
-        let mut log_likelihood = 0.0;
-        let mut steps = Vec::with_capacity(t_len);
-        for y in x.as_slice().chunks(obs.max(1)).take(t_len) {
-            let ph = covariance.mul(&h.t());
-            let s = h.mul(&ph).add(&r);
-            let Some(l) = s.cholesky() else {
-                log_likelihood = f64::NEG_INFINITY;
-                break;
-            };
-            let innovation = Mat::column(y).sub(&h.mul(&mean));
-            let precision = Mat::cholesky_inverse(&l);
-            let weighted = precision.mul(&innovation);
-            let log_det: f64 = (0..obs).map(|i| l.at(i, i).ln()).sum::<f64>() * 2.0;
-            let quadratic: f64 = innovation
-                .data
-                .iter()
-                .zip(&weighted.data)
-                .map(|(a, b)| a * b)
-                .sum();
-            log_likelihood -= 0.5 * (obs as f64 * log_2pi + log_det + quadratic);
-            let gain = ph.mul(&precision);
-            let complement = identity.sub(&gain.mul(&h));
-            let filtered_mean = mean.add(&gain.mul(&innovation));
-            let filtered_covariance = complement
-                .mul(&covariance)
-                .mul(&complement.t())
-                .add(&gain.mul(&r).mul(&gain.t()))
-                .symmetric();
-            let next_mean = f.mul(&filtered_mean);
-            let next_covariance = f.mul(&filtered_covariance).mul(&f.t()).add(&q).symmetric();
-            steps.push(Step {
-                mean,
-                covariance,
-                innovation,
-                innovation_precision: precision,
-                weighted_innovation: weighted,
-                gain,
-                complement,
-                filtered_mean,
-                filtered_covariance,
-            });
-            mean = next_mean;
-            covariance = next_covariance;
-            if !keep_going && log_likelihood.is_nan() {
-                break;
-            }
-        }
-        Ok(Forward {
-            log_likelihood,
-            steps,
+    /// The parameters as matrices, the initial mean as a column.
+    fn matrices(&self, d: usize) -> Result<Matrices<DoubleTensor>> {
+        Ok(Matrices {
+            initial_mean: self.initial_mean.reshape(&[d as isize, 1])?,
+            initial_covariance: self.initial_covariance.clone().into_owned(),
+            f: self.transition_matrix.clone().into_owned(),
+            q: self.transition_covariance.clone().into_owned(),
+            h: self.observation_matrix.clone().into_owned(),
+            r: self.observation_covariance.clone().into_owned(),
+            identity: DoubleTensor::eye(d)?,
         })
+    }
+
+    fn forward(&self, x: &DoubleTensor, keep_going: bool) -> Result<Forward<DoubleTensor>> {
+        let (t_len, d, obs) = self.steps(x.shape())?;
+        let observations = x
+            .as_slice()
+            .chunks(obs)
+            .take(t_len)
+            .map(|y| Ok(DoubleTensor::new(&[obs, 1], y.to_vec())?));
+        kalman_forward(&self.matrices(d)?, observations, keep_going)
     }
 
     /// The log density of the observations `x` ([T, m]; T may be 0, giving 0): the Kalman filter's sum of
@@ -692,8 +813,9 @@ impl<'a> LinearGaussianStateSpace<'a> {
         let mut means = vec![f64::NAN; t_len * d];
         let mut covariances = vec![f64::NAN; t_len * d * d];
         for (t, step) in forward.steps.iter().enumerate() {
-            means[t * d..(t + 1) * d].copy_from_slice(&step.filtered_mean.data);
-            covariances[t * d * d..(t + 1) * d * d].copy_from_slice(&step.filtered_covariance.data);
+            means[t * d..(t + 1) * d].copy_from_slice(step.filtered_mean.as_slice());
+            covariances[t * d * d..(t + 1) * d * d]
+                .copy_from_slice(step.filtered_covariance.as_slice());
         }
         Ok(KalmanFilter {
             log_likelihood: forward.log_likelihood,
@@ -707,71 +829,124 @@ impl<'a> LinearGaussianStateSpace<'a> {
     /// density is -∞ there).
     pub fn d_log_prob(&self, x: &DoubleTensor) -> Result<LinearGaussianStateSpaceGradient> {
         let (t_len, d, obs) = self.steps(x.shape())?;
+        let matrices = self.matrices(d)?;
         let forward = self.forward(x, false)?;
         if forward.steps.len() < t_len {
-            return invalid_parameter(
-                "an innovation covariance H P Hᵀ + R is not positive definite, so the log density has no gradient",
-            );
+            return not_positive_definite();
         }
-        let f = Mat::of(&self.transition_matrix);
-        let h = Mat::of(&self.observation_matrix);
-        let r = Mat::of(&self.observation_covariance);
-        let mut df = Mat::zeros(d, d);
-        let mut dq = Mat::zeros(d, d);
-        let mut dh = Mat::zeros(obs, d);
-        let mut dr = Mat::zeros(obs, obs);
-        let mut dx = vec![0.0; t_len * obs];
-        // adjoints of the predicted mean and covariance of the step after the current one
-        let mut d_mean = Mat::zeros(d, 1);
-        let mut d_covariance = Mat::zeros(d, d);
-        for (t, step) in forward.steps.iter().enumerate().rev() {
-            // prediction: m' = F m⁺, P' = sym(F P⁺ Fᵀ + Q)
-            let d_next = d_covariance.symmetric();
-            df.add_assign(&d_mean.mul(&step.filtered_mean.t()));
-            df.add_assign(&d_next.mul(&f).mul(&step.filtered_covariance).scale(2.0));
-            dq.add_assign(&d_next);
-            let d_filtered_mean = f.t().mul(&d_mean);
-            let d_filtered_covariance = f.t().mul(&d_next).mul(&f).symmetric();
-            // Joseph update: P⁺ = sym(A P Aᵀ + K R Kᵀ), A = I − K H
-            let (p, k, a) = (&step.covariance, &step.gain, &step.complement);
-            let twice = d_filtered_covariance.scale(2.0);
-            let d_a = twice.mul(a).mul(p);
-            let mut d_p = a.t().mul(&d_filtered_covariance).mul(a);
-            let mut d_k = twice.mul(k).mul(&r);
-            dr.add_assign(&k.t().mul(&d_filtered_covariance).mul(k));
-            d_k.add_assign(&d_a.mul(&h.t()).scale(-1.0));
-            dh.add_assign(&k.t().mul(&d_a).scale(-1.0));
-            // mean update: m⁺ = m + K e
-            let mut d_m = d_filtered_mean.clone();
-            d_k.add_assign(&d_filtered_mean.mul(&step.innovation.t()));
-            let mut d_e = k.t().mul(&d_filtered_mean);
-            // log density: −½ (log det S + eᵀ S⁻¹ e)
-            let (precision, weighted) = (&step.innovation_precision, &step.weighted_innovation);
-            d_e.add_assign(&weighted.scale(-1.0));
-            let mut d_s = precision.sub(&weighted.mul(&weighted.t())).scale(-0.5);
-            // gain: K = P Hᵀ S⁻¹
-            d_p.add_assign(&d_k.mul(precision).mul(&h));
-            dh.add_assign(&precision.mul(&d_k.t()).mul(p));
-            d_s.add_assign(&k.t().mul(&d_k).mul(precision).scale(-1.0));
-            // innovation: e = y − H m
-            dx[t * obs..(t + 1) * obs].copy_from_slice(&d_e.data);
-            dh.add_assign(&d_e.mul(&step.mean.t()).scale(-1.0));
-            d_m.add_assign(&h.t().mul(&d_e).scale(-1.0));
-            // innovation covariance: S = H P Hᵀ + R
-            dr.add_assign(&d_s);
-            d_p.add_assign(&h.t().mul(&d_s).mul(&h));
-            dh.add_assign(&d_s.add(&d_s.t()).mul(&h).mul(p));
-            d_mean = d_m;
-            d_covariance = d_p;
+        let adjoints = kalman_reverse(&matrices, &forward.steps)?;
+        let dx: Vec<f64> = adjoints
+            .x
+            .iter()
+            .flat_map(|e| e.as_slice().iter().copied())
+            .collect();
+        Ok(LinearGaussianStateSpaceGradient {
+            x: DoubleTensor::new(&[t_len, obs], dx)?,
+            initial_mean: adjoints.initial_mean.reshape(&[d as isize])?,
+            initial_covariance: adjoints.initial_covariance,
+            transition_matrix: adjoints.f,
+            transition_covariance: adjoints.q,
+            observation_matrix: adjoints.h,
+            observation_covariance: adjoints.r,
+        })
+    }
+
+    /// Hessian-vector products of [`Self::log_prob`]: the derivatives of [`Self::d_log_prob`] along `b`
+    /// directions, given as tangents of the observations (`x_tangent`, [b, T, m]) and of each parameter
+    /// (`parameter_tangents`, in the order of [`Self::new`], each [b, parameter shape...]), None for a zero
+    /// tangent. Each field of the result is shaped [b, input shape...]: for each input u, Σᵥ ∂² log p / ∂u ∂v · v̇.
+    ///
+    /// They are exact: the reverse pass of [`Self::d_log_prob`] differentiated in forward mode, through the
+    /// Cholesky inverses of the innovation covariances and the Joseph-form update. As for the gradient, a
+    /// covariance's tangent is taken to be symmetric (its symmetric part is used) and the covariances' products
+    /// are symmetric.
+    ///
+    /// # Errors
+    ///
+    /// An error if `parameter_tangents` does not have six entries or a tangent does not have the shape
+    /// [b, input shape...], or if an innovation covariance is not positive definite.
+    pub fn hvp(
+        &self,
+        x: &DoubleTensor,
+        x_tangent: Option<&DoubleTensor>,
+        parameter_tangents: &[Option<&DoubleTensor>],
+        b: usize,
+    ) -> Result<LinearGaussianStateSpaceGradient> {
+        let (t_len, d, obs) = self.steps(x.shape())?;
+        let &[t0, t1, t2, t3, t4, t5] = parameter_tangents else {
+            return invalid_parameter(format!(
+                "a linear Gaussian state space model has 6 parameters, not {} parameter tangents",
+                parameter_tangents.len()
+            ));
+        };
+        let shapes = self.parameter_shapes(d, obs);
+        let tangents = [t0, t1, t2, t3, t4, t5];
+        let mut parameters = Vec::with_capacity(6);
+        for ((what, shape, _), tangent) in shapes.iter().zip(tangents) {
+            parameters.push(checked_tangent(what, tangent, b, shape)?);
+        }
+        let x_tangent = checked_tangent("observations", x_tangent, b, x.shape())?;
+        let base = self.matrices(d)?;
+        // covariance tangents are taken to be symmetric
+        let symmetric = |t: Option<&DoubleTensor>| -> Result<Option<DoubleTensor>> {
+            t.map(|t| Ok(t.add(&t.transpose()?)? * 0.5)).transpose()
+        };
+        let dual =
+            |value: DoubleTensor, tangent: Option<DoubleTensor>| Dual::new(value, tangent, b);
+        let matrices = Matrices {
+            initial_mean: dual(
+                base.initial_mean,
+                parameters[0]
+                    .map(|t| t.reshape(&[b as isize, d as isize, 1]))
+                    .transpose()?,
+            ),
+            initial_covariance: dual(base.initial_covariance, symmetric(parameters[1])?),
+            f: dual(base.f, parameters[2].cloned()),
+            q: dual(base.q, symmetric(parameters[3])?),
+            h: dual(base.h, parameters[4].cloned()),
+            r: dual(base.r, symmetric(parameters[5])?),
+            identity: dual(base.identity, None),
+        };
+        let observations = (0..t_len).map(|t| {
+            let value =
+                DoubleTensor::new(&[obs, 1], x.as_slice()[t * obs..(t + 1) * obs].to_vec())?;
+            let tangent = x_tangent
+                .map(|xt| {
+                    let data: Vec<f64> = (0..b)
+                        .flat_map(|k| {
+                            let start = (k * t_len + t) * obs;
+                            xt.as_slice()[start..start + obs].iter().copied()
+                        })
+                        .collect();
+                    DoubleTensor::new(&[b, obs, 1], data)
+                })
+                .transpose()?;
+            Ok(dual(value, tangent))
+        });
+        let forward = kalman_forward(&matrices, observations, false)?;
+        if forward.steps.len() < t_len {
+            return not_positive_definite();
+        }
+        let adjoints = kalman_reverse(&matrices, &forward.steps)?;
+        let mut dx = vec![0.0; b * t_len * obs];
+        for (t, e) in adjoints.x.iter().enumerate() {
+            let tangent = e.tangent.as_slice();
+            for k in 0..b {
+                let start = (k * t_len + t) * obs;
+                dx[start..start + obs].copy_from_slice(&tangent[k * obs..(k + 1) * obs]);
+            }
         }
         Ok(LinearGaussianStateSpaceGradient {
-            x: DoubleTensor::new(x.shape(), dx)?,
-            initial_mean: d_mean.into_tensor(&[d])?,
-            initial_covariance: d_covariance.symmetric().into_tensor(&[d, d])?,
-            transition_matrix: df.into_tensor(&[d, d])?,
-            transition_covariance: dq.symmetric().into_tensor(&[d, d])?,
-            observation_matrix: dh.into_tensor(&[obs, d])?,
-            observation_covariance: dr.symmetric().into_tensor(&[obs, obs])?,
+            x: DoubleTensor::new(&[b, t_len, obs], dx)?,
+            initial_mean: adjoints
+                .initial_mean
+                .tangent
+                .reshape(&[b as isize, d as isize])?,
+            initial_covariance: adjoints.initial_covariance.tangent,
+            transition_matrix: adjoints.f.tangent,
+            transition_covariance: adjoints.q.tangent,
+            observation_matrix: adjoints.h.tangent,
+            observation_covariance: adjoints.r.tangent,
         })
     }
 
@@ -779,26 +954,54 @@ impl<'a> LinearGaussianStateSpace<'a> {
     /// (positive semidefinite) here.
     pub fn sample(&self, shape: &[usize], rng: &mut KeanuRng) -> Result<DoubleTensor> {
         let (t_len, d, obs) = self.steps(shape)?;
-        let f = Mat::of(&self.transition_matrix);
-        let h = Mat::of(&self.observation_matrix);
-        let initial = Mat::of(&self.initial_covariance).psd_factor("the initial covariance")?;
-        let transition =
-            Mat::of(&self.transition_covariance).psd_factor("the transition covariance")?;
-        let observation =
-            Mat::of(&self.observation_covariance).psd_factor("the observation covariance")?;
-        let noise = |factor: &Mat, n: usize, rng: &mut KeanuRng| {
+        let (f, h) = (&*self.transition_matrix, &*self.observation_matrix);
+        let initial = psd_factor(&self.initial_covariance, "the initial covariance")?;
+        let transition = psd_factor(&self.transition_covariance, "the transition covariance")?;
+        let observation = psd_factor(&self.observation_covariance, "the observation covariance")?;
+        let noise = |factor: &DoubleTensor, n: usize, rng: &mut KeanuRng| -> Result<DoubleTensor> {
             let z: Vec<f64> = (0..n).map(|_| rng.next_gaussian()).collect();
-            factor.mul(&Mat::column(&z))
+            Ok(factor.matmul(&DoubleTensor::new(&[n, 1], z)?)?)
         };
-        let mut state = Mat::column(self.initial_mean.as_slice()).add(&noise(&initial, d, rng));
+        let mut state = self
+            .initial_mean
+            .reshape(&[d as isize, 1])?
+            .add(&noise(&initial, d, rng)?)?;
         let mut out = Vec::with_capacity(t_len * obs);
         for t in 0..t_len {
-            let y = h.mul(&state).add(&noise(&observation, obs, rng));
-            out.extend_from_slice(&y.data);
+            let y = h.matmul(&state)?.add(&noise(&observation, obs, rng)?)?;
+            out.extend_from_slice(y.as_slice());
             if t + 1 < t_len {
-                state = f.mul(&state).add(&noise(&transition, d, rng));
+                state = f.matmul(&state)?.add(&noise(&transition, d, rng)?)?;
             }
         }
         Ok(DoubleTensor::new(&[t_len, obs], out)?)
     }
+}
+
+/// A tangent, checked to have the shape [b, shape...].
+fn checked_tangent<'t>(
+    what: &str,
+    tangent: Option<&'t DoubleTensor>,
+    b: usize,
+    shape: &[usize],
+) -> Result<Option<&'t DoubleTensor>> {
+    let Some(tangent) = tangent else {
+        return Ok(None);
+    };
+    let mut expected = vec![b];
+    expected.extend_from_slice(shape);
+    if tangent.shape() != expected {
+        return invalid_parameter(format!(
+            "the tangent of the {what} must have shape {expected:?}, not {:?}",
+            tangent.shape()
+        ));
+    }
+    Ok(Some(tangent))
+}
+
+/// The error of a derivative where an innovation covariance is not positive definite.
+fn not_positive_definite<T>() -> Result<T> {
+    invalid_parameter(
+        "an innovation covariance H P Hᵀ + R is not positive definite, so the log density has no gradient",
+    )
 }

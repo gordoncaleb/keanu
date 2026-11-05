@@ -634,8 +634,8 @@ impl GraphBuilder {
     /// `observation_matrix` [m, d], `observation_covariance` [m, m]; the covariances must be symmetric positive
     /// semidefinite (with H P Hᵀ + R positive definite at each step, else the observations are impossible). The
     /// log density is the Kalman filter's exact marginal likelihood, computed with Cholesky solves and the
-    /// Joseph-form covariance update, and its gradient with respect to the observations and every parameter is
-    /// exact; see [`keanu_distributions::LinearGaussianStateSpace`]. Shape mismatches are build errors.
+    /// Joseph-form covariance update, and its gradient and Hessian-vector products with respect to the observations
+    /// and every parameter are exact (so it works with NUTS, optimizers and the Laplace approximation); see [`keanu_distributions::LinearGaussianStateSpace`]. Shape mismatches are build errors.
     ///
     /// ```
     /// use keanu_graph::GraphBuilder;

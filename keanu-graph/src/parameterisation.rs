@@ -74,8 +74,7 @@
 //! ```
 //!
 //! Every op of the graph has a second-order rule except lambdas, and every distribution kind except custom
-//! distributions and the linear Gaussian state space model (a known gap: its rule would differentiate the Kalman
-//! recursion). A truncated or censored gamma, beta or negative binomial whose shape parameter (`k`, `alpha` or
+//! distributions. A truncated or censored gamma, beta or negative binomial whose shape parameter (`k`, `alpha` or
 //! `beta`, or the dispersion `alpha`) depends on the latents has none either, since the second derivative of its
 //! CDF with respect to the shape has no closed form. A model whose log probability depends on the latents through
 //! any of these fails with [`GraphError::NoSecondOrderRule`] naming the node. Second derivatives follow the
@@ -424,7 +423,7 @@ impl<'m> Parameterisation<'m> {
     ///
     /// [`GraphError::InvalidValue`] if `z` or `v` has the wrong length, [`GraphError::NoSecondOrderRule`] naming the
     /// node if the model has a distribution or op on the path from a latent to the log probability without a
-    /// second-order rule (a lambda, a custom distribution, a linear Gaussian state space model, or a truncated or censored distribution's shape parameter
+    /// second-order rule (a lambda, a custom distribution, or a truncated or censored distribution's shape parameter
     /// whose CDF has no closed-form second derivative; see the [module documentation](self#second-order)), and
     /// any error evaluating the model.
     pub fn hvp(&self, z: &[f64], v: &[f64], jacobian: bool, state: &mut State) -> Result<Vec<f64>> {
