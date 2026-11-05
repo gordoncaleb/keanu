@@ -184,11 +184,11 @@ pub fn latent_increments(graph: &Graph, state: &State) -> Vec<(NodeId, Vec<NodeI
                 latent,
                 |id| graph.children(id).unwrap_or_default(),
                 |id| {
-                    if let Some(i) = observation_index[id.index()]
-                        && queue.remove(&(remaining[i], id))
-                    {
-                        remaining[i] -= 1;
-                        queue.insert((remaining[i], id));
+                    if let Some(i) = observation_index[id.index()] {
+                        if queue.remove(&(remaining[i], id)) {
+                            remaining[i] -= 1;
+                            queue.insert((remaining[i], id));
+                        }
                     }
                     true
                 },
