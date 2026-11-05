@@ -13,7 +13,10 @@
 //! with `λ' = −f / S`. The first derivative `λ'` is recovered from the first-order gradient, so the two agree.
 
 use super::super::distribution::DistributionKind;
-use keanu_tensor::special::{log_bessel_i0, log_bessel_i1, trigamma};
+use keanu_tensor::special::{
+    digamma, log_bessel_i0, log_bessel_i1, log_gamma_p_da2, log_gamma_q_da2, log_inc_beta_da2,
+    log_inc_beta_dadb, log_inc_beta_db2, trigamma,
+};
 
 /// The most inputs (value and parameters, or a truncated distribution's value, base parameters and bounds) any
 /// element-wise rule has.
@@ -405,46 +408,36 @@ fn negative_binomial(k: f64, p: &[f64], h: &mut Hessian) {
 /// is none).
 pub(crate) type CdfRule = fn(point: f64, p: &[f64], upper: bool, gradient: &[f64], h: &mut Hessian);
 
-/// The log CDF rule of a kind with a CDF, and the indices of the parameters whose second derivatives the rule
-/// doesn't give: the shape parameters of CDFs built on the regularised incomplete gamma and beta functions, whose
-/// second derivatives with respect to the shape have no closed form.
-pub(crate) fn cdf_rule(kind: &DistributionKind) -> Option<(CdfRule, &'static [usize])> {
+/// The log CDF rule of a kind with a CDF. Every rule gives the second derivatives with respect to the point and
+/// every parameter with a first-order gradient; those of CDFs built on the regularised incomplete gamma and beta
+/// functions with respect to their shapes come from the shape derivatives of those functions in
+/// [`keanu_tensor::special`], and the mixed ones with the point from the shape derivative of the density.
+pub(crate) fn cdf_rule(kind: &DistributionKind) -> Option<CdfRule> {
     use DistributionKind as K;
-    let rule: (CdfRule, &'static [usize]) = match kind {
-        K::Gaussian => (|x, p, _, g, h| standard_cdf(h, x, p, g, |z| -z), &[]),
-        K::Cauchy => (
-            |x, p, _, g, h| standard_cdf(h, x, p, g, |z| -2.0 * z / (1.0 + z * z)),
-            &[],
-        ),
-        K::Laplace => (|x, p, _, g, h| standard_cdf(h, x, p, g, |z| -sign(z)), &[]),
-        K::Logistic => (
-            |x, p, _, g, h| standard_cdf(h, x, p, g, |z| 1.0 - 2.0 * sigmoid(z)),
-            &[],
-        ),
-        K::LogNormal => (log_normal_cdf, &[]),
-        K::Exponential => (exponential_cdf, &[]),
-        K::Weibull => (weibull_cdf, &[]),
-        K::Uniform => (uniform_cdf, &[]),
-        K::Gamma => (gamma_cdf, &[1]),
-        K::Beta => (beta_cdf, &[0, 1]),
-        K::StudentT => (
-            |t, p, _, g, h| {
-                let v = p[0];
-                let psi = -(v + 1.0) * t / (v + t * t);
-                h.add(0, 0, g[0] * (psi - g[0]));
-            },
-            &[],
-        ),
-        K::Poisson => (
-            |k, p, _, g, h| {
-                if k >= 0.0 {
-                    h.add(1, 1, g[1] * (k / p[0] - 1.0 - g[1]));
-                }
-            },
-            &[],
-        ),
-        K::Binomial => (binomial_cdf, &[]),
-        K::NegativeBinomial => (negative_binomial_cdf, &[1]),
+    let rule: CdfRule = match kind {
+        K::Gaussian => |x, p, _, g, h| standard_cdf(h, x, p, g, |z| -z),
+        K::Cauchy => |x, p, _, g, h| standard_cdf(h, x, p, g, |z| -2.0 * z / (1.0 + z * z)),
+        K::Laplace => |x, p, _, g, h| standard_cdf(h, x, p, g, |z| -sign(z)),
+        K::Logistic => |x, p, _, g, h| standard_cdf(h, x, p, g, |z| 1.0 - 2.0 * sigmoid(z)),
+        K::LogNormal => log_normal_cdf,
+        K::Exponential => exponential_cdf,
+        K::Weibull => weibull_cdf,
+        K::Uniform => uniform_cdf,
+        K::Gamma => gamma_cdf,
+        K::Beta => beta_cdf,
+        // the degrees of freedom are an integer, without derivatives
+        K::StudentT => |t, p, _, g, h| {
+            let v = p[0];
+            let psi = -(v + 1.0) * t / (v + t * t);
+            h.add(0, 0, g[0] * (psi - g[0]));
+        },
+        K::Poisson => |k, p, _, g, h| {
+            if k >= 0.0 {
+                h.add(1, 1, g[1] * (k / p[0] - 1.0 - g[1]));
+            }
+        },
+        K::Binomial => binomial_cdf,
+        K::NegativeBinomial => negative_binomial_cdf,
         _ => return None,
     };
     Some(rule)
@@ -552,8 +545,10 @@ fn uniform_cdf(x: f64, p: &[f64], upper: bool, _: &[f64], h: &mut Hessian) {
 }
 
 /// The regularised incomplete gamma P(k, y) (or Q) in y = x/θ, with ψ = (k − 1)/y − 1 and λ_y = θ ∂λ/∂x (inputs
-/// x, θ; the shape k has no rule).
-fn gamma_cdf(x: f64, p: &[f64], _: bool, g: &[f64], h: &mut Hessian) {
+/// x, θ, k). In the shape, λ_kk is the incomplete gamma function's own second shape derivative and
+/// λ_ky = λ_y (∂ ln p/∂k − λ_k), with p(y) = y^(k−1) e^(−y) / Γ(k) the density P and Q differentiate to (±) in y,
+/// so ∂ ln p/∂k = ln y − ψ(k).
+fn gamma_cdf(x: f64, p: &[f64], upper: bool, g: &[f64], h: &mut Hessian) {
     if x <= 0.0 || x == f64::INFINITY {
         return;
     }
@@ -568,16 +563,51 @@ fn gamma_cdf(x: f64, p: &[f64], _: bool, g: &[f64], h: &mut Hessian) {
         &[(0, 1.0 / theta), (1, -x / t2)],
         &[(0, 1, -1.0 / t2), (1, 1, 2.0 * x / (t2 * theta))],
     );
+    let d_ky = d1 * (y.ln() - digamma(k) - g[2]);
+    h.add(0, 2, d_ky / theta);
+    h.add(1, 2, -d_ky * x / t2);
+    h.add(
+        2,
+        2,
+        if upper {
+            log_gamma_q_da2(k, y)
+        } else {
+            log_gamma_p_da2(k, y)
+        },
+    );
 }
 
-/// The regularised incomplete beta I_x(a, b) (or its complement), in x only (the shapes have no rule).
-fn beta_cdf(x: f64, p: &[f64], _: bool, g: &[f64], h: &mut Hessian) {
+/// The regularised incomplete beta I_x(a, b), or its complement I_(1−x)(b, a) (inputs x, a, b). In the shapes,
+/// λ's second derivatives are the incomplete beta function's own, and the mixed ones with the point are
+/// λ_xa = λ_x (∂ ln f/∂a − λ_a) with f the Beta(a, b) density, whose log has derivatives ln x − ψ(a) + ψ(a + b)
+/// and ln(1 − x) − ψ(b) + ψ(a + b).
+fn beta_cdf(x: f64, p: &[f64], upper: bool, g: &[f64], h: &mut Hessian) {
     if x <= 0.0 || x >= 1.0 {
         return;
     }
     let (a, b) = (p[0], p[1]);
-    let psi = (a - 1.0) / x - (b - 1.0) / (1.0 - x);
+    let y = 1.0 - x;
+    let psi = (a - 1.0) / x - (b - 1.0) / y;
     h.add(0, 0, g[0] * (psi - g[0]));
+    let both = digamma(a + b);
+    h.add(0, 1, g[0] * (x.ln() - digamma(a) + both - g[1]));
+    h.add(0, 2, g[0] * (y.ln() - digamma(b) + both - g[2]));
+    let (aa, ab, bb) = if upper {
+        (
+            log_inc_beta_db2(b, a, y),
+            log_inc_beta_dadb(b, a, y),
+            log_inc_beta_da2(b, a, y),
+        )
+    } else {
+        (
+            log_inc_beta_da2(a, b, x),
+            log_inc_beta_dadb(a, b, x),
+            log_inc_beta_db2(a, b, x),
+        )
+    };
+    h.add(1, 1, aa);
+    h.add(1, 2, ab);
+    h.add(2, 2, bb);
 }
 
 /// In p, whose derivative of the CDF is minus the Beta(k + 1, n − k) density at p (inputs k, p, n).
@@ -591,9 +621,13 @@ fn binomial_cdf(k: f64, p: &[f64], _: bool, g: &[f64], h: &mut Hessian) {
     h.add(1, 1, g[1] * (psi - g[1]));
 }
 
-/// I_p(α, k + 1) (or its complement) in p = α/(α + μ), whose derivative is the Beta(α, k + 1) density at p:
-/// λ_μμ = λ_pp p_μ² + λ_p p_μμ (inputs k, μ; the dispersion α has no rule).
-fn negative_binomial_cdf(k: f64, p: &[f64], _: bool, g: &[f64], h: &mut Hessian) {
+/// I_p(α, k + 1), or its complement I_(1−p)(k + 1, α), in α and p = α/(α + μ), whose derivative in p is (±) the
+/// Beta(α, k + 1) density f at p (inputs k, μ, α). With λ_α the derivative at fixed p (the gradient's less
+/// λ_p p_α), λ_αα the incomplete beta function's own second shape derivative and λ_αp = λ_p (∂ ln f/∂α − λ_α),
+/// ∂ ln f/∂α = ln p − ψ(α) + ψ(α + k + 1):
+/// λ_μμ = λ_pp p_μ² + λ_p p_μμ, λ_μα = λ_pp p_μ p_α + λ_p p_μα + λ_αp p_μ and
+/// λ_αα (total) = λ_αα + 2 λ_αp p_α + λ_pp p_α² + λ_p p_αα.
+fn negative_binomial_cdf(k: f64, p: &[f64], upper: bool, g: &[f64], h: &mut Hessian) {
     if k < 0.0 {
         return;
     }
@@ -606,4 +640,21 @@ fn negative_binomial_cdf(k: f64, p: &[f64], _: bool, g: &[f64], h: &mut Hessian)
     let psi = (alpha - 1.0) / q_p - k / q_q;
     let d2 = d1 * (psi - d1);
     h.add(1, 1, d2 * dp * dp + d1 * d2p);
+    // p_α = μ/T², p_αα = −2μ/T³ and p_μα = (α − μ)/T³
+    let t3 = total * total * total;
+    let (dp_a, d2p_a, d2p_ma) = (mu / (total * total), -2.0 * mu / t3, (alpha - mu) / t3);
+    let count = k + 1.0;
+    let d_alpha = g[2] - d1 * dp_a;
+    let d_ap = d1 * (q_p.ln() - digamma(alpha) + digamma(alpha + count) - d_alpha);
+    let d_aa = if upper {
+        log_inc_beta_db2(count, alpha, q_q)
+    } else {
+        log_inc_beta_da2(alpha, count, q_p)
+    };
+    h.add(1, 2, d2 * dp * dp_a + d1 * d2p_ma + d_ap * dp);
+    h.add(
+        2,
+        2,
+        d_aa + 2.0 * d_ap * dp_a + d2 * dp_a * dp_a + d1 * d2p_a,
+    );
 }

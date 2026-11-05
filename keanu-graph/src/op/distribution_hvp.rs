@@ -20,9 +20,10 @@
 //! follows a convention: the uniform has no derivative with respect to its bounds and the categorical none with
 //! respect to its probabilities, so their second derivatives are zero too, and the Laplace density's kink at its
 //! location takes the almost-everywhere second derivative 0. The second derivatives of a gamma, beta or negative
-//! binomial CDF with respect to a shape parameter have no closed form, so a truncated or censored distribution
-//! whose shape depends on the latents returns [`GraphError::NoSecondOrderRule`] naming the kind and the
-//! parameter; so does a custom distribution.
+//! binomial CDF with respect to a shape parameter come from the second shape derivatives of the regularised
+//! incomplete gamma and beta functions, and the linear Gaussian state space model differentiates the Kalman
+//! filter in forward mode over its reverse pass. Only a custom distribution returns
+//! [`GraphError::NoSecondOrderRule`], naming the kind.
 
 pub(crate) mod rules;
 
@@ -51,9 +52,8 @@ impl DistributionKind {
     ///
     /// # Errors
     ///
-    /// [`GraphError::NoSecondOrderRule`] naming the kind for a custom distribution, and naming the kind and the
-    /// parameter for a truncated or censored distribution whose CDF's second derivative along a shape parameter's
-    /// tangent has no closed form (see the [module documentation](self)).
+    /// [`GraphError::NoSecondOrderRule`] naming the kind for a custom distribution (see the
+    /// [module documentation](self)).
     pub(crate) fn log_prob_hvp(
         &self,
         value: &Value,

@@ -1463,22 +1463,18 @@ fn distribution_cases() -> Vec<DistributionCase> {
             let x: DoubleVar<'_> = b.mixture(kind, &params, weights);
             b.set_value(x, DoubleTensor::scalar(0.4));
         }),
-        no_rule(
-            "a mixture of truncated gammas with a latent shape",
-            |b| {
-                let params = [
-                    positive(b, 0.9).id(),
-                    positive_vector(b, &[1.5, 4.0]).id(),
-                    b.scalar(0.5).id(),
-                    b.scalar(3.0).id(),
-                ];
-                let weights = b.constant(vector(&[0.4, 0.6]));
-                let kind = K::Truncated(Arc::new(K::Gamma));
-                let y: DoubleVar<'_> = b.mixture(kind, &params, weights);
-                b.observe(y, DoubleTensor::scalar(1.2));
-            },
-            "gamma distribution's CDF with respect to k",
-        ),
+        case("a mixture of truncated gammas with a latent shape", |b| {
+            let params = [
+                positive(b, 0.9).id(),
+                positive_vector(b, &[1.5, 4.0]).id(),
+                b.scalar(0.5).id(),
+                b.scalar(3.0).id(),
+            ];
+            let weights = b.constant(vector(&[0.4, 0.6]));
+            let kind = K::Truncated(Arc::new(K::Gamma));
+            let y: DoubleVar<'_> = b.mixture(kind, &params, weights);
+            b.observe(y, DoubleTensor::scalar(1.2));
+        }),
         // truncated distributions, one for each base with a CDF
         case("truncated gaussian", |b| {
             truncated_location_scale(b, K::Gaussian)
@@ -1562,32 +1558,38 @@ fn distribution_cases() -> Vec<DistributionCase> {
             let y: IntVar<'_> = b.truncated(K::NegativeBinomial, &params, 0.0, 7.0);
             b.observe(y, ints(&[0, 3, 7]));
         }),
-        no_rule(
-            "truncated gamma with a latent shape",
-            |b| {
-                let params = [positive(b, 0.9).id(), positive(b, 2.3).id()];
-                let y: DoubleVar<'_> = b.truncated(K::Gamma, &params, 0.5, 2.5);
-                b.observe(y, DoubleTensor::scalar(1.2));
-            },
-            "gamma distribution's CDF with respect to k",
-        ),
-        no_rule(
-            "truncated beta with a latent shape",
-            |b| {
-                let params = [positive(b, 1.7).id(), b.scalar(2.4).id()];
-                let y: DoubleVar<'_> = b.truncated(K::Beta, &params, 0.2, 0.8);
-                b.observe(y, DoubleTensor::scalar(0.5));
-            },
-            "beta distribution's CDF with respect to alpha",
-        ),
-        no_rule(
+        // the shapes of CDFs built on the incomplete gamma and beta functions
+        case("truncated gamma with a latent shape", |b| {
+            truncated_positive(b, K::Gamma)
+        }),
+        case("truncated gamma with a large latent shape", |b| {
+            // where the incomplete gamma function comes from its asymptotic expansion
+            let params = [positive(b, 0.01).id(), positive(b, 150.0).id()];
+            let (lower, upper) = positive_bounds(b, 1.3, 0.4);
+            let x: DoubleVar<'_> = b.truncated(K::Gamma, &params, lower, upper);
+            b.set_value(x, DoubleTensor::scalar(1.5));
+        }),
+        case("truncated beta with latent shapes", |b| {
+            let lower = scalar_latent(b, -1.4).sigmoid();
+            let upper = lower + (-lower + 1.0) * scalar_latent(b, 1.0).sigmoid();
+            let params = [positive(b, 1.7).id(), positive(b, 2.4).id()];
+            let x: DoubleVar<'_> = b.truncated(K::Beta, &params, lower, upper);
+            b.set_value(x, DoubleTensor::scalar(0.5));
+            let y: DoubleVar<'_> = b.truncated(K::Beta, &params, 0.05, upper);
+            b.observe(y, DoubleTensor::scalar(0.3));
+        }),
+        case(
             "truncated negative_binomial with a latent dispersion",
             |b| {
-                let params = [b.scalar(2.5).id(), positive(b, 2.0).id()];
+                let params = [
+                    positive_vector(b, &[2.5, 2.5, 2.5]).id(),
+                    positive(b, 2.0).id(),
+                ];
                 let y: IntVar<'_> = b.truncated(K::NegativeBinomial, &params, 0.0, 7.0);
-                b.observe(y, IntTensor::scalar(3));
+                b.observe(y, ints(&[0, 3, 7]));
+                let z: IntVar<'_> = b.truncated(K::NegativeBinomial, &params, 2.0, f64::INFINITY);
+                b.observe(z, ints(&[2, 4, 11]));
             },
-            "negative_binomial distribution's CDF with respect to alpha",
         ),
         // censored distributions, one for each base with a CDF
         case("censored gaussian", |b| {
@@ -1634,16 +1636,9 @@ fn distribution_cases() -> Vec<DistributionCase> {
                 b.observe(y, vector(&[0.7, 1.3]));
             },
         ),
-        no_rule(
-            "censored gamma with a latent shape and a value at a bound",
-            |b| {
-                let params = [positive(b, 0.9).id(), positive(b, 2.3).id()];
-                let lower = b.constant(vector(&[0.5, 0.5]));
-                let y: DoubleVar<'_> = b.censored(K::Gamma, &params, lower, 2.5);
-                b.observe(y, vector(&[0.7, 2.5]));
-            },
-            "gamma distribution's CDF with respect to k",
-        ),
+        case("censored gamma with a latent shape", |b| {
+            censored_positive(b, K::Gamma)
+        }),
         case("censored beta with fixed shapes", |b| {
             let params = [b.scalar(1.7).id(), b.scalar(2.4).id()];
             let lower = b.constant(vector(&[0.2, 0.2, 0.2]));
@@ -1652,6 +1647,12 @@ fn distribution_cases() -> Vec<DistributionCase> {
             let (l, u) = (scalar_latent(b, 0.2), scalar_latent(b, 0.8));
             let x: DoubleVar<'_> = b.censored(K::Beta, &params, l, u);
             b.set_value(x, DoubleTensor::scalar(0.5));
+        }),
+        case("censored beta with latent shapes", |b| {
+            let params = [positive(b, 1.7).id(), positive(b, 2.4).id()];
+            let lower = b.constant(vector(&[0.2, 0.2, 0.2]));
+            let y: DoubleVar<'_> = b.censored(K::Beta, &params, lower, 0.8);
+            b.observe(y, vector(&[0.2, 0.5, 0.8]));
         }),
         case("censored student_t", |b| {
             let v = [b.int_constant(IntTensor::scalar(4)).id()];
@@ -1677,6 +1678,14 @@ fn distribution_cases() -> Vec<DistributionCase> {
             let params = [
                 positive_vector(b, &[2.5, 2.5, 2.5]).id(),
                 b.scalar(2.0).id(),
+            ];
+            let y: IntVar<'_> = b.censored(K::NegativeBinomial, &params, 0.0, 7.0);
+            b.observe(y, ints(&[0, 3, 7]));
+        }),
+        case("censored negative_binomial with a latent dispersion", |b| {
+            let params = [
+                positive_vector(b, &[2.5, 2.5, 2.5]).id(),
+                positive(b, 2.0).id(),
             ];
             let y: IntVar<'_> = b.censored(K::NegativeBinomial, &params, 0.0, 7.0);
             b.observe(y, ints(&[0, 3, 7]));

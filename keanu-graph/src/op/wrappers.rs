@@ -832,13 +832,12 @@ pub(crate) fn sample_censored(
 /// ∇² ln Z = w_P (∇²P + ∇P ∇Pᵀ) − w_Q (∇²Q + ∇Q ∇Qᵀ) − ∇ ln Z ∇ ln Zᵀ, where P and Q depend on the base parameters
 /// and their own bound. A censored value at a bound has the base's log CDF (or log survival function) there, a
 /// function of the base parameters and that bound. The log CDFs' second derivatives come from
-/// [`rules::cdf_rule`].
+/// [`rules::cdf_rule`], which has them with respect to every differentiable parameter (the shapes of the gamma,
+/// beta and negative binomial CDFs included).
 ///
 /// # Errors
 ///
-/// [`GraphError::NoSecondOrderRule`] naming the base and the parameter if a shape parameter whose CDF second
-/// derivative has no closed form has a tangent and a log CDF is needed (always for a truncated distribution, and
-/// for a censored one with a value at a bound).
+/// [`GraphError::NoSecondOrderRule`] naming the base if it has no log density or log CDF rule.
 pub(crate) fn second_order(
     wrapper: Wrapper,
     base: &DistributionKind,
@@ -851,8 +850,7 @@ pub(crate) fn second_order(
     let bounds = Bounds::new(base, parameters)?;
     let m = bounds.base.len();
     let (lower_index, upper_index) = (m + 1, m + 2);
-    let (Some(density_rule), Some((cdf_rule, no_rule))) =
-        (rules::density_rule(base), rules::cdf_rule(base))
+    let (Some(density_rule), Some(cdf_rule)) = (rules::density_rule(base), rules::cdf_rule(base))
     else {
         return Err(GraphError::NoSecondOrderRule(format!(
             "the {} distribution's CDF",
@@ -896,7 +894,7 @@ pub(crate) fn second_order(
         Upper,
         Inside,
     }
-    let (sides, cases, needs_cdf) = match wrapper {
+    let (sides, cases) = match wrapper {
         Wrapper::Truncated => {
             let low = bound_points(bounds.lower, shift, bounds.discrete);
             let high = bound_points(bounds.upper, 0.0, bounds.discrete);
@@ -948,7 +946,7 @@ pub(crate) fn second_order(
                     }
                 })
                 .collect::<Vec<_>>();
-            (sides, cases, true)
+            (sides, cases)
         }
         Wrapper::Censored => {
             let low = bound_points(bounds.lower, 0.0, bounds.discrete);
@@ -980,26 +978,10 @@ pub(crate) fn second_order(
                     }
                 })
                 .collect();
-            let needs_cdf = cases.iter().any(|&c| c == Case::Lower || c == Case::Upper);
-            (sides, cases, needs_cdf)
+            (sides, cases)
         }
     };
-    let mut differentiable: Vec<bool> = gradients.iter().map(Option::is_some).collect();
-    if needs_cdf {
-        for &j in no_rule {
-            if tangents[j + 1].is_some() {
-                let names = base.parameter_names().unwrap_or_default();
-                return Err(GraphError::NoSecondOrderRule(format!(
-                    "the second derivative of the {} distribution's CDF with respect to {} (a shape parameter of a \
-                     regularised incomplete gamma or beta function, which has no closed form)",
-                    base.name(),
-                    names.get(j).copied().unwrap_or("a shape parameter")
-                )));
-            }
-            // its products would lack the CDF's terms, and nothing reads them without a tangent
-            differentiable[j + 1] = false;
-        }
-    }
+    let differentiable: Vec<bool> = gradients.iter().map(Option::is_some).collect();
 
     let n = m + 3;
     let mut point = vec![0.0; m];

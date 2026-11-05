@@ -74,10 +74,11 @@
 //! ```
 //!
 //! Every op of the graph has a second-order rule except lambdas, and every distribution kind except custom
-//! distributions. A truncated or censored gamma, beta or negative binomial whose shape parameter (`k`, `alpha` or
-//! `beta`, or the dispersion `alpha`) depends on the latents has none either, since the second derivative of its
-//! CDF with respect to the shape has no closed form. A model whose log probability depends on the latents through
-//! any of these fails with [`GraphError::NoSecondOrderRule`] naming the node. Second derivatives follow the
+//! distributions. (A truncated or censored gamma, beta or negative binomial whose shape depends on the latents has
+//! one: its CDF's second shape derivatives come from those of the regularised incomplete gamma and beta functions
+//! in [`keanu_tensor::special`]; the linear Gaussian state space model differentiates its Kalman filter.) A model
+//! whose log probability depends on the latents through a lambda or a custom distribution fails with
+//! [`GraphError::NoSecondOrderRule`] naming the node. Second derivatives follow the
 //! first-order gradients' conventions (the uniform has none with respect to its bounds, the categorical none with
 //! respect to its probabilities, and the Laplace density takes the almost-everywhere value at its kink).
 //! Eigenvector derivatives assume distinct eigenvalues, as their first derivatives do.
