@@ -945,6 +945,41 @@ fn metropolis_hastings_rolls_back_a_proposal_that_fails() {
     }
 }
 
+/// A latent truncation bound that crosses the other bound makes the state impossible (log probability −∞), as a
+/// uniform's bounds do, so Metropolis–Hastings rejects the proposal instead of failing. lower ~ N(0, 1) and
+/// x ~ N(0, 1) truncated to [lower, 1] observed at -0.5: the posterior of lower is N(0, 1) restricted to
+/// lower <= -0.5 and reweighted by 1 / P(lower <= X <= 1), and proposals of step 2 often land above 1.
+#[test]
+fn metropolis_hastings_rejects_a_latent_truncation_bound_that_crosses_the_other() {
+    use keanu_graph::op::DistributionKind;
+    let b = GraphBuilder::new();
+    let lower = b.gaussian(0.0, 1.0);
+    b.set_value(lower, DoubleTensor::scalar(-1.0));
+    let (mu, sigma) = (b.scalar(0.0), b.scalar(1.0));
+    let x: keanu_graph::DoubleVar<'_> = b.truncated(
+        DistributionKind::Gaussian,
+        &[mu.id(), sigma.id()],
+        lower,
+        1.0,
+    );
+    b.observe(x, DoubleTensor::scalar(-0.5));
+    let lower = lower.id();
+    let (graph, state) = b.build().unwrap();
+    let model = Model::new(graph, &state).unwrap();
+    for rejection in [
+        RejectionStrategy::RollbackToCachedValues,
+        RejectionStrategy::RollbackAndCascade,
+    ] {
+        let samples = MetropolisHastings::default()
+            .proposal(GaussianProposal::new(2.0))
+            .rejection(rejection)
+            .sample(&model, &mut state.clone(), &[lower], 2000, &mut rng(23))
+            .unwrap_or_else(|e| panic!("{rejection:?}: {e}"));
+        let draws = series(&samples, lower);
+        assert!(draws.iter().all(|&l| l <= -0.5), "{rejection:?}");
+    }
+}
+
 #[test]
 fn unknown_nodes_are_errors_not_panics() {
     use keanu_graph::GraphError;

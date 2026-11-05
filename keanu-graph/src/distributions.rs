@@ -383,8 +383,9 @@ impl GraphBuilder {
     /// which fails with an error if the bounds hold too little of the base's probability.
     ///
     /// The handle type must match the base's value type ([`DoubleVar`] or [`IntVar`]). Building fails if the base
-    /// has no CDF, the parameters don't match it, or constant bounds have `lower >= upper`; bounds that are not
-    /// constant are checked when the node is evaluated.
+    /// has no CDF, the parameters don't match it, or constant bounds have `lower >= upper`. Bounds that are not
+    /// constant and cross (`lower >= upper`, or NaN) make the node's log probability −∞, as a uniform's bounds do,
+    /// so samplers reject such a state; drawing a value between them, or taking the node's support, is an error.
     ///
     /// ```
     /// use keanu_graph::{DoubleVar, GraphBuilder, op::DistributionKind};

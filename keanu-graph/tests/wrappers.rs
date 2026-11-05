@@ -618,28 +618,42 @@ fn invalid_bounds_and_bases_are_errors() {
         Err(GraphError::InvalidNode { op: "censored", .. })
     ));
 
-    // bounds that are not constants are checked when evaluated
-    let b = GraphBuilder::new();
-    let (mu, sigma) = (b.scalar(0.0), b.scalar(1.0));
-    let upper = b.gaussian(0.0, 1.0);
-    let x: DoubleVar = b.truncated(
-        DistributionKind::Gaussian,
-        &[mu.id(), sigma.id()],
-        0.5,
-        upper,
-    );
-    let (x, upper) = (x.id(), upper.id());
-    let (graph, mut state) = b.build().unwrap();
-    state.set(&graph, upper, Value::F64(s(0.0))).unwrap();
-    state.set(&graph, x, Value::F64(s(0.0))).unwrap();
-    assert!(matches!(
-        node_log_prob(&graph, &state, x),
-        Err(GraphError::Distribution(_))
-    ));
-    assert!(matches!(
-        node_support(&graph, &state, x),
-        Err(GraphError::Distribution(_))
-    ));
+    // bounds that are not constants and cross make the state impossible (as a uniform's do), so samplers reject
+    // it; the support and sampling are still errors
+    for censored in [false, true] {
+        let b = GraphBuilder::new();
+        let (mu, sigma) = (b.scalar(0.0), b.scalar(1.0));
+        let upper = b.gaussian(0.0, 1.0);
+        let params = [mu.id(), sigma.id()];
+        let x: DoubleVar = if censored {
+            b.censored(DistributionKind::Gaussian, &params, 0.5, upper)
+        } else {
+            b.truncated(DistributionKind::Gaussian, &params, 0.5, upper)
+        };
+        let (x, upper) = (x.id(), upper.id());
+        let (graph, mut state) = b.build().unwrap();
+        for (bound, value) in [(0.0, 0.0), (0.5, 0.5), (f64::NAN, 0.7)] {
+            state.set(&graph, upper, Value::F64(s(bound))).unwrap();
+            state.set(&graph, x, Value::F64(s(value))).unwrap();
+            assert_eq!(
+                node_log_prob(&graph, &state, x).unwrap(),
+                f64::NEG_INFINITY,
+                "censored {censored}, upper {bound}"
+            );
+            assert!(node_log_prob_gradient(&graph, &state, x).is_ok());
+            assert!(matches!(
+                node_support(&graph, &state, x),
+                Err(GraphError::Distribution(_))
+            ));
+        }
+        // drawing a value between crossed bounds is still an error
+        state.set(&graph, upper, Value::F64(s(0.2))).unwrap();
+        state.clear(x).unwrap();
+        assert!(matches!(
+            state.lazy_eval(&graph, &[x], &mut KeanuRng::seed_from_u64(1)),
+            Err(GraphError::Distribution(_))
+        ));
+    }
 
     // a base without a CDF, wrong parameters, a wrapper of a wrapper, the wrong handle type
     let b = GraphBuilder::new();

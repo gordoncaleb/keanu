@@ -8,7 +8,7 @@ Review of `e8d5a30c1..main` (plan `docs/plans/2026-11-04-001-feat-ppl-feature-ga
 - keanu-graph `ScanBody::jvp` multiplies batch × length × carry size unchecked.
 - `add_proxy` / `add_distribution` with huge shapes from Rust code are not capped (only the loader caps them).
 - Weibull sampling can return +inf with probability 2^-53 per draw (u = 0); NegativeBinomial gradients are NaN at mu = 0; Weibull `d_log_cdf` is NaN when (x/beta)^alpha underflows.
-- OrderedLogistic, Mixture, HMM and Truncated/Censored return `Err` (not −∞) when latent parameters leave their valid region, so Metropolis–Hastings aborts rather than rejects.
+- OrderedLogistic, Mixture and HMM return `Err` (not −∞) when latent parameters leave their valid region, so Metropolis–Hastings aborts rather than rejects.
 - `eigh` fixes eigenvector signs by the largest component; equal-magnitude components can flip under rounding while derivative rules assume smoothness.
 
 ## Sampling quality

@@ -57,8 +57,14 @@ pub(crate) fn split<'p, 'v>(
     Ok(parameters.split_at(parameters.len() - own))
 }
 
-/// A wrapper's base parameters and bounds, checked: each lower bound must be less than its upper bound (neither
-/// NaN), and for a discrete base each finite bound must be a whole number.
+/// A wrapper's base parameters and bounds, checked: for a discrete base each finite bound must be a whole number,
+/// and (for [`Bounds::new`], which sampling and the support use) each lower bound must be less than its upper bound
+/// (neither NaN).
+///
+/// The log density instead takes bounds that are not ordered as an impossible state, with log probability −∞
+/// ([`Bounds::unordered`]), as a uniform distribution does: bounds that depend on latents can cross during
+/// inference, and a sampler such as Metropolis–Hastings then rejects the state rather than failing. Constant bounds
+/// that are not ordered are an error when the graph is built.
 struct Bounds<'p, 'v> {
     base: &'p [&'v Value],
     lower: &'v DoubleTensor,
@@ -66,16 +72,34 @@ struct Bounds<'p, 'v> {
     discrete: bool,
 }
 
+/// Whether a lower and an upper bound are ordered (false if either is NaN).
+fn ordered(lower: f64, upper: f64) -> bool {
+    lower < upper
+}
+
 impl<'p, 'v> Bounds<'p, 'v> {
+    /// The bounds, which must be ordered.
     fn new(base_kind: &DistributionKind, parameters: &'p [&'v Value]) -> Result<Self> {
+        Self::checked(base_kind, parameters, true)
+    }
+
+    /// The bounds, which need not be ordered (for the log density).
+    fn unordered(base_kind: &DistributionKind, parameters: &'p [&'v Value]) -> Result<Self> {
+        Self::checked(base_kind, parameters, false)
+    }
+
+    fn checked(
+        base_kind: &DistributionKind,
+        parameters: &'p [&'v Value],
+        check_order: bool,
+    ) -> Result<Self> {
         let (base, own) = split(parameters, OWN_PARAMETERS)?;
         let (lower, upper) = (own[0].f64()?, own[1].f64()?);
         let discrete = base_kind.value_type() != DType::F64;
         let shape = broadcast_shape(lower.shape(), upper.shape())?;
         let (l, u) = (lower.broadcast_to(&shape)?, upper.broadcast_to(&shape)?);
         for (&l, &u) in l.as_slice().iter().zip(u.as_slice()) {
-            // NaN bounds fail too
-            if l >= u || l.is_nan() || u.is_nan() {
+            if check_order && !ordered(l, u) {
                 return invalid_parameter(format!(
                     "the lower bound must be less than the upper bound, got [{l}, {u}]"
                 ));
@@ -193,7 +217,7 @@ pub(crate) fn elementwise(
     parameters: &[&Value],
     gradient: bool,
 ) -> Result<(DoubleTensor, Option<LogProbGradientParts>)> {
-    let bounds = Bounds::new(base, parameters)?;
+    let bounds = Bounds::unordered(base, parameters)?;
     let mut shape = Shape::from_slice(value.shape());
     for p in parameters {
         shape = broadcast_shape(&shape, p.shape())?;
@@ -352,6 +376,7 @@ fn truncated(
 ) -> Result<Parts> {
     let z = normaliser(bounds, base, gradient, shape)?;
     let x = x.as_slice();
+    // (bounds that are not ordered hold no value with Z > 0)
     let inside: Vec<bool> = (0..x.len())
         .map(|i| x[i] >= lower[i] && x[i] <= upper[i] && z.log_z[i] > f64::NEG_INFINITY)
         .collect();
@@ -436,7 +461,9 @@ fn censored(
     let x = x.as_slice();
     let cases: Vec<Case> = (0..x.len())
         .map(|i| {
-            if x[i] == lower[i] {
+            if !ordered(lower[i], upper[i]) {
+                Case::Outside
+            } else if x[i] == lower[i] {
                 Case::Lower
             } else if x[i] == upper[i] {
                 Case::Upper
@@ -847,7 +874,7 @@ pub(crate) fn second_order(
     b: usize,
     shape: &[usize],
 ) -> Result<Elementwise> {
-    let bounds = Bounds::new(base, parameters)?;
+    let bounds = Bounds::unordered(base, parameters)?;
     let m = bounds.base.len();
     let (lower_index, upper_index) = (m + 1, m + 2);
     let (Some(density_rule), Some(cdf_rule)) = (rules::density_rule(base), rules::cdf_rule(base))
@@ -939,7 +966,7 @@ pub(crate) fn second_order(
             ];
             let cases = (0..len)
                 .map(|i| {
-                    if x[i] >= lower[i] && x[i] <= upper[i] {
+                    if ordered(lower[i], upper[i]) && x[i] >= lower[i] && x[i] <= upper[i] {
                         Case::Inside
                     } else {
                         Case::Outside
@@ -967,7 +994,9 @@ pub(crate) fn second_order(
             ];
             let cases: Vec<Case> = (0..len)
                 .map(|i| {
-                    if x[i] == lower[i] {
+                    if !ordered(lower[i], upper[i]) {
+                        Case::Outside
+                    } else if x[i] == lower[i] {
                         Case::Lower
                     } else if x[i] == upper[i] {
                         Case::Upper
