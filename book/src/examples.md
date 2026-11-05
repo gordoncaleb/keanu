@@ -17,7 +17,7 @@ their results against the functions or parameters their synthetic data were gene
 | `eight_schools` | How much do coaching effects differ between schools? Centred and non-centred forms, compared by PSIS-LOO |
 | `radon` | How much does indoor radon vary between Minnesota counties? A varying-intercept model |
 | `gaussian_mixture` | Which of two groups does each measurement come from, and what are the groups like? |
-| `gp_regression` | What smooth function produced noisy measurements? Gaussian process hyperparameters by NUTS |
+| `gp_regression` | What smooth function produced noisy measurements? Gaussian process hyperparameters by NUTS, exactly and with an HSGP |
 | `stochastic_volatility` | How volatile are daily returns, and how persistent is the volatility? A scan over latent innovations |
 | `hmm` | When does a series switch regime, and how often? A two-state hidden Markov model |
 | `sir` | How fast did influenza spread through a boarding school, and how long were the boys ill? An SIR ODE |
@@ -98,8 +98,13 @@ posterior-predictive mean is the average conditional mean, and its variance the 
 the variance of the conditional means. Keeping the prediction out of the sampled model means NUTS does not recompute
 it at every leapfrog step.
 
-Its test checks that the hyperparameters' R-hat is below 1.01, the noise is recovered, and the predictive mean is
-within two predictive standard deviations of sin(x) at every grid point.
+Its second half fits 200 points with an HSGP of 25 basis functions instead: NUTS samples the weights with the
+hyperparameters, and the function on the grid is recorded at each draw (`prior.predict` with the same weights), so
+the prediction is the draws' mean and standard deviation.
+
+Its tests check that the hyperparameters' R-hat is below 1.01 (1.02 for the HSGP, whose amplitude is weakly
+identified), the noise is recovered, and the predictive mean is within two predictive standard deviations of sin(x)
+at every grid point (2.5 for the HSGP).
 
 ```rust,ignore
 {{#include ../../keanu/examples/gp_regression.rs}}

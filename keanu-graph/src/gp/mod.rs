@@ -12,6 +12,10 @@
 //!
 //! [`gp_marginal`] and [`gp_predict`] do the same with a constant mean in one call.
 //!
+//! For more points than an exact GP can handle, [`Hsgp`] approximates a GP with an exponentiated quadratic or
+//! Matérn kernel by a fixed set of basis functions with Gaussian weights (Riutort-Mayol et al., 2023): the function
+//! is an ordinary latent of the model, at a cost linear in the number of points (see the [`hsgp`] module).
+//!
 //! ```
 //! use keanu_distributions::KeanuRng;
 //! use keanu_graph::GraphBuilder;
@@ -36,6 +40,10 @@
 //! Shape errors (inputs with different feature counts, hyperparameters or targets of the wrong shape) are recorded
 //! by the builder like any other invalid node, so [`GraphBuilder::build`] returns them. Hyperparameter values (e.g.
 //! positivity of a length scale) are not checked: give them priors with the right support.
+
+pub mod hsgp;
+
+pub use hsgp::{Hsgp, HsgpDomain, HsgpPrior};
 
 use crate::builder::GraphBuilder;
 use crate::error::GraphError;

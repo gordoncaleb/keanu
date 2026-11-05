@@ -279,6 +279,16 @@ Work from `docs/plans/2026-11-05-001-feat-applied-modelling-gaps-plan.md`.
   probability's gradient against finite differences to 10⁻⁶ relative. `pharmacokinetics` fits a one-compartment
   oral-dose model as an ODE and in closed form and checks that they agree. `multi_state` fits an illness–death
   continuous-time Markov chain to simulated interval-censored panel data through a batched matrix exponential.
+- keanu-graph: **Hilbert space approximate GPs** (`gp::Hsgp`, `HsgpPrior`, `HsgpDomain`, `gp::hsgp`), following
+  Riutort-Mayol et al. (2023): an exponentiated quadratic or Matérn 1/2, 3/2 or 5/2 kernel's GP as Φ (√S ⊙ β) with
+  the Laplacian's eigenfunctions on a box that extends the inputs' range by a factor c, m basis functions per input
+  dimension (the full tensor grid for multi-dimensional inputs, with a scalar or per-dimension length scale), the
+  kernel's spectral density S and weights β ~ N(0, 1). `prior(x)` returns the function at the inputs and the weights,
+  `predict` the same function at new inputs inside the box, and `covariance` the covariance the approximation implies.
+  It is built from constants, element-wise ops and a matrix product, so gradients and Hessian-vector products come
+  from the graph's autodiff. Other kernels and sums or products of kernels are rejected by `Hsgp::new`. The GP
+  regression example gained an HSGP fit and the guide's GP chapter a section. keanu-tensor's small matrix products
+  with one column (matrix-vector products) are about four times faster, with unchanged results.
 
 ### Code review fixes
 

@@ -18,11 +18,16 @@
 //! The predictive nodes are built in a separate graph whose hyperparameters are constants, set to each draw in turn.
 //! Keeping them out of the sampled model means NUTS doesn't recompute the prediction at every leapfrog step.
 //!
+//! The second half fits the same model to 200 points with a Hilbert space approximate GP (HSGP, Riutort-Mayol et
+//! al. 2023), as one would for a series too long for an exact GP: the function is a weighted sum of 25 fixed basis
+//! functions whose weights are latent, so NUTS samples the weights with the hyperparameters, and the prediction on
+//! the grid is the same weighted sum there, evaluated at every draw.
+//!
 //! Run with `cargo run --release --example gp_regression`.
 
 use keanu::algorithms::ChainSamples;
 use keanu::algorithms::mcmc::chains::sample_chains;
-use keanu::graph::gp::{GaussianProcess, Kernel};
+use keanu::graph::gp::{GaussianProcess, Hsgp, Kernel};
 use keanu::prelude::*;
 
 /// The number of chains.
@@ -62,9 +67,14 @@ pub struct GpRegression {
 
 /// Noisy observations of [`truth`] at `POINTS` evenly spaced inputs, from a generator seeded with `seed`.
 pub fn data(seed: u64) -> (Vec<f64>, Vec<f64>) {
+    data_at(POINTS, seed)
+}
+
+/// Noisy observations of [`truth`] at `points` evenly spaced inputs on [0, `RANGE`].
+fn data_at(points: usize, seed: u64) -> (Vec<f64>, Vec<f64>) {
     let mut rng = KeanuRng::seed_from_u64(seed);
-    let x: Vec<f64> = (0..POINTS)
-        .map(|i| RANGE * i as f64 / (POINTS - 1) as f64)
+    let x: Vec<f64> = (0..points)
+        .map(|i| RANGE * i as f64 / (points - 1) as f64)
         .collect();
     let y = x
         .iter()
@@ -116,9 +126,7 @@ pub fn run(seed: u64, draws: usize) -> keanu::Result<GpRegression> {
     })?;
 
     // the prediction: the same GP with constant hyperparameters, conditioned on the data, at the grid
-    let grid: Vec<f64> = (0..GRID_POINTS)
-        .map(|i| RANGE * i as f64 / (GRID_POINTS - 1) as f64)
-        .collect();
+    let grid = grid();
     let p = GraphBuilder::new();
     let hyperparameters = [p.scalar(1.0), p.scalar(1.0), p.scalar(1.0)];
     let [a, l, s] = hyperparameters;
@@ -172,12 +180,90 @@ pub fn run(seed: u64, draws: usize) -> keanu::Result<GpRegression> {
     })
 }
 
+/// `GRID_POINTS` evenly spaced points on [0, `RANGE`].
+fn grid() -> Vec<f64> {
+    (0..GRID_POINTS)
+        .map(|i| RANGE * i as f64 / (GRID_POINTS - 1) as f64)
+        .collect()
+}
+
+/// The number of training points of the HSGP fit.
+pub const HSGP_POINTS: usize = 200;
+/// The number of HSGP basis functions. With the domain extended by `HSGP_C` and length scales down to 0.2 of the
+/// inputs' half range, Riutort-Mayol et al.'s rule m ≥ 1.75 c / (ℓ / S) asks for at least 14.
+pub const BASIS_FUNCTIONS: usize = 25;
+/// The factor by which the HSGP's domain extends the inputs' range.
+pub const HSGP_C: f64 = 1.5;
+
+/// The same model on `HSGP_POINTS` points with an HSGP in place of the exact GP: NUTS samples the hyperparameters
+/// and the basis functions' weights with `CHAINS` chains of `draws` draws (after as many adaptation steps), and the
+/// prediction is the function's posterior mean and standard deviation on the grid.
+pub fn run_hsgp(seed: u64, draws: usize) -> keanu::Result<GpRegression> {
+    let (x, y) = data_at(HSGP_POINTS, seed);
+    let grid = grid();
+
+    let b = GraphBuilder::new();
+    let amplitude = b.half_gaussian(2.0).label("amplitude");
+    let length_scale = b.half_gaussian(2.0).label("length_scale");
+    let noise = b.half_gaussian(1.0).label("noise");
+    b.set_value(amplitude, DoubleTensor::scalar(1.0));
+    b.set_value(length_scale, DoubleTensor::scalar(1.0));
+    b.set_value(noise, DoubleTensor::scalar(0.5));
+    let kernel = Kernel::exp_quad(&b, amplitude, length_scale);
+    let hsgp = Hsgp::new(&kernel, BASIS_FUNCTIONS, HSGP_C)?.prior(DoubleTensor::vector(x));
+    // the function on the grid, with the same weights
+    let f_grid = hsgp.predict(DoubleTensor::vector(grid.clone())).id();
+    let y_node = b.gaussian(hsgp.f, noise);
+    b.observe(y_node, DoubleTensor::vector(y));
+    let latents = [amplitude.id(), length_scale.id(), noise.id()];
+    drop((hsgp, kernel));
+    let (graph, state) = b.build()?;
+    let model = Model::new(graph, &state)?;
+
+    let nuts = Nuts::default().with_adapt_count(draws);
+    let recorded = [latents[0], latents[1], latents[2], f_grid];
+    let samples = sample_chains(CHAINS, seed, &state, |state, rng| {
+        nuts.sample_with_statistics(
+            &model,
+            state,
+            &recorded,
+            2 * draws,
+            SamplingOptions::default().with_drop(draws),
+            rng,
+        )
+        .map(|(samples, _)| samples)
+    })?;
+    let (mut mean, mut sd) = (Vec::new(), Vec::new());
+    for i in 0..GRID_POINTS {
+        let s = samples.summarize(f_grid, &[i])?;
+        mean.push(s.mean);
+        sd.push(s.sd);
+    }
+    Ok(GpRegression {
+        samples,
+        amplitude: latents[0],
+        length_scale: latents[1],
+        noise: latents[2],
+        grid,
+        mean,
+        sd,
+    })
+}
+
 /// The number of draws per chain (after as many adaptation steps).
 pub const DEFAULT_SAMPLES: usize = 1000;
 
 #[allow(dead_code)]
 fn main() -> keanu::Result<()> {
-    let result = run(1, DEFAULT_SAMPLES)?;
+    println!("exact GP, {POINTS} points:");
+    report(&run(1, DEFAULT_SAMPLES)?)?;
+    println!("\nHSGP with {BASIS_FUNCTIONS} basis functions, {HSGP_POINTS} points:");
+    report(&run_hsgp(1, DEFAULT_SAMPLES)?)
+}
+
+/// Prints the hyperparameters' posterior summaries and the prediction on the grid.
+#[allow(dead_code)]
+fn report(result: &GpRegression) -> keanu::Result<()> {
     for (name, id) in [
         ("amplitude", result.amplitude),
         ("length scale", result.length_scale),

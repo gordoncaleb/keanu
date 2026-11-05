@@ -518,6 +518,33 @@ fn gp_regression_recovers_the_sine_curve() {
 }
 
 #[test]
+fn gp_regression_with_an_hsgp_recovers_the_sine_curve() {
+    // 4 chains of 500 draws after 500 adaptation steps each, sampling the 25 weights with the hyperparameters. The
+    // amplitude is weakly identified by one stretch of a sine (bulk ESS about 400): over seeds 1 to 6 the largest
+    // R-hat was 1.012, every grid point was within 2.01 predictive sd of sin(x), the largest predictive sd was 0.083
+    // and the noise's posterior mean was between 0.179 and 0.211.
+    let r = gp_regression::run_hsgp(1, 500).unwrap();
+    for (name, id) in [
+        ("amplitude", r.amplitude),
+        ("length scale", r.length_scale),
+        ("noise", r.noise),
+    ] {
+        let s = r.samples.summarize(id, &[]).unwrap();
+        assert!(s.r_hat < 1.02, "R-hat of {name} is {}", s.r_hat);
+    }
+    let noise = r.samples.summarize(r.noise, &[]).unwrap();
+    assert_close(noise.mean, gp_regression::NOISE, 0.05, "noise");
+    for ((x, m), s) in r.grid.iter().zip(&r.mean).zip(&r.sd) {
+        let truth = gp_regression::truth(*x);
+        assert!(
+            (m - truth).abs() < 2.5 * s,
+            "HSGP predictive mean {m} ± {s} at x = {x} vs {truth}"
+        );
+        assert!(*s < 0.15, "HSGP predictive sd {s} at x = {x}");
+    }
+}
+
+#[test]
 fn stochastic_volatility_data_is_reproducible() {
     use stochastic_volatility::{DATA_SEED, DAYS, data, simulate, to_csv};
     let simulated = simulate(DAYS, DATA_SEED);

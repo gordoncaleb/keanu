@@ -705,6 +705,18 @@ fn matmul_into(
     if work <= SMALL_MATMUL {
         debug_assert!(out.iter().all(|&x| x == 0.0));
         let a_at = |i: usize, p: usize| if ta { a[p * ac + i] } else { a[i * ac + p] };
+        if n == 1 {
+            // a matrix-vector product: b's one column is contiguous either way, and a running sum per row avoids
+            // the loop below's inner loop of length 1 (the same additions in the same order)
+            for (i, o) in out.iter_mut().enumerate() {
+                let mut sum = 0.0;
+                for (p, &bp) in b[..k].iter().enumerate() {
+                    sum += a_at(i, p) * bp;
+                }
+                *o = sum;
+            }
+            return;
+        }
         for i in 0..m {
             let row = &mut out[i * n..(i + 1) * n];
             for p in 0..k {

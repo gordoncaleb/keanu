@@ -58,3 +58,45 @@ order of the jitter.
 Shape errors (inputs with different feature counts, a length scale with the wrong number of elements, targets of the
 wrong length) fail `build` like any other invalid node. Hyperparameter values are not checked: give them priors on the
 right support, such as `half_gaussian`, and the samplers and optimizers keep them positive.
+
+## Hilbert space approximate GPs (HSGP)
+
+An exact GP's cost grows with the cube of the number of points. For long series or large spatial data sets,
+`Hsgp` approximates a GP with an exponentiated quadratic or Matérn kernel by a weighted sum of fixed basis functions
+(Riutort-Mayol, Bürkner, Andersen, Solin and Vehtari, 2023):
+
+f(x) ≈ Σⱼ φⱼ(x) · √S(√λⱼ) · βⱼ, βⱼ ~ N(0, 1).
+
+The φⱼ are the eigenfunctions of the Laplacian on a box [centre − L, centre + L] that contains the inputs, λⱼ their
+eigenvalues and S the kernel's spectral density, which carries the amplitude and length scale. The basis functions
+depend only on the inputs, so they are a constant matrix Φ, and f = Φ (√S ⊙ β) costs O(n·m) to evaluate. The
+function is an ordinary latent of the model (through the weights β), so any likelihood can sit on top of it, not
+only a Gaussian one, and gradients and Hessian-vector products in the weights and hyperparameters come from the
+graph's autodiff.
+
+```rust,ignore
+{{#include ../../keanu/tests/book.rs:hsgp}}
+```
+
+- `Hsgp::new(&kernel, m, c)` takes the kernel (`exp_quad`, `matern12`, `matern32` or `matern52`; other kernels and
+  sums or products of kernels have no spectral density here and are an error: for a sum, add one HSGP per term),
+  the number of basis functions m per input dimension and the factor c ≥ 1 by which the box extends the inputs'
+  range: L = c · S, with S half the range, centred on its midpoint. `with_domain(HsgpDomain::new(centre, L))` sets
+  the box instead, for instance to predict beyond the data.
+- `hsgp.prior(x)` adds the weights (`prior.beta`, of length m^d) and returns `prior.f`, the function at the inputs
+  (`[n]`, or `[n, d]` with one row per point). Inputs with d dimensions use the full tensor grid of m functions per
+  dimension, so m^d weights; the length scale is a scalar or one per dimension.
+- `prior.predict(x_new)` is the same function, with the same weights, at new inputs inside the box: its draws are
+  draws of the posterior predictive function. `prior.covariance(x1, x2)` is the covariance the approximation implies,
+  Φ(x1) diag(S) Φ(x2)ᵀ, to compare with `kernel.covariance(x1, x2)`.
+
+The approximation is accurate when the box is wide enough and there are enough basis functions for the length
+scale. Riutort-Mayol et al. recommend c ≥ 1.2 (at least 3.2 ℓ/S for the exponentiated quadratic) and m ≥ 1.75 c / (ℓ/S)
+for the exponentiated quadratic; the Matérn kernels' spectra decay more slowly and need more (m ≥ 3.42 c / (ℓ/S) for
+Matérn 3/2). The error is largest near the inputs' ends, where the box's edge (at which every basis function
+vanishes) is closest: with ℓ = 0.3 on [−1, 1] and m = 40, c = 2 approximates the exponentiated quadratic's
+covariance to better than 10⁻⁹, but c = 1.5 only to 4·10⁻³. With latent hyperparameters, give the length scale a
+prior that keeps it above the smallest value m can represent.
+
+The GP regression example (`cargo run --release --example gp_regression`) fits the same model with an exact GP and
+with an HSGP, sampling the HSGP's weights with its hyperparameters by NUTS.

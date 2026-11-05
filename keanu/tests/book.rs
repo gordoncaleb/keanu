@@ -1291,6 +1291,46 @@ fn gaussian_processes() -> keanu::Result<()> {
 }
 
 #[test]
+fn hsgp() -> keanu::Result<()> {
+    // ANCHOR: hsgp
+    use keanu::graph::gp::{Hsgp, Kernel};
+
+    // 500 noisy observations of sin(x) on [0, 10]
+    let mut rng = KeanuRng::seed_from_u64(6);
+    let x: Vec<f64> = (0..500).map(|i| i as f64 / 49.9).collect();
+    let y: Vec<f64> = x
+        .iter()
+        .map(|x| x.sin() + 0.2 * rng.next_gaussian())
+        .collect();
+    let grid = DoubleTensor::vector((0..7).map(|i| 0.3 + i as f64).collect());
+
+    let b = GraphBuilder::new();
+    let length_scale = b.half_gaussian(2.0).label("length_scale");
+    b.set_value(length_scale, DoubleTensor::scalar(1.0));
+    let kernel = Kernel::exp_quad(&b, 1.0, length_scale);
+    // 25 basis functions on the inputs' range extended by half its width at each end
+    let hsgp = Hsgp::new(&kernel, 25, 1.5)?.prior(DoubleTensor::vector(x));
+    // the weights β ~ N(0, 1) are latents too, here starting at 0
+    b.set_value(hsgp.beta, DoubleTensor::zeros(&[25]));
+    let observed = b.gaussian(hsgp.f, 0.2);
+    b.observe(observed, DoubleTensor::vector(y));
+    // the same function, with the same weights, on the grid
+    let on_grid = hsgp.predict(grid.clone()).id();
+    let (graph, mut state) = b.build()?;
+    let model = Model::new(graph, &state)?;
+
+    // fit the length scale and the weights by MAP
+    GradientOptimizer::new(&model).max_a_posteriori(&mut state)?;
+    state.eval(model.graph(), &[on_grid], &mut rng)?;
+    let f = state.f64(on_grid).unwrap();
+    // ANCHOR_END: hsgp
+    for (f, x) in f.as_slice().iter().zip(grid.as_slice()) {
+        assert!((f - x.sin()).abs() < 0.1, "{f} vs sin({x})");
+    }
+    Ok(())
+}
+
+#[test]
 fn model_comparison() -> keanu::Result<()> {
     // ANCHOR: loo_fit
     use keanu::algorithms::mcmc::chains::sample_chains;
