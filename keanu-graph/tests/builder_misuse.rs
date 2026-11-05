@@ -251,3 +251,45 @@ fn a_cpt_with_more_conditions_than_parents_is_an_error_not_a_panic() {
         );
     }
 }
+
+#[test]
+fn shapes_too_large_to_allocate_are_errors_not_panics() {
+    let b = GraphBuilder::new();
+    let x = b.scalar(1.0).id();
+    let index = b
+        .int_constant(keanu_tensor::IntTensor::vector(vec![0]))
+        .id();
+    let v = b.constant(DoubleTensor::vector(vec![1.0, 2.0, 3.0])).id();
+    // 2^61 f64s are 2^64 bytes, more than isize::MAX
+    let too_large = [
+        (Op::Broadcast(vec![1 << 61]), vec![x]),
+        (Op::Broadcast(vec![1 << 31, 1 << 30]), vec![x]),
+        (
+            Op::ScatterAdd {
+                axis: 0,
+                size: 1 << 61,
+            },
+            vec![v, index],
+        ),
+    ];
+    for (op, parents) in too_large {
+        let name = op.name();
+        assert!(
+            matches!(
+                b.add_node(op, &parents),
+                Err(GraphError::InvalidNode { .. })
+            ),
+            "{name}"
+        );
+    }
+    // a scan of 2^62 steps over a scalar carry
+    let body = GraphBuilder::new();
+    let carry = body.double_proxy(&[]);
+    let out = carry * 2.0;
+    let (carry, out) = (carry.id(), out.id());
+    let (graph, _) = body.build().unwrap();
+    assert!(matches!(
+        keanu_graph::op::ScanBody::new(graph, 1 << 62, carry, vec![], vec![], out),
+        Err(GraphError::InvalidNode { .. })
+    ));
+}

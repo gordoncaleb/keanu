@@ -43,12 +43,17 @@ fn isizes(values: &[i64]) -> Result<Vec<isize>> {
     values.iter().map(|&v| isize_of(v)).collect()
 }
 
-/// A shape from the file: dimensions whose product (the element count) fits a `usize`.
+/// The most elements a shape from the file may have: at 8 bytes an element (an `f64` or `i64`), a value must fit in
+/// `isize::MAX` bytes, the most one allocation can hold. The graph applies the same limit to every node it creates.
+const MAX_ELEMENTS: usize = isize::MAX as usize / 8;
+
+/// A shape from the file: dimensions whose product (the element count) is at most [`MAX_ELEMENTS`].
 fn shape_of(dims: &[u64]) -> Result<Vec<usize>> {
     let shape = usizes(dims)?;
     shape
         .iter()
         .try_fold(1usize, |n, &d| n.checked_mul(d))
+        .filter(|&n| n <= MAX_ELEMENTS)
         .ok_or_else(|| IoError::Decode(format!("the shape {shape:?} has too many elements")))?;
     Ok(shape)
 }

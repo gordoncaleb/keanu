@@ -112,6 +112,15 @@ impl ScanBody {
                 carry_node.shape()
             )));
         }
+        let mut stacked = vec![length];
+        stacked.extend_from_slice(carry_node.shape());
+        if super::shape::element_count(&stacked).is_none() {
+            return Err(invalid(format!(
+                "{length} steps of a carry of shape {:?} is too many elements (at most {})",
+                carry_node.shape(),
+                super::shape::MAX_ELEMENTS
+            )));
+        }
         Ok(Self {
             graph,
             length,
@@ -308,8 +317,11 @@ impl ScanBody {
             )));
         }
         let carry_shape = self.shape_of(self.carry);
-        let m: usize = carry_shape.iter().product();
-        let mut data = Vec::with_capacity(self.length * m);
+        let mut shape = vec![self.length];
+        shape.extend_from_slice(carry_shape);
+        let total = super::shape::element_count(&shape)
+            .ok_or_else(|| invalid(format!("the output shape {shape:?} has too many elements")))?;
+        let mut data = Vec::with_capacity(total);
         let mut carry = f64_of(parents[0])?.clone();
         for step in 0..self.length {
             let mut state = self.run(carry, parents, step)?;
@@ -319,8 +331,6 @@ impl ScanBody {
             data.extend_from_slice(next.as_slice());
             carry = next;
         }
-        let mut shape = vec![self.length];
-        shape.extend_from_slice(carry_shape);
         Ok(Value::F64(DoubleTensor::new(&shape, data)?))
     }
 

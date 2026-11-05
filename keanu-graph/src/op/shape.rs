@@ -11,6 +11,29 @@ fn invalid(op: &Op, message: impl Into<String>) -> GraphError {
     }
 }
 
+/// The most elements a node's value may have: at 8 bytes an element (the size of an `f64` or `i64`), the value must
+/// fit in `isize::MAX` bytes, the most one allocation can hold. Node creation rejects larger shapes, so a graph (or a
+/// loaded file) never asks evaluation for an allocation that can't exist.
+pub(crate) const MAX_ELEMENTS: usize = isize::MAX as usize / 8;
+
+/// The number of elements of a shape, or `None` if it exceeds [`MAX_ELEMENTS`].
+pub(crate) fn element_count(shape: &[usize]) -> Option<usize> {
+    shape
+        .iter()
+        .try_fold(1usize, |n, &d| n.checked_mul(d))
+        .filter(|&n| n <= MAX_ELEMENTS)
+}
+
+fn check_elements(op: &Op, shape: &[usize]) -> Result<()> {
+    match element_count(shape) {
+        Some(_) => Ok(()),
+        None => Err(invalid(
+            op,
+            format!("the shape {shape:?} has too many elements (at most {MAX_ELEMENTS})"),
+        )),
+    }
+}
+
 fn square_batch(op: &Op, shape: &[usize]) -> Result<()> {
     let r = shape.len();
     if r < 2 || shape[r - 1] != shape[r - 2] {
@@ -25,8 +48,15 @@ fn square_batch(op: &Op, shape: &[usize]) -> Result<()> {
 /// The type and shape of a node's value given its parents' types and shapes.
 ///
 /// Most ops are checked by evaluating them on dummy values of the parents' shapes, which guarantees the shape
-/// agrees with evaluation. Ops where dummy values could fail or be expensive have explicit rules.
+/// agrees with evaluation. Ops where dummy values could fail or be expensive have explicit rules. Every output shape
+/// has at most [`MAX_ELEMENTS`] elements.
 pub(crate) fn output_type(op: &Op, parents: &[(DType, &[usize])]) -> Result<(DType, Shape)> {
+    let (dtype, shape) = infer(op, parents)?;
+    check_elements(op, &shape)?;
+    Ok((dtype, shape))
+}
+
+fn infer(op: &Op, parents: &[(DType, &[usize])]) -> Result<(DType, Shape)> {
     let f64_parents = |n: usize| -> Result<()> {
         if parents.len() != n || parents.iter().any(|(t, _)| *t != DType::F64) {
             return Err(invalid(op, format!("needs {n} f64 parents")));
@@ -155,7 +185,31 @@ pub(crate) fn output_type(op: &Op, parents: &[(DType, &[usize])]) -> Result<(DTy
             f64_parents(2)?;
             dummy(op, parents)
         }
+        Op::Broadcast(target) => {
+            // explicit, so a large target is checked before anything of its size is allocated
+            check_elements(op, target)?;
+            let source = parents[0].1;
+            let shape = broadcast_shape(source, target)?;
+            if shape.as_slice() != target.as_slice() {
+                return Err(keanu_tensor::TensorError::IncompatibleShapes {
+                    left: source.to_vec(),
+                    right: target.clone(),
+                }
+                .into());
+            }
+            Ok((parents[0].0, shape))
+        }
         Op::Gather { .. } | Op::ScatterAdd { .. } => {
+            if let Op::ScatterAdd { axis, size } = op {
+                // the output replaces the axis's length with `size`: check it before the dummy evaluation allocates it
+                let source = parents[0].1;
+                let rank = source.len() as isize;
+                if (-rank..rank).contains(axis) {
+                    let mut shape = source.to_vec();
+                    shape[axis.rem_euclid(rank) as usize] = *size;
+                    check_elements(op, &shape)?;
+                }
+            }
             if parents[1].0 != DType::I64 {
                 return Err(invalid(op, "the indices must be i64"));
             }

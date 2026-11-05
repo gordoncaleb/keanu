@@ -1180,6 +1180,50 @@ fn malformed_cpt_condition_counts_are_errors_not_panics() {
     assert!(is_error(load_json(&model.to_string())));
 }
 
+#[test]
+fn shapes_too_large_to_allocate_are_rejected_when_loading() {
+    let is_error = |result: keanu_io::Result<Loaded>| {
+        matches!(
+            result,
+            Err(IoError::Decode(_)) | Err(IoError::InvalidNode { .. }) | Err(IoError::Graph(_))
+        )
+    };
+    // 2^61 elements fit a usize, but not 8 bytes each in isize::MAX bytes
+    let scalar = serde_json::json!({"constant": {"shape": [], "f64": {"values": [1.0]}}});
+    let mut model = saved_vector();
+    model["graph"]["nodes"].as_array_mut().unwrap().push(scalar);
+    model["graph"]["nodes"]
+        .as_array_mut()
+        .unwrap()
+        .push(serde_json::json!({"parents": [1],
+        "broadcast": {"shape": ["2305843009213693952"]}}));
+    let result = load_json(&model.to_string());
+    assert!(is_error(result), "broadcast");
+    let proxy = with_node(
+        serde_json::json!({"proxy": {"dtype": "D_TYPE_F64", "shape": ["2305843009213693952"]}}),
+    );
+    assert!(is_error(load_json(&proxy)), "proxy");
+    // a scatter-add whose output would have 3 x 2^60 elements
+    let mut model = saved_vector();
+    model["graph"]["nodes"]
+        .as_array_mut()
+        .unwrap()
+        .push(serde_json::json!({"constant": {"shape": [1], "i64": {"values": ["0"]}}}));
+    model["graph"]["nodes"]
+        .as_array_mut()
+        .unwrap()
+        .push(serde_json::json!({"parents": [0, 1],
+        "scatterAdd": {"axis": "0", "size": "1152921504606846976"}}));
+    assert!(is_error(load_json(&model.to_string())), "scatter-add");
+    // a scan of 2^60 and 2^62 steps (8 bytes per step, as the carry is a scalar)
+    for length in ["1152921504606846976", "4611686018427387904"] {
+        let mut model = saved_scan();
+        model["graph"]["nodes"][2]["scan"]["length"] = length.into();
+        let result = load_json(&model.to_string());
+        assert!(is_error(result), "scan length {length}");
+    }
+}
+
 // ----- DOT -----
 
 #[cfg(feature = "dot")]
