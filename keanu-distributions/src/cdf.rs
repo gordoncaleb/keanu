@@ -704,29 +704,32 @@ impl Weibull<'_> {
         })
     }
 
-    /// With t = (x/β)^α, the derivatives of -t with respect to x, α and β, scaled by `factor(t)`.
+    /// With t = (x/β)^α, the derivatives of h(-t) with respect to x, α and β, given `factor(t)` = t h'(-t). The
+    /// derivatives of -t are -(α/x) t, -ln(x/β) t and (α/β) t, so they are -(α/x), -ln(x/β) and α/β times
+    /// `factor(t)`, which keeps its finite limit where t underflows to 0. ln(x/β) is taken as ln x - ln β, which
+    /// stays accurate where x/β underflows.
     fn cdf_gradient(&self, x: &DoubleTensor, factor: fn(f64) -> f64) -> Result<WeibullGradient> {
         let [x, alpha, beta] = map_n((x, &*self.alpha, &*self.beta), |(x, a, b)| {
             if x <= 0.0 {
                 return [0.0; 3];
             }
-            let z = x / b;
-            let t = z.powf(a);
-            let f = factor(t);
-            [-a * t / x * f, -t * z.ln() * f, a * t / b * f]
+            let ln_z = x.ln() - b.ln();
+            let f = factor((x / b).powf(a));
+            [-a / x * f, -ln_z * f, a / b * f]
         })?;
         Ok(WeibullGradient { x, alpha, beta })
     }
 
     /// The element-wise derivatives of [`Self::log_cdf`] with respect to x and each parameter.
     pub fn d_log_cdf(&self, x: &DoubleTensor) -> Result<WeibullGradient> {
-        // d ln(1 - e^-t) = -d(-t) / (e^t - 1)
-        self.cdf_gradient(x, |t| -1.0 / t.exp_m1())
+        // h(u) = ln(1 - e^u), so t h'(-t) = -t / (e^t - 1), with the limit -1 as t → 0
+        self.cdf_gradient(x, |t| if t == 0.0 { -1.0 } else { -t / t.exp_m1() })
     }
 
     /// The element-wise derivatives of [`Self::log_ccdf`] with respect to x and each parameter.
     pub fn d_log_ccdf(&self, x: &DoubleTensor) -> Result<WeibullGradient> {
-        self.cdf_gradient(x, |_| 1.0)
+        // h(u) = u
+        self.cdf_gradient(x, |t| t)
     }
 
     /// The element-wise inverse CDF: the x with P(X <= x) = p, for p in [0, 1].

@@ -49,3 +49,61 @@ fn negative_binomial_gradients_at_zero_mean() {
     }
 }
 
+#[test]
+fn weibull_log_cdf_gradient_where_the_cdf_underflows() {
+    // t = (x/β)^α underflows to 0: ln F ≈ ln t = α (ln x - ln β), so d/dx = α/x, d/dα = ln(x/β), d/dβ = -α/β
+    for (a, b, x) in [(2.0, 1.0, 1e-200), (40.0, 3.0, 1e-10), (1.0, 10.0, 5e-324)] {
+        let dist = Weibull::new(s(a), s(b));
+        let g = dist.d_log_cdf(&s(x)).unwrap();
+        let what = format!("alpha {a}, beta {b}, x {x}");
+        close(g.x.as_slice()[0], a / x, 1e-9, &format!("d/dx, {what}"));
+        close(
+            g.alpha.as_slice()[0],
+            x.ln() - f64::ln(b),
+            1e-9,
+            &format!("d/dalpha, {what}"),
+        );
+        close(g.beta.as_slice()[0], -a / b, 1e-9, &format!("d/dbeta, {what}"));
+    }
+}
+
+#[test]
+fn weibull_log_prob_gradient_at_and_near_zero() {
+    // ln p = ln α - ln β + (α - 1) ln(x/β) - (x/β)^α:
+    // d/dx = (α - 1)/x - (α/β)(x/β)^(α-1), d/dα = 1/α + ln(x/β)(1 - (x/β)^α), d/dβ = (α/β)((x/β)^α - 1)
+    let expected = |a: f64, b: f64, x: f64| {
+        let lz = x.ln() - b.ln();
+        [
+            (a - 1.0) / x - a / b * ((a - 1.0) * lz).exp(),
+            1.0 / a + lz * (1.0 - (a * lz).exp()),
+            a / b * ((a * lz).exp() - 1.0),
+        ]
+    };
+    for (a, b, x) in [
+        (1.0, 10.0, 5e-324),
+        (2.0, 1e10, 1e-300),
+        (0.5, 1e10, 1e-300),
+        (3.0, 2.0, 1e-100),
+    ] {
+        let dist = Weibull::new(s(a), s(b));
+        let g = dist.d_log_prob(&s(x)).unwrap();
+        let [dx, da, db] = expected(a, b, x);
+        let what = format!("alpha {a}, beta {b}, x {x}");
+        close(g.x.as_slice()[0], dx, 1e-9, &format!("d/dx, {what}"));
+        close(g.alpha.as_slice()[0], da, 1e-9, &format!("d/dalpha, {what}"));
+        close(g.beta.as_slice()[0], db, 1e-9, &format!("d/dbeta, {what}"));
+    }
+    // at x = 0, the limits: d/dx is -1/β for α = 1 and ±∞ (the sign of α - 1) otherwise; d/dα → -∞ (the
+    // (α - 1) ln x term); d/dβ = -α/β
+    for (a, b, dx) in [
+        (1.0, 2.0, -0.5),
+        (2.0, 2.0, f64::INFINITY),
+        (0.5, 2.0, f64::NEG_INFINITY),
+    ] {
+        let g = Weibull::new(s(a), s(b)).d_log_prob(&s(0.0)).unwrap();
+        assert_eq!(g.x.as_slice()[0], dx, "d/dx at x = 0, alpha {a}");
+        assert_eq!(g.alpha.as_slice()[0], f64::NEG_INFINITY, "d/dalpha at 0");
+        close(g.beta.as_slice()[0], -a / b, 1e-12, "d/dbeta at x = 0");
+    }
+}
+

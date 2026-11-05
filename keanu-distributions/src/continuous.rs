@@ -1178,13 +1178,24 @@ impl<'a> Weibull<'a> {
     }
 
     /// The element-wise derivatives of [`Self::log_prob`] with respect to x and each parameter.
+    ///
+    /// They are computed from ln(x/β) = ln x - ln β, so they stay accurate where x/β underflows. At x = 0 they
+    /// are the limits as x → 0: with respect to x, -1/β for α = 1 and ±infinity (the sign of α - 1) otherwise;
+    /// with respect to α, -infinity.
     pub fn d_log_prob(&self, x: &DoubleTensor) -> Result<WeibullGradient> {
         let [x, alpha, beta] = map_n((x, &*self.alpha, &*self.beta), |(x, a, b)| {
-            let z = x / b;
-            let za = z.powf(a);
+            let ln_z = x.ln() - b.ln();
+            let za = (a * ln_z).exp();
+            // d/dx = (α - 1)/x - (α/β)(x/β)^(α-1), with each term's limit at x = 0 for α = 1
+            let d_ln_x = if a == 1.0 { 0.0 } else { (a - 1.0) / x };
+            let d_power = if a == 1.0 {
+                a / b
+            } else {
+                a / b * ((a - 1.0) * ln_z).exp()
+            };
             [
-                ((a - 1.0) - a * za) / x,
-                1.0 / a + z.ln() * (1.0 - za),
+                d_ln_x - d_power,
+                1.0 / a + ln_z * (1.0 - za),
                 a / b * (za - 1.0),
             ]
         })?;
