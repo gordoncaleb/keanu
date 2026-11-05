@@ -33,9 +33,12 @@
 //!
 //! - R-hat needs at least two chains and every diagnostic needs at least four draws per chain; with fewer, or with
 //!   any NaN or infinite draw, they are NaN (as in ArviZ, which checks only NaN).
-//! - When every draw is the same (to within 10⁻¹⁵), R-hat is 1, both ESS are S and the MCSE is 0, so a fixed
-//!   quantity does not count as unconverged. (ArviZ returns a NaN R-hat here.) When each chain is constant but the
-//!   chains disagree, the within-chain variance is zero and R-hat is infinite.
+//! - When every draw is the same (to within 10⁻¹⁵), R-hat, both ESS and the MCSE are NaN, so
+//!   [`ElementSummary::is_converged`] is false: draws that never move are what a sampler stuck at its initial
+//!   value produces, and they carry no information about how well it mixes. Summarising a genuinely fixed quantity
+//!   therefore gives NaN diagnostics by design. (ArviZ also returns a NaN R-hat here, but an ESS of S and an MCSE
+//!   of 0; Keanu reports NaN for those too, so that more stuck draws do not look like more information.) When each
+//!   chain is constant but the chains disagree, the within-chain variance is zero and R-hat is infinite.
 //!
 //! The functions take the draws of one scalar quantity as one slice per chain, which must all be the same length;
 //! [`ChainSamples`](crate::ChainSamples) applies them to every element of sampled nodes.
@@ -126,7 +129,7 @@ pub struct ElementSummary {
 
 impl ElementSummary {
     /// Whether R-hat is below [`RHAT_THRESHOLD`] and both effective sample sizes are above [`MIN_ESS`]. False if
-    /// any of them is NaN.
+    /// any of them is NaN, as they are for draws that are all the same (see the [module docs](self#edge-cases)).
     pub fn is_converged(&self) -> bool {
         self.r_hat < RHAT_THRESHOLD && self.ess_bulk > MIN_ESS && self.ess_tail > MIN_ESS
     }
@@ -277,7 +280,7 @@ impl Draws {
             return f64::NAN;
         }
         if self.is_constant() {
-            return 1.0;
+            return f64::NAN;
         }
         let split = self.split();
         let bulk = split.z_scale().basic_rhat();
@@ -289,14 +292,14 @@ impl Draws {
     }
 
     fn ess_bulk(&self) -> f64 {
-        if !self.valid(1) {
+        if !self.valid(1) || self.is_constant() {
             return f64::NAN;
         }
         self.split().z_scale().basic_ess()
     }
 
     fn ess_tail(&self) -> f64 {
-        if !self.valid(1) {
+        if !self.valid(1) || self.is_constant() {
             return f64::NAN;
         }
         let mut sorted = self.data.clone();
@@ -312,7 +315,7 @@ impl Draws {
     }
 
     fn mcse_mean(&self) -> f64 {
-        if !self.valid(1) {
+        if !self.valid(1) || self.is_constant() {
             return f64::NAN;
         }
         let (_, variance) = mean_and_variance(&self.data);
@@ -335,9 +338,10 @@ impl Draws {
         // B / n: the variance of the chain means
         let (_, between_over_n) = mean_and_variance(&means);
         if within == 0.0 {
-            // every chain is constant: they agree only if they are at the same value
+            // every chain is constant: if they are all at the same value there is no variance to compare (0 / 0, as
+            // in ArviZ), otherwise they disagree completely
             return if between_over_n == 0.0 {
-                1.0
+                f64::NAN
             } else {
                 f64::INFINITY
             };
@@ -347,7 +351,8 @@ impl Draws {
     }
 
     /// The ESS of these chains as they are, from the pooled autocorrelations with Geyer's initial monotone
-    /// sequence. A port of arviz-stats' `_ess`.
+    /// sequence. A port of arviz-stats' `_ess`, including its convention that constant chains (here only derived
+    /// series, such as a tail indicator that is always 1; constant draws are NaN before this) have an ESS of S.
     fn basic_ess(&self) -> f64 {
         let size = self.data.len() as f64;
         if self.is_constant() {

@@ -131,19 +131,39 @@ fn diagnostics_match_arviz() {
 }
 
 #[test]
-fn constant_chains_have_documented_values() {
+fn constant_chains_have_nan_diagnostics() {
     let chains = vec![vec![2.5; 100]; 4];
     let s = diagnostics::summarize(&chains).unwrap();
-    assert_eq!(s.r_hat, 1.0);
-    assert_eq!(s.ess_bulk, 400.0);
-    assert_eq!(s.ess_tail, 400.0);
-    assert_eq!(s.mcse_mean, 0.0);
+    assert!(s.r_hat.is_nan(), "{s:?}");
+    assert!(s.ess_bulk.is_nan(), "{s:?}");
+    assert!(s.ess_tail.is_nan(), "{s:?}");
+    assert!(s.mcse_mean.is_nan(), "{s:?}");
+    assert_eq!(s.mean, 2.5);
     assert_eq!(s.sd, 0.0);
     assert_eq!((s.q5, s.q50, s.q95), (2.5, 2.5, 2.5));
 
     // each chain constant but at a different value: the chains disagree completely
     let stuck: Vec<Vec<f64>> = (0..4).map(|c| vec![c as f64; 100]).collect();
     assert_eq!(rhat(&stuck).unwrap(), f64::INFINITY);
+    assert!(!diagnostics::summarize(&stuck).unwrap().is_converged());
+}
+
+#[test]
+fn frozen_chains_are_not_converged() {
+    // four samplers stuck at their (shared) initial value
+    let frozen = vec![vec![0.3; 1000]; 4];
+    let s = diagnostics::summarize(&frozen).unwrap();
+    assert!(!s.is_converged(), "{s:?}");
+    // more stuck draws must not look like more information
+    let longer = vec![vec![0.3; 10_000]; 4];
+    assert!(ess_bulk(&longer).unwrap().is_nan());
+
+    // through ChainSamples::summary as well
+    let (graph, mut state, x, n) = vector_graph();
+    let chain = network_samples(&graph, &mut state, x, n, &[[1.0, -2.0]; 500]);
+    let samples = ChainSamples::new(vec![chain; 4]).unwrap();
+    let summary = samples.summary().unwrap();
+    assert!(!summary.is_converged(), "{summary}");
 }
 
 #[test]

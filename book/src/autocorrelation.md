@@ -34,5 +34,9 @@ The diagnostics follow Vehtari et al. (2021), as ArviZ computes them:
   chains).
 - **MCSE** is the Monte Carlo standard error of the mean: the standard deviation over the square root of the ESS.
 
+If every draw of an element is the same, as when a sampler never leaves its initial value, R-hat, both ESS and the
+MCSE are NaN and `is_converged()` is false: constant draws say nothing about mixing. A genuinely fixed quantity
+gets NaN diagnostics too. Chains that are each constant but at different values have an infinite R-hat.
+
 `ChainSamples::new` builds the same thing from chains you ran yourself, and checks they sampled the same nodes for
 the same number of draws. `keanu::algorithms::diagnostics` has the functions over plain `&[Vec<f64>]` chains.
