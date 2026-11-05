@@ -11,7 +11,7 @@ use keanu_algorithms::mcmc::proposal::{
 use keanu_algorithms::mcmc::select::{Sampler, is_differentiable_wrt_latents};
 use keanu_algorithms::mcmc::{SamplingAlgorithm, SamplingOptions, generate};
 use keanu_algorithms::statistics::effective_sample_size;
-use keanu_algorithms::{AlgorithmError, NetworkSamples};
+use keanu_algorithms::{AlgorithmError, NetworkSamples, diagnostics};
 use keanu_distributions::KeanuRng;
 use keanu_graph::{GraphBuilder, Model, NodeId, Space, State};
 use keanu_tensor::{DoubleTensor, IntTensor};
@@ -1030,4 +1030,144 @@ fn nuts_reports_a_support_that_depends_on_a_latent() {
         .with_space(Space::Constrained)
         .sample(&model, &mut state.clone(), &[x], 20, &mut rng(1))
         .unwrap();
+}
+
+const SCHOOL_EFFECTS: [f64; 8] = [28.0, 8.0, -3.0, 7.0, -1.0, 1.0, 18.0, 12.0];
+const SCHOOL_SIGMAS: [f64; 8] = [15.0, 10.0, 16.0, 11.0, 9.0, 11.0, 10.0, 18.0];
+
+/// Eight schools (Rubin 1981): mu ~ N(0, 5), tau ~ HalfCauchy(5), theta ~ N(mu, tau), y ~ N(theta, sigma). The
+/// centred form samples theta directly, giving the funnel between theta and tau; the non-centred form samples
+/// eta ~ N(0, 1) and sets theta = mu + tau·eta. Returns the model, its state and the latents.
+fn eight_schools(centred: bool) -> (Model, State, Vec<NodeId>) {
+    let schools = SCHOOL_EFFECTS.len();
+    let b = GraphBuilder::new();
+    let mu = b.gaussian(0.0, 5.0);
+    let tau = b.half_cauchy(5.0);
+    b.set_value(mu, DoubleTensor::scalar(0.0));
+    b.set_value(tau, DoubleTensor::scalar(1.0));
+    let (theta, latents) = if centred {
+        let theta = b.gaussian_with_shape(&[schools], mu, tau);
+        b.set_value(theta, DoubleTensor::vector(vec![0.0; schools]));
+        (theta, vec![mu.id(), tau.id(), theta.id()])
+    } else {
+        let eta = b.gaussian_with_shape(&[schools], 0.0, 1.0);
+        b.set_value(eta, DoubleTensor::vector(vec![0.0; schools]));
+        (mu + tau * eta, vec![mu.id(), tau.id(), eta.id()])
+    };
+    let sigma = b.constant(DoubleTensor::vector(SCHOOL_SIGMAS.to_vec()));
+    let y = b.gaussian_with_shape(&[schools], theta, sigma);
+    b.observe(y, DoubleTensor::vector(SCHOOL_EFFECTS.to_vec()));
+    let (graph, state) = b.build().unwrap();
+    let model = Model::new(graph, &state).unwrap();
+    (model, state, latents)
+}
+
+/// The divergences of four NUTS chains of eight schools after adaptation, and each chain's draw count and
+/// energy series length.
+fn eight_schools_divergences(centred: bool) -> (usize, Vec<(usize, usize)>) {
+    let (model, state, latents) = eight_schools(centred);
+    let (adapt, draws) = (500, 500);
+    let nuts = Nuts::default()
+        .with_adapt_count(adapt)
+        .with_target_acceptance_prob(0.9);
+    let chains = run_chains(4, 8, &state, |state, rng| {
+        nuts.sample_with_statistics(
+            &model,
+            state,
+            &latents,
+            adapt + draws,
+            SamplingOptions::default().with_drop(adapt),
+            rng,
+        )
+    })
+    .unwrap();
+    let divergences = chains.iter().map(|(_, s)| s.divergence_count()).sum();
+    let lengths = chains
+        .iter()
+        .map(|(samples, s)| (samples.len(), s.energy[adapt..].len()))
+        .collect();
+    (divergences, lengths)
+}
+
+#[test]
+fn centred_eight_schools_diverges_and_non_centred_does_not() {
+    let (centred, _) = eight_schools_divergences(true);
+    assert!(centred > 0, "centred eight schools reported no divergences");
+    let (non_centred, lengths) = eight_schools_divergences(false);
+    assert_eq!(non_centred, 0, "non-centred eight schools diverged");
+    for (draws, energies) in lengths {
+        assert_eq!(draws, energies);
+    }
+}
+
+#[test]
+fn nuts_records_an_energy_per_step_and_flags_divergences() {
+    let (model, mut state, mu, ..) = gaussian_model();
+    let nuts = Nuts::default()
+        .with_adapt_count(0)
+        .with_adapt_step_size(false)
+        .with_initial_step_size(5.0)
+        .with_max_energy_change(1e-3);
+    let (samples, statistics) = nuts
+        .sample_with_statistics(
+            &model,
+            &mut state,
+            &[mu],
+            50,
+            SamplingOptions::default(),
+            &mut rng(16),
+        )
+        .unwrap();
+    assert_eq!(statistics.energy.len(), samples.len());
+    assert!(statistics.energy.iter().all(|e| e.is_finite()));
+    let flags = statistics.divergent_flags();
+    assert_eq!(flags.len(), samples.len());
+    assert_eq!(
+        flags.iter().filter(|&&d| d).count(),
+        statistics.divergence_count()
+    );
+    assert!(statistics.divergence_count() > 0);
+    for &step in &statistics.divergent_steps {
+        assert!(flags[step]);
+    }
+}
+
+#[test]
+fn e_bfmi_of_a_standard_gaussian_is_healthy() {
+    let b = GraphBuilder::new();
+    let x = b.gaussian_with_shape(&[10], 0.0, 1.0);
+    b.set_value(x, DoubleTensor::vector(vec![0.0; 10]));
+    let x = x.id();
+    let (graph, mut state) = b.build().unwrap();
+    let model = Model::new(graph, &state).unwrap();
+    let (adapt, draws) = (500, 2000);
+    let (samples, statistics) = Nuts::default()
+        .with_adapt_count(adapt)
+        .sample_with_statistics(
+            &model,
+            &mut state,
+            &[x],
+            adapt + draws,
+            SamplingOptions::default().with_drop(adapt),
+            &mut rng(21),
+        )
+        .unwrap();
+    assert_eq!(statistics.energy.len(), adapt + samples.len());
+    let e_bfmi = diagnostics::e_bfmi(&statistics.energy[adapt..]);
+    assert!(e_bfmi > diagnostics::E_BFMI_THRESHOLD, "E-BFMI {e_bfmi}");
+}
+
+#[test]
+fn e_bfmi_is_nan_for_too_few_or_degenerate_energies() {
+    assert!(diagnostics::e_bfmi(&[]).is_nan());
+    assert!(diagnostics::e_bfmi(&[1.0]).is_nan());
+    assert!(diagnostics::e_bfmi(&[2.0, 2.0, 2.0]).is_nan());
+    assert!(diagnostics::e_bfmi(&[1.0, f64::NAN, 2.0]).is_nan());
+    assert!(diagnostics::e_bfmi(&[1.0, f64::INFINITY, 2.0]).is_nan());
+    // alternating energies: three successive differences of ±2 over four unit deviations, 12 / 4
+    let e = diagnostics::e_bfmi(&[1.0, -1.0, 1.0, -1.0]);
+    assert!((e - 3.0).abs() < 1e-12, "{e}");
+    // a slow drift: successive differences are small next to the spread
+    let drift: Vec<f64> = (0..100).map(f64::from).collect();
+    assert!(diagnostics::e_bfmi(&drift) < 0.01);
 }

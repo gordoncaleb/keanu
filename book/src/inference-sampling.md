@@ -49,9 +49,8 @@ Settings on `Nuts`:
   `target_acceptance_prob`.
 - **Mass matrix:** `potential` and `adapt_potential`.
 - **Trajectories:** `max_tree_height`, and `max_energy_change` (the threshold for marking a trajectory divergent).
-- **Diagnostics:** `save_statistics`, used with `sample_with_statistics` for per-step step sizes, tree sizes and
-  divergences.
-
+- **Diagnostics:** `save_statistics`, used with `sample_with_statistics` for per-step step sizes, acceptance rates,
+  log probabilities and tree sizes. Divergences and energies are recorded either way (see below).
 - **Space:** `space` (see below).
 
 A `Nuts` value holds settings only, so it can be reused and shared between threads.
@@ -80,6 +79,32 @@ with an error suggesting a reparameterisation (`u ~ Uniform(0, 1)` and `x = hi �
 starting value outside its support, or on its boundary, is an impossible start in either space.
 
 Metropolis–Hastings always works on the latents' own values: its proposals are defined on them.
+
+### Divergences and energy
+
+`sample_with_statistics` returns `NutsStatistics` alongside the samples. Two of its diagnostics are always
+recorded, whatever `save_statistics` says:
+
+- **Divergences.** A trajectory is divergent when its Hamiltonian drifts by at least `max_energy_change` from
+  where it started: the leapfrog integrator has gone unstable, usually in a region of high curvature such as the neck
+  of a funnel. The chain can't explore such a region properly, so its draws may be biased even when R-hat and the
+  effective sample size look fine. `divergent_steps` lists the divergent steps after adaptation,
+  `divergence_count()` counts them and `divergent_flags()` gives one flag per step. Any divergence is worth
+  investigating. The usual cure is to reparameterise: a hierarchical model such as eight schools, with
+  `theta ~ N(mu, tau)`, diverges as `tau` shrinks, while its non-centred form, `eta ~ N(0, 1)` and
+  `theta = mu + tau · eta`, samples cleanly. Raising `target_acceptance_prob` (smaller steps) sometimes helps too.
+- **Energy.** `energy` holds the Hamiltonian at each step's sample, adaptation steps included. Its *energy Bayesian
+  fraction of missing information*, `diagnostics::e_bfmi` (Betancourt, 2016), is
+  Σ(Eₙ − Eₙ₋₁)² / Σ(Eₙ − Ē)²: how far the energy moves between draws compared with how far it varies overall. Values
+  below `E_BFMI_THRESHOLD` (0.3) mean resampling the momentum can't move the chain through the energy levels quickly,
+  typically because of heavy tails, and the tails are poorly explored. Pass only the energies after adaptation.
+
+```rust,ignore
+{{#include ../../keanu/tests/book.rs:nuts_diagnostics}}
+```
+
+Both are per step. With `SamplingOptions` dropping `d` steps and recording every `k`-th, draw `i` is step
+`d + i·k`. With several chains (below), check every chain.
 
 ## Choosing automatically
 

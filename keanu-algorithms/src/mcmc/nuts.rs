@@ -212,7 +212,44 @@ pub struct NutsStatistics {
     /// The number of leapfrog steps in each step's tree.
     pub tree_size: Vec<usize>,
     /// The (0-based) steps after adaptation whose trajectory diverged. Always recorded.
+    ///
+    /// A trajectory diverges when its Hamiltonian moves at least [`Nuts::max_energy_change`] from where it started
+    /// (or becomes NaN): the leapfrog integrator has gone unstable, typically in a region of high curvature such as
+    /// the neck of a funnel. Divergences mean the chain may not reach that region, so its draws can be biased even
+    /// when other diagnostics look healthy; reparameterising the model (for example in non-centred form) or raising
+    /// [`Nuts::target_acceptance_prob`] usually removes them. [`divergence_count`](Self::divergence_count) and
+    /// [`divergent_flags`](Self::divergent_flags) are views of this list.
     pub divergent_steps: Vec<usize>,
+    /// The Hamiltonian (potential plus kinetic energy) at each step's sample, with the momentum it was reached with.
+    /// Always recorded, one per step, adaptation steps included.
+    ///
+    /// The potential is the negative log density being sampled, which in unconstrained space includes the Jacobian
+    /// of the transforms, so this is not `-log_prob`. Pass the energies after adaptation to
+    /// [`diagnostics::e_bfmi`](crate::diagnostics::e_bfmi) to check how well the chain explores the energy levels.
+    pub energy: Vec<f64>,
+}
+
+impl NutsStatistics {
+    /// The number of divergent steps after adaptation: the length of
+    /// [`divergent_steps`](Self::divergent_steps).
+    pub fn divergence_count(&self) -> usize {
+        self.divergent_steps.len()
+    }
+
+    /// One flag per step taken (the length of [`energy`](Self::energy)), true for the steps in
+    /// [`divergent_steps`](Self::divergent_steps). Adaptation steps are never flagged.
+    ///
+    /// When sampling with the default [`SamplingOptions`] each step is one draw, so flag `i` belongs to draw `i`;
+    /// with a drop of `d` and down-sampling interval `k`, draw `i` is step `d + i·k`.
+    pub fn divergent_flags(&self) -> Vec<bool> {
+        let mut flags = vec![false; self.energy.len()];
+        for &step in &self.divergent_steps {
+            if let Some(flag) = flags.get_mut(step) {
+                *flag = true;
+            }
+        }
+        flags
+    }
 }
 
 impl Nuts {
@@ -313,6 +350,7 @@ impl Nuts {
                 position: Rc::new(position),
                 gradient: Rc::new(gradient),
                 log_prob,
+                energy: f64::NAN,
             },
             sample_log_prob,
             step_count: 0,
@@ -380,6 +418,8 @@ struct Candidate {
     position: Rc<Vec<DoubleTensor>>,
     gradient: Rc<Vec<DoubleTensor>>,
     log_prob: f64,
+    /// The Hamiltonian at this point with the momentum it was reached with (NaN until a step has given it one).
+    energy: f64,
 }
 
 /// A point of a trajectory. Immutable once made: trees share them (and their position and gradient with
@@ -698,6 +738,7 @@ impl Integrator<'_, '_> {
                 position: Rc::clone(&after.position),
                 gradient: Rc::clone(&after.gradient),
                 log_prob: after.log_prob,
+                energy: after.energy,
             }),
             forward: Rc::clone(&after),
             backward: after,
@@ -839,11 +880,12 @@ impl SamplingAlgorithm for NutsSampler<'_> {
             self.proposal.log_prob,
             &self.potential,
         )?);
+        let start_energy = start.energy;
         let integrator = Integrator {
             param: &self.param,
             shapes: &self.shapes,
             potential: &self.potential,
-            start_energy: start.energy,
+            start_energy,
             max_energy_change: self.config.max_energy_change,
             in_state: RefCell::new(None),
         };
@@ -851,7 +893,11 @@ impl SamplingAlgorithm for NutsSampler<'_> {
             sum_momentum: start.momentum.clone(),
             forward: Rc::clone(&start),
             backward: start,
-            proposal: Some(self.proposal.clone()),
+            // the previous sample stays the candidate unless the trajectory moves, with this step's momentum
+            proposal: Some(Candidate {
+                energy: start_energy,
+                ..self.proposal.clone()
+            }),
             log_sum_weight: 0.0,
             diverged: false,
             u_turned: false,
@@ -891,6 +937,7 @@ impl SamplingAlgorithm for NutsSampler<'_> {
         if self.step_count < self.config.adapt_count && self.config.adapt_potential {
             self.potential.update(&self.proposal.position)?;
         }
+        self.statistics.energy.push(self.proposal.energy);
         if self.step_count >= self.config.adapt_count && tree.diverged {
             self.statistics.divergent_steps.push(self.step_count);
         }

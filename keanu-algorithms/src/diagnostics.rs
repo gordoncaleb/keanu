@@ -1,5 +1,6 @@
 //! Convergence diagnostics for several MCMC chains: rank-normalised split R-hat, bulk and tail effective sample
-//! size (ESS) and the Monte Carlo standard error (MCSE) of the mean.
+//! size (ESS) and the Monte Carlo standard error (MCSE) of the mean; plus the energy Bayesian fraction of missing
+//! information ([`e_bfmi`]) of a Hamiltonian Monte Carlo chain.
 //!
 //! The estimators follow Vehtari, Gelman, Simpson, Carpenter and Bürkner (2021), "Rank-normalization, folding, and
 //! localization: an improved R-hat for assessing convergence of MCMC", *Bayesian Analysis* 16(2), as implemented
@@ -58,6 +59,37 @@ pub const RHAT_THRESHOLD: f64 = 1.01;
 /// Trust the samples only if the bulk and tail effective sample sizes are above this (Vehtari et al., 2021,
 /// recommend 100 per chain with four chains).
 pub const MIN_ESS: f64 = 400.0;
+
+/// An energy Bayesian fraction of missing information below this suggests Hamiltonian Monte Carlo explores the
+/// tails poorly (Betancourt, 2016).
+pub const E_BFMI_THRESHOLD: f64 = 0.3;
+
+/// The energy Bayesian fraction of missing information (E-BFMI) of one chain's Hamiltonian energies, one per draw:
+/// Σₙ (Eₙ − Eₙ₋₁)² / Σₙ (Eₙ − Ē)², as in Betancourt (2016), "Diagnosing suboptimal cotangent disintegrations in
+/// Hamiltonian Monte Carlo", and ArviZ's `bfmi`.
+///
+/// It compares how much the energy changes between draws (what momentum resampling can achieve) with how much it
+/// varies overall (what the chain must explore). Values below [`E_BFMI_THRESHOLD`] mean the sampler moves through
+/// the energy levels slowly, typically because of heavy tails or a poorly adapted mass matrix. Pass the energies
+/// after adaptation, such as [`NutsStatistics::energy`](crate::mcmc::nuts::NutsStatistics::energy) from the first
+/// step after `adapt_count`.
+///
+/// NaN for fewer than two energies, any NaN or infinite energy, or energies that are all the same.
+pub fn e_bfmi(energy: &[f64]) -> f64 {
+    if energy.len() < 2 || energy.iter().any(|e| !e.is_finite()) {
+        return f64::NAN;
+    }
+    let mean = energy.iter().sum::<f64>() / energy.len() as f64;
+    let spread = energy.iter().map(|e| (e - mean) * (e - mean)).sum::<f64>();
+    if spread == 0.0 {
+        return f64::NAN;
+    }
+    let steps = energy
+        .windows(2)
+        .map(|w| (w[1] - w[0]) * (w[1] - w[0]))
+        .sum::<f64>();
+    steps / spread
+}
 
 /// The probabilities of the quantiles whose indicators give the tail ESS.
 const TAIL_PROBABILITIES: (f64, f64) = (0.05, 0.95);

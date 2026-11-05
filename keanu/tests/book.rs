@@ -346,6 +346,46 @@ fn posterior_sampling() -> keanu::Result<()> {
 }
 
 #[test]
+fn nuts_divergences_and_energy() -> keanu::Result<()> {
+    use keanu::algorithms::diagnostics::{self, E_BFMI_THRESHOLD};
+
+    // ANCHOR: nuts_diagnostics
+    // Neal's funnel: log_scale ~ N(0, 1.5), x ~ N(0, exp(log_scale)). Its narrow neck is hard to integrate through.
+    let b = GraphBuilder::new();
+    let log_scale = b.gaussian(0.0, 1.5);
+    let x = b.gaussian_with_shape(&[5], 0.0, log_scale.exp());
+    b.set_value(log_scale, DoubleTensor::scalar(0.0));
+    b.set_value(x, DoubleTensor::vector(vec![0.0; 5]));
+    let log_scale = log_scale.id();
+    let (graph, mut state) = b.build()?;
+    let model = Model::new(graph, &state)?;
+    let mut rng = KeanuRng::seed_from_u64(3);
+
+    let adapt = 500;
+    let (samples, statistics) = Nuts::default()
+        .with_adapt_count(adapt)
+        .sample_with_statistics(
+            &model,
+            &mut state,
+            &[log_scale],
+            adapt + 1000,
+            SamplingOptions::default().with_drop(adapt),
+            &mut rng,
+        )?;
+    // divergences are always recorded; any at all means the draws may be biased
+    assert!(statistics.divergence_count() > 0);
+    let flags = statistics.divergent_flags(); // one per step: draw i is step adapt + i here
+    assert_eq!(flags[adapt..].len(), samples.len());
+
+    // the Hamiltonian of each step's sample, for the energy Bayesian fraction of missing information
+    let e_bfmi = diagnostics::e_bfmi(&statistics.energy[adapt..]);
+    println!("E-BFMI {e_bfmi:.2} (below {E_BFMI_THRESHOLD} is a warning)");
+    // ANCHOR_END: nuts_diagnostics
+    assert!(e_bfmi.is_finite());
+    Ok(())
+}
+
+#[test]
 fn predictive_sampling() -> keanu::Result<()> {
     // ANCHOR: predictive
     // the rate of a Poisson process, with a Gamma prior, and three observed counts
