@@ -683,6 +683,59 @@ fn is_u_turning(
     Ok(dot(forward, rho)? < 0.0 || dot(backward, rho)? < 0.0)
 }
 
+/// The two halves of a trajectory being merged: the subtree that was there first (`init`) and the one just built
+/// on from its end (`last`).
+struct Halves<'a> {
+    /// The end of `init` away from `last`.
+    init_outer: &'a LeapfrogState,
+    /// The end of `init` that `last` was built from.
+    init_inner: &'a LeapfrogState,
+    /// The sum of `init`'s momenta.
+    init_rho: &'a [DoubleTensor],
+    /// The end of `last` next to `init`.
+    last_inner: &'a LeapfrogState,
+    /// The end of `last` away from `init`.
+    last_outer: &'a LeapfrogState,
+    /// The sum of `last`'s momenta.
+    last_rho: &'a [DoubleTensor],
+}
+
+impl Halves<'_> {
+    /// The generalised no-U-turn criterion on the merged trajectory, whose summed momentum is `rho`, with the extra
+    /// checks across the boundary between the halves that Stan added in 2.21 (stan-dev/stan#2800): the merged
+    /// trajectory's ends against `rho`, and then each half extended by the nearest point of the other. Without the
+    /// extra checks a trajectory can run on past a U-turn when its halves together nearly complete an orbit, so
+    /// that their momenta almost cancel.
+    fn u_turned(&self, rho: &[DoubleTensor]) -> Result<bool> {
+        if is_u_turning(&self.init_outer.velocity, &self.last_outer.velocity, rho)? {
+            return Ok(true);
+        }
+        let init_extended = add_all(self.init_rho, &self.last_inner.momentum)?;
+        if is_u_turning(
+            &self.init_outer.velocity,
+            &self.last_inner.velocity,
+            &init_extended,
+        )? {
+            return Ok(true);
+        }
+        let last_extended = add_all(self.last_rho, &self.init_inner.momentum)?;
+        is_u_turning(
+            &self.init_inner.velocity,
+            &self.last_outer.velocity,
+            &last_extended,
+        )
+    }
+}
+
+/// A (sub)trajectory's ends as (the end behind, the end ahead) when travelling in `direction`.
+fn ends(tree: &Tree, direction: f64) -> (Rc<LeapfrogState>, Rc<LeapfrogState>) {
+    if direction < 0.0 {
+        (Rc::clone(&tree.forward), Rc::clone(&tree.backward))
+    } else {
+        (Rc::clone(&tree.backward), Rc::clone(&tree.forward))
+    }
+}
+
 fn add_all(a: &[DoubleTensor], b: &[DoubleTensor]) -> Result<Vec<DoubleTensor>> {
     a.iter().zip(b).map(|(x, y)| Ok(x.add(y)?)).collect()
 }
@@ -746,12 +799,10 @@ impl Integrator<'_, '_> {
         }
         let mut tree = self.build(state, from, direction, height - 1, step_size, rng)?;
         if tree.should_continue() {
-            let edge = Rc::clone(if direction < 0.0 {
-                &tree.backward
-            } else {
-                &tree.forward
-            });
-            let extension = self.build(state, &edge, direction, height - 1, step_size, rng)?;
+            let (init_outer, init_inner) = ends(&tree, direction);
+            let extension =
+                self.build(state, &init_inner, direction, height - 1, step_size, rng)?;
+            let (last_inner, last_outer) = ends(&extension, direction);
             if direction < 0.0 {
                 tree.backward = Rc::clone(&extension.backward);
             } else {
@@ -760,12 +811,17 @@ impl Integrator<'_, '_> {
             tree.diverged = extension.diverged;
             tree.u_turned = extension.u_turned;
             if extension.should_continue() {
-                tree.sum_momentum = add_all(&tree.sum_momentum, &extension.sum_momentum)?;
-                tree.u_turned = is_u_turning(
-                    &tree.forward.velocity,
-                    &tree.backward.velocity,
-                    &tree.sum_momentum,
-                )?;
+                let rho = add_all(&tree.sum_momentum, &extension.sum_momentum)?;
+                tree.u_turned = Halves {
+                    init_outer: &init_outer,
+                    init_inner: &init_inner,
+                    init_rho: &tree.sum_momentum,
+                    last_inner: &last_inner,
+                    last_outer: &last_outer,
+                    last_rho: &extension.sum_momentum,
+                }
+                .u_turned(&rho)?;
+                tree.sum_momentum = rho;
                 let total = log_sum_exp([tree.log_sum_weight, extension.log_sum_weight]);
                 tree.log_sum_weight = total;
                 if accept_with_log_probability(extension.log_sum_weight - total, rng) {
@@ -787,12 +843,9 @@ impl Integrator<'_, '_> {
         rng: &mut KeanuRng,
     ) -> Result<()> {
         let direction = if rng.next_bool() { 1.0 } else { -1.0 };
-        let edge = Rc::clone(if direction < 0.0 {
-            &tree.backward
-        } else {
-            &tree.forward
-        });
-        let other = self.build(state, &edge, direction, tree.height, step_size, rng)?;
+        let (init_outer, init_inner) = ends(tree, direction);
+        let other = self.build(state, &init_inner, direction, tree.height, step_size, rng)?;
+        let (last_inner, last_outer) = ends(&other, direction);
         if direction < 0.0 {
             tree.backward = Rc::clone(&other.backward);
         } else {
@@ -800,21 +853,24 @@ impl Integrator<'_, '_> {
         }
         tree.sum_metropolis_acceptance += other.sum_metropolis_acceptance;
         tree.size += other.size;
+        tree.diverged = other.diverged;
+        tree.u_turned = other.u_turned;
         if other.should_continue() {
             if accept_with_log_probability(other.log_sum_weight - tree.log_sum_weight, rng) {
                 tree.proposal = other.proposal;
             }
             tree.log_sum_weight = log_sum_exp([tree.log_sum_weight, other.log_sum_weight]);
-            tree.sum_momentum = add_all(&tree.sum_momentum, &other.sum_momentum)?;
-        }
-        tree.diverged = other.diverged;
-        if !tree.diverged {
-            tree.u_turned = other.u_turned
-                || is_u_turning(
-                    &tree.forward.velocity,
-                    &tree.backward.velocity,
-                    &tree.sum_momentum,
-                )?;
+            let rho = add_all(&tree.sum_momentum, &other.sum_momentum)?;
+            tree.u_turned = Halves {
+                init_outer: &init_outer,
+                init_inner: &init_inner,
+                init_rho: &tree.sum_momentum,
+                last_inner: &last_inner,
+                last_outer: &last_outer,
+                last_rho: &other.sum_momentum,
+            }
+            .u_turned(&rho)?;
+            tree.sum_momentum = rho;
         }
         tree.height += 1;
         Ok(())

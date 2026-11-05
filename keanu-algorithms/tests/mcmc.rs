@@ -1032,36 +1032,78 @@ fn mixed_support_model() -> (Model, State, NodeId, NodeId) {
     (model, state, mu, sigma)
 }
 
-/// `Space::Constrained` is NUTS as it was before it moved to unconstrained space: these sums, last draws and log
-/// probabilities were recorded from that implementation (seed 42, 40 adaptation steps, 80 samples) and must be
-/// reproduced exactly.
+/// `Space::Constrained` moves in the latents' own values. Where every latent is unbounded the transforms are the
+/// identity, so it must give exactly the unconstrained chain. (This replaces a test that compared its chain bit for
+/// bit with constants recorded from NUTS before transforms existed; NUTS's tree building and adaptation have since
+/// changed, so those constants no longer describe anything.)
 #[test]
-fn nuts_in_constrained_space_reproduces_the_pre_transform_chain() {
-    let (model, mut state, mu, sigma) = mixed_support_model();
-    let samples = Nuts::default()
-        .with_adapt_count(40)
-        .with_space(Space::Constrained)
-        .sample(&model, &mut state, &[mu, sigma], 80, &mut rng(42))
-        .unwrap();
-    let mus: Vec<f64> = samples
-        .f64(mu)
-        .unwrap()
-        .as_slice()
+fn nuts_in_constrained_space_matches_unconstrained_for_unbounded_latents() {
+    let b = GraphBuilder::new();
+    let mu = b.gaussian_with_shape(&[2], 0.0, 3.0);
+    let x = b.gaussian_with_shape(&[2], mu, 1.5);
+    b.observe(x, DoubleTensor::vector(vec![0.8, -1.3]));
+    b.set_value(mu, DoubleTensor::vector(vec![0.1, 0.2]));
+    let mu = mu.id();
+    let (graph, state) = b.build().unwrap();
+    let model = Model::new(graph, &state).unwrap();
+    let run = |space| {
+        let samples = Nuts::default()
+            .with_adapt_count(100)
+            .with_space(space)
+            .sample(&model, &mut state.clone(), &[mu], 200, &mut rng(42))
+            .unwrap();
+        (
+            samples.f64(mu).unwrap().as_slice().to_vec(),
+            samples.log_probs().to_vec(),
+        )
+    };
+    assert_eq!(run(Space::Constrained), run(Space::Unconstrained));
+}
+
+/// With a bounded latent the two spaces give different chains, but the same posterior: their means agree within
+/// Monte Carlo error.
+#[test]
+fn nuts_in_constrained_and_unconstrained_space_agree_on_the_posterior() {
+    let (model, state, mu, sigma) = mixed_support_model();
+    let run = |space| {
+        let samples = Nuts::default()
+            .with_adapt_count(500)
+            .with_space(space)
+            .sample_with_statistics(
+                &model,
+                &mut state.clone(),
+                &[mu, sigma],
+                4500,
+                SamplingOptions::default().with_drop(500),
+                &mut rng(42),
+            )
+            .unwrap()
+            .0;
+        let mu = samples.f64(mu).unwrap();
+        [
+            mu.element(&[0]).unwrap(),
+            mu.element(&[1]).unwrap(),
+            series(&samples, sigma),
+        ]
+    };
+    let constrained = run(Space::Constrained);
+    let unconstrained = run(Space::Unconstrained);
+    assert!(constrained[2].iter().all(|&s| s > 0.0));
+    for ((label, a), b) in ["mu[0]", "mu[1]", "sigma"]
         .iter()
-        .flat_map(|t| t.as_slice().to_vec())
-        .collect();
-    let sigmas = series(&samples, sigma);
-    let squares =
-        sigmas.iter().map(|s| s * s).sum::<f64>() + mus.iter().map(|m| m * m).sum::<f64>();
-    assert_eq!(mus.iter().sum::<f64>(), -22.039102939226353);
-    assert_eq!(sigmas.iter().sum::<f64>(), 181.2339512038264);
-    assert_eq!(squares, 1190.4332070957182);
-    assert_eq!(samples.log_probs().iter().sum::<f64>(), -793.1055813581459);
-    assert_eq!(
-        &mus[mus.len() - 2..],
-        &[0.42542978748156246, -2.1173053684998595]
-    );
-    assert_eq!(*sigmas.last().unwrap(), 1.4752970588003893);
+        .zip(&constrained)
+        .zip(&unconstrained)
+    {
+        let (ess_a, ess_b) = (effective_sample_size(a), effective_sample_size(b));
+        let v = variance(b);
+        let tolerance = 5.0 * (v / ess_a + v / ess_b).sqrt();
+        assert!(
+            (mean(a) - mean(b)).abs() < tolerance,
+            "{label}: constrained mean {} vs unconstrained {} (tolerance {tolerance})",
+            mean(a),
+            mean(b)
+        );
+    }
 }
 
 /// The posterior mean and variance of sigma ~ HalfGaussian(1) given y_i ~ N(0, sigma), by quadrature of
@@ -1483,4 +1525,37 @@ fn nuts_on_a_scan_model_matches_the_unrolled_model() {
             mean(b)
         );
     }
+}
+
+/// Regression: without the checks across subtree boundaries that Stan added in 2.21, the no-U-turn criterion could
+/// miss a U-turn when a trajectory's two halves together nearly complete an orbit, so that their summed momentum
+/// almost cancels, and the tree then kept doubling. On a 100-dimensional standard Gaussian with the identity metric
+/// and step size 0.2, an orbit takes 2π / 0.2 ≈ 31 leapfrog steps; about a fifth of the trees ran to the maximum of
+/// 1023 steps. With the checks every tree stops within two orbits.
+#[test]
+fn nuts_trees_stop_within_two_orbits_of_a_standard_gaussian() {
+    let d = 100;
+    let b = GraphBuilder::new();
+    let x = b.gaussian_with_shape(&[d], 0.0, 1.0);
+    b.set_value(x, DoubleTensor::vector(vec![0.5; d]));
+    let x = x.id();
+    let (graph, mut state) = b.build().unwrap();
+    let model = Model::new(graph, &state).unwrap();
+    let (_, statistics) = Nuts::default()
+        .with_adapt_count(0)
+        .with_adapt_step_size(false)
+        .with_adapt_potential(false)
+        .with_initial_step_size(0.2)
+        .with_save_statistics(true)
+        .sample_with_statistics(
+            &model,
+            &mut state,
+            &[x],
+            300,
+            SamplingOptions::default(),
+            &mut rng(3),
+        )
+        .unwrap();
+    let longest = statistics.tree_size.iter().max().unwrap();
+    assert!(*longest <= 63, "a tree took {longest} leapfrog steps");
 }
