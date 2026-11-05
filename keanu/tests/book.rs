@@ -747,3 +747,50 @@ fn regression_sampling() -> keanu::Result<()> {
     assert!((mean - 2.0).abs() < 0.2, "{mean}");
     Ok(())
 }
+
+#[test]
+fn variational_inference() -> keanu::Result<()> {
+    // ANCHOR: advi
+    // mu ~ N(0, 10) and sigma ~ HalfGaussian(5), observed through y ~ N(mu, sigma)
+    let b = GraphBuilder::new();
+    let mu = b.gaussian(0.0, 10.0).label("mu");
+    let sigma = b.half_gaussian(5.0).label("sigma");
+    b.set_value(mu, DoubleTensor::scalar(0.0));
+    b.set_value(sigma, DoubleTensor::scalar(1.0));
+    let y = b.gaussian_with_shape(&[6], mu, sigma);
+    b.observe(y, DoubleTensor::vector(vec![4.1, 5.3, 3.8, 6.0, 4.9, 5.4]));
+    let (mu, sigma) = (mu.id(), sigma.id());
+    let (graph, mut state) = b.build()?;
+    let model = Model::new(graph, &state)?;
+
+    let mut rng = KeanuRng::seed_from_u64(1);
+    let result = Advi::mean_field()
+        .with_tol_rel_obj(0.001)
+        .fit(&model, &mut state, &mut rng)?;
+    // the Gaussian's mean and covariance are in unconstrained space: sigma's coordinate is log(sigma)
+    let log_sigma = result.parameterisation().range(sigma).unwrap().start;
+    assert!(result.mean()[log_sigma].exp() > 0.3);
+    assert!(result.elbo_trace().iter().all(|elbo| elbo.is_finite()));
+
+    // draws are mapped back to the latents' own values, so every sigma is positive
+    let samples = result.sample(&mut state, &[mu, sigma], 2000, &mut rng)?;
+    let mean_mu = samples.f64(mu).unwrap().mean()?.to_scalar().unwrap();
+    assert!((mean_mu - 4.9).abs() < 0.5);
+    let sigmas = samples.f64(sigma).unwrap();
+    assert!(
+        sigmas
+            .as_slice()
+            .iter()
+            .all(|s| s.to_scalar().unwrap() > 0.0)
+    );
+    // ANCHOR_END: advi
+
+    // ANCHOR: advi_full_rank
+    // a full covariance captures the correlation between mu and log(sigma), at a cost quadratic in the dimension
+    let full = Advi::full_rank()
+        .with_tol_rel_obj(0.001)
+        .fit(&model, &mut state, &mut rng)?;
+    assert_eq!(full.covariance().shape(), &[2, 2]);
+    // ANCHOR_END: advi_full_rank
+    Ok(())
+}

@@ -92,6 +92,7 @@ pub mod prelude {
         Fitter, LinearRegression, LogisticRegression, PredictiveModel, Prior, RegressionModel,
         Regularization, SamplingFitting, accuracy, coefficient_of_determination,
     };
+    pub use crate::algorithms::vi::{Advi, AdviResult, VariationalFamily};
     pub use crate::algorithms::{NetworkSample, NetworkSamples, Samples};
     pub use crate::distributions::KeanuRng;
     pub use crate::graph::{

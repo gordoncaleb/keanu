@@ -10,6 +10,7 @@
 - [Most probable values (MAP)](inference-map.md)
 - [Posterior sampling (MCMC)](inference-sampling.md)
 - [Autocorrelation and effective sample size](autocorrelation.md)
+- [Variational inference (ADVI)](inference-vi.md)
 - [Sequences (plates)](sequences.md)
 - [Saving and loading](save-and-load.md)
 - [Particle filter](particle-filter.md)

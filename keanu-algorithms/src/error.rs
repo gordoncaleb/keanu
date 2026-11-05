@@ -25,6 +25,9 @@ pub enum AlgorithmError {
     InvalidSetting(String),
     /// An argument is invalid for this operation.
     InvalidArgument(String),
+    /// Variational inference could not evaluate its objective, the evidence lower bound (ELBO), or its gradient:
+    /// the message says where.
+    NonFiniteElbo(String),
 }
 
 impl fmt::Display for AlgorithmError {
@@ -50,6 +53,9 @@ impl fmt::Display for AlgorithmError {
                 f.write_str("the initial gradient has a NaN or infinite element")
             }
             Self::InvalidSetting(message) | Self::InvalidArgument(message) => f.write_str(message),
+            Self::NonFiniteElbo(message) => {
+                write!(f, "variational inference failed: {message}")
+            }
         }
     }
 }
