@@ -71,6 +71,8 @@ let (graph, state) = b.build()?;     // the first construction error, if any, su
   closures
 - `Assert`
 - `Distribution(DistributionOp)`: the probabilistic nodes. Their parents are the distribution parameters.
+- `Scan(Arc<ScanBody>)` (added later): the general scan. The body is a nested deterministic `Graph` run once per
+  step on its own `State`; its reverse and second-order rules recompute each step from the stacked output.
 
 Each op provides:
 

@@ -600,6 +600,186 @@ impl GraphBuilder {
         V::wrap(self, self.add(Op::Stack(axis), &parents, V::DTYPE))
     }
 
+    // ----- scan -----
+
+    /// A loop over the steps of `xs` (along their first axis): the general scan.
+    ///
+    /// `body` builds the loop body on a fresh builder, given placeholders for the carry, for one step of each of
+    /// `xs` (their shape without the first axis) and for each of `constants`, and returns the next carry, which must
+    /// have the carry's shape. The scan's value stacks the carry after every step: shape `[T, init shape...]`, where
+    /// T is the length of the first axis of every `xs` (they must agree; use [`scan_steps`](Self::scan_steps) for a
+    /// loop without per-step inputs). Row t is `body(row t − 1, xs[t], constants)`, with row −1 being `init`.
+    ///
+    /// The body is deterministic: building it with a probabilistic node (`body.gaussian(...)`) fails. It sees only
+    /// its placeholders: outer handles have a different lifetime from the body's, so using one in the body doesn't
+    /// compile, and an outer node mixed in some other way (e.g. through its id) is reported when building. Pass
+    /// outer values in as `constants`, and random variables drawn per step as `xs`. Several carries are packed into
+    /// one tensor (e.g. with [`stack`](Self::stack) and [`slice`](DoubleVar::slice)). Values are f64.
+    ///
+    /// The graph holds the body once, so building is O(1) in T, and the scan is differentiable to every order the
+    /// graph supports through `init`, `xs` and `constants`. Prefer an unrolled loop (one set of nodes per step, as
+    /// [`Sequence`](crate::sequence::Sequence)) when each step needs its own random variables in the graph.
+    ///
+    /// ```
+    /// use keanu_graph::GraphBuilder;
+    /// use keanu_tensor::DoubleTensor;
+    ///
+    /// // x_t = φ x_{t-1} + ε_t
+    /// let b = GraphBuilder::new();
+    /// let phi = b.scalar(0.5);
+    /// let eps = b.constant(DoubleTensor::vector(vec![1.0, 0.0, 2.0]));
+    /// let x0 = b.scalar(4.0);
+    /// let x = b.scan(x0, &[eps], &[phi], |_, x, eps, c| c[0] * x + eps[0]);
+    /// let x = x.id();
+    /// let (graph, mut state) = b.build()?;
+    /// state.eval(&graph, &[x], &mut keanu_distributions::KeanuRng::seed_from_u64(0))?;
+    /// assert_eq!(state.f64(x).unwrap().as_slice(), &[3.0, 1.5, 2.75]);
+    /// # Ok::<(), keanu_graph::GraphError>(())
+    /// ```
+    ///
+    /// ```compile_fail
+    /// # use keanu_graph::GraphBuilder;
+    /// let b = GraphBuilder::new();
+    /// let outer = b.scalar(2.0);
+    /// let xs = b.constant(keanu_tensor::DoubleTensor::vector(vec![1.0, 2.0]));
+    /// // the body can't use an outer node directly: pass it as a constant
+    /// b.scan(b.scalar(0.0), &[xs], &[], |_, carry, xs, _| carry * outer + xs[0]);
+    /// ```
+    pub fn scan<'b, F>(
+        &'b self,
+        init: DoubleVar<'b>,
+        xs: &[DoubleVar<'b>],
+        constants: &[DoubleVar<'b>],
+        body: F,
+    ) -> DoubleVar<'b>
+    where
+        F: for<'s> FnOnce(
+            &'s GraphBuilder,
+            DoubleVar<'s>,
+            &[DoubleVar<'s>],
+            &[DoubleVar<'s>],
+        ) -> DoubleVar<'s>,
+    {
+        let xs: Vec<DoubleVar<'b>> = xs.iter().map(|&x| self.own(x)).collect();
+        let Some(length) = xs
+            .first()
+            .map(|x| self.dtype_shape(x.id()).1.first().copied())
+        else {
+            self.record(GraphError::InvalidNode {
+                op: "scan",
+                message: "needs per-step inputs to take the number of steps from (use scan_steps)"
+                    .into(),
+            });
+            return DoubleVar::new(self, self.placeholder(DType::F64));
+        };
+        let Some(length) = length else {
+            self.record(GraphError::InvalidNode {
+                op: "scan",
+                message: "per-step inputs need at least one dimension (the steps)".into(),
+            });
+            return DoubleVar::new(self, self.placeholder(DType::F64));
+        };
+        self.scan_node(length, init, &xs, constants, body)
+    }
+
+    /// A loop of `length` steps without per-step inputs: as [`scan`](Self::scan), with `body` given the carry and
+    /// the constants' placeholders. `length` may be 0, giving an empty `[0, init shape...]` value.
+    ///
+    /// ```
+    /// use keanu_graph::GraphBuilder;
+    ///
+    /// // doubling: [2, 4, 8, 16]
+    /// let b = GraphBuilder::new();
+    /// let x = b.scan_steps(4, b.scalar(1.0), &[], |_, x, _| x * 2.0);
+    /// assert_eq!(x.shape(), vec![4]);
+    /// ```
+    pub fn scan_steps<'b, F>(
+        &'b self,
+        length: usize,
+        init: DoubleVar<'b>,
+        constants: &[DoubleVar<'b>],
+        body: F,
+    ) -> DoubleVar<'b>
+    where
+        F: for<'s> FnOnce(&'s GraphBuilder, DoubleVar<'s>, &[DoubleVar<'s>]) -> DoubleVar<'s>,
+    {
+        self.scan_node(length, init, &[], constants, |b, carry, _, constants| {
+            body(b, carry, constants)
+        })
+    }
+
+    fn scan_node<'b, F>(
+        &'b self,
+        length: usize,
+        init: DoubleVar<'b>,
+        xs: &[DoubleVar<'b>],
+        constants: &[DoubleVar<'b>],
+        body: F,
+    ) -> DoubleVar<'b>
+    where
+        F: for<'s> FnOnce(
+            &'s GraphBuilder,
+            DoubleVar<'s>,
+            &[DoubleVar<'s>],
+            &[DoubleVar<'s>],
+        ) -> DoubleVar<'s>,
+    {
+        let init = self.own(init);
+        let xs: Vec<DoubleVar<'b>> = xs.iter().map(|&x| self.own(x)).collect();
+        let constants: Vec<DoubleVar<'b>> = constants.iter().map(|&c| self.own(c)).collect();
+        let shape = |v: DoubleVar<'b>| self.dtype_shape(v.id()).1;
+        let inner = GraphBuilder::new();
+        let carry = inner.double_proxy(&shape(init));
+        let step_inputs: Vec<DoubleVar<'_>> = xs
+            .iter()
+            .map(|&x| {
+                let s = shape(x);
+                inner.double_proxy(s.get(1..).unwrap_or_default())
+            })
+            .collect();
+        let constant_inputs: Vec<DoubleVar<'_>> = constants
+            .iter()
+            .map(|&c| inner.double_proxy(&shape(c)))
+            .collect();
+        let output = inner.own(body(&inner, carry, &step_inputs, &constant_inputs));
+        let ids = |vars: &[DoubleVar<'_>]| vars.iter().map(|v| v.id()).collect::<Vec<_>>();
+        let (carry, step_inputs, constant_inputs, output) = (
+            carry.id(),
+            ids(&step_inputs),
+            ids(&constant_inputs),
+            output.id(),
+        );
+        let body = inner
+            .build()
+            .and_then(|(graph, state)| {
+                check_body_state(&graph, &state)?;
+                crate::op::ScanBody::new(graph, length, carry, step_inputs, constant_inputs, output)
+            })
+            .map_err(|e| match e {
+                e @ GraphError::InvalidNode { op: "scan", .. } => e,
+                e => GraphError::InvalidNode {
+                    op: "scan",
+                    message: format!("in the body: {e}"),
+                },
+            });
+        let body = match body {
+            Ok(body) => body,
+            Err(e) => {
+                self.record(e);
+                return DoubleVar::new(self, self.placeholder(DType::F64));
+            }
+        };
+        let parents: Vec<NodeId> = std::iter::once(init)
+            .chain(xs)
+            .chain(constants)
+            .map(|v| v.id())
+            .collect();
+        DoubleVar::new(
+            self,
+            self.add(Op::Scan(Arc::new(body)), &parents, DType::F64),
+        )
+    }
+
     // ----- distributions -----
 
     /// Adds a probabilistic node. On error nothing is added.
@@ -643,5 +823,40 @@ impl GraphBuilder {
                 self.record(e);
                 self.placeholder(dtype)
             })
+    }
+}
+
+/// A scan body is evaluated from its operations alone, so it can't hold observations or values set while building.
+fn check_body_state(graph: &Graph, state: &State) -> Result<()> {
+    for id in graph.ids() {
+        let unchanged = match (&graph[id].op, state.value(id)) {
+            _ if state.is_observed(id) => false,
+            (Op::Constant(op), Some(value)) => same_bits(op, value),
+            (_, value) => value.is_none(),
+        };
+        if !unchanged {
+            return Err(GraphError::InvalidNode {
+                op: "scan",
+                message: format!(
+                    "the body's node {id:?} is observed or has a value set: scan bodies are computed from \
+                     their inputs alone"
+                ),
+            });
+        }
+    }
+    Ok(())
+}
+
+/// Whether two values are identical, NaNs included.
+fn same_bits(a: &Value, b: &Value) -> bool {
+    match (a, b) {
+        (Value::F64(a), Value::F64(b)) => {
+            a.shape() == b.shape()
+                && a.as_slice()
+                    .iter()
+                    .zip(b.as_slice())
+                    .all(|(x, y)| x.to_bits() == y.to_bits())
+        }
+        (a, b) => a == b,
     }
 }

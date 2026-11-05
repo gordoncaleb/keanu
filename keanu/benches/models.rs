@@ -259,6 +259,44 @@ fn autodiff(c: &mut Criterion) {
     group.finish();
 }
 
+fn scan_build(c: &mut Criterion) {
+    // building the AR(1) recursion x[t] = phi x[t-1] + eps[t] over T steps: one scan node (constant in T) against an
+    // unrolled loop (linear in T)
+    let mut group = c.benchmark_group("ScanBuild");
+    for length in [100usize, 1000, 10_000] {
+        group.bench_with_input(BenchmarkId::new("scan", length), &length, |bench, &n| {
+            bench.iter(|| {
+                let b = GraphBuilder::new();
+                let phi = b.gaussian(0.0, 1.0);
+                let eps = b.gaussian_with_shape(&[n], 0.0, 1.0);
+                b.scan(b.scalar(0.0), &[eps], &[phi], |_, x, e, c| c[0] * x + e[0]);
+                black_box(b.build().unwrap())
+            })
+        });
+        group.bench_with_input(
+            BenchmarkId::new("unrolled", length),
+            &length,
+            |bench, &n| {
+                bench.iter(|| {
+                    let b = GraphBuilder::new();
+                    let phi = b.gaussian(0.0, 1.0);
+                    let eps = b.gaussian_with_shape(&[n], 0.0, 1.0);
+                    let mut x = b.scalar(0.0);
+                    let items: Vec<DoubleVar<'_>> = (0..n)
+                        .map(|t| {
+                            x = phi * x + eps.take(&[t]);
+                            x
+                        })
+                        .collect();
+                    b.stack(0, &items);
+                    black_box(b.build().unwrap())
+                })
+            },
+        );
+    }
+    group.finish();
+}
+
 fn config() -> Criterion {
     Criterion::default()
         .warm_up_time(std::time::Duration::from_secs(1))
@@ -266,5 +304,5 @@ fn config() -> Criterion {
         .sample_size(10)
 }
 
-criterion_group!(name = benches; config = config(); targets = nuts, optimizers, graph_evaluation, golden_models, autodiff);
+criterion_group!(name = benches; config = config(); targets = nuts, optimizers, graph_evaluation, golden_models, autodiff, scan_build);
 criterion_main!(benches);

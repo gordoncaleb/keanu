@@ -60,3 +60,36 @@ x_{t+1} = F x_t + N(0, Q), observed as y_t = H x_t + N(0, R) in dimension m. The
   the observations and every parameter is exact (the filter differentiated in reverse mode). Covariance gradients are
   symmetric, as for the multivariate Gaussian.
 - `keanu_distributions::LinearGaussianStateSpace::filter` returns the filtered means and covariances at each step.
+
+## Scan: a loop in one node
+
+A sequence adds one group of nodes per item, so building a 10,000-step model makes tens of thousands of nodes. When
+each step is a *deterministic* function of the previous step's state, the per-step inputs and some constants, a
+**scan** expresses the loop as a single node holding the loop body as a nested graph:
+
+```rust,ignore
+{{#include ../../keanu/tests/book.rs:scan}}
+```
+
+`b.scan(init, &xs, &constants, body)` calls `body` once, on a fresh builder, with placeholders for the carry, for
+step t of each per-step input (sliced along its first axis) and for each constant, and the body returns the next
+carry. The scan's value stacks the carry after each step, shape `[T, carry shape...]`. `b.scan_steps(T, init,
+&constants, body)` is the same loop without per-step inputs (T may be 0, giving an empty value).
+
+- The body is deterministic. Random variables come from outside: draw a vector latent for the per-step noise and pass
+  it as a per-step input, as with `eps` above. A body containing a distribution is rejected when building.
+- The body only sees its placeholders. Values from the enclosing graph enter as constants; using an outer handle in
+  the body doesn't compile.
+- There is one carry tensor. Carry several values by packing them into one tensor with `stack` (and `slice` to read
+  them back) — for example `[level, trend]` for a local linear trend.
+- Scans are differentiable to first and second order (NUTS, optimizers, ADVI, Laplace) through the initial carry, the
+  per-step inputs and the constants. Reverse mode recomputes each step's body from the stacked output instead of
+  storing it, so memory stays proportional to T. Scans nest, and save, load and export to DOT (the body is drawn as
+  a cluster).
+
+Use a **scan** for long deterministic recursions (autoregressive means, state-space filters written by hand, ODE
+solvers stepped explicitly): graph building is constant in T and the model stays small. Use an **unrolled sequence**
+when a step's random variables have distributions that depend on the previous step and can't be rewritten as
+independent noise passed in (a Poisson count whose rate is the previous count, a discrete state chain), when you want
+each step's nodes labelled in the graph, and for the [particle filter](particle-filter.md), which adds
+observations and samples latents one step at a time and so needs the steps as separate nodes.

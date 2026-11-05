@@ -314,6 +314,21 @@ fn general_cases() -> Vec<Case> {
             Expect::Matches,
         ),
         (
+            "scan",
+            |b| {
+                let init = latent_vector(b, &[0.3, -0.4]);
+                let xs = latent(b, t(&[3, 2], &[0.5, -0.1, 0.2, 0.9, -0.6, 0.4]));
+                let w = latent(b, t(&[2, 2], &[0.8, -0.3, 0.2, 0.6]));
+                observe(
+                    b,
+                    b.scan(init, &[xs], &[w], |_, h, x, c| {
+                        (c[0].matmul(h.reshape(&[2, 1])).reshape(&[2]) + x[0]).tanh() * h.exp()
+                    }),
+                );
+            },
+            Expect::Matches,
+        ),
+        (
             "shape and indexing ops",
             |b| {
                 let x = latent(b, t(&[2, 3], &[0.4, -0.7, 1.1, 0.9, 1.6, -0.2]));
@@ -591,6 +606,7 @@ const EVERY_OP: &[&str] = &[
     "lambda",
     "assert",
     "distribution",
+    "scan",
 ];
 
 #[test]

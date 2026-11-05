@@ -5,6 +5,7 @@ mod distribution_hvp;
 pub(crate) mod eval;
 mod hmm;
 mod mixture;
+mod scan;
 mod shape;
 mod wrappers;
 
@@ -13,6 +14,7 @@ pub use distribution::{
     CustomDistribution, CustomGradient, DistributionKind, DistributionOp, Support,
 };
 pub(crate) use eval::eval;
+pub use scan::ScanBody;
 pub(crate) use shape::output_type;
 
 use crate::error::Result;
@@ -457,6 +459,10 @@ pub enum Op {
     Assert(Option<String>),
     /// Parents: `parameters...` probabilistic
     Distribution(DistributionOp),
+    /// Parents: `init`, `xs...`, `constants...`, f64 -> the general scan: runs the body graph once per step,
+    /// threading the carry (starting at `init`) through the steps, and stacks the carries each step outputs, shape
+    /// `[length, carry shape...]`. See [`ScanBody`].
+    Scan(Arc<ScanBody>),
 }
 
 impl Op {
@@ -518,6 +524,7 @@ impl Op {
             Op::Lambda(_) => "lambda",
             Op::Assert(_) => "assert",
             Op::Distribution(_) => "distribution",
+            Op::Scan(_) => "scan",
         }
     }
 

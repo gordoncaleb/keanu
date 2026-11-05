@@ -174,24 +174,32 @@ fn save_op(graph: &Graph, id: NodeId) -> Result<P> {
                 base: saved.base.map(|base| *base),
             })
         }
+        Op::Scan(body) => P::Scan(proto::Scan {
+            body: Some(save_graph(body.graph(), None)?),
+            length: body.length() as u64,
+            carry: index(body.carry()),
+            xs: body.xs().iter().map(|&x| index(x)).collect(),
+            constants: body.constants().iter().map(|&c| index(c)).collect(),
+            output: index(body.output()),
+        }),
         Op::Lambda(_) => return Err(unsupported("a lambda")),
         other => return Err(unsupported(other.name())),
     })
 }
 
-/// The saved form of a graph and the values in a state.
-pub(crate) fn save_model(
-    graph: &Graph,
-    state: &State,
-    metadata: &Metadata,
-) -> Result<proto::Model> {
+/// A node's index in the saved graph. [`save_graph`] checks the graph's ids fit.
+fn index(id: NodeId) -> u32 {
+    id.index() as u32
+}
+
+/// The saved form of a graph and, with a state, its values. A scan body is saved without values.
+fn save_graph(graph: &Graph, state: Option<&State>) -> Result<proto::Graph> {
     if u32::try_from(graph.len()).is_err() {
         return Err(IoError::NotSaveable(format!(
             "the graph has {} nodes, more than the format allows (2³² - 1)",
             graph.len()
         )));
     }
-    let index = |id: NodeId| id.index() as u32;
     let nodes = graph
         .ids()
         .map(|id| {
@@ -203,21 +211,33 @@ pub(crate) fn save_model(
             })
         })
         .collect::<Result<_>>()?;
-    let values = graph
-        .ids()
-        .filter_map(|id| {
-            state.value(id).map(|value| {
-                Ok(proto::StoredValue {
-                    node: index(id),
-                    value: Some(tensor(value)?),
-                    observed: state.is_observed(id),
+    let values = match state {
+        Some(state) => graph
+            .ids()
+            .filter_map(|id| {
+                state.value(id).map(|value| {
+                    Ok(proto::StoredValue {
+                        node: index(id),
+                        value: Some(tensor(value)?),
+                        observed: state.is_observed(id),
+                    })
                 })
             })
-        })
-        .collect::<Result<_>>()?;
+            .collect::<Result<_>>()?,
+        None => Vec::new(),
+    };
+    Ok(proto::Graph { nodes, values })
+}
+
+/// The saved form of a graph and the values in a state.
+pub(crate) fn save_model(
+    graph: &Graph,
+    state: &State,
+    metadata: &Metadata,
+) -> Result<proto::Model> {
     Ok(proto::Model {
         format_version: FORMAT_VERSION,
-        graph: Some(proto::Graph { nodes, values }),
+        graph: Some(save_graph(graph, Some(state))?),
         metadata: metadata.clone(),
     })
 }

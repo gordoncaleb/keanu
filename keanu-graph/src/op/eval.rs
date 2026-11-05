@@ -400,6 +400,7 @@ pub(crate) fn eval(op: &Op, inputs: &[&Value]) -> Result<Value> {
             expect_parents(op, inputs, 1)?;
             inputs[0].clone()
         }
+        Op::Scan(body) => body.eval(inputs)?,
         Op::Lambda(lambda) => {
             let out = (lambda.function)(inputs).map_err(GraphError::Lambda)?;
             if out.dtype() != lambda.dtype || out.shape() != lambda.shape.as_slice() {

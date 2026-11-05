@@ -90,11 +90,8 @@ message Node {
     Empty determinant_sign = 61;
     Empty eigvalsh = 62;
     Empty eigh_vectors = 63;
+    Scan scan = 100;
   }
-
-  // Reserved for a general scan whose body is a nested `Graph`.
-  reserved 100;
-  reserved "scan";
 }
 
 // The parameters of an operation that has none.
@@ -390,6 +387,24 @@ message Proxy {
 
 message Assert {
   optional string message = 1;
+}
+
+// The general scan. Its parents are the initial carry, then one per-step input per `xs` entry, then one per
+// `constants` entry. The body is a nested graph, deterministic and without stored values, whose inputs are
+// unconnected f64 proxies: the carry, one step of each per-step input, and each constant. Its `output` node is the
+// next carry.
+message Scan {
+  Graph body = 1;
+  // The number of steps.
+  uint64 length = 2;
+  // The body's carry input.
+  uint32 carry = 3;
+  // The body's per-step inputs.
+  repeated uint32 xs = 4;
+  // The body's constant inputs.
+  repeated uint32 constants = 5;
+  // The body's output.
+  uint32 output = 6;
 }
 
 // A probabilistic node. Its parents are the distribution's parameters, in the order the distribution documents.

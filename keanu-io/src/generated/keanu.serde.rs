@@ -3161,6 +3161,9 @@ impl serde::Serialize for Node {
                 node::Op::EighVectors(v) => {
                     struct_ser.serialize_field("eighVectors", v)?;
                 }
+                node::Op::Scan(v) => {
+                    struct_ser.serialize_field("scan", v)?;
+                }
             }
         }
         struct_ser.end()
@@ -3244,6 +3247,7 @@ impl<'de> serde::Deserialize<'de> for Node {
             "eigvalsh",
             "eigh_vectors",
             "eighVectors",
+            "scan",
         ];
 
         #[allow(clippy::enum_variant_names)]
@@ -3304,6 +3308,7 @@ impl<'de> serde::Deserialize<'de> for Node {
             DeterminantSign,
             Eigvalsh,
             EighVectors,
+            Scan,
         }
         impl<'de> serde::Deserialize<'de> for GeneratedField {
             fn deserialize<D>(deserializer: D) -> std::result::Result<GeneratedField, D::Error>
@@ -3381,6 +3386,7 @@ impl<'de> serde::Deserialize<'de> for Node {
                             "determinantSign" | "determinant_sign" => Ok(GeneratedField::DeterminantSign),
                             "eigvalsh" => Ok(GeneratedField::Eigvalsh),
                             "eighVectors" | "eigh_vectors" => Ok(GeneratedField::EighVectors),
+                            "scan" => Ok(GeneratedField::Scan),
                             _ => Err(serde::de::Error::unknown_field(value, FIELDS)),
                         }
                     }
@@ -3789,6 +3795,13 @@ impl<'de> serde::Deserialize<'de> for Node {
                                 return Err(serde::de::Error::duplicate_field("eighVectors"));
                             }
                             op__ = map_.next_value::<::std::option::Option<_>>()?.map(node::Op::EighVectors)
+;
+                        }
+                        GeneratedField::Scan => {
+                            if op__.is_some() {
+                                return Err(serde::de::Error::duplicate_field("scan"));
+                            }
+                            op__ = map_.next_value::<::std::option::Option<_>>()?.map(node::Op::Scan)
 ;
                         }
                     }
@@ -4480,6 +4493,196 @@ impl<'de> serde::Deserialize<'de> for Reshape {
             }
         }
         deserializer.deserialize_struct("keanu.Reshape", FIELDS, GeneratedVisitor)
+    }
+}
+impl serde::Serialize for Scan {
+    #[allow(deprecated)]
+    fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        use serde::ser::SerializeStruct;
+        let mut len = 0;
+        if self.body.is_some() {
+            len += 1;
+        }
+        if self.length != 0 {
+            len += 1;
+        }
+        if self.carry != 0 {
+            len += 1;
+        }
+        if !self.xs.is_empty() {
+            len += 1;
+        }
+        if !self.constants.is_empty() {
+            len += 1;
+        }
+        if self.output != 0 {
+            len += 1;
+        }
+        let mut struct_ser = serializer.serialize_struct("keanu.Scan", len)?;
+        if let Some(v) = self.body.as_ref() {
+            struct_ser.serialize_field("body", v)?;
+        }
+        if self.length != 0 {
+            #[allow(clippy::needless_borrow)]
+            #[allow(clippy::needless_borrows_for_generic_args)]
+            struct_ser.serialize_field("length", ToString::to_string(&self.length).as_str())?;
+        }
+        if self.carry != 0 {
+            struct_ser.serialize_field("carry", &self.carry)?;
+        }
+        if !self.xs.is_empty() {
+            struct_ser.serialize_field("xs", &self.xs)?;
+        }
+        if !self.constants.is_empty() {
+            struct_ser.serialize_field("constants", &self.constants)?;
+        }
+        if self.output != 0 {
+            struct_ser.serialize_field("output", &self.output)?;
+        }
+        struct_ser.end()
+    }
+}
+impl<'de> serde::Deserialize<'de> for Scan {
+    #[allow(deprecated)]
+    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        const FIELDS: &[&str] = &[
+            "body",
+            "length",
+            "carry",
+            "xs",
+            "constants",
+            "output",
+        ];
+
+        #[allow(clippy::enum_variant_names)]
+        enum GeneratedField {
+            Body,
+            Length,
+            Carry,
+            Xs,
+            Constants,
+            Output,
+        }
+        impl<'de> serde::Deserialize<'de> for GeneratedField {
+            fn deserialize<D>(deserializer: D) -> std::result::Result<GeneratedField, D::Error>
+            where
+                D: serde::Deserializer<'de>,
+            {
+                struct GeneratedVisitor;
+
+                impl serde::de::Visitor<'_> for GeneratedVisitor {
+                    type Value = GeneratedField;
+
+                    fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                        write!(formatter, "expected one of: {:?}", &FIELDS)
+                    }
+
+                    #[allow(unused_variables)]
+                    fn visit_str<E>(self, value: &str) -> std::result::Result<GeneratedField, E>
+                    where
+                        E: serde::de::Error,
+                    {
+                        match value {
+                            "body" => Ok(GeneratedField::Body),
+                            "length" => Ok(GeneratedField::Length),
+                            "carry" => Ok(GeneratedField::Carry),
+                            "xs" => Ok(GeneratedField::Xs),
+                            "constants" => Ok(GeneratedField::Constants),
+                            "output" => Ok(GeneratedField::Output),
+                            _ => Err(serde::de::Error::unknown_field(value, FIELDS)),
+                        }
+                    }
+                }
+                deserializer.deserialize_identifier(GeneratedVisitor)
+            }
+        }
+        struct GeneratedVisitor;
+        impl<'de> serde::de::Visitor<'de> for GeneratedVisitor {
+            type Value = Scan;
+
+            fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                formatter.write_str("struct keanu.Scan")
+            }
+
+            fn visit_map<V>(self, mut map_: V) -> std::result::Result<Scan, V::Error>
+                where
+                    V: serde::de::MapAccess<'de>,
+            {
+                let mut body__ = None;
+                let mut length__ = None;
+                let mut carry__ = None;
+                let mut xs__ = None;
+                let mut constants__ = None;
+                let mut output__ = None;
+                while let Some(k) = map_.next_key()? {
+                    match k {
+                        GeneratedField::Body => {
+                            if body__.is_some() {
+                                return Err(serde::de::Error::duplicate_field("body"));
+                            }
+                            body__ = map_.next_value()?;
+                        }
+                        GeneratedField::Length => {
+                            if length__.is_some() {
+                                return Err(serde::de::Error::duplicate_field("length"));
+                            }
+                            length__ = 
+                                Some(map_.next_value::<::pbjson::private::NumberDeserialize<_>>()?.0)
+                            ;
+                        }
+                        GeneratedField::Carry => {
+                            if carry__.is_some() {
+                                return Err(serde::de::Error::duplicate_field("carry"));
+                            }
+                            carry__ = 
+                                Some(map_.next_value::<::pbjson::private::NumberDeserialize<_>>()?.0)
+                            ;
+                        }
+                        GeneratedField::Xs => {
+                            if xs__.is_some() {
+                                return Err(serde::de::Error::duplicate_field("xs"));
+                            }
+                            xs__ = 
+                                Some(map_.next_value::<Vec<::pbjson::private::NumberDeserialize<_>>>()?
+                                    .into_iter().map(|x| x.0).collect())
+                            ;
+                        }
+                        GeneratedField::Constants => {
+                            if constants__.is_some() {
+                                return Err(serde::de::Error::duplicate_field("constants"));
+                            }
+                            constants__ = 
+                                Some(map_.next_value::<Vec<::pbjson::private::NumberDeserialize<_>>>()?
+                                    .into_iter().map(|x| x.0).collect())
+                            ;
+                        }
+                        GeneratedField::Output => {
+                            if output__.is_some() {
+                                return Err(serde::de::Error::duplicate_field("output"));
+                            }
+                            output__ = 
+                                Some(map_.next_value::<::pbjson::private::NumberDeserialize<_>>()?.0)
+                            ;
+                        }
+                    }
+                }
+                Ok(Scan {
+                    body: body__,
+                    length: length__.unwrap_or_default(),
+                    carry: carry__.unwrap_or_default(),
+                    xs: xs__.unwrap_or_default(),
+                    constants: constants__.unwrap_or_default(),
+                    output: output__.unwrap_or_default(),
+                })
+            }
+        }
+        deserializer.deserialize_struct("keanu.Scan", FIELDS, GeneratedVisitor)
     }
 }
 impl serde::Serialize for ScatterAdd {

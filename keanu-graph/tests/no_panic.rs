@@ -40,6 +40,7 @@ enum Step {
     Eigh,
     Standardize,
     Gaussian(usize),
+    Scan(usize),
 }
 
 fn shape() -> impl Strategy<Value = Vec<usize>> {
@@ -103,6 +104,7 @@ fn step() -> impl Strategy<Value = Step> {
         Just(Step::Eigh),
         Just(Step::Standardize),
         (0usize..8).prop_map(Step::Gaussian),
+        (0usize..8).prop_map(Step::Scan),
     ]
 }
 
@@ -168,6 +170,7 @@ proptest! {
                 }
                 Step::Standardize => last.standardize(),
                 Step::Gaussian(i) => b.gaussian(last, pick(*i).abs() + 1.0),
+                Step::Scan(i) => b.scan(pick(*i), &[last], &[last], |_, c, x, k| (c * x[0]).sin() + k[0].sum()),
             };
             nodes.push(next);
         }
@@ -191,7 +194,7 @@ proptest! {
     /// Steps whose parameters are chosen to be valid for the current shape, so that evaluation and both auto diff
     /// modes are exercised on deep random graphs (the property above mostly exercises construction errors).
     #[test]
-    fn random_valid_graphs_evaluate_and_differentiate_without_panicking(start in prop::collection::vec(1usize..4, 0..4), choices in prop::collection::vec((0usize..14, any::<u8>()), 0..16)) {
+    fn random_valid_graphs_evaluate_and_differentiate_without_panicking(start in prop::collection::vec(1usize..4, 0..4), choices in prop::collection::vec((0usize..15, any::<u8>()), 0..16)) {
         let b = GraphBuilder::new();
         let latent = b.gaussian_with_shape(&start, 0.0, 1.0);
         let mut last: DoubleVar<'_> = latent;
@@ -217,6 +220,7 @@ proptest! {
                 11 if rank >= 1 => last.cumsum(-1),
                 12 if rank >= 1 => last.slice("::-1"),
                 13 => b.gaussian(last, 1.0),
+                14 if rank >= 1 => b.scan(b.constant(DoubleTensor::zeros(&shape[1..])), &[last], &[latent], |_, c, x, k| (c + x[0]).sin() * k[0].sum()),
                 _ => last.sigmoid(),
             };
         }

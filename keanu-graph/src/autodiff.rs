@@ -90,7 +90,8 @@ pub fn is_differentiable(graph: &Graph, id: NodeId) -> bool {
             | Op::Standardize
             | Op::Softmax { .. }
             | Op::LogSoftmax { .. }
-            | Op::Cumulative { .. } => true,
+            | Op::Cumulative { .. }
+            | Op::Scan(_) => true,
             Op::Reshape(_)
             | Op::Permute(_)
             | Op::Transpose
@@ -296,7 +297,7 @@ pub(crate) fn reverse_from_seeds(
 /// The reverse sweep: from batched cotangents `[b, node shape...]` at the seed nodes (summed where a node is
 /// seeded twice), visits differentiable ancestors in decreasing id order, stopping at probabilistic nodes and at
 /// the nodes marked in `is_wrt`, whose batched cotangents it emits.
-fn reverse_sweep(
+pub(crate) fn reverse_sweep(
     graph: &Graph,
     state: &State,
     seeds: impl IntoIterator<Item = (NodeId, DoubleTensor)>,
@@ -1709,6 +1710,7 @@ fn jvp(
             let Some(t0) = t[0] else { return Ok(None) };
             Some(scale(t0, &not_nan_mask(parents)?)?)
         }
+        Op::Scan(body) => body.jvp(parents, y, t, b)?,
         Op::Lambda(lambda) => {
             let jacobian = lambda.jacobian.as_ref().ok_or_else(|| {
                 GraphError::NotDifferentiable(format!("lambda {} has no jacobian", lambda.name))
@@ -2028,6 +2030,7 @@ fn vjp(
             vec![Some(to_operand), None, Some(to_value)]
         }
         Op::ReplaceNan(_) => vec![Some(g.mul(&not_nan_mask(parents)?)?)],
+        Op::Scan(body) => body.vjp(parents, y, g, b)?,
         Op::Lambda(lambda) => {
             let jacobian = lambda.jacobian.as_ref().ok_or_else(|| {
                 GraphError::NotDifferentiable(format!("lambda {} has no jacobian", lambda.name))
@@ -2429,6 +2432,7 @@ fn vjp_tangent(
                 .add(&q.matmul(&inner)?.matmul_transposed(q_dot, false, true)?)?;
             vec![Some(lower_from_symmetric(&s_bar_dot)?)]
         }
+        Op::Scan(body) => body.vjp_tangent(parents, y, g, t, yt, b)?,
         Op::Lambda(lambda) => {
             return Err(GraphError::NoSecondOrderRule(format!(
                 "the lambda {:?} (node {})",

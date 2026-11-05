@@ -41,6 +41,7 @@ pub(crate) fn output_type(op: &Op, parents: &[(DType, &[usize])]) -> Result<(DTy
             "proxy and probabilistic nodes are created with add_proxy and add_distribution",
         )),
         Op::Lambda(l) => Ok((l.dtype, Shape::from_slice(&l.shape))),
+        Op::Scan(body) => body.output_type(parents),
         Op::MatMul {
             transpose_left,
             transpose_right,
@@ -225,6 +226,10 @@ fn check_arity(op: &Op, count: usize) -> Result<()> {
         Op::Multiplexer => (2, None),
         Op::Cpt { conditions, keys } => {
             let n = conditions + keys.len() + 1;
+            (n, Some(n))
+        }
+        Op::Scan(body) => {
+            let n = body.parent_count();
             (n, Some(n))
         }
         // a lambda takes any parents; proxies and distributions are rejected by the caller

@@ -1,7 +1,7 @@
 //! Graphviz DOT export.
 
 use crate::Metadata;
-use keanu_graph::op::{BinaryOp, DistributionKind, LogicOp, Op};
+use keanu_graph::op::{BinaryOp, DistributionKind, LogicOp, Op, ScanBody};
 use keanu_graph::{Graph, NodeId, State, Value};
 use std::fmt::Write;
 
@@ -47,7 +47,9 @@ fn scalar_value(value: &Value) -> Option<String> {
 }
 
 /// A Graphviz DOT description of the graph. With `state`, scalar values are shown in the node labels; constants
-/// always show their scalar value. Distribution edges are labelled with the parameter names.
+/// always show their scalar value. Distribution edges are labelled with the parameter names. A scan's body is drawn
+/// as a cluster subgraph (nodes named `"<scan>.<body node>"`, recursively for nested scans), with a dashed edge from
+/// the body's output to the scan node.
 pub fn to_dot(graph: &Graph, state: Option<&State>, metadata: &Metadata) -> String {
     let mut out = String::from("digraph BayesianNetwork {\n");
     if !metadata.is_empty() {
@@ -56,24 +58,57 @@ pub fn to_dot(graph: &Graph, state: Option<&State>, metadata: &Metadata) -> Stri
             let _ = writeln!(out, "// {key}={value}");
         }
     }
+    write_graph(&mut out, graph, state, "", None);
+    out.push('}');
+    out
+}
+
+/// A node's DOT id: its index at the top level (`<i>` in edges), and the quoted, dotted path of indices inside scan
+/// bodies.
+fn dot_id(prefix: &str, id: NodeId, edge: bool) -> String {
+    match (prefix, edge) {
+        ("", true) => format!("<{}>", id.index()),
+        ("", false) => id.index().to_string(),
+        _ => format!("\"{prefix}{}\"", id.index()),
+    }
+}
+
+/// The role of a scan body's input node: `carry`, `xs[i]` or `constants[i]`.
+fn input_name(body: &ScanBody, id: NodeId) -> Option<String> {
+    if id == body.carry() {
+        return Some("carry".into());
+    }
+    if let Some(i) = body.xs().iter().position(|&x| x == id) {
+        return Some(format!("xs[{i}]"));
+    }
+    let i = body.constants().iter().position(|&c| c == id)?;
+    Some(format!("constants[{i}]"))
+}
+
+/// Writes a graph's edges, node labels and scan body clusters, naming its nodes with `prefix`. In a scan body
+/// (`scan`), the inputs are labelled by their role.
+fn write_graph(
+    out: &mut String,
+    graph: &Graph,
+    state: Option<&State>,
+    prefix: &str,
+    scan: Option<&ScanBody>,
+) {
     for child in graph.ids() {
         let node = &graph[child];
         let names = match node.op() {
             Op::Distribution(d) => d.kind.parameter_names().unwrap_or_default(),
             _ => Default::default(),
         };
+        let child_id = dot_id(prefix, child, true);
         for (i, parent) in node.parents().iter().enumerate() {
+            let parent_id = dot_id(prefix, *parent, true);
             match names.get(i) {
                 Some(name) => {
-                    let _ = writeln!(
-                        out,
-                        "<{}> -> <{}> [label={name}]",
-                        parent.index(),
-                        child.index()
-                    );
+                    let _ = writeln!(out, "{parent_id} -> {child_id} [label={name}]");
                 }
                 None => {
-                    let _ = writeln!(out, "<{}> -> <{}>", parent.index(), child.index());
+                    let _ = writeln!(out, "{parent_id} -> {child_id}");
                 }
             }
         }
@@ -82,12 +117,32 @@ pub fn to_dot(graph: &Graph, state: Option<&State>, metadata: &Metadata) -> Stri
         let _ = writeln!(
             out,
             "{}[label=\"{}\"]",
-            id.index(),
-            escape(&node_label(graph, state, id))
+            dot_id(prefix, id, false),
+            escape(
+                &scan
+                    .and_then(|s| input_name(s, id))
+                    .unwrap_or_else(|| node_label(graph, state, id))
+            )
         );
     }
-    out.push('}');
-    out
+    for id in graph.ids() {
+        if let Op::Scan(body) = graph[id].op() {
+            let inner = format!("{prefix}{}.", id.index());
+            let _ = writeln!(
+                out,
+                "subgraph \"cluster_{inner}\" {{\nlabel=\"scan body ({} steps)\"",
+                body.length()
+            );
+            write_graph(out, body.graph(), None, &inner, Some(body));
+            out.push_str("}\n");
+            let _ = writeln!(
+                out,
+                "{} -> {} [style=dashed]",
+                dot_id(&inner, body.output(), true),
+                dot_id(prefix, id, true)
+            );
+        }
+    }
 }
 
 /// Escapes text for a double-quoted DOT string: quotes and backslashes are escaped, and line breaks become `\n`.

@@ -1282,3 +1282,77 @@ fn e_bfmi_is_nan_for_too_few_or_degenerate_energies() {
     let drift: Vec<f64> = (0..100).map(f64::from).collect();
     assert!(diagnostics::e_bfmi(&drift) < 0.01);
 }
+
+/// The AR(1) model x_t = φ x_{t-1} + ε_t, φ ~ N(0.5, 0.3²), ε ~ N(0, 1), y_t ~ N(x_t, 0.5) observed, with x built by
+/// a scan or unrolled. Returns the model, its state and (φ, ε).
+fn ar1_model(scan: bool) -> (Model, State, NodeId, NodeId) {
+    let data = [0.4, 0.9, 0.2, -0.5, -0.1];
+    let b = GraphBuilder::new();
+    let phi = b.gaussian(0.5, 0.3);
+    let eps = b.gaussian_with_shape(&[data.len()], 0.0, 1.0);
+    let x0 = b.scalar(0.2);
+    let x = if scan {
+        b.scan(x0, &[eps], &[phi], |_, x, e, c| c[0] * x + e[0])
+    } else {
+        let mut x = x0;
+        let items: Vec<_> = (0..data.len())
+            .map(|t| {
+                x = phi * x + eps.take(&[t]);
+                x
+            })
+            .collect();
+        b.stack(0, &items)
+    };
+    let y = b.gaussian(x, 0.5);
+    b.observe(y, DoubleTensor::vector(data.to_vec()));
+    b.set_value(phi, DoubleTensor::scalar(0.5));
+    b.set_value(eps, DoubleTensor::vector(vec![0.0; data.len()]));
+    let (phi, eps) = (phi.id(), eps.id());
+    let (graph, state) = b.build().unwrap();
+    (Model::new(graph, &state).unwrap(), state, phi, eps)
+}
+
+#[test]
+fn nuts_on_a_scan_model_matches_the_unrolled_model() {
+    let run = |scan: bool, seed: u64| {
+        let (model, mut state, phi, eps) = ar1_model(scan);
+        let samples = Nuts::default()
+            .with_adapt_count(300)
+            .sample_with_statistics(
+                &model,
+                &mut state,
+                &[phi, eps],
+                3000,
+                SamplingOptions::default()
+                    .with_drop(300)
+                    .with_down_sample_interval(1),
+                &mut rng(seed),
+            )
+            .unwrap()
+            .0;
+        let eps0 = samples.f64(eps).unwrap().element(&[0]).unwrap();
+        (series(&samples, phi), eps0)
+    };
+    // the scan's log probability and gradient are bit for bit the unrolled model's, so with the same seed the
+    // chains are identical
+    let (phi_scan, eps_scan) = run(true, 21);
+    let (phi_unrolled, eps_unrolled) = run(false, 21);
+    assert_eq!(phi_scan, phi_unrolled);
+    assert_eq!(eps_scan, eps_unrolled);
+    // and an independent unrolled chain agrees on the posterior means within Monte Carlo error
+    let (phi_other, eps_other) = run(false, 22);
+    for (label, a, b) in [
+        ("phi", &phi_scan, &phi_other),
+        ("eps[0]", &eps_scan, &eps_other),
+    ] {
+        let (ess_a, ess_b) = (effective_sample_size(a), effective_sample_size(b));
+        let v = variance(b);
+        let tolerance = 5.0 * (v / ess_a + v / ess_b).sqrt();
+        assert!(
+            (mean(a) - mean(b)).abs() < tolerance,
+            "{label}: scan mean {} vs unrolled {} (tolerance {tolerance})",
+            mean(a),
+            mean(b)
+        );
+    }
+}

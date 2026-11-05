@@ -688,6 +688,41 @@ fn kalman_filters() -> keanu::Result<()> {
     Ok(())
 }
 
+#[test]
+fn scan() -> keanu::Result<()> {
+    // ANCHOR: scan
+    // an AR(1) process x[t] = phi x[t-1] + sigma eps[t], observed with noise as y[t] ~ N(x[t], 0.5)
+    let observations = [0.3, 1.1, 0.9, 1.8, 2.4, 1.7, 1.2, 0.4];
+    let b = GraphBuilder::new();
+    let phi = b.uniform(-1.0, 1.0);
+    let sigma = b.half_gaussian(1.0);
+    // the per-step noise is one vector latent, outside the loop
+    let eps = b.gaussian_with_shape(&[observations.len()], 0.0, 1.0);
+    // the body sees placeholders: the carry, step t of each per-step input, and the constants
+    let x = b.scan(b.scalar(0.0), &[eps], &[phi, sigma], |_body, x, eps, c| {
+        c[0] * x + c[1] * eps[0]
+    });
+    assert_eq!(x.shape(), vec![observations.len()]);
+    let y = b.gaussian(x, 0.5);
+    b.observe(y, DoubleTensor::vector(observations.to_vec()));
+    let phi = phi.id();
+    let (graph, mut state) = b.build()?;
+
+    // the graph holds the body once: its size doesn't grow with the number of steps
+    assert!(graph.len() < 20);
+    let model = Model::new(graph, &state)?;
+    let mut rng = KeanuRng::seed_from_u64(1);
+    model.probe_for_non_zero_probability(&mut state, 10, &mut rng)?;
+    let samples =
+        Nuts::default()
+            .with_adapt_count(200)
+            .sample(&model, &mut state, &[phi], 500, &mut rng)?;
+    let phi_samples = samples.f64(phi).unwrap().element(&[])?;
+    assert!(phi_samples.iter().all(|p| (-1.0..=1.0).contains(p)));
+    // ANCHOR_END: scan
+    Ok(())
+}
+
 #[cfg(feature = "json")]
 #[test]
 fn save_and_load() -> keanu::Result<()> {

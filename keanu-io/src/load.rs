@@ -6,9 +6,10 @@ use crate::error::{IoError, Result};
 use crate::proto;
 use crate::proto::node::Op as P;
 use crate::save::FORMAT_VERSION;
-use keanu_graph::op::Op;
+use keanu_graph::op::{Op, ScanBody};
 use keanu_graph::{DType, Graph, GraphBuilder, NodeId, State, Value};
 use keanu_tensor::{BoolTensor, DoubleTensor, IntTensor};
+use std::sync::Arc;
 
 /// A loaded model: its graph, the saved values (observations are observed) and the saved metadata. Saved node `i`
 /// is the graph's node `NodeId::from_index(i)`.
@@ -86,6 +87,16 @@ pub(crate) fn load_model(model: &proto::Model) -> Result<Loaded> {
         .graph
         .as_ref()
         .ok_or_else(|| IoError::Decode("the model has no graph".into()))?;
+    let (graph, state) = load_graph(saved)?;
+    Ok(Loaded {
+        graph,
+        state,
+        metadata: model.metadata.clone(),
+    })
+}
+
+/// Builds a graph and its state from a saved graph.
+fn load_graph(saved: &proto::Graph) -> Result<(Graph, State)> {
     let builder = GraphBuilder::new();
     for (index, node) in saved.nodes.iter().enumerate() {
         let invalid = |message: String| IoError::InvalidNode { index, message };
@@ -133,12 +144,29 @@ pub(crate) fn load_model(model: &proto::Model) -> Result<Loaded> {
             builder.set_value_of(node, value)?;
         }
     }
-    let (graph, state) = builder.build()?;
-    Ok(Loaded {
+    Ok(builder.build()?)
+}
+
+/// The body of a saved scan.
+fn scan_body(p: &proto::Scan) -> Result<ScanBody> {
+    let saved = p
+        .body
+        .as_ref()
+        .ok_or_else(|| IoError::Decode("a scan has no body".into()))?;
+    if !saved.values.is_empty() {
+        return Err(IoError::Decode("a scan body has stored values".into()));
+    }
+    let id = |i: u32| -> Result<NodeId> { Ok(NodeId::from_index(usize_of(u64::from(i))?)) };
+    let ids = |v: &[u32]| v.iter().map(|&i| id(i)).collect::<Result<Vec<_>>>();
+    let (graph, _) = load_graph(saved)?;
+    Ok(ScanBody::new(
         graph,
-        state,
-        metadata: model.metadata.clone(),
-    })
+        usize_of(p.length)?,
+        id(p.carry)?,
+        ids(&p.xs)?,
+        ids(&p.constants)?,
+        id(p.output)?,
+    )?)
 }
 
 /// Adds the node of a saved operation.
@@ -238,6 +266,11 @@ fn add_node(builder: &GraphBuilder, op: &P, parents: &[NodeId]) -> Result<NodeId
                 _ => return Err(IoError::Decode("a proxy has more than one parent".into())),
             }
             return Ok(proxy);
+        }
+        P::Scan(p) => {
+            Op::Scan(Arc::new(scan_body(p).map_err(|e| {
+                IoError::Decode(format!("in the scan body: {e}"))
+            })?))
         }
         P::Distribution(p) => {
             let kind = distribution_of_type(&proto::DistributionType {

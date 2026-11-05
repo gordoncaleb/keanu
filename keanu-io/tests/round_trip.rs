@@ -396,7 +396,29 @@ fn op_cases() -> Vec<(String, Graph, State)> {
     b.add_proxy(DType::I64, &[4]);
     let (graph, state) = b.build().unwrap();
     cases.push(("Proxy".into(), graph, state));
+    cases.push(scan_case());
     cases
+}
+
+/// Scans: one with per-step inputs, constants and a labelled body holding a nested scan, and one of zero steps.
+fn scan_case() -> (String, Graph, State) {
+    let b = GraphBuilder::new();
+    let xs = b.constant(DoubleTensor::new(&[3, 2], vec![0.5, -0.1, 0.2, 0.9, -0.6, 0.4]).unwrap());
+    let w = b.constant(DoubleTensor::new(&[2, 2], vec![0.8, -0.3, 0.2, 0.6]).unwrap());
+    let init = b.constant(DoubleTensor::vector(vec![0.3, -0.4]));
+    let scan = b.scan(init, &[xs], &[w], |body, h, x, c| {
+        let wh = c[0].matmul(h.reshape(&[2, 1])).reshape(&[2]).label("wh");
+        let inner = body.scan_steps(2, h, &[], |_, g, _| g * 0.5);
+        (wh + x[0]).tanh() + inner.sum_axes(&[0])
+    });
+    b.set_label_of(scan.id(), "x").unwrap();
+    b.scan_steps(0, b.scalar(1.0), &[], |_, g, _| g.exp());
+    let (graph, mut state) = b.build().unwrap();
+    let all: Vec<NodeId> = graph.ids().collect();
+    state
+        .lazy_eval(&graph, &all, &mut KeanuRng::seed_from_u64(0))
+        .unwrap();
+    ("Scan".into(), graph, state)
 }
 
 /// The parameter values a distribution is built with in [`distribution_cases`]: scalars (or, for the multivariate
@@ -673,6 +695,7 @@ fn every_operation_round_trips() {
         "replace_nan",
         "proxy",
         "assert",
+        "scan",
     ];
     assert_eq!(names, every_op.into_iter().collect::<BTreeSet<_>>());
     for (name, graph, state) in &cases {
@@ -1034,6 +1057,56 @@ fn invalid_nodes_are_reported_with_their_index() {
     assert!(matches!(load_json(&tril), Err(IoError::Graph(_))));
 }
 
+/// A saved model whose last node is a scan of two steps over a scalar carry with one constant: body nodes
+/// [carry, constant, carry * constant].
+fn saved_scan() -> Json {
+    let b = GraphBuilder::new();
+    let k = b.scalar(0.5);
+    b.scan_steps(2, b.scalar(1.0), &[k], |_, x, c| x * c[0]);
+    let (graph, state) = b.build().unwrap();
+    serde_json::from_str(&save_json(&graph, &state, &Metadata::new()).unwrap()).unwrap()
+}
+
+#[test]
+fn invalid_scan_bodies_are_rejected() {
+    let scan_index = 2;
+    let edit = |f: &dyn Fn(&mut Json)| {
+        let mut model = saved_scan();
+        f(&mut model["graph"]["nodes"][scan_index]["scan"]);
+        load_json(&model.to_string())
+    };
+    assert!(edit(&|_| {}).is_ok());
+    type Edit<'a> = &'a dyn Fn(&mut Json);
+    let rejected: [(&str, Edit<'_>); 5] = [
+        ("no body", &|scan| {
+            scan.as_object_mut().unwrap().remove("body");
+        }),
+        ("stored values", &|scan| {
+            scan["body"]["values"] =
+                serde_json::json!([{"node": 2, "value": {"shape": [], "f64": {"values": [1.0]}}}]);
+        }),
+        ("an unknown output", &|scan| scan["output"] = 9.into()),
+        ("a carry that isn't a proxy", &|scan| {
+            scan["carry"] = 2.into()
+        }),
+        ("a distribution", &|scan| {
+            scan["body"]["nodes"][2] = serde_json::json!({"parents": [0, 1],
+                "distribution": {"kind": "DISTRIBUTION_KIND_GAUSSIAN"}});
+        }),
+    ];
+    for (name, f) in rejected {
+        let result = edit(f);
+        assert!(is_invalid_node(result, scan_index), "{name}");
+    }
+    // the parents must match the body's inputs
+    let mut model = saved_scan();
+    model["graph"]["nodes"][scan_index]["parents"] = serde_json::json!([1]);
+    assert!(matches!(
+        load_json(&model.to_string()),
+        Err(IoError::Graph(_))
+    ));
+}
+
 #[test]
 fn invalid_shapes_and_values_are_decode_errors() {
     let is_decode_error = |result: keanu_io::Result<Loaded>| {
@@ -1143,4 +1216,42 @@ fn dot_labels_are_escaped() {
     let (graph, _) = b.build().unwrap();
     let dot = keanu_io::to_dot(&graph, None, &Metadata::new());
     assert!(dot.contains(r#"2[label="say \"hi\"\\\nbye"]"#), "{dot}");
+}
+
+#[cfg(feature = "dot")]
+#[test]
+fn dot_draws_scan_bodies_as_clusters() {
+    let b = GraphBuilder::new();
+    let k = b.scalar(0.5);
+    let x = b.scan_steps(2, b.scalar(1.0), &[k], |body, x, c| {
+        let inner = body.scan_steps(3, x, &[], |_, y, _| y.exp());
+        x * c[0] + inner.sum()
+    });
+    let x = x.id();
+    let (graph, _) = b.build().unwrap();
+    let dot = keanu_io::to_dot(&graph, None, &Metadata::new());
+    let s = x.index();
+    assert!(
+        dot.contains(&format!(
+            "subgraph \"cluster_{s}.\" {{\nlabel=\"scan body (2 steps)\""
+        )),
+        "{dot}"
+    );
+    // body edges and labels use the scan's prefix, and the output feeds the scan node
+    assert!(dot.contains(&format!("\"{s}.0\" -> \"{s}.2\"")), "{dot}");
+    assert!(
+        dot.contains(&format!("\"{s}.1\"[label=\"constants[0]\"]")),
+        "{dot}"
+    );
+    assert!(dot.contains(&format!("-> <{s}> [style=dashed]")), "{dot}");
+    assert!(dot.contains(&format!("{s}[label=\"scan\"]")), "{dot}");
+    // the nested scan's body is a cluster inside it
+    assert!(
+        dot.contains(&format!("subgraph \"cluster_{s}.2.\"")),
+        "{dot}"
+    );
+    assert!(
+        dot.contains(&format!("\"{s}.2.0\"[label=\"carry\"]")),
+        "{dot}"
+    );
 }

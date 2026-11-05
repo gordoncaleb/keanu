@@ -34,7 +34,7 @@ pub struct Node {
     pub label: ::prost::alloc::string::String,
     #[prost(
         oneof = "node::Op",
-        tags = "10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63"
+        tags = "10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 100"
     )]
     pub op: ::core::option::Option<node::Op>,
 }
@@ -150,6 +150,8 @@ pub mod node {
         Eigvalsh(super::Empty),
         #[prost(message, tag = "63")]
         EighVectors(super::Empty),
+        #[prost(message, tag = "100")]
+        Scan(super::Scan),
     }
 }
 /// The parameters of an operation that has none.
@@ -374,6 +376,30 @@ pub struct Proxy {
 pub struct Assert {
     #[prost(string, optional, tag = "1")]
     pub message: ::core::option::Option<::prost::alloc::string::String>,
+}
+/// The general scan. Its parents are the initial carry, then one per-step input per `xs` entry, then one per
+/// `constants` entry. The body is a nested graph, deterministic and without stored values, whose inputs are
+/// unconnected f64 proxies: the carry, one step of each per-step input, and each constant. Its `output` node is the
+/// next carry.
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct Scan {
+    #[prost(message, optional, tag = "1")]
+    pub body: ::core::option::Option<Graph>,
+    /// The number of steps.
+    #[prost(uint64, tag = "2")]
+    pub length: u64,
+    /// The body's carry input.
+    #[prost(uint32, tag = "3")]
+    pub carry: u32,
+    /// The body's per-step inputs.
+    #[prost(uint32, repeated, tag = "4")]
+    pub xs: ::prost::alloc::vec::Vec<u32>,
+    /// The body's constant inputs.
+    #[prost(uint32, repeated, tag = "5")]
+    pub constants: ::prost::alloc::vec::Vec<u32>,
+    /// The body's output.
+    #[prost(uint32, tag = "6")]
+    pub output: u32,
 }
 /// A probabilistic node. Its parents are the distribution's parameters, in the order the distribution documents.
 #[derive(Clone, PartialEq, ::prost::Message)]
