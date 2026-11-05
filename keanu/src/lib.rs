@@ -96,7 +96,7 @@ pub mod prelude {
     pub use crate::distributions::KeanuRng;
     pub use crate::graph::{
         BoolVar, CustomDistribution, CustomGradient, DType, DoubleVar, Graph, GraphBuilder, IntVar,
-        Model, NodeId, State, Support, Value, Var,
+        Model, NodeId, Parameterisation, Space, State, Support, Value, Var,
     };
     pub use crate::tensor::{BoolTensor, DoubleTensor, IntTensor, Tensor};
     pub use crate::{Error, Result};

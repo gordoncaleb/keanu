@@ -40,6 +40,7 @@ mod graph;
 mod logprob;
 mod model;
 pub mod op;
+pub mod parameterisation;
 pub mod sequence;
 mod state;
 pub mod transform;
@@ -59,6 +60,7 @@ pub use logprob::{
 };
 pub use model::{LambdaSection, Model, downstream_lambda_section, upstream_lambda_section};
 pub use op::{CustomDistribution, CustomGradient, Support};
+pub use parameterisation::{Parameterisation, Space};
 pub use state::State;
 pub use value::{DType, Value};
 pub use vars::{BoolVar, DoubleVar, IntVar, IntoBoolVar, IntoDoubleVar, IntoIntVar, Var};
