@@ -3,7 +3,8 @@
 These live in `keanu/examples`. Run one with `cargo run --release --example <name>`. Each is also an
 integration test (`keanu/tests/examples.rs`): the examples ported from Java check the same results the Java
 examples' tests check, and the hierarchical ones check multi-chain R-hat, divergences and posterior means.
-The Gaussian process example checks its prediction against the function its data were generated from.
+The Gaussian process, stochastic volatility and hidden Markov model examples check their results against the
+functions or parameters their synthetic data were generated from.
 
 | Example | Question |
 |---|---|
@@ -17,6 +18,8 @@ The Gaussian process example checks its prediction against the function its data
 | `radon` | How much does indoor radon vary between Minnesota counties? A varying-intercept model |
 | `gaussian_mixture` | Which of two groups does each measurement come from, and what are the groups like? |
 | `gp_regression` | What smooth function produced noisy measurements? Gaussian process hyperparameters by NUTS |
+| `stochastic_volatility` | How volatile are daily returns, and how persistent is the volatility? A scan over latent innovations |
+| `hmm` | When does a series switch regime, and how often? A two-state hidden Markov model |
 
 The first five come from *Bayesian Methods for Hackers* by Cameron Davidson-Pilon; `eight_schools` and `radon` are
 classic hierarchical models from Gelman et al. `gaussian_mixture` is checked against the mixture its synthetic data
@@ -65,6 +68,8 @@ Gelman & Hill's book.
 
 ```rust,ignore
 {{#include ../../keanu/examples/radon.rs}}
+```
+
 ## A Gaussian mixture
 
 A two-component mixture with a Dirichlet prior on the weights and ordered means, built as the first mean plus a
@@ -92,4 +97,42 @@ within two predictive standard deviations of sin(x) at every grid point.
 
 ```rust,ignore
 {{#include ../../keanu/examples/gp_regression.rs}}
+```
+
+## Stochastic volatility
+
+The stochastic volatility model of the Stan User's Guide: daily returns r_t ~ N(0, exp(h_t / 2)), with the log
+variance h_t a stationary AR(1) process, h_t = mu + phi (h_{t−1} − mu) + sigma eps_t. The innovations eps are
+non-centred, a standard normal vector latent, and h is built from them with a [scan](sequences.md#scan-a-loop-in-one-node):
+one node holding the loop body, with the scaled innovations as its per-step input and the level and persistence as
+constants, so the graph has the same size for any number of days. The priors are mu ~ N(0, 10), (phi + 1) / 2 ~
+Beta(20, 1.5) and sigma ~ HalfCauchy(5).
+
+The data (`keanu/examples/data/returns.csv`) are 200 days simulated from the model with mu = −1, phi = 0.9 and
+sigma = 0.4 by the example's `simulate` function with a fixed seed; the file holds the true log variance alongside
+each return, and a test checks that `simulate` still reproduces it. Four NUTS chains with a target acceptance of
+0.95 recover phi and sigma within their posterior uncertainty, with every R-hat below 1.01. As phi nears 1 the level
+mu and the slow movements of h trade off along a curved ridge, and a few trajectories in a thousand diverge there
+even at a target acceptance of 0.99; the test checks that fewer than 1% do.
+
+```rust,ignore
+{{#include ../../keanu/examples/stochastic_volatility.rs}}
+```
+
+## A hidden Markov model
+
+Four hundred observations of a series that switches between two regimes, simulated with Gaussian emissions of means
+−1 and 2 and the transition matrix [[0.95, 0.05], [0.10, 0.90]]. The model is a
+[hidden Markov model distribution](sequences.md#hidden-markov-models-and-state-space-models): the hidden states are
+summed out by the forward algorithm, so NUTS samples only the transition matrix, the means and the noise scale. Each
+row of the transition matrix has a Dirichlet prior, and the rows are stacked into the matrix.
+
+Swapping the two states' labels leaves the likelihood unchanged, so the posterior has two copies of each mode and
+chains can settle in different ones (label switching), which makes R-hat meaningless. The example removes the copy
+by ordering the emission means: the first mean plus a positive gap, as in the Gaussian mixture, so state 0 is always
+the regime with the lower mean. Its test checks every R-hat below 1.01, the transition probabilities, means and noise
+scale within their posterior uncertainty of the truth, and the ordering in every draw.
+
+```rust,ignore
+{{#include ../../keanu/examples/hmm.rs}}
 ```

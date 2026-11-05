@@ -8,7 +8,8 @@
 //!
 //! The hierarchical examples with no Java counterpart (eight schools, radon) are checked against published or
 //! independently computed posteriors, with multi-chain R-hat and divergence counts; each passed over seeds 1 to 8.
-//! The GP regression example is checked against the function its data were generated from.
+//! The GP regression example is checked against the function its data were generated from, and the stochastic
+//! volatility and hidden Markov model examples against the parameters their synthetic data were simulated with.
 
 #![allow(dead_code)]
 
@@ -28,8 +29,12 @@ mod eight_schools;
 mod gaussian_mixture;
 #[path = "../examples/gp_regression.rs"]
 mod gp_regression;
+#[path = "../examples/hmm.rs"]
+mod hmm;
 #[path = "../examples/radon.rs"]
 mod radon;
+#[path = "../examples/stochastic_volatility.rs"]
+mod stochastic_volatility;
 #[path = "../examples/text_messaging.rs"]
 mod text_messaging;
 
@@ -329,5 +334,104 @@ fn gp_regression_recovers_the_sine_curve() {
         );
         // the data pin the function down: the predictive sd is well below the function's amplitude of 1
         assert!(*s < 0.3, "predictive sd {s} at x = {x}");
+    }
+}
+
+#[test]
+fn stochastic_volatility_data_is_reproducible() {
+    use stochastic_volatility::{DATA_SEED, DAYS, data, simulate, to_csv};
+    let simulated = simulate(DAYS, DATA_SEED);
+    if std::env::var_os("KEANU_REGENERATE").is_some() {
+        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/examples/data/returns.csv");
+        std::fs::write(path, to_csv(&simulated)).unwrap();
+    }
+    let bundled = data();
+    assert_eq!(bundled.returns.len(), DAYS);
+    for (what, a, b) in [
+        (
+            "log variance",
+            &bundled.log_variance,
+            &simulated.log_variance,
+        ),
+        ("return", &bundled.returns, &simulated.returns),
+    ] {
+        for (t, (a, b)) in a.iter().zip(b).enumerate() {
+            assert_close(*a, *b, 1e-11, &format!("day {t} {what}"));
+        }
+    }
+}
+
+#[test]
+fn stochastic_volatility_recovers_the_simulated_parameters() {
+    // 4 chains of 500 draws after 500 adaptation steps each, on the 200 bundled days. Over seeds 1 to 8 every R-hat
+    // (the three parameters and the 200 log variances) was below 1.009, and 1 to 14 of the 2000 draws diverged.
+    let draws = 500;
+    let r = stochastic_volatility::run(1, draws).unwrap();
+    // a few trajectories in a thousand diverge where phi nears 1 (see the example's documentation)
+    let total = stochastic_volatility::CHAINS * draws;
+    assert!(
+        r.divergences * 100 < total,
+        "{} of {total} draws diverged",
+        r.divergences
+    );
+    let summary = r.samples.summary().unwrap();
+    for row in summary.rows() {
+        assert!(
+            row.stats.r_hat < 1.01,
+            "R-hat of {:?}{:?} is {}",
+            row.node,
+            row.index,
+            row.stats.r_hat
+        );
+    }
+    // the data are one draw from the model, so the posterior is centred near, not on, the truth: each true value
+    // within four posterior standard deviations (plus the Monte Carlo error) of its posterior mean
+    for (node, truth, what) in [
+        (r.mu, stochastic_volatility::TRUE_MU, "mu"),
+        (r.phi, stochastic_volatility::TRUE_PHI, "phi"),
+        (r.sigma, stochastic_volatility::TRUE_SIGMA, "sigma"),
+    ] {
+        let s = summary.get(node, &[]).unwrap();
+        assert_close(s.mean, truth, 4.0 * s.sd + 4.0 * s.mcse_mean, what);
+    }
+}
+
+#[test]
+fn hmm_recovers_the_transition_probabilities() {
+    // 4 chains of 1000 draws after 1000 adaptation steps each, on 400 simulated steps. Over seeds 1 to 8 the largest
+    // R-hat was 1.003, and every posterior mean of the transition matrix was within 2 posterior sd of the truth.
+    let r = hmm::run(1, 1000).unwrap();
+    let summary = r.samples.summary().unwrap();
+    for row in summary.rows() {
+        assert!(
+            row.stats.r_hat < 1.01,
+            "R-hat of {:?}{:?} is {}",
+            row.node,
+            row.index,
+            row.stats.r_hat
+        );
+    }
+    // each true value within four posterior standard deviations (plus the Monte Carlo error) of its posterior mean
+    let check = |node, index: &[usize], truth: f64, what: &str| {
+        let s = summary.get(node, index).unwrap();
+        assert_close(s.mean, truth, 4.0 * s.sd + 4.0 * s.mcse_mean, what);
+    };
+    for i in 0..2 {
+        for j in 0..2 {
+            let truth = hmm::TRUE_TRANSITION[i][j];
+            check(r.transition, &[i, j], truth, &format!("P[{i}][{j}]"));
+        }
+        check(r.means, &[i], hmm::TRUE_MEANS[i], &format!("mean {i}"));
+    }
+    check(r.sigma, &[], hmm::TRUE_SIGMA, "sigma");
+    // the ordering holds in every draw, so the chains never swap labels
+    for chain in r.samples.chains() {
+        let means = chain.f64(r.means).unwrap();
+        assert!(
+            means
+                .as_slice()
+                .iter()
+                .all(|m| m.as_slice()[0] < m.as_slice()[1])
+        );
     }
 }
