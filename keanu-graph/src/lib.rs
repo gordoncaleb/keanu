@@ -36,6 +36,7 @@ pub mod autodiff;
 mod builder;
 mod distributions;
 mod error;
+pub mod gp;
 mod graph;
 mod logprob;
 mod model;

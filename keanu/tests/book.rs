@@ -794,3 +794,55 @@ fn variational_inference() -> keanu::Result<()> {
     // ANCHOR_END: advi_full_rank
     Ok(())
 }
+
+#[test]
+fn gaussian_processes() -> keanu::Result<()> {
+    // ANCHOR: gaussian_processes
+    use keanu::graph::gp::{GaussianProcess, Kernel};
+
+    // noisy observations of sin(x)
+    let mut rng = KeanuRng::seed_from_u64(5);
+    let x: Vec<f64> = (0..15).map(|i| 0.5 * i as f64).collect();
+    let y: Vec<f64> = x
+        .iter()
+        .map(|x| x.sin() + 0.1 * rng.next_gaussian())
+        .collect();
+    let (x, y) = (DoubleTensor::vector(x), DoubleTensor::vector(y));
+    let grid = DoubleTensor::vector((0..7).map(|i| 0.3 + i as f64).collect());
+
+    let b = GraphBuilder::new();
+    let amplitude = b.half_gaussian(2.0).label("amplitude");
+    let length_scale = b.half_gaussian(2.0).label("length_scale");
+    b.set_value(amplitude, DoubleTensor::scalar(1.0));
+    b.set_value(length_scale, DoubleTensor::scalar(1.0));
+    let gp = GaussianProcess::new(Kernel::exp_quad(&b, amplitude, length_scale)).with_noise(0.1);
+    // the observed marginal likelihood p(y | amplitude, length scale)
+    gp.marginal(x.clone(), y.clone());
+    // the latent function on the grid, given the data
+    let prediction = gp.predict(x, y, grid.clone());
+    let (mean, sd) = (prediction.mean.id(), prediction.variance().sqrt().id());
+    let (graph, mut state) = b.build()?;
+    // compute every node once, including the parts of the kernel that depend only on the constant inputs
+    let all: Vec<NodeId> = graph.ids().collect();
+    state.lazy_eval(&graph, &all, &mut rng)?;
+    let model = Model::new(graph, &state)?;
+
+    // fit the hyperparameters by MAP, then evaluate the predictive at the fitted values
+    GradientOptimizer::new(&model).max_a_posteriori(&mut state)?;
+    state.eval(model.graph(), &[mean, sd], &mut rng)?;
+    let (mean, sd) = (state.f64(mean).unwrap(), state.f64(sd).unwrap());
+    // ANCHOR_END: gaussian_processes
+    for ((m, s), x) in mean
+        .as_slice()
+        .iter()
+        .zip(sd.as_slice())
+        .zip(grid.as_slice())
+    {
+        assert!(
+            (m - x.sin()).abs() < 3.0 * s + 0.05,
+            "{m} ± {s} vs sin({x})"
+        );
+        assert!(*s < 0.2, "sd {s}");
+    }
+    Ok(())
+}
