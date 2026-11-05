@@ -130,7 +130,7 @@ impl Laplace {
         // short of the mode, and a quadratic log density (a Gaussian posterior) takes one step
         let (_, mut gradient) = objective.value_and_gradient_flat(state, &mode)?;
         for _ in 0..NEWTON_STEPS {
-            let step = solve_with_factor(&factor, &gradient);
+            let step = solve_with_factor(&factor, &gradient)?;
             let size = norm(&step);
             if !size.is_finite() {
                 break;
@@ -182,25 +182,9 @@ const NEWTON_STEPS: usize = 5;
 const NEWTON_TOLERANCE: f64 = 1e-12;
 
 /// (L Lᵀ)⁻¹ b, for a lower triangular L (n × n) with a positive diagonal.
-fn solve_with_factor(factor: &DoubleTensor, b: &[f64]) -> Vec<f64> {
-    let n = b.len();
-    let l = factor.as_slice();
-    let mut x = b.to_vec();
-    for i in 0..n {
-        let sum: f64 = (0..i).map(|k| l[i * n + k] * x[k]).sum();
-        x[i] = (x[i] - sum) / l[i * n + i];
-    }
-    back_substitute(l, &mut x);
-    x
-}
-
-/// Solves Lᵀ x = b in place (b given in `x`), for a lower triangular L (n × n, row-major) with a positive diagonal.
-fn back_substitute(l: &[f64], x: &mut [f64]) {
-    let n = x.len();
-    for i in (0..n).rev() {
-        let sum: f64 = (i + 1..n).map(|k| l[k * n + i] * x[k]).sum();
-        x[i] = (x[i] - sum) / l[i * n + i];
-    }
+fn solve_with_factor(factor: &DoubleTensor, b: &[f64]) -> Result<Vec<f64>> {
+    let y = factor.solve_triangular(&DoubleTensor::vector(b.to_vec()), true, false)?;
+    Ok(factor.solve_triangular(&y, true, true)?.as_slice().to_vec())
 }
 
 /// The lower Cholesky factor L of −H (symmetrised), where `hessian` is n × n: L Lᵀ = −(H + Hᵀ) / 2. `name` names
@@ -340,9 +324,15 @@ impl LaplaceResult<'_> {
     pub fn draw(&self, rng: &mut KeanuRng) -> Vec<f64> {
         let n = self.mode.len();
         let eps: Vec<f64> = (0..n).map(|_| rng.next_gaussian()).collect();
-        let mut x = eps;
-        back_substitute(self.factor.as_slice(), &mut x);
-        x.iter().zip(&self.mode).map(|(xi, m)| xi + m).collect()
+        let x = self
+            .factor
+            .solve_triangular(&DoubleTensor::vector(eps), true, true)
+            .expect("the precision factor is n × n with a positive diagonal");
+        x.as_slice()
+            .iter()
+            .zip(&self.mode)
+            .map(|(xi, m)| xi + m)
+            .collect()
     }
 
     /// `count` independent draws from the approximation, recording the values of `nodes` at each: each draw is
