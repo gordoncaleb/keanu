@@ -608,7 +608,8 @@ fn invalid_mixtures_are_errors() {
     });
     assert!(e.to_string().contains("no CDF"), "{e}");
 
-    // weights off the simplex are an error when evaluated
+    // weights off the simplex are outside the parameters' valid region: an error when sampled, an impossible
+    // state (log probability -infinity, so that a sampler rejects it) when evaluated
     for weights in [v(&[0.5, 0.6]), v(&[1.2, -0.2]), v(&[f64::NAN, 1.0])] {
         let b = GraphBuilder::new();
         let (mu, sigma) = (b.constant(v(&[0.0, 1.0])), b.scalar(1.0));
@@ -622,8 +623,8 @@ fn invalid_mixtures_are_errors() {
                 .is_err()
         );
         state.set(&graph, x, f(s(0.0))).unwrap();
-        let e = node_log_prob(&graph, &state, x).unwrap_err();
-        assert!(e.to_string().contains("weights"), "{e}");
+        assert_eq!(node_log_prob(&graph, &state, x).unwrap(), f64::NEG_INFINITY);
+        assert!(node_log_prob_gradient(&graph, &state, x).is_ok());
     }
 }
 

@@ -63,7 +63,12 @@ fn weibull_log_cdf_gradient_where_the_cdf_underflows() {
             1e-9,
             &format!("d/dalpha, {what}"),
         );
-        close(g.beta.as_slice()[0], -a / b, 1e-9, &format!("d/dbeta, {what}"));
+        close(
+            g.beta.as_slice()[0],
+            -a / b,
+            1e-9,
+            &format!("d/dbeta, {what}"),
+        );
     }
 }
 
@@ -90,7 +95,12 @@ fn weibull_log_prob_gradient_at_and_near_zero() {
         let [dx, da, db] = expected(a, b, x);
         let what = format!("alpha {a}, beta {b}, x {x}");
         close(g.x.as_slice()[0], dx, 1e-9, &format!("d/dx, {what}"));
-        close(g.alpha.as_slice()[0], da, 1e-9, &format!("d/dalpha, {what}"));
+        close(
+            g.alpha.as_slice()[0],
+            da,
+            1e-9,
+            &format!("d/dalpha, {what}"),
+        );
         close(g.beta.as_slice()[0], db, 1e-9, &format!("d/dbeta, {what}"));
     }
     // at x = 0, the limits: d/dx is -1/β for α = 1 and ±∞ (the sign of α - 1) otherwise; d/dα → -∞ (the
@@ -107,3 +117,37 @@ fn weibull_log_prob_gradient_at_and_near_zero() {
     }
 }
 
+#[test]
+fn ordered_logistic_log_prob_is_minus_infinity_for_cutpoints_that_are_not_increasing() {
+    let k = IntTensor::vector(vec![0, 1, 2]);
+    for cutpoints in [vec![1.0, -1.0], vec![0.5, 0.5], vec![f64::NAN, 1.0]] {
+        let dist = OrderedLogistic::new(s(0.3), DoubleTensor::vector(cutpoints.clone()));
+        let lp = dist.log_prob(&k).unwrap();
+        assert_eq!(
+            lp.as_slice(),
+            &[f64::NEG_INFINITY; 3],
+            "cutpoints {cutpoints:?}"
+        );
+        let g = dist.d_log_prob(&k).unwrap();
+        assert!(
+            g.eta
+                .as_slice()
+                .iter()
+                .chain(g.cutpoints.as_slice())
+                .all(|d| *d == 0.0),
+            "gradient at cutpoints {cutpoints:?}: {g:?}"
+        );
+        // sampling and the probabilities still need valid cutpoints
+        assert!(dist.probabilities().is_err());
+        assert!(dist.sample(&[2], &mut KeanuRng::seed_from_u64(1)).is_err());
+    }
+    // only the batch elements whose cutpoints are invalid are impossible
+    let cutpoints = DoubleTensor::new(&[2, 2], vec![-1.0, 1.0, 1.0, -1.0]).unwrap();
+    let dist = OrderedLogistic::new(s(0.0), cutpoints);
+    let lp = dist.log_prob(&IntTensor::vector(vec![1, 1])).unwrap();
+    assert!(lp.as_slice()[0].is_finite());
+    assert_eq!(lp.as_slice()[1], f64::NEG_INFINITY);
+    // structural problems are still errors
+    let no_cutpoints = OrderedLogistic::new(s(0.0), DoubleTensor::new(&[0], vec![]).unwrap());
+    assert!(no_cutpoints.log_prob(&IntTensor::scalar(0)).is_err());
+}

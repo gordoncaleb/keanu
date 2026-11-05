@@ -661,6 +661,11 @@ pub struct OrderedLogisticGradient {
     pub cutpoints: DoubleTensor,
 }
 
+/// Whether a set of cutpoints is strictly increasing (and has no NaN).
+fn increasing(cutpoints: &[f64]) -> bool {
+    cutpoints.windows(2).all(|w| w[0] < w[1]) && cutpoints.iter().all(|c| !c.is_nan())
+}
+
 /// ln logit⁻¹(t) = -softplus(-t).
 fn log_sigmoid(t: f64) -> f64 {
     -softplus(-t)
@@ -708,7 +713,7 @@ impl<'a> OrderedLogistic<'a> {
     }
 
     /// The batch shape (the broadcast of the value's shape, η's shape and the cutpoints' leading axes) and the
-    /// number of cutpoints, checking the cutpoints are a non-empty, strictly increasing last axis.
+    /// number of cutpoints, checking the cutpoints are a non-empty last axis.
     fn layout(&self, value: &[usize]) -> Result<(Shape, usize)> {
         let Some((&count, leading)) = self.cutpoints.shape().split_last() else {
             return invalid_parameter("the cutpoints must have at least one axis");
@@ -716,15 +721,20 @@ impl<'a> OrderedLogistic<'a> {
         if count == 0 {
             return invalid_parameter("there must be at least one cutpoint");
         }
-        let increasing = self
+        Ok((broadcast_all(&[value, self.eta.shape(), leading])?, count))
+    }
+
+    /// An error unless every set of cutpoints is strictly increasing.
+    fn require_increasing(&self, count: usize) -> Result<()> {
+        if !self
             .cutpoints
             .as_slice()
             .chunks_exact(count)
-            .all(|c| c.windows(2).all(|w| w[0] < w[1]) && c.iter().all(|c| !c.is_nan()));
-        if !increasing {
+            .all(increasing)
+        {
             return invalid_parameter("the cutpoints must be strictly increasing");
         }
-        Ok((broadcast_all(&[value, self.eta.shape(), leading])?, count))
+        Ok(())
     }
 
     /// The cutpoints broadcast to `batch` with their last axis appended.
@@ -735,7 +745,10 @@ impl<'a> OrderedLogistic<'a> {
     }
 
     /// The log probability of each category index k, broadcasting k with η and the cutpoints' leading axes
-    /// (-infinity for an index that is not a category). An error unless the cutpoints are strictly increasing.
+    /// (-infinity for an index that is not a category). Where the cutpoints are not strictly increasing the
+    /// parameters are outside their valid region and the log probability is -infinity (with a zero gradient), so
+    /// that a sampler proposing such cutpoints rejects the proposal; an error if the cutpoints have no last axis
+    /// or it is empty.
     pub fn log_prob(&self, k: &IntTensor) -> Result<DoubleTensor> {
         Ok(self.log_prob_and_gradient(k)?.0)
     }
@@ -759,6 +772,11 @@ impl<'a> OrderedLogistic<'a> {
         let mut d_cutpoints = vec![0.0; len * count];
         for i in 0..len {
             let range = i * count..(i + 1) * count;
+            if !increasing(&cutpoints[range.clone()]) {
+                log_prob.push(f64::NEG_INFINITY);
+                d_eta.push(0.0);
+                continue;
+            }
             let (lp, de) = ordered_logistic(
                 k.at(i),
                 eta.at(i),
@@ -782,6 +800,7 @@ impl<'a> OrderedLogistic<'a> {
     /// The probability of each category, shaped like the batch with a last axis of the K categories.
     pub fn probabilities(&self) -> Result<DoubleTensor> {
         let (batch, count) = self.layout(&[])?;
+        self.require_increasing(count)?;
         let len: usize = batch.iter().product();
         let mut out = Vec::with_capacity(len * (count + 1));
         let cutpoints = self.cutpoints_for(&batch, count)?;
@@ -807,6 +826,7 @@ impl<'a> OrderedLogistic<'a> {
     /// unless the cutpoints are strictly increasing.
     pub fn sample(&self, shape: &[usize], rng: &mut KeanuRng) -> Result<IntTensor> {
         let (batch, count) = self.layout(shape)?;
+        self.require_increasing(count)?;
         let cutpoints = self.cutpoints_for(&batch, count)?;
         let eta = operand(&self.eta, &batch)?;
         let len: usize = batch.iter().product();

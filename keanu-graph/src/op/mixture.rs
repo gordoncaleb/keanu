@@ -81,28 +81,39 @@ struct Parameters<'p, 'v> {
 }
 
 impl<'p, 'v> Parameters<'p, 'v> {
+    /// The parameters, an error unless the weights are valid.
     fn new(parameters: &'p [&'v Value]) -> Result<Self> {
+        let p = Self::unchecked(parameters)?;
+        if let Some(message) = p.invalid_weights() {
+            return invalid_parameter(message);
+        }
+        Ok(p)
+    }
+
+    /// The parameters with only the weights' layout checked (a non-empty component axis), not their values.
+    fn unchecked(parameters: &'p [&'v Value]) -> Result<Self> {
         let (components, own) = wrappers::split(parameters, OWN_PARAMETERS)?;
         let weights = own[0].f64()?;
         let Some(&count) = weights.shape().last().filter(|&&c| c > 0) else {
             return invalid_parameter("the mixture weights need a non-empty component axis".into());
         };
-        for row in weights.as_slice().chunks(count) {
-            // written so that NaN weights fail too
-            if !row.iter().all(|&w| w >= 0.0) {
-                return invalid_parameter(format!(
-                    "mixture weights must be non-negative, got {row:?}"
-                ));
-            }
-            let total: f64 = row.iter().sum();
-            if (total - 1.0).abs() > WEIGHT_TOLERANCE {
-                return invalid_parameter(format!("mixture weights must sum to 1, got {row:?}"));
-            }
-        }
         Ok(Self {
             components,
             weights,
             count,
+        })
+    }
+
+    /// Why the weights are outside their valid region (the simplex), if they are.
+    fn invalid_weights(&self) -> Option<String> {
+        self.weights.as_slice().chunks(self.count).find_map(|row| {
+            // written so that NaN weights fail too
+            if !row.iter().all(|&w| w >= 0.0) {
+                return Some(format!("mixture weights must be non-negative, got {row:?}"));
+            }
+            let total: f64 = row.iter().sum();
+            ((total - 1.0).abs() > WEIGHT_TOLERANCE)
+                .then(|| format!("mixture weights must sum to 1, got {row:?}"))
         })
     }
 }
@@ -121,13 +132,20 @@ pub(crate) fn with_component_axis(value: &Value) -> Result<Value> {
 /// The log probability of a mixture node at `value` (summed over its elements) and, with `gradient`, its gradient
 /// parts: with respect to the value (summed over the components), to each component parameter (shaped like the
 /// value with the component axis) and to the weights.
+///
+/// Weights off the simplex are outside the parameters' valid region: the log probability is -infinity there (with
+/// no gradient), so that a sampler proposing such weights rejects the proposal, as for any other impossible state.
+/// Sampling such a mixture is an error.
 pub(crate) fn log_prob(
     component: &DistributionKind,
     value: &Value,
     parameters: &[&Value],
     gradient: bool,
 ) -> Result<(f64, Option<LogProbGradientParts>)> {
-    let p = Parameters::new(parameters)?;
+    let p = Parameters::unchecked(parameters)?;
+    if p.invalid_weights().is_some() {
+        return Ok((f64::NEG_INFINITY, None));
+    }
     let x = with_component_axis(value)?;
     let (densities, parts) =
         component.univariate(Univariate::Density, &x, p.components, gradient)?;

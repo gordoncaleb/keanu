@@ -95,6 +95,7 @@ struct Parameters<'p, 'v> {
 }
 
 impl<'p, 'v> Parameters<'p, 'v> {
+    /// The parameters, an error unless the chain's shapes and probabilities are valid.
     fn new(parameters: &'p [&'v Value]) -> Result<Self> {
         let (emission, own) = wrappers::split(parameters, OWN_PARAMETERS)?;
         let chain = HiddenMarkovChain::new(own[0].f64()?, own[1].f64()?);
@@ -104,6 +105,23 @@ impl<'p, 'v> Parameters<'p, 'v> {
             chain,
             count,
         })
+    }
+
+    /// The parameters, an error unless the chain's shapes are valid ([K] and [K, K], K > 0); None if its
+    /// probabilities are outside their valid region (negative, or a set not summing to 1).
+    fn with_valid_shapes(parameters: &'p [&'v Value]) -> Result<Option<Self>> {
+        let (_, own) = wrappers::split(parameters, OWN_PARAMETERS)?;
+        let (initial, transition) = (own[0].f64()?, own[1].f64()?);
+        let valid_shapes = match *initial.shape() {
+            [k] => k > 0 && transition.shape() == [k, k],
+            _ => false,
+        };
+        if !valid_shapes {
+            // the error, with its message
+            return Self::new(parameters).map(Some);
+        }
+        // with the shapes valid, the chain's only remaining check is of the probabilities
+        Ok(Self::new(parameters).ok())
     }
 }
 
@@ -117,13 +135,19 @@ fn with_states(shape: &[usize], count: usize) -> Vec<usize> {
 /// The log probability of a hidden Markov model node at `value` and, with `gradient`, its gradient parts (None if
 /// the log probability is impossible): with respect to the value (for continuous emissions), to each emission
 /// parameter (shaped like the value with the state axis) and to the initial and transition probabilities.
+///
+/// Initial or transition probabilities off the simplex are outside the parameters' valid region: the log
+/// probability is -infinity there (with no gradient), so that a sampler proposing them rejects the proposal, as
+/// for any other impossible state. Sampling such a model is an error.
 pub(crate) fn log_prob(
     emission: &DistributionKind,
     value: &Value,
     parameters: &[&Value],
     gradient: bool,
 ) -> Result<(f64, Option<LogProbGradientParts>)> {
-    let p = Parameters::new(parameters)?;
+    let Some(p) = Parameters::with_valid_shapes(parameters)? else {
+        return Ok((f64::NEG_INFINITY, None));
+    };
     let count = p.count;
     let Some(&steps) = value.shape().first().filter(|&&t| t > 0) else {
         return invalid_parameter(format!(

@@ -25,8 +25,9 @@ Each distribution has a builder method taking its parameters, which can be other
   at κ = 0). Its support is circular, so NUTS and the other gradient based algorithms move through a circular
   transform and pass freely between -π and π; samples are reported in [-π, π).
 - `ordered_logistic(eta, cutpoints)` is Stan's ordered logistic regression: a category index in 0..K from a location
-  η and K − 1 strictly increasing cutpoints (the last axis of `cutpoints`). Cutpoints that don't increase are an
-  error; latent cutpoints are best given an ordered prior.
+  η and K − 1 strictly increasing cutpoints (the last axis of `cutpoints`). Cutpoints that don't increase are
+  outside the valid region: the log probability is −∞ there (so Metropolis–Hastings rejects a proposal of them) and
+  sampling is an error. Latent cutpoints are best given an ordered prior.
 
 ```rust,ignore
 {{#include ../../keanu/tests/book.rs:new_distributions}}
@@ -56,7 +57,8 @@ observed data. Each of these distributions also has `log_cdf` and `log_ccdf` (wi
 
 `mixture(component, parameters, weights)` is a mixture of C distributions of one kind, with density
 Σ_c w_c p_c(x). The weights are non-negative and sum to 1 along their last axis, the component axis, of length C (a
-`dirichlet` prior keeps a latent weight vector on the simplex). Each of the component's parameters, given as node
+`dirichlet` prior keeps a latent weight vector on the simplex; weights off it give a log probability of −∞, and
+an error when sampled). Each of the component's parameters, given as node
 ids in the component's order, has the same trailing component axis, of length C, or of length 1 or no axes at all
 to share one value between the components. The value has the parameters' batch shape (their shapes without the
 component axis); `mixture_with_shape` gives a larger one, such as a vector of observations.

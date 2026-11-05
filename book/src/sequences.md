@@ -34,7 +34,8 @@ continuous or discrete, and its parameters carry a trailing state axis.
 
 - `initial` and `transition` are probabilities, not log probabilities: non-negative and summing to 1 along their last
   axis (within 1e-5). Give each row of the transition matrix a Dirichlet prior and stack the rows: they stay on the
-  simplex under the gradient based algorithms.
+  simplex under the gradient based algorithms. Probabilities off the simplex give a log probability of −∞ (so
+  Metropolis–Hastings rejects a proposal of them), and an error when sampled.
 - The value has shape [steps]; `hidden_markov_model_with_shape` takes [T, ...] for several observations per step, all
   emitted by that step's state. An emission parameter may have a leading time axis for parameters that vary over
   time.

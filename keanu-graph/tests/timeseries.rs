@@ -410,7 +410,8 @@ fn invalid_hidden_markov_models_are_errors() {
         }),
         "I64",
     );
-    // probabilities off the simplex are an error when evaluated, not a panic
+    // probabilities off the simplex are outside the parameters' valid region: an error when sampled, an
+    // impossible state (log probability -infinity, so that a sampler rejects it) when evaluated, not a panic
     for (initial, transition) in [
         (v(&[0.5, 0.6]), m(2, 2, &[0.5; 4])),
         (v(&[0.5, 0.5]), m(2, 2, &[0.5, 0.5, 0.9, 0.3])),
@@ -428,8 +429,8 @@ fn invalid_hidden_markov_models_are_errors() {
                 .is_err()
         );
         state.set(&graph, x, f(v(&[0.0, 0.1, 0.2]))).unwrap();
-        assert!(node_log_prob(&graph, &state, x).is_err());
-        assert!(node_log_prob_gradient(&graph, &state, x).is_err());
+        assert_eq!(node_log_prob(&graph, &state, x).unwrap(), f64::NEG_INFINITY);
+        assert!(node_log_prob_gradient(&graph, &state, x).is_ok());
     }
 }
 

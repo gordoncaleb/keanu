@@ -689,11 +689,15 @@ fn ordered_logistic() {
 fn ordered_logistic_rejects_cutpoints_that_do_not_increase() {
     for cutpoints in [vec![0.0, 0.0], vec![1.0, -1.0], vec![0.0, f64::NAN]] {
         let d = OrderedLogistic::new(s(0.0), DoubleTensor::vector(cutpoints));
+        // outside the valid region: impossible rather than an error when evaluated, an error when sampled
+        assert_eq!(
+            d.log_prob(&IntTensor::scalar(0)).unwrap().as_slice(),
+            &[f64::NEG_INFINITY]
+        );
         assert!(matches!(
-            d.log_prob(&IntTensor::scalar(0)),
+            d.sample(&[3], &mut rng()),
             Err(DistributionError::InvalidParameter(_))
         ));
-        assert!(d.sample(&[3], &mut rng()).is_err());
     }
     let empty = OrderedLogistic::new(s(0.0), DoubleTensor::vector(vec![]));
     assert!(empty.log_prob(&IntTensor::scalar(0)).is_err());
