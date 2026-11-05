@@ -1093,13 +1093,6 @@ fn unconstrained(name: &'static str, build: fn(&GraphBuilder)) -> DistributionCa
     }
 }
 
-fn no_rule(name: &'static str, build: fn(&GraphBuilder), text: &'static str) -> DistributionCase {
-    DistributionCase {
-        expect: Expect::NoRule(text),
-        ..case(name, build)
-    }
-}
-
 /// A truncated location-scale base whose parameters and bounds depend on latents: a latent value between the
 /// bounds, an observation, and an observation with an infinite upper bound.
 fn truncated_location_scale(b: &GraphBuilder, base: DistributionKind) {
