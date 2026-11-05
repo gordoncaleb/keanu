@@ -12,6 +12,7 @@
 //! |---|---|---|---|
 //! | [`Support::Real`] | [`Identity`] | `x = y` | 0 |
 //! | [`Support::GreaterThan`] | [`LowerBound`] | `x = a + exp(y)` | `y` |
+//! | [`Support::LessThan`] | [`UpperBound`] | `x = b − exp(y)` | `y` |
 //! | [`Support::Interval`] | [`Interval`] | `x = a + (b − a)·logistic(y)` | `log(b − a) + log s + log(1 − s)`, `s = logistic(y)` |
 //! | [`Support::Ordered`] | [`Ordered`] | `x₁ = y₁`, `xₖ = xₖ₋₁ + exp(yₖ)` | `Σₖ₌₂ yₖ` |
 //! | [`Support::Simplex`] | [`Simplex`] | inverse isometric log-ratio, then softmax | `Σ log xᵢ + ½ log K` |
@@ -89,7 +90,7 @@ pub trait Bijector: fmt::Debug + Send + Sync {
 
 /// The bijector for values of `shape` in `support`.
 ///
-/// Bounds of [`Support::GreaterThan`] and [`Support::Interval`] are broadcast to `shape` and apply element-wise;
+/// Bounds of [`Support::GreaterThan`], [`Support::LessThan`] and [`Support::Interval`] are broadcast to `shape` and apply element-wise;
 /// they must be finite, and each lower bound must be less than its upper bound. [`Support::Ordered`] and
 /// [`Support::Simplex`] act on the last axis and [`Support::CorrelationCholesky`] on the last two (which must be
 /// equal), with any leading axes as a batch.
@@ -103,6 +104,7 @@ pub fn bijector_for(support: &Support, shape: &[usize]) -> Result<Box<dyn Biject
     Ok(match support {
         Support::Real => Box::new(Identity::new(shape)),
         Support::GreaterThan(lower) => Box::new(LowerBound::new(lower, shape)?),
+        Support::LessThan(upper) => Box::new(UpperBound::new(upper, shape)?),
         Support::Interval(lower, upper) => Box::new(Interval::new(lower, upper, shape)?),
         Support::Simplex => Box::new(Simplex::new(shape)?),
         Support::Ordered => Box::new(Ordered::new(shape)?),
@@ -352,6 +354,91 @@ impl Bijector for LowerBound {
         Ok(y.iter()
             .zip(cotangent.as_slice())
             .map(|(y, c)| y.exp() * c)
+            .collect())
+    }
+}
+
+/// An upper bound, for [`Support::LessThan`]: `x = b − exp(y)` element-wise, with log-Jacobian `Σ y`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct UpperBound {
+    shape: Vec<usize>,
+    upper: Vec<f64>,
+}
+
+impl UpperBound {
+    /// Values of `shape` less than `upper`, which is broadcast to `shape`.
+    ///
+    /// # Errors
+    ///
+    /// [`GraphError::Transform`] if the bound doesn't broadcast to `shape` or isn't finite.
+    pub fn new(upper: &DoubleTensor, shape: &[usize]) -> Result<Self> {
+        Ok(UpperBound {
+            shape: shape.to_vec(),
+            upper: bound("upper", upper, shape)?,
+        })
+    }
+}
+
+impl Bijector for UpperBound {
+    fn constrained_shape(&self) -> &[usize] {
+        &self.shape
+    }
+
+    fn unconstrained_len(&self) -> usize {
+        self.upper.len()
+    }
+
+    fn forward(&self, y: &[f64]) -> Result<DoubleTensor> {
+        check_len("the unconstrained vector", y.len(), self.upper.len())?;
+        let x = y
+            .iter()
+            .zip(&self.upper)
+            .map(|(y, b)| b - y.exp())
+            .collect();
+        tensor(&self.shape, x)
+    }
+
+    fn inverse(&self, x: &DoubleTensor) -> Result<Vec<f64>> {
+        check_shape("the value", x, &self.shape)?;
+        x.as_slice()
+            .iter()
+            .zip(&self.upper)
+            .map(|(&x, &b)| {
+                let d = b - x;
+                if d > 0.0 && d.is_finite() {
+                    Ok(d.ln())
+                } else {
+                    Err(transform_error(format!(
+                        "{x} is not a finite value less than the upper bound {b}"
+                    )))
+                }
+            })
+            .collect()
+    }
+
+    fn log_det_jacobian(&self, y: &[f64]) -> Result<f64> {
+        check_len("the unconstrained vector", y.len(), self.upper.len())?;
+        Ok(y.iter().sum())
+    }
+
+    fn log_det_jacobian_gradient(&self, y: &[f64]) -> Result<Vec<f64>> {
+        check_len("the unconstrained vector", y.len(), self.upper.len())?;
+        Ok(vec![1.0; y.len()])
+    }
+
+    fn forward_jvp(&self, y: &[f64], tangent: &[f64]) -> Result<DoubleTensor> {
+        check_len("the unconstrained vector", y.len(), self.upper.len())?;
+        check_len("the tangent", tangent.len(), self.upper.len())?;
+        let dx = y.iter().zip(tangent).map(|(y, t)| -y.exp() * t).collect();
+        tensor(&self.shape, dx)
+    }
+
+    fn forward_vjp(&self, y: &[f64], cotangent: &DoubleTensor) -> Result<Vec<f64>> {
+        check_len("the unconstrained vector", y.len(), self.upper.len())?;
+        check_shape("the cotangent", cotangent, &self.shape)?;
+        Ok(y.iter()
+            .zip(cotangent.as_slice())
+            .map(|(y, c)| -y.exp() * c)
             .collect())
     }
 }

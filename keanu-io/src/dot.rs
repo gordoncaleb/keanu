@@ -28,6 +28,8 @@ fn distribution_name(kind: &DistributionKind) -> String {
     match kind {
         DistributionKind::Kde(_) => "Kde".into(),
         DistributionKind::Custom(_) => "Custom".into(),
+        DistributionKind::Truncated(_) => "Truncated".into(),
+        DistributionKind::Censored(_) => "Censored".into(),
         // the other kinds are unit variants, which format as their name
         kind => format!("{kind:?}"),
     }
@@ -138,5 +140,17 @@ mod tests {
         );
         let kde = DistributionKind::Kde(Arc::new(Kde::new(vec![0.5; 10_000], 0.1).unwrap()));
         assert_eq!(distribution_name(&kde), "Kde");
+        for (kind, name) in [
+            (
+                DistributionKind::Truncated(Arc::new(DistributionKind::Gaussian)),
+                "Truncated",
+            ),
+            (
+                DistributionKind::Censored(Arc::new(DistributionKind::Gaussian)),
+                "Censored",
+            ),
+        ] {
+            assert_eq!(distribution_name(&kind), name);
+        }
     }
 }

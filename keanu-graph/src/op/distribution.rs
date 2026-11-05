@@ -1,10 +1,12 @@
 //! Probabilistic nodes: a distribution whose parameters are the node's parents.
 
+use super::wrappers::{self, Wrapper};
 use crate::error::{GraphError, Result};
 use crate::value::{DType, Value};
 use keanu_distributions as d;
 use keanu_distributions::KeanuRng;
 use keanu_tensor::{DoubleTensor, Shape};
+use std::borrow::Cow;
 use std::sync::Arc;
 
 /// The set of values a distribution gives positive density (or mass), which decides how a gradient based algorithm
@@ -21,6 +23,8 @@ pub enum Support {
     Real,
     /// Real numbers greater than the lower bound.
     GreaterThan(DoubleTensor),
+    /// Real numbers less than the upper bound.
+    LessThan(DoubleTensor),
     /// Real numbers between the lower and the upper bound.
     Interval(DoubleTensor, DoubleTensor),
     /// Non-negative vectors summing to 1, over the value's last dimension.
@@ -41,6 +45,11 @@ impl Support {
     /// Real numbers greater than a scalar lower bound.
     pub fn greater_than(lower: f64) -> Self {
         Support::GreaterThan(DoubleTensor::scalar(lower))
+    }
+
+    /// Real numbers less than a scalar upper bound.
+    pub fn less_than(upper: f64) -> Self {
+        Support::LessThan(DoubleTensor::scalar(upper))
     }
 
     /// Real numbers between scalar lower and upper bounds.
@@ -113,6 +122,16 @@ pub enum DistributionKind {
     /// A user-defined distribution; its parameters are whatever nodes it was given. Support: whatever
     /// [`CustomDistribution::support`] returns.
     Custom(Arc<dyn CustomDistribution>),
+    /// The base distribution restricted to `[lower, upper]` and renormalised by the probability it gives that
+    /// range. Parameters: the base's parameters, then `lower`, `upper` (f64, either may be infinite). Support: the
+    /// base's support intersected with the bounds (discrete for a discrete base). See
+    /// [`GraphBuilder::truncated`](crate::GraphBuilder::truncated).
+    Truncated(Arc<DistributionKind>),
+    /// The base distribution with values at or beyond the bounds recorded as the bounds: a value equal to `lower`
+    /// has the probability P(X <= lower) and a value equal to `upper` the probability P(X >= upper). Parameters:
+    /// the base's parameters, then `lower`, `upper` (f64, either may be infinite). Support: as for
+    /// [`Truncated`](Self::Truncated). See [`GraphBuilder::censored`](crate::GraphBuilder::censored).
+    Censored(Arc<DistributionKind>),
 }
 
 /// A user-defined distribution for a probabilistic node, the equivalent of implementing a custom probabilistic
@@ -222,19 +241,29 @@ macro_rules! gradient {
 /// `log_prob_and_gradient`; it must return exactly what the separate methods do. Every row states its support as
 /// `support = expression`, an expression of the parameters' tensors (bound to the parameters' names) giving a
 /// [`Support`].
+///
+/// A univariate distribution with `log_cdf`, `log_ccdf`, `d_log_cdf` and `d_log_ccdf` methods (which can then be
+/// truncated or censored) says so with `cdf = inverse` if it also has `inverse_cdf` and `inverse_ccdf` (so a
+/// truncation is sampled by inverting the CDF), or `cdf = rejection` if not (so it is sampled by rejection).
 macro_rules! distributions {
     ($(
         $kind:ident $name:literal ($($param:ident: $ptype:ident),+) -> $vtype:ident => $build:expr,
         support = $support:expr
+        $(, cdf = $cdf:ident)?
         $(, sample = $sample:expr)? $(, gradient = $gradient:expr)? $(, fused = $fused:expr)?;
     )+) => {
         impl DistributionKind {
             /// The parameter types, or None for a variable number of f64 parameters (Categorical).
-            pub(crate) fn parameter_types(&self) -> Option<&'static [DType]> {
+            pub(crate) fn parameter_types(&self) -> Option<Cow<'static, [DType]>> {
                 match self {
-                    $(DistributionKind::$kind => Some(&[$(DType::$ptype),+]),)+
-                    DistributionKind::Kde(_) => Some(&[]),
+                    $(DistributionKind::$kind => Some(Cow::Borrowed(&[$(DType::$ptype),+])),)+
+                    DistributionKind::Kde(_) => Some(Cow::Borrowed(&[])),
                     DistributionKind::Categorical | DistributionKind::Custom(_) => None,
+                    DistributionKind::Truncated(base) | DistributionKind::Censored(base) => {
+                        let mut types = base.parameter_types()?.into_owned();
+                        types.extend([DType::F64; wrappers::OWN_PARAMETERS]);
+                        Some(Cow::Owned(types))
+                    }
                 }
             }
 
@@ -244,8 +273,54 @@ macro_rules! distributions {
                 match self {
                     $(DistributionKind::$kind => Some(&[$(stringify!($param)),+]),)+
                     DistributionKind::Kde(_) => Some(&[]),
-                    DistributionKind::Categorical | DistributionKind::Custom(_) => None,
+                    DistributionKind::Categorical
+                    | DistributionKind::Custom(_)
+                    | DistributionKind::Truncated(_)
+                    | DistributionKind::Censored(_) => None,
                 }
+            }
+
+            /// Whether the distribution is univariate and has a CDF, so that it can be truncated or censored.
+            pub(crate) fn has_cdf(&self) -> bool {
+                match self {
+                    $(DistributionKind::$kind => has_cdf!([$($cdf)?]),)+
+                    _ => false,
+                }
+            }
+
+            /// `function` of a univariate distribution (one with a CDF) at `x`, a value of the distribution's type,
+            /// element-wise and broadcast with the parameters; with `gradient`, also its derivatives with respect
+            /// to x and each parameter, element-wise.
+            pub(crate) fn univariate(
+                &self,
+                function: Univariate,
+                x: &Value,
+                parameters: &[&Value],
+                gradient: bool,
+            ) -> Result<(DoubleTensor, Option<LogProbGradientParts>)> {
+                Ok(match self {
+                    $(DistributionKind::$kind => univariate!(
+                        [$($cdf)?], self, function, x, parameters, gradient, $vtype,
+                        [$($param: $ptype),+], [$($gradient)?], $build
+                    ),)+
+                    _ => return Err(self.no_cdf()),
+                })
+            }
+
+            /// The inverse CDF at probabilities `p` (or the inverse survival function if `upper`), element-wise
+            /// and broadcast with the parameters, if the distribution has one in closed form.
+            pub(crate) fn inverse_cdf(
+                &self,
+                p: &DoubleTensor,
+                upper: bool,
+                parameters: &[&Value],
+            ) -> Result<Option<DoubleTensor>> {
+                Ok(match self {
+                    $(DistributionKind::$kind => inverse_cdf!(
+                        [$($cdf)?], self, p, upper, parameters, [$($param: $ptype),+], $build
+                    ),)+
+                    _ => None,
+                })
             }
 
             /// The type of the node's value.
@@ -255,6 +330,7 @@ macro_rules! distributions {
                     DistributionKind::Kde(_) => DType::F64,
                     DistributionKind::Categorical => DType::I64,
                     DistributionKind::Custom(c) => c.value_type(),
+                    DistributionKind::Truncated(base) | DistributionKind::Censored(base) => base.value_type(),
                 }
             }
 
@@ -264,6 +340,8 @@ macro_rules! distributions {
                     DistributionKind::Kde(_) => "kde",
                     DistributionKind::Categorical => "categorical",
                     DistributionKind::Custom(_) => "custom",
+                    DistributionKind::Truncated(_) => "truncated",
+                    DistributionKind::Censored(_) => "censored",
                 }
             }
 
@@ -280,11 +358,14 @@ macro_rules! distributions {
                     DistributionKind::Kde(_) => Support::Real,
                     DistributionKind::Categorical => Support::Discrete,
                     DistributionKind::Custom(c) => c.support(parameters).map_err(GraphError::Custom)?,
+                    DistributionKind::Truncated(base) | DistributionKind::Censored(base) => {
+                        wrappers::support(base, parameters)?
+                    }
                 })
             }
 
             /// Draws a value of the given shape from the distribution given its parameters' values.
-            fn sample(&self, shape: &[usize], parameters: &[&Value], rng: &mut KeanuRng) -> Result<Value> {
+            pub(crate) fn sample(&self, shape: &[usize], parameters: &[&Value], rng: &mut KeanuRng) -> Result<Value> {
                 Ok(match self {
                     $(DistributionKind::$kind => {
                         let &[$($param),+] = parameters else { return Err(self.wrong_parameters()) };
@@ -320,6 +401,8 @@ macro_rules! distributions {
                         }
                         value
                     }
+                    DistributionKind::Truncated(base) => wrappers::sample_truncated(base, shape, parameters, rng)?,
+                    DistributionKind::Censored(base) => wrappers::sample_censored(base, shape, parameters, rng)?,
                 })
             }
 
@@ -336,6 +419,12 @@ macro_rules! distributions {
                         d::Categorical::new(f64_tensors(parameters)?)?.log_prob(value.i64()?)?.sum()
                     }
                     DistributionKind::Custom(c) => c.log_prob(value, parameters).map_err(GraphError::Custom)?,
+                    DistributionKind::Truncated(base) => {
+                        wrappers::log_prob(Wrapper::Truncated, base, value, parameters, false)?.0
+                    }
+                    DistributionKind::Censored(base) => {
+                        wrappers::log_prob(Wrapper::Censored, base, value, parameters, false)?.0
+                    }
                 })
             }
 
@@ -365,6 +454,12 @@ macro_rules! distributions {
                             }
                             None => no_gradient(parameters.len()),
                         }
+                    }
+                    DistributionKind::Truncated(base) => {
+                        wrapper_gradient(Wrapper::Truncated, base, value, parameters)?
+                    }
+                    DistributionKind::Censored(base) => {
+                        wrapper_gradient(Wrapper::Censored, base, value, parameters)?
                     }
                 })
             }
@@ -410,6 +505,16 @@ macro_rules! distributions {
                         }
                         (log_prob, Some(self.log_prob_gradient(value, parameters)?))
                     }
+                    DistributionKind::Truncated(base) => {
+                        let (log_prob, gradient) =
+                            wrappers::log_prob(Wrapper::Truncated, base, value, parameters, true)?;
+                        (log_prob, gradient.filter(|_| !is_impossible(log_prob)))
+                    }
+                    DistributionKind::Censored(base) => {
+                        let (log_prob, gradient) =
+                            wrappers::log_prob(Wrapper::Censored, base, value, parameters, true)?;
+                        (log_prob, gradient.filter(|_| !is_impossible(log_prob)))
+                    }
                 })
             }
         }
@@ -433,6 +538,97 @@ macro_rules! distribution_gradient {
     };
 }
 
+/// `true` for a row with a CDF.
+macro_rules! has_cdf {
+    ([]) => {
+        false
+    };
+    ([$cdf:ident]) => {
+        true
+    };
+}
+
+/// The body of [`DistributionKind::univariate`] for a row: an error without a CDF, else the requested function of
+/// the built distribution and, if asked for, its gradient parts (from `d_log_prob`, or the row's gradient override,
+/// for the log density, and from `d_log_cdf` / `d_log_ccdf` for the others).
+macro_rules! univariate {
+    ([], $kind:ident, $($rest:tt)*) => {
+        return Err($kind.no_cdf())
+    };
+    ([$cdf:ident], $kind:ident, $function:ident, $x:ident, $parameters:ident, $want:ident, $vtype:ident,
+     [$($param:ident: $ptype:ident),+], [$($gradient:expr)?], $build:expr) => {{
+        let &[$($param),+] = $parameters else { return Err($kind.wrong_parameters()) };
+        $(let $param = tensor!($ptype, $param);)+
+        let dist = $build;
+        let x = tensor!($vtype, $x);
+        match $function {
+            Univariate::Density => (
+                dist.log_prob(x)?,
+                if $want {
+                    Some(distribution_gradient!(dist, x, $vtype, [$($param: $ptype),+], [$($gradient)?]))
+                } else {
+                    None
+                },
+            ),
+            Univariate::Cdf => (
+                dist.log_cdf(x)?,
+                if $want {
+                    let g = dist.d_log_cdf(x)?;
+                    Some((gradient!($vtype, g.x), smallvec::smallvec![$(gradient!($ptype, g.$param)),+]))
+                } else {
+                    None
+                },
+            ),
+            Univariate::Ccdf => (
+                dist.log_ccdf(x)?,
+                if $want {
+                    let g = dist.d_log_ccdf(x)?;
+                    Some((gradient!($vtype, g.x), smallvec::smallvec![$(gradient!($ptype, g.$param)),+]))
+                } else {
+                    None
+                },
+            ),
+        }
+    }};
+}
+
+/// The body of [`DistributionKind::inverse_cdf`] for a row.
+macro_rules! inverse_cdf {
+    ([inverse], $kind:ident, $p:ident, $upper:ident, $parameters:ident, [$($param:ident: $ptype:ident),+],
+     $build:expr) => {{
+        let &[$($param),+] = $parameters else { return Err($kind.wrong_parameters()) };
+        $(let $param = tensor!($ptype, $param);)+
+        let dist = $build;
+        Some(if $upper { dist.inverse_ccdf($p)? } else { dist.inverse_cdf($p)? })
+    }};
+    ([$($other:ident)?], $($rest:tt)*) => {
+        None
+    };
+}
+
+/// A function of a univariate distribution, evaluated element-wise by [`DistributionKind::univariate`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Univariate {
+    /// The log density (or mass), ln p(x).
+    Density,
+    /// The log CDF, ln P(X <= x).
+    Cdf,
+    /// The log survival function, ln P(X > x).
+    Ccdf,
+}
+
+/// A wrapper's log prob gradient (the separate method, which [`DistributionKind::log_prob_gradient`] returns even
+/// where the log probability is impossible).
+fn wrapper_gradient(
+    wrapper: Wrapper,
+    base: &DistributionKind,
+    value: &Value,
+    parameters: &[&Value],
+) -> Result<LogProbGradientParts> {
+    let (_, gradient) = wrappers::log_prob(wrapper, base, value, parameters, true)?;
+    Ok(gradient.unwrap_or_else(|| no_gradient(parameters.len())))
+}
+
 /// Whether a log probability makes the state impossible: -infinity or NaN.
 pub(crate) fn is_impossible(log_prob: f64) -> bool {
     log_prob == f64::NEG_INFINITY || log_prob.is_nan()
@@ -441,32 +637,40 @@ pub(crate) fn is_impossible(log_prob: f64) -> bool {
 distributions! {
     Gaussian "gaussian" (mu: F64, sigma: F64) -> F64 => d::Gaussian::new(mu, sigma),
         support = Support::Real,
+        cdf = inverse,
         fused = gaussian_log_prob_and_gradient;
     HalfGaussian "half_gaussian" (sigma: F64) -> F64 => d::HalfGaussian::new(sigma),
         support = Support::greater_than(0.0);
     Cauchy "cauchy" (location: F64, scale: F64) -> F64 => d::Cauchy::new(location, scale),
-        support = Support::Real;
+        support = Support::Real,
+        cdf = inverse;
     HalfCauchy "half_cauchy" (scale: F64) -> F64 => d::HalfCauchy::new(scale),
         support = Support::greater_than(0.0);
     Beta "beta" (alpha: F64, beta: F64) -> F64 => d::Beta::standard(alpha, beta),
-        support = Support::interval(0.0, 1.0);
+        support = Support::interval(0.0, 1.0),
+        cdf = rejection;
     ChiSquared "chi_squared" (k: I64) -> F64 => d::ChiSquared::new(k),
         support = Support::greater_than(0.0);
     Dirichlet "dirichlet" (concentration: F64) -> F64 => d::Dirichlet::new(concentration),
         support = Support::Simplex,
         sample = |dist: &d::Dirichlet<'_>, _, rng| dist.sample(rng);
     Exponential "exponential" (rate: F64) -> F64 => d::Exponential::new(rate),
-        support = Support::greater_than(0.0);
+        support = Support::greater_than(0.0),
+        cdf = inverse;
     Gamma "gamma" (theta: F64, k: F64) -> F64 => d::Gamma::new(theta, k),
-        support = Support::greater_than(0.0);
+        support = Support::greater_than(0.0),
+        cdf = rejection;
     InverseGamma "inverse_gamma" (alpha: F64, beta: F64) -> F64 => d::InverseGamma::new(alpha, beta),
         support = Support::greater_than(0.0);
     Laplace "laplace" (mu: F64, beta: F64) -> F64 => d::Laplace::new(mu, beta),
-        support = Support::Real;
+        support = Support::Real,
+        cdf = inverse;
     Logistic "logistic" (mu: F64, s: F64) -> F64 => d::Logistic::new(mu, s),
-        support = Support::Real;
+        support = Support::Real,
+        cdf = inverse;
     LogNormal "log_normal" (mu: F64, sigma: F64) -> F64 => d::LogNormal::new(mu, sigma),
-        support = Support::greater_than(0.0);
+        support = Support::greater_than(0.0),
+        cdf = inverse;
     LkjCholesky "lkj_cholesky" (eta: F64) -> F64 => d::LkjCholesky::new(eta),
         support = Support::CorrelationCholesky;
     MultivariateGaussian "multivariate_gaussian" (mu: F64, covariance: F64) -> F64 =>
@@ -475,30 +679,42 @@ distributions! {
     Pareto "pareto" (location: F64, scale: F64) -> F64 => d::Pareto::new(location, scale),
         support = Support::GreaterThan(location.clone());
     StudentT "student_t" (v: I64) -> F64 => d::StudentT::new(v),
-        support = Support::Real;
+        support = Support::Real,
+        cdf = rejection;
     Triangular "triangular" (x_min: F64, x_max: F64, c: F64) -> F64 => d::Triangular::new(x_min, x_max, c),
         support = Support::Interval(x_min.clone(), x_max.clone());
     Uniform "uniform" (x_min: F64, x_max: F64) -> F64 => d::Uniform::new(x_min, x_max),
         support = Support::Interval(x_min.clone(), x_max.clone()),
+        cdf = inverse,
         gradient = uniform_gradient;
     Bernoulli "bernoulli" (prob_true: F64) -> Bool => d::Bernoulli::new(prob_true),
         support = Support::Discrete;
     Binomial "binomial" (p: F64, n: I64) -> I64 => d::Binomial::new(p, n),
-        support = Support::Discrete;
+        support = Support::Discrete,
+        cdf = rejection;
     Geometric "geometric" (p: F64) -> I64 => d::Geometric::new(p),
         support = Support::Discrete;
     Multinomial "multinomial" (n: I64, p: F64) -> I64 => d::Multinomial::new(n, p)?,
         support = Support::Discrete;
     Poisson "poisson" (mu: F64) -> I64 => d::Poisson::new(mu),
-        support = Support::Discrete;
+        support = Support::Discrete,
+        cdf = rejection;
     UniformInt "uniform_int" (x_min: I64, x_max: I64) -> I64 => d::UniformInt::new(x_min, x_max),
         support = Support::Discrete,
         gradient = |_, _| Ok(no_gradient(2));
 }
 
 impl DistributionKind {
+    /// The error for a distribution without a CDF used where one is needed.
+    fn no_cdf(&self) -> GraphError {
+        GraphError::InvalidNode {
+            op: self.name(),
+            message: "the distribution has no CDF, so it cannot be truncated or censored".into(),
+        }
+    }
+
     /// The error for a parameter list that doesn't match the distribution (checked when the node is built).
-    fn wrong_parameters(&self) -> GraphError {
+    pub(crate) fn wrong_parameters(&self) -> GraphError {
         GraphError::InvalidNode {
             op: self.name(),
             message: format!("needs parameters of types {:?}", self.parameter_types()),
@@ -584,10 +800,21 @@ impl DistributionOp {
         if let DistributionKind::Custom(_) = kind {
             return Ok(Shape::from_slice(requested.unwrap_or(&[])));
         }
+        if let DistributionKind::Truncated(base) | DistributionKind::Censored(base) = kind {
+            if !base.has_cdf() {
+                return Err(invalid(format!(
+                    "the base distribution ({}) has no CDF, so it cannot be truncated or censored",
+                    base.name()
+                )));
+            }
+        }
         match kind.parameter_types() {
             Some(types) => {
                 if parameters.len() != types.len()
-                    || parameters.iter().zip(types).any(|((t, _), e)| t != e)
+                    || parameters
+                        .iter()
+                        .zip(types.iter())
+                        .any(|((t, _), e)| t != e)
                 {
                     return Err(invalid(format!("needs parameters of types {types:?}")));
                 }

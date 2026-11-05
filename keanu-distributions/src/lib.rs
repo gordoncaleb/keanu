@@ -26,6 +26,7 @@
 #![deny(missing_docs)]
 #![cfg_attr(docsrs, feature(doc_cfg))]
 
+mod cdf;
 pub mod continuous;
 pub mod discrete;
 mod error;

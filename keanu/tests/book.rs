@@ -154,6 +154,43 @@ fn indexing() -> keanu::Result<()> {
     Ok(())
 }
 
+#[test]
+fn truncated_and_censored() -> keanu::Result<()> {
+    // ANCHOR: truncated_censored
+    use keanu::graph::op::DistributionKind;
+
+    let b = GraphBuilder::new();
+    let (mu, sigma) = (b.gaussian(0.0, 5.0), b.half_gaussian(2.0));
+
+    // a Gaussian restricted to [0, ∞) and renormalised: NUTS keeps it above 0
+    let rate: DoubleVar = b.truncated(
+        DistributionKind::Gaussian,
+        &[mu.id(), sigma.id()],
+        0.0,
+        f64::INFINITY,
+    );
+
+    // readings from an instrument that saturates at 10: a reading of exactly 10 means "10 or more"
+    let readings: DoubleVar = b.censored(
+        DistributionKind::Gaussian,
+        &[rate.id(), b.scalar(1.0).id()],
+        f64::NEG_INFINITY,
+        DoubleTensor::full(&[4], 10.0),
+    );
+    b.observe(readings, DoubleTensor::vector(vec![7.9, 9.4, 10.0, 10.0]));
+
+    // a zero-truncated Poisson: counts of at least 1
+    let count: IntVar = b.truncated(DistributionKind::Poisson, &[rate.id()], 1.0, f64::INFINITY);
+    b.observe(count, IntTensor::scalar(3));
+
+    let rate = rate.id();
+    let (graph, mut state) = b.build()?;
+    state.lazy_eval(&graph, &[rate], &mut KeanuRng::seed_from_u64(1))?;
+    assert!(state.f64(rate).unwrap().to_scalar().unwrap() >= 0.0);
+    // ANCHOR_END: truncated_censored
+    Ok(())
+}
+
 /// The thermometer example: a room temperature read by two noisy thermometers.
 fn thermometers() -> keanu::Result<(Model, State, NodeId)> {
     // ANCHOR: thermometers

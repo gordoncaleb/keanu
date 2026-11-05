@@ -4,7 +4,9 @@ use crate::builder::GraphBuilder;
 use crate::graph::NodeId;
 use crate::op::{CustomDistribution, DistributionKind};
 use crate::vars::{BoolVar, DoubleVar, IntVar, IntoDoubleVar, IntoIntVar, Var};
+use crate::{GraphError, Value};
 use keanu_distributions::Kde;
+use keanu_tensor::DoubleTensor;
 use std::sync::Arc;
 
 macro_rules! continuous {
@@ -316,4 +318,117 @@ impl GraphBuilder {
             self.distribution(DistributionKind::UniformInt, Some(shape), &ids),
         )
     }
+}
+
+impl GraphBuilder {
+    /// A truncated distribution: `base` (a univariate distribution kind with a CDF: Gaussian, LogNormal,
+    /// Exponential, Gamma, Beta, StudentT, Cauchy, Laplace, Logistic, Uniform, Poisson or Binomial) with
+    /// `parameters` (its parameter nodes, in its order), restricted to `[lower, upper]` and renormalised by the
+    /// probability the base gives that range. Either bound may be infinite; for a discrete base both must be whole
+    /// numbers (or infinite) and the range includes them.
+    ///
+    /// The node's support is the base's intersected with the bounds, so gradient based samplers keep a latent
+    /// truncated node inside them. Values are drawn by inverting the base's CDF where it has a closed-form inverse
+    /// (Gaussian, LogNormal, Exponential, Cauchy, Laplace, Logistic, Uniform) and by rejection otherwise, which
+    /// fails with an error if the bounds hold too little of the base's probability.
+    ///
+    /// The handle type must match the base's value type ([`DoubleVar`] or [`IntVar`]). Building fails if the base
+    /// has no CDF, the parameters don't match it, or constant bounds have `lower >= upper`; bounds that are not
+    /// constant are checked when the node is evaluated.
+    ///
+    /// ```
+    /// use keanu_graph::{DoubleVar, GraphBuilder, op::DistributionKind};
+    ///
+    /// let b = GraphBuilder::new();
+    /// let (mu, sigma) = (b.scalar(0.0), b.scalar(1.0));
+    /// // a half-normal, as a Gaussian truncated below at 0
+    /// let x: DoubleVar = b.truncated(DistributionKind::Gaussian, &[mu.id(), sigma.id()], 0.0, f64::INFINITY);
+    /// # let _ = x;
+    /// b.build()?;
+    /// # Ok::<(), keanu_graph::GraphError>(())
+    /// ```
+    pub fn truncated<'b, V: Var<'b>>(
+        &'b self,
+        base: DistributionKind,
+        parameters: &[NodeId],
+        lower: impl IntoDoubleVar<'b>,
+        upper: impl IntoDoubleVar<'b>,
+    ) -> V {
+        let kind = DistributionKind::Truncated(Arc::new(base));
+        self.wrapper(kind, parameters, lower.into_var(self), upper.into_var(self))
+    }
+
+    /// A censored distribution: `base` (a univariate distribution kind with a CDF, as for [`Self::truncated`]) with
+    /// `parameters`, observed through bounds. A value strictly between the bounds has the base's density; a value
+    /// equal to `lower` stands for every value at or below it, with probability P(X <= lower), and a value equal
+    /// to `upper` for every value at or above it, with probability P(X >= upper). Values beyond the bounds are
+    /// impossible. Either bound may be infinite (no censoring on that side); for a discrete base both must be
+    /// whole numbers (or infinite).
+    ///
+    /// Censoring is for observed data, such as measurements clipped by an instrument's range. Values are drawn
+    /// from the base and recorded as the nearer bound when beyond it. Errors are as for [`Self::truncated`].
+    pub fn censored<'b, V: Var<'b>>(
+        &'b self,
+        base: DistributionKind,
+        parameters: &[NodeId],
+        lower: impl IntoDoubleVar<'b>,
+        upper: impl IntoDoubleVar<'b>,
+    ) -> V {
+        let kind = DistributionKind::Censored(Arc::new(base));
+        self.wrapper(kind, parameters, lower.into_var(self), upper.into_var(self))
+    }
+
+    fn wrapper<'b, V: Var<'b>>(
+        &'b self,
+        kind: DistributionKind,
+        parameters: &[NodeId],
+        lower: DoubleVar<'b>,
+        upper: DoubleVar<'b>,
+    ) -> V {
+        let op = if matches!(kind, DistributionKind::Truncated(_)) {
+            "truncated"
+        } else {
+            "censored"
+        };
+        if kind.value_type() != V::DTYPE {
+            self.record(GraphError::InvalidNode {
+                op,
+                message: format!(
+                    "the base distribution's values are {:?} but a {:?} node was requested",
+                    kind.value_type(),
+                    V::DTYPE
+                ),
+            });
+        }
+        if let (Some(Value::F64(l)), Some(Value::F64(u))) = (
+            self.constant_value(lower.id()),
+            self.constant_value(upper.id()),
+        ) {
+            if let Ok((l, u)) = broadcast_pair(&l, &u) {
+                // NaN bounds fail too
+                if l.as_slice()
+                    .iter()
+                    .zip(u.as_slice())
+                    .any(|(l, u)| l >= u || l.is_nan() || u.is_nan())
+                {
+                    self.record(GraphError::InvalidNode {
+                        op,
+                        message: "the lower bound must be less than the upper bound".into(),
+                    });
+                }
+            }
+        }
+        let mut ids = parameters.to_vec();
+        ids.extend([lower.id(), upper.id()]);
+        V::wrap(self, self.distribution(kind, None, &ids))
+    }
+}
+
+/// Two tensors broadcast to their common shape.
+fn broadcast_pair(
+    a: &DoubleTensor,
+    b: &DoubleTensor,
+) -> keanu_tensor::Result<(DoubleTensor, DoubleTensor)> {
+    let shape = keanu_tensor::broadcast_shape(a.shape(), b.shape())?;
+    Ok((a.broadcast_to(&shape)?, b.broadcast_to(&shape)?))
 }

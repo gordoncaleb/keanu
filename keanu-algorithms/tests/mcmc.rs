@@ -192,6 +192,61 @@ fn samplers_find_the_beta_binomial_posterior() {
     assert_moments(&series(&nuts, p), m, v, "Beta-Binomial NUTS");
 }
 
+/// A latent N(0, 1) truncated to [a, b] (either bound may be infinite): NUTS stays inside the bounds through the
+/// truncation's support transform and finds the truncated mean and variance.
+#[test]
+fn nuts_keeps_a_truncated_latent_inside_its_bounds() {
+    use keanu_graph::DoubleVar;
+    use keanu_graph::op::DistributionKind;
+    let phi = |x: f64| {
+        if x.is_finite() {
+            (-x * x / 2.0).exp() / (2.0 * std::f64::consts::PI).sqrt()
+        } else {
+            0.0
+        }
+    };
+    let x_phi = |x: f64| if x.is_finite() { x * phi(x) } else { 0.0 };
+    let cdf = keanu_tensor::special::ndtr;
+    for (a, b, seed) in [(0.5, 2.0, 21), (-f64::INFINITY, -1.0, 22)] {
+        let builder = GraphBuilder::new();
+        let (mu, sigma) = (builder.scalar(0.0), builder.scalar(1.0));
+        let x: DoubleVar =
+            builder.truncated(DistributionKind::Gaussian, &[mu.id(), sigma.id()], a, b);
+        let start = if b.is_finite() && a.is_finite() {
+            (a + b) / 2.0
+        } else {
+            b - 1.0
+        };
+        builder.set_value(x, DoubleTensor::scalar(start));
+        let x = x.id();
+        let (graph, mut state) = builder.build().unwrap();
+        let model = Model::new(graph, &state).unwrap();
+        let samples = Nuts::default()
+            .with_adapt_count(500)
+            .sample_with_statistics(
+                &model,
+                &mut state,
+                &[x],
+                4000,
+                SamplingOptions::default()
+                    .with_drop(500)
+                    .with_down_sample_interval(1),
+                &mut rng(seed),
+            )
+            .unwrap()
+            .0;
+        let xs = series(&samples, x);
+        assert!(
+            xs.iter().all(|&x| x > a && x < b),
+            "[{a}, {b}]: a sample left the bounds"
+        );
+        let z = cdf(b) - cdf(a);
+        let m = (phi(a) - phi(b)) / z;
+        let v = 1.0 + (x_phi(a) - x_phi(b)) / z - m * m;
+        assert_moments(&xs, m, v, &format!("truncated [{a}, {b}]"));
+    }
+}
+
 /// rate ~ Gamma(theta = 1.5, k = 2), x_i ~ Poisson(rate) observed: the posterior is
 /// Gamma(k + Σx, theta / (1 + n theta)).
 #[test]

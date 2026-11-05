@@ -3,6 +3,7 @@
 mod distribution;
 pub(crate) mod eval;
 mod shape;
+mod wrappers;
 
 pub(crate) use distribution::LogProbGradientParts;
 pub use distribution::{

@@ -13,7 +13,7 @@ use crate::util::{
 use keanu_tensor::DoubleTensor;
 use std::f64::consts::{LN_2, PI};
 
-const LN_SQRT_2PI: f64 = 0.918_938_533_204_672_8;
+pub(crate) const LN_SQRT_2PI: f64 = 0.918_938_533_204_672_8;
 
 /// Normal distribution with mean `mu` and standard deviation `sigma`.
 #[derive(Debug, Clone, PartialEq)]
@@ -1076,6 +1076,18 @@ pub struct Uniform<'a> {
     pub x_min: Param<'a>,
     /// The upper bound.
     pub x_max: Param<'a>,
+}
+
+/// Derivatives of [`Uniform::log_cdf`] and [`Uniform::log_ccdf`] (the log density has no useful derivative: it
+/// is constant inside the support).
+#[derive(Debug, Clone, PartialEq)]
+pub struct UniformGradient {
+    /// With respect to x.
+    pub x: DoubleTensor,
+    /// With respect to `x_min`.
+    pub x_min: DoubleTensor,
+    /// With respect to `x_max`.
+    pub x_max: DoubleTensor,
 }
 
 impl<'a> Uniform<'a> {

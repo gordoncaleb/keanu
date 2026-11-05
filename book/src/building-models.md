@@ -16,6 +16,26 @@ Each distribution has a builder method taking its parameters, which can be other
 | Discrete | `bernoulli` (bool), `binomial`, `categorical`, `geometric`, `multinomial`, `poisson`, `uniform_int` |
 | Your own | `custom` (see [Custom distributions](custom-distributions.md)) |
 
+## Truncated and censored distributions
+
+`truncated(base, parameters, lower, upper)` restricts a univariate distribution to `[lower, upper]` and renormalises
+it by the probability the base gives that range; `censored(base, parameters, lower, upper)` models values that are
+clipped to the bounds, so a value equal to `lower` has probability P(X ≤ lower) and a value equal to `upper` has
+P(X ≥ upper). The base is a `DistributionKind` with a CDF (Gaussian, LogNormal, Exponential, Gamma, Beta, StudentT,
+Cauchy, Laplace, Logistic, Uniform, Poisson or Binomial) and its parameters are node ids, in the base's order.
+Either bound may be infinite; for a discrete base the bounds are whole numbers and the range includes them.
+
+```rust,ignore
+{{#include ../../keanu/tests/book.rs:truncated_censored}}
+```
+
+A truncated latent's support is the base's support intersected with the bounds, so NUTS, the gradient optimizers
+and the other gradient based algorithms keep it inside them. Truncations are sampled by inverting the base's CDF
+where it has a closed form (Gaussian, LogNormal, Exponential, Cauchy, Laplace, Logistic, Uniform) and by rejection
+otherwise, which fails with an error if the bounds hold too little of the base's probability. Censoring is meant for
+observed data. Each of these distributions also has `log_cdf` and `log_ccdf` (with gradients) in
+`keanu::distributions`, accurate far into the tails.
+
 ## Deterministic nodes
 
 Handles (`DoubleVar`, `IntVar`, `BoolVar`) support:

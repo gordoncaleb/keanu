@@ -62,6 +62,8 @@ fn square_cases() -> Vec<Case> {
             ("identity", Support::Real),
             ("lower_bound", Support::greater_than(0.0)),
             ("lower_bound_tensor", Support::GreaterThan(lower.clone())),
+            ("upper_bound", Support::less_than(2.0)),
+            ("upper_bound_tensor", Support::LessThan(upper.clone())),
             ("interval", Support::interval(-1.0, 3.0)),
             ("interval_tensor", Support::Interval(lower, upper)),
         ];
