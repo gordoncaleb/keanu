@@ -182,6 +182,29 @@ Still slower than Java:
 | CONJUGATE_GRADIENT | 58.43 µs | 30.12 µs | 1.9× |
 | CONJUGATE_GRADIENT (cold start) | — | 190.46 µs | — |
 
+#### L-BFGS evaluation counts
+
+L-BFGS (the default gradient optimizer since 2026-11-05) was added to `OptimizerBenchmark` as `LBFGS`. It was
+measured on a loaded machine (Adam's warm start took 104 µs against the 18.8 µs above), so its times aren't
+comparable with the table and aren't shown. What does compare is the number of fitness and gradient evaluations,
+which `cargo bench -p keanu --all-features --bench models` prints. L-BFGS evaluates the fitness and its gradient
+at every trial point, so each trial point counts twice.
+
+| Model (MAP from the stored values) | Conjugate gradient | L-BFGS |
+|---|---:|---:|
+| `OptimizerBenchmark`, from A = B = 0 | 272 | 36 |
+| `OptimizerBenchmark`, from the previous optimum (as Java) | 4 | 12 |
+| thermometers | 20 | 8 |
+| linearRegression | 320 | 36 |
+| gammaPoisson | 20 | 10 |
+
+L-BFGS needs fewer evaluations everywhere except the warm start, where it is already at the optimum and its
+convergence tests (Stan's, such as a fitness change below 1e-12) are stricter than conjugate gradient's (1e-8).
+The golden optimizer test (`keanu-algorithms/tests/golden_optimizers.rs`) prints the counts for every conjugate
+gradient case. L-BFGS needs between a half and a ninth of conjugate gradient's evaluations there; for example,
+randomWalkSequence MAP takes 20 against 62 and betaBinomial MAP 6 against 34. hierarchicalGaussian's MAP is left
+out: its posterior is unbounded, so neither optimizer has an optimum to reach.
+
 ### 1000 NUTS samples, adapting for 1000 (`NUTSBenchmark`)
 
 | Case | Java | Rust | Java ÷ Rust |

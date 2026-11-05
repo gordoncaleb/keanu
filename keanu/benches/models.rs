@@ -58,10 +58,18 @@ fn optimizers(c: &mut Criterion) {
             keanu::algorithms::optimizer::Algorithm::from(adam),
         ),
         ("CONJUGATE_GRADIENT", cg.into()),
+        ("LBFGS", Lbfgs::default().into()),
     ] {
         let optimizer = GradientOptimizer::new(&model).algorithm(algorithm);
         // same check as the Java benchmark's teardown
         let result = optimizer.max_a_posteriori(&mut state.clone()).unwrap();
+        let mut warm = state.clone();
+        optimizer.max_a_posteriori(&mut warm).unwrap();
+        let warm_evaluations = optimizer.max_a_posteriori(&mut warm).unwrap().evaluations;
+        println!(
+            "{name}: {} evaluations from A = B = 0, {warm_evaluations} from the previous optimum",
+            result.evaluations
+        );
         assert!(
             (result.fitness - -0.1496).abs() < 1e-2,
             "{name} fitness {}",
@@ -158,6 +166,25 @@ fn golden_models(c: &mut Criterion) {
             .lazy_eval(&graph, &all, &mut KeanuRng::seed_from_u64(1))
             .unwrap();
         let model = Model::new(graph, &state).unwrap();
+        // fitness and gradient evaluations of each gradient optimizer to the MAP from the stored values
+        for (algorithm, choice) in [
+            (
+                "CONJUGATE_GRADIENT",
+                keanu::algorithms::optimizer::Algorithm::from(ConjugateGradient::default()),
+            ),
+            ("LBFGS", Lbfgs::default().into()),
+        ] {
+            match GradientOptimizer::new(&model)
+                .algorithm(choice)
+                .max_a_posteriori(&mut state.clone())
+            {
+                Ok(result) => println!(
+                    "MAP {name} {algorithm}: {} evaluations, fitness {}, converged {}",
+                    result.evaluations, result.fitness, result.converged
+                ),
+                Err(e) => println!("MAP {name} {algorithm}: {e}"),
+            }
+        }
         group.bench_with_input(BenchmarkId::new("logProb", name), &(), |b, _| {
             b.iter(|| black_box(model.log_prob(&state).unwrap()))
         });

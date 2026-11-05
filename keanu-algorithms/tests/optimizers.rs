@@ -3,7 +3,8 @@
 use keanu_algorithms::AlgorithmError;
 use keanu_algorithms::Space;
 use keanu_algorithms::optimizer::{
-    Adam, ConjugateGradient, ConvergenceChecker, GradientOptimizer, Norm, UpdateFormula,
+    Adam, Algorithm, ConjugateGradient, ConvergenceChecker, GradientOptimizer, Lbfgs, Norm,
+    UpdateFormula,
 };
 use keanu_graph::{GraphBuilder, Model, State};
 use keanu_tensor::{DoubleTensor, IntTensor};
@@ -38,6 +39,8 @@ fn both_algorithms_find_the_conjugate_gaussian_posterior_mode() {
         ConjugateGradient::default()
             .with_formula(UpdateFormula::FletcherReeves)
             .into(),
+        Lbfgs::default().into(),
+        Lbfgs::default().with_history_size(1).into(),
     ];
     for algorithm in algorithms {
         let (model, mut state, mu) = conjugate_gaussian(&observations);
@@ -70,6 +73,7 @@ fn conjugate_gradient_does_not_waste_evaluations_at_the_optimum() {
     let (graph, mut state) = b.build().unwrap();
     let model = Model::new(graph, &state).unwrap();
     let result = GradientOptimizer::new(&model)
+        .algorithm(ConjugateGradient::default())
         .max_a_posteriori(&mut state)
         .unwrap();
     assert!(result.converged);
@@ -83,6 +87,7 @@ fn conjugate_gradient_does_not_waste_evaluations_at_the_optimum() {
     let observations = [0.3, 1.2, 0.9, 1.7];
     let (model, mut state, mu) = conjugate_gaussian(&observations);
     let result = GradientOptimizer::new(&model)
+        .algorithm(ConjugateGradient::default())
         .max_a_posteriori(&mut state)
         .unwrap();
     let found = result.get(mu).unwrap().to_scalar().unwrap();
@@ -305,8 +310,9 @@ fn conjugate_gradient_stops_at_an_impossible_start() {
             .unwrap_err(),
         AlgorithmError::ImpossibleStart
     );
-    // in constrained space the optimizer starts there, and stops at once
+    // in constrained space conjugate gradient starts there, and stops at once
     let result = GradientOptimizer::new(&model)
+        .algorithm(ConjugateGradient::default())
         .space(Space::Constrained)
         .check_initial_conditions(false)
         .max_a_posteriori(&mut state)
@@ -320,6 +326,7 @@ fn both_algorithms() -> Vec<keanu_algorithms::optimizer::Algorithm> {
     vec![
         Adam::default().with_max_evaluations(100_000).into(),
         ConjugateGradient::default().into(),
+        Lbfgs::default().into(),
     ]
 }
 
@@ -474,5 +481,125 @@ fn conjugate_gradient_keeps_to_its_evaluation_budget() {
     assert!(!result.converged);
     // the budget, with no final fitness evaluation
     assert!(result.evaluations <= 5, "{}", result.evaluations);
+    assert!(result.fitness.is_finite());
+}
+
+/// KTD11: L-BFGS is the default gradient algorithm.
+#[test]
+fn lbfgs_is_the_default() {
+    assert_eq!(Algorithm::default(), Algorithm::from(Lbfgs::default()));
+}
+
+/// The generalised Rosenbrock function as a negative log likelihood: for each i < n,
+/// a_i ~ N(10 (x_{i+1} − x_i²), 1/√2) observed at 0 and b_i ~ N(x_i, 1/√2) observed at 1, so the log likelihood
+/// is −Σ [100 (x_{i+1} − x_i²)² + (1 − x_i)²] + const, maximised at x = (1, …, 1).
+fn rosenbrock(start: &[f64]) -> (Model, State, Vec<keanu_graph::NodeId>) {
+    let b = GraphBuilder::new();
+    let sigma = std::f64::consts::FRAC_1_SQRT_2;
+    let x: Vec<_> = start
+        .iter()
+        .map(|&v| {
+            let x = b.gaussian(0.0, 1.0);
+            b.set_value(x, DoubleTensor::scalar(v));
+            x
+        })
+        .collect();
+    for i in 0..start.len() - 1 {
+        let a = b.gaussian((x[i + 1] - x[i] * x[i]) * 10.0, sigma);
+        b.observe(a, DoubleTensor::scalar(0.0));
+        let c = b.gaussian(x[i], sigma);
+        b.observe(c, DoubleTensor::scalar(1.0));
+    }
+    let ids = x.iter().map(|x| x.id()).collect();
+    let (graph, state) = b.build().unwrap();
+    (Model::new(graph, &state).unwrap(), state, ids)
+}
+
+#[test]
+fn lbfgs_minimises_rosenbrock() {
+    let mut ten = [-1.2, 1.0].repeat(5);
+    ten[9] = 1.0;
+    for start in [vec![-1.2, 1.0], ten] {
+        let (model, mut state, x) = rosenbrock(&start);
+        let result = GradientOptimizer::new(&model)
+            .algorithm(Lbfgs::default())
+            .max_likelihood(&mut state)
+            .unwrap();
+        assert!(result.converged, "{} dimensions", start.len());
+        for &id in &x {
+            let v = result.get(id).unwrap().to_scalar().unwrap();
+            assert!((v - 1.0).abs() < 1e-4, "{} dimensions: {v}", start.len());
+        }
+        // two evaluations (fitness and gradient) per trial point, well inside 2000 iterations
+        assert!(result.evaluations < 2_000, "{}", result.evaluations);
+    }
+}
+
+/// An impossible (−∞ or NaN) fitness at the start is an error for L-BFGS even without the initial-condition check
+/// (conjugate gradient instead stops there).
+#[test]
+fn lbfgs_rejects_a_non_finite_start() {
+    let (model, mut state, _) = zero_sigma();
+    assert_eq!(
+        GradientOptimizer::new(&model)
+            .algorithm(Lbfgs::default())
+            .space(Space::Constrained)
+            .check_initial_conditions(false)
+            .max_a_posteriori(&mut state)
+            .unwrap_err(),
+        AlgorithmError::ImpossibleStart
+    );
+}
+
+/// In constrained space the first L-BFGS step from a = 0.5 (a step of 1 along the gradient) leaves the support of
+/// Uniform(0, 1), where the fitness is −∞: the line search shrinks the step and the optimizer finds the mode, 0.9.
+#[test]
+fn lbfgs_shrinks_a_step_to_a_non_finite_point() {
+    let b = GraphBuilder::new();
+    let a = b.uniform(0.0, 1.0);
+    b.set_value(a, DoubleTensor::scalar(0.5));
+    let x = b.gaussian(a, 0.1);
+    b.observe(x, DoubleTensor::scalar(0.9));
+    let a = a.id();
+    let (graph, mut state) = b.build().unwrap();
+    let model = Model::new(graph, &state).unwrap();
+    let result = GradientOptimizer::new(&model)
+        .algorithm(Lbfgs::default())
+        .space(Space::Constrained)
+        .max_a_posteriori(&mut state)
+        .unwrap();
+    assert!(result.converged);
+    let mode = result.get(a).unwrap().to_scalar().unwrap();
+    assert!((mode - 0.9).abs() < 1e-6, "{mode}");
+}
+
+#[test]
+fn invalid_lbfgs_settings_are_errors() {
+    let (model, mut state, _) = conjugate_gaussian(&[1.0]);
+    for lbfgs in [
+        Lbfgs::default().with_history_size(0),
+        Lbfgs::default().with_max_iterations(0),
+        Lbfgs::default().with_tol_grad(-1.0),
+        Lbfgs::default().with_tol_rel_obj(f64::NAN),
+    ] {
+        let error = GradientOptimizer::new(&model)
+            .algorithm(lbfgs)
+            .max_a_posteriori(&mut state);
+        assert!(
+            matches!(error, Err(AlgorithmError::InvalidSetting(_))),
+            "{lbfgs:?}"
+        );
+    }
+}
+
+/// The iteration limit stops L-BFGS without converging.
+#[test]
+fn lbfgs_stops_at_its_iteration_limit() {
+    let (model, mut state, _) = rosenbrock(&[-1.2, 1.0]);
+    let result = GradientOptimizer::new(&model)
+        .algorithm(Lbfgs::default().with_max_iterations(3))
+        .max_likelihood(&mut state)
+        .unwrap();
+    assert!(!result.converged);
     assert!(result.fitness.is_finite());
 }

@@ -84,8 +84,8 @@ pub mod prelude {
     pub use crate::algorithms::mcmc::select::Sampler;
     pub use crate::algorithms::mcmc::{SamplingOptions, generate};
     pub use crate::algorithms::optimizer::{
-        Adam, Bobyqa, ConjugateGradient, GradientOptimizer, NonGradientOptimizer, OptimizedResult,
-        OptimizerBounds,
+        Adam, Bobyqa, ConjugateGradient, GradientOptimizer, Lbfgs, NonGradientOptimizer,
+        OptimizedResult, OptimizerBounds,
     };
     pub use crate::algorithms::predictive::PredictiveSampler;
     pub use crate::algorithms::regression::{

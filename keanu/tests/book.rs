@@ -176,7 +176,7 @@ fn thermometers() -> keanu::Result<(Model, State, NodeId)> {
 fn maximum_a_posteriori() -> keanu::Result<()> {
     let (model, mut state, temperature) = thermometers()?;
     // ANCHOR: map
-    // conjugate gradient by default
+    // L-BFGS by default
     let result = GradientOptimizer::new(&model).max_a_posteriori(&mut state)?;
     let most_probable = result.get(temperature).unwrap().to_scalar().unwrap();
     assert!((most_probable - 26.0).abs() < 1e-3);
@@ -193,6 +193,12 @@ fn maximum_a_posteriori() -> keanu::Result<()> {
         .with_max_evaluations(50_000);
     let result = GradientOptimizer::new(&model)
         .algorithm(adam)
+        .max_a_posteriori(&mut state)?;
+    assert!(result.converged);
+
+    let lbfgs = Lbfgs::default().with_history_size(10).with_tol_grad(1e-10);
+    let result = GradientOptimizer::new(&model)
+        .algorithm(lbfgs)
         .max_a_posteriori(&mut state)?;
     assert!(result.converged);
 

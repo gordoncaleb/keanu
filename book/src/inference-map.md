@@ -12,9 +12,16 @@ latents; for models with discrete latents, use [sampling](inference-sampling.md)
 
 ## Choosing an algorithm
 
-Two gradient algorithms are available:
+Three gradient algorithms are available:
 
-- **`ConjugateGradient`** (the default) is nonlinear conjugate gradient, Polak–Ribière+ with a line search.
+- **`Lbfgs`** (the default) is limited-memory BFGS with Stan's settings: a history of 5 steps
+  (`history_size`) and a line search for the strong Wolfe conditions. It stops, converged, when the log
+  probability changes by less than `tol_obj` (1e-12) or by less than `tol_rel_obj` (1e4) machine epsilons relative
+  to its size, when the gradient's norm is below `tol_grad` (1e-8) or its size relative to the log probability is
+  below `tol_rel_grad` (1e7) machine epsilons, or when the latents move less than `tol_param` (1e-8); and, without
+  converging, after `max_iterations` (2000). On the golden models it needs between a half and a ninth of
+  conjugate gradient's evaluations.
+- **`ConjugateGradient`** is nonlinear conjugate gradient, Polak–Ribière+ with a line search.
   Settings: `max_evaluations`, `relative_threshold` and `absolute_threshold` (both 1e-8 by default; the optimizer
   stops when the change in log probability is below either), and `formula`.
 - **`Adam`**, with its usual settings: `alpha` (the step size), `beta1`, `beta2`, `epsilon`, `max_evaluations`, and
@@ -24,10 +31,12 @@ Two gradient algorithms are available:
 {{#include ../../keanu/tests/book.rs:map_settings}}
 ```
 
-If an algorithm runs out of evaluations, it returns its current point with `converged: false` rather than an error.
-Conjugate gradient also stops with `converged: false`, at the best point found, if the log probability becomes
-impossible or the gradient NaN or infinite. Unless the initial-condition check is turned off, an impossible start
-or a NaN or infinite starting gradient is an error.
+If an algorithm runs out of evaluations or iterations, it returns its current point with `converged: false` rather
+than an error. L-BFGS shortens a step that reaches an impossible log probability or a NaN or infinite gradient, and
+stops with `converged: false` if no step along the gradient improves the log probability. Conjugate gradient stops
+with `converged: false`, at the best point found, if the log probability becomes impossible or the gradient NaN or
+infinite. Unless the initial-condition check is turned off, an impossible start or a NaN or infinite starting
+gradient is an error; for L-BFGS an impossible start is an error either way.
 
 ## Constrained latents
 

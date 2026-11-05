@@ -23,11 +23,14 @@ mod adam;
 pub mod bobyqa;
 mod conjugate_gradient;
 mod convergence;
+mod lbfgs;
+mod line_search;
 
 pub use adam::Adam;
 pub use bobyqa::{Bobyqa, NonGradientOptimizer, OptimizerBounds};
 pub use conjugate_gradient::{ConjugateGradient, UpdateFormula};
 pub use convergence::{ConvergenceChecker, Norm};
+pub use lbfgs::Lbfgs;
 
 use crate::error::{AlgorithmError, Result};
 use crate::support::{block_shapes, concat, split, start_point};
@@ -52,12 +55,20 @@ pub enum Algorithm {
     Adam(Adam),
     /// Nonlinear conjugate gradient.
     ConjugateGradient(ConjugateGradient),
+    /// Limited-memory BFGS.
+    Lbfgs(Lbfgs),
 }
 
-/// Conjugate gradient, the default (as in Java).
+/// L-BFGS, the default.
 impl Default for Algorithm {
     fn default() -> Self {
-        Self::ConjugateGradient(ConjugateGradient::default())
+        Self::Lbfgs(Lbfgs::default())
+    }
+}
+
+impl From<Lbfgs> for Algorithm {
+    fn from(l: Lbfgs) -> Self {
+        Self::Lbfgs(l)
     }
 }
 
@@ -100,7 +111,7 @@ impl OptimizedResult {
 }
 
 /// Finds the latent values that maximize the log probability or log likelihood of a model by gradient ascent
-/// (Java's `GradientOptimizer`). The default algorithm is conjugate gradient, in unconstrained space (see the
+/// (Java's `GradientOptimizer`). The default algorithm is [`Lbfgs`], in unconstrained space (see the
 /// [module documentation](self)).
 #[derive(Debug, Clone)]
 pub struct GradientOptimizer<'m> {
@@ -122,11 +133,11 @@ const BOUNDARY: f64 = 30.0;
 const PROBE: f64 = 5.0;
 
 impl<'m> GradientOptimizer<'m> {
-    /// An optimizer for `model`, using conjugate gradient in unconstrained space by default.
+    /// An optimizer for `model`, using L-BFGS in unconstrained space by default.
     pub fn new(model: &'m Model) -> Self {
         Self {
             model,
-            algorithm: ConjugateGradient::default().into(),
+            algorithm: Algorithm::default(),
             check_initial_conditions: true,
             space: Space::Unconstrained,
         }
@@ -210,6 +221,12 @@ impl<'m> GradientOptimizer<'m> {
             }
             Algorithm::ConjugateGradient(cg) => {
                 let (x, fitness, converged) = cg.maximize(&objective, state, start, known_start)?;
+                objective.apply_flat(state, &x)?;
+                (x, fitness, converged)
+            }
+            Algorithm::Lbfgs(lbfgs) => {
+                let (x, fitness, converged) =
+                    lbfgs.maximize(&objective, state, start, known_start)?;
                 objective.apply_flat(state, &x)?;
                 (x, fitness, converged)
             }
@@ -438,6 +455,25 @@ impl<'m> Objective<'m> {
         self.count();
         self.apply_flat(state, x)?;
         self.fitness_of(state, x)
+    }
+
+    /// The fitness and its gradient at the flat vector `x` (which is applied to the state), as
+    /// [`value_flat`](Self::value_flat) and [`gradient_flat`](Self::gradient_flat) (and counted as both), in one
+    /// pass for the log probability.
+    pub(crate) fn value_and_gradient_flat(
+        &self,
+        state: &mut State,
+        x: &[f64],
+    ) -> Result<(f64, Vec<f64>)> {
+        if self.fitness != Fitness::LogProb {
+            let value = self.value_flat(state, x)?;
+            return Ok((value, self.gradient_flat(state, x)?));
+        }
+        self.count();
+        self.count();
+        // where the log probability is impossible there is no gradient
+        let (value, gradient) = self.param.log_prob_and_gradient(x, self.jacobian, state)?;
+        Ok((value, gradient.unwrap_or_else(|| vec![f64::NAN; x.len()])))
     }
 
     /// The gradient of the fitness at a point (which is applied to the state), one tensor per latent. A latent the
