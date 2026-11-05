@@ -328,6 +328,10 @@ fn infer(op: &Op, parents: &[(DType, &[usize])]) -> Result<(DType, Shape)> {
             Ok((DType::Bool, Shape::new()))
         }
         Op::Predicate(_) => Ok((DType::Bool, expect(parents[0], DType::F64)?.into())),
+        Op::Factor => {
+            expect(parents[0], DType::F64)?;
+            Ok((DType::F64, Shape::new()))
+        }
         Op::Standardize | Op::ReplaceNan(_) => {
             Ok((DType::F64, expect(parents[0], DType::F64)?.into()))
         }
@@ -696,7 +700,8 @@ fn check_arity(op: &Op, count: usize) -> Result<()> {
         | Op::EighVectors
         | Op::Cast(_)
         | Op::ReplaceNan(_)
-        | Op::Assert(_) => (1, Some(1)),
+        | Op::Assert(_)
+        | Op::Factor => (1, Some(1)),
         Op::Binary(_)
         | Op::Compare(_)
         | Op::Mask(_)

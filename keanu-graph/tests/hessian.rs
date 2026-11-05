@@ -485,6 +485,16 @@ fn general_cases() -> Vec<Case> {
             Expect::Matches,
         ),
         (
+            "a factor",
+            |b| {
+                let x = latent_vector(b, &[0.5, -0.5, 2.0]);
+                let y = latent(b, DoubleTensor::scalar(0.3));
+                b.factor((x * y).sin() - x.exp() * 0.1);
+                observe(b, x.sum());
+            },
+            Expect::Matches,
+        ),
+        (
             "a lambda without a second-order rule",
             |b| {
                 let x = latent_vector(b, &[0.5, -0.5, 2.0]);

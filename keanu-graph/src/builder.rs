@@ -5,7 +5,7 @@ use crate::graph::{Graph, Node, NodeId, Parents};
 use crate::op::{DistributionKind, DistributionOp, Lambda, Op, output_type};
 use crate::state::State;
 use crate::value::{DType, Value};
-use crate::vars::{BoolVar, DoubleVar, IntVar, Var};
+use crate::vars::{BoolVar, DoubleVar, IntVar, IntoDoubleVar, Var};
 use keanu_tensor::{BoolTensor, DoubleTensor, IntTensor, Shape};
 use smallvec::SmallVec;
 use std::cell::RefCell;
@@ -546,6 +546,40 @@ impl GraphBuilder {
         self.add(Op::Lambda(lambda), parents, DType::F64)
     }
 
+    // ----- factors -----
+
+    /// A factor node: a term of the joint log probability, like PyMC's `Potential` or Stan's `target +=`. The node's
+    /// value is the scalar sum of `expr`, and [`Model::log_prob`](crate::Model::log_prob) adds it to the log
+    /// probabilities of the probabilistic nodes. A factor whose value is not finite (NaN or ±∞) makes the point
+    /// impossible.
+    ///
+    /// Factors count in the log likelihood ([`Model::log_likelihood`](crate::Model::log_likelihood)) and not in the
+    /// log prior. Their gradients and Hessian-vector products are those of `expr`, through the ordinary automatic
+    /// differentiation, so every gradient based algorithm (NUTS, optimizers, variational inference, the Laplace
+    /// approximation) and Metropolis–Hastings (which updates the log probability incrementally) respect them.
+    /// Forward sampling, predictive sampling and the particle filter don't: a factor is a term of the density, not a
+    /// generative step.
+    ///
+    /// ```
+    /// use keanu_graph::{GraphBuilder, Model};
+    /// use keanu_tensor::DoubleTensor;
+    ///
+    /// // a flat prior on [-10, 10) with a factor -x²/2 is a standard Gaussian, truncated far in its tails
+    /// let b = GraphBuilder::new();
+    /// let x = b.uniform(-10.0, 10.0);
+    /// b.factor(x * x * -0.5).label("standard normal");
+    /// let x = x.id();
+    /// let (graph, mut state) = b.build()?;
+    /// state.set_and_cascade(&graph, x, DoubleTensor::scalar(2.0))?;
+    /// let model = Model::new(graph, &state)?;
+    /// assert_eq!(model.log_prob(&state)?, -(20f64.ln()) - 2.0);
+    /// # Ok::<(), keanu_graph::GraphError>(())
+    /// ```
+    pub fn factor<'b>(&'b self, expr: impl IntoDoubleVar<'b>) -> DoubleVar<'b> {
+        let expr = expr.into_var(self);
+        DoubleVar::new(self, self.add(Op::Factor, &[expr.id()], DType::F64))
+    }
+
     /// The option chosen by a scalar integer selector. Every option must have the same type and shape.
     pub fn multiplexer<'b, V: Var<'b>>(&'b self, selector: IntVar<'b>, options: &[V]) -> V {
         let mut parents = vec![self.own(selector).id()];
@@ -621,11 +655,11 @@ impl GraphBuilder {
     /// T is the length of the first axis of every `xs` (they must agree; use [`scan_steps`](Self::scan_steps) for a
     /// loop without per-step inputs). Row t is `body(row t − 1, xs[t], constants)`, with row −1 being `init`.
     ///
-    /// The body is deterministic: building it with a probabilistic node (`body.gaussian(...)`) fails. It sees only
-    /// its placeholders: outer handles have a different lifetime from the body's, so using one in the body doesn't
-    /// compile, and an outer node mixed in some other way (e.g. through its id) is reported when building. Pass
-    /// outer values in as `constants`, and random variables drawn per step as `xs`. Several carries are packed into
-    /// one tensor (e.g. with [`stack`](Self::stack) and [`slice`](DoubleVar::slice)). Values are f64.
+    /// The body is deterministic: building it with a probabilistic node (`body.gaussian(...)`) or a factor fails. It
+    /// sees only its placeholders: outer handles have a different lifetime from the body's, so using one in the body
+    /// doesn't compile, and an outer node mixed in some other way (e.g. through its id) is reported when building.
+    /// Pass outer values in as `constants`, and random variables drawn per step as `xs`. Several carries are packed
+    /// into one tensor (e.g. with [`stack`](Self::stack) and [`slice`](DoubleVar::slice)). Values are f64.
     ///
     /// The graph holds the body once, so building is O(1) in T, and the scan is differentiable to every order the
     /// graph supports through `init`, `xs` and `constants`. Prefer an unrolled loop (one set of nodes per step, as

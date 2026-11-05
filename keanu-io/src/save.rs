@@ -182,6 +182,7 @@ fn save_op(graph: &Graph, id: NodeId) -> Result<P> {
             constants: body.constants().iter().map(|&c| index(c)).collect(),
             output: index(body.output()),
         }),
+        Op::Factor => P::Factor(empty()),
         Op::Lambda(_) => return Err(unsupported("a lambda")),
         other => return Err(unsupported(other.name())),
     })

@@ -3161,6 +3161,9 @@ impl serde::Serialize for Node {
                 node::Op::EighVectors(v) => {
                     struct_ser.serialize_field("eighVectors", v)?;
                 }
+                node::Op::Factor(v) => {
+                    struct_ser.serialize_field("factor", v)?;
+                }
                 node::Op::Scan(v) => {
                     struct_ser.serialize_field("scan", v)?;
                 }
@@ -3247,6 +3250,7 @@ impl<'de> serde::Deserialize<'de> for Node {
             "eigvalsh",
             "eigh_vectors",
             "eighVectors",
+            "factor",
             "scan",
         ];
 
@@ -3308,6 +3312,7 @@ impl<'de> serde::Deserialize<'de> for Node {
             DeterminantSign,
             Eigvalsh,
             EighVectors,
+            Factor,
             Scan,
         }
         impl<'de> serde::Deserialize<'de> for GeneratedField {
@@ -3386,6 +3391,7 @@ impl<'de> serde::Deserialize<'de> for Node {
                             "determinantSign" | "determinant_sign" => Ok(GeneratedField::DeterminantSign),
                             "eigvalsh" => Ok(GeneratedField::Eigvalsh),
                             "eighVectors" | "eigh_vectors" => Ok(GeneratedField::EighVectors),
+                            "factor" => Ok(GeneratedField::Factor),
                             "scan" => Ok(GeneratedField::Scan),
                             _ => Err(serde::de::Error::unknown_field(value, FIELDS)),
                         }
@@ -3795,6 +3801,13 @@ impl<'de> serde::Deserialize<'de> for Node {
                                 return Err(serde::de::Error::duplicate_field("eighVectors"));
                             }
                             op__ = map_.next_value::<::std::option::Option<_>>()?.map(node::Op::EighVectors)
+;
+                        }
+                        GeneratedField::Factor => {
+                            if op__.is_some() {
+                                return Err(serde::de::Error::duplicate_field("factor"));
+                            }
+                            op__ = map_.next_value::<::std::option::Option<_>>()?.map(node::Op::Factor)
 ;
                         }
                         GeneratedField::Scan => {

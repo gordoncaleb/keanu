@@ -211,7 +211,8 @@ fn vjp_tangent(
         | Op::Cpt { .. }
         | Op::Multiplexer
         | Op::SetWithMask
-        | Op::ReplaceNan(_) => none(),
+        | Op::ReplaceNan(_)
+        | Op::Factor => none(),
         Op::Unary(u) => {
             // x̄ = ḡ f'(x): its derivative is ḡ f''(x) ẋ
             let Some(t0) = t[0] else { return Ok(none()) };

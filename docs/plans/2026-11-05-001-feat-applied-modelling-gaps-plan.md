@@ -237,6 +237,7 @@ Phases run in letter order. U18's occupancy example needs U10 and U17. U23 needs
 - **Files:** `keanu-graph/src/op/mod.rs`, `keanu-graph/src/logprob.rs`, `keanu-graph/src/model.rs`, `keanu-graph/src/builder.rs` (`factor`), `keanu-graph/src/parameterisation.rs`, `keanu-graph/src/autodiff/`, `keanu-io/proto/keanu/graph.proto`, `keanu-io/src/{save,load}.rs`, `keanu-graph/tests/factor.rs`, `book/src/building-models.md`.
 - **Approach:** per KTD1. `GraphBuilder::factor(expr)` returns a `NodeId`. `Model` lists factor nodes; `log_prob`, `log_likelihood` (factors count as likelihood unless labelled prior via `factor_prior`? keep one: factors count in the joint and in `log_likelihood`), gradient and HVP include them. MH incremental `log_prob_after` includes affected factors.
 - **Test scenarios:** a factor of `-0.5·x²` on an improper flat latent reproduces a standard normal under NUTS (moments); gradient and HVP match finite differences; a factor with non-finite value makes the state impossible; save/load round trip; MH respects factors.
+- **Implementation note:** `GraphBuilder::factor` returns a `DoubleVar` (so the factor can be labelled) rather than a bare `NodeId`. Keanu has no improper flat distribution, so the NUTS test uses a wide `Uniform(-20, 20)` prior, whose truncation of the standard normal is negligible. A factor's term is its value, or −∞ where that is not finite (NaN, +∞ or −∞).
 
 ### U2. Log-density op
 
@@ -433,7 +434,7 @@ Phases run in letter order. U18's occupancy example needs U10 and U17. U23 needs
 
 ## Open Questions
 
-- Deferred: whether factor nodes should count in `log_likelihood` or `log_prior` when labelled (decide in U1; default: likelihood).
+- Resolved in U1: factor nodes count in `log_likelihood` (and the joint log probability), never in `log_prior`, with no option to label one as a prior term. A prior-like penalty is still part of the joint, which is what every sampler targets; only code that separates the likelihood from the prior (maximum likelihood, U3's pointwise log-likelihood, which excludes factors) sees the difference.
 - Deferred: the exact public shape of `Compound` builders (settled in U9).
 
 ## Sources & Research

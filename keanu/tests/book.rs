@@ -270,6 +270,37 @@ fn mixtures() -> keanu::Result<()> {
     Ok(())
 }
 
+#[test]
+fn factors() -> keanu::Result<()> {
+    // ANCHOR: factor
+    let b = GraphBuilder::new();
+    let effects = b.gaussian_with_shape(&[4], 0.0, 1.0);
+    // a soft sum-to-zero constraint: log p += -(Σ effects / 0.05)² / 2
+    let total = effects.sum() / 0.05;
+    b.factor(total * total * -0.5).label("sum to zero");
+    let effects = effects.id();
+    let (graph, mut state) = b.build()?;
+    let model = Model::new(graph, &state)?;
+    let samples = Nuts::default().sample(
+        &model,
+        &mut state,
+        &[effects],
+        500,
+        &mut KeanuRng::seed_from_u64(2),
+    )?;
+    let draws = samples.f64(effects).unwrap();
+    let columns: Vec<Vec<f64>> = (0..4)
+        .map(|i| draws.element(&[i]))
+        .collect::<Result<_, _>>()?;
+    // after warm-up, every draw sums to within a few multiples of 0.05 of zero
+    for draw in 250..columns[0].len() {
+        let sum: f64 = columns.iter().map(|column| column[draw]).sum();
+        assert!(sum.abs() < 0.3, "draw {draw} sums to {sum}");
+    }
+    // ANCHOR_END: factor
+    Ok(())
+}
+
 /// The thermometer example: a room temperature read by two noisy thermometers.
 fn thermometers() -> keanu::Result<(Model, State, NodeId)> {
     // ANCHOR: thermometers

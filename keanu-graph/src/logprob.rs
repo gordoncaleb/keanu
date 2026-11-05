@@ -1,4 +1,8 @@
 //! Log probabilities of probabilistic nodes and their gradients with respect to latent nodes.
+//!
+//! Factor nodes ([`Op::Factor`]) are terms of the log probability too: a factor's term is its value (the sum of
+//! its expression), or −∞ where that is not finite. The joint log probability and the log likelihood include every
+//! factor; the log prior includes none.
 
 use crate::autodiff::{
     SecondOrderSeed, accumulate, forward_tangents, reverse_from_seeds, second_order_sweep,
@@ -16,6 +20,25 @@ fn value(state: &State, id: NodeId) -> Result<&Value> {
     state.value(id).ok_or(GraphError::MissingValue(id))
 }
 
+/// A factor's term of the log probability at the factor value `v`: `v`, or −∞ where it is not finite.
+fn factor_term(v: &Value) -> Result<f64> {
+    let v = v.f64()?.sum();
+    Ok(if v.is_finite() { v } else { f64::NEG_INFINITY })
+}
+
+/// A factor's gradient parts: none with respect to its own value, and ones with respect to its expression.
+fn factor_gradient_parts(graph: &Graph, id: NodeId) -> LogProbGradientParts {
+    let expr = graph[id].parents()[0];
+    (
+        None,
+        smallvec::smallvec![Some(DoubleTensor::full(graph[expr].shape(), 1.0))],
+    )
+}
+
+fn is_factor(graph: &Graph, id: NodeId) -> bool {
+    graph.node(id).is_some_and(|node| node.is_factor())
+}
+
 fn kind(graph: &Graph, id: NodeId) -> Result<&DistributionKind> {
     match graph.node(id).ok_or(GraphError::UnknownNode(id))?.op() {
         Op::Distribution(op) => Ok(&op.kind),
@@ -27,15 +50,20 @@ fn kind(graph: &Graph, id: NodeId) -> Result<&DistributionKind> {
 }
 
 /// The log probability of a probabilistic node at its current value, given its parameters' current values
-/// (summed over the elements of the node).
+/// (summed over the elements of the node). For a factor node, its term of the log probability: its value, or −∞
+/// where that is not finite.
 pub fn node_log_prob(graph: &Graph, state: &State, id: NodeId) -> Result<f64> {
     graph.check_ids([&id])?;
     node_log_prob_at(graph, state, id, value(state, id)?)
 }
 
 /// The log probability that a probabilistic node takes the value `v`, given its parameters' current values
-/// (summed over the elements of the node). The node's own current value is ignored.
+/// (summed over the elements of the node). The node's own current value is ignored. For a factor node, its term
+/// of the log probability were its value `v`.
 pub fn node_log_prob_at(graph: &Graph, state: &State, id: NodeId, v: &Value) -> Result<f64> {
+    if is_factor(graph, id) {
+        return factor_term(v);
+    }
     let kind = kind(graph, id)?;
     kind.log_prob(v, &parameters(graph, state, id)?)
 }
@@ -69,19 +97,21 @@ pub fn log_prob(graph: &Graph, state: &State, nodes: &[NodeId]) -> Result<f64> {
         .sum()
 }
 
-/// The joint log probability of every probabilistic node.
+/// The joint log probability of every probabilistic node and every factor.
 pub fn joint_log_prob(graph: &Graph, state: &State) -> Result<f64> {
     graph
         .probabilistic()
+        .chain(graph.factors())
         .map(|id| node_log_prob(graph, state, id))
         .sum()
 }
 
-/// The log likelihood: the log probability of the observed probabilistic nodes.
+/// The log likelihood: the log probability of the observed probabilistic nodes, and every factor's term.
 pub fn log_likelihood(graph: &Graph, state: &State) -> Result<f64> {
     graph
         .probabilistic()
         .filter(|&id| state.is_observed(id))
+        .chain(graph.factors())
         .map(|id| node_log_prob(graph, state, id))
         .sum()
 }
@@ -108,7 +138,8 @@ pub struct NodeLogProbGradient {
     pub parameters: Vec<Option<DoubleTensor>>,
 }
 
-/// ∂ log p(node) / ∂ value and ∂ log p(node) / ∂ parameter for each parameter.
+/// ∂ log p(node) / ∂ value and ∂ log p(node) / ∂ parameter for each parameter. For a factor node, none with
+/// respect to its value and ones with respect to its expression.
 pub fn node_log_prob_gradient(
     graph: &Graph,
     state: &State,
@@ -122,6 +153,9 @@ pub fn node_log_prob_gradient(
 }
 
 fn node_gradient_parts(graph: &Graph, state: &State, id: NodeId) -> Result<LogProbGradientParts> {
+    if is_factor(graph, id) {
+        return Ok(factor_gradient_parts(graph, id));
+    }
     let kind = kind(graph, id)?;
     let v = value(state, id)?;
     kind.log_prob_gradient(v, &parameters(graph, state, id)?)
@@ -266,8 +300,16 @@ pub(crate) fn log_prob_and_gradient(
 ) -> Result<Option<(f64, LogProbGradient)>> {
     let mut log_prob = 0.0;
     let gradient = gradient_from_parts(graph, state, of, wrt, |node| {
-        let (node_log_prob, parts) = kind(graph, node)?
-            .log_prob_and_gradient(value(state, node)?, &parameters(graph, state, node)?)?;
+        let (node_log_prob, parts) = if graph[node].is_factor() {
+            let term = factor_term(value(state, node)?)?;
+            (
+                term,
+                (term != f64::NEG_INFINITY).then(|| factor_gradient_parts(graph, node)),
+            )
+        } else {
+            kind(graph, node)?
+                .log_prob_and_gradient(value(state, node)?, &parameters(graph, state, node)?)?
+        };
         log_prob += node_log_prob;
         Ok(parts)
     })?;
@@ -368,27 +410,29 @@ pub(crate) fn log_prob_hvp(
             .iter()
             .map(|p| node_tangents[p.0].as_ref())
             .collect();
-        // a node whose value and parameters don't move along the directions has no second-order terms
-        let (value_hvp, parameter_hvps) =
-            if value_tangent.is_none() && parent_tangents.iter().all(Option::is_none) {
-                (None, smallvec::smallvec![None; parents.len()])
-            } else {
-                kind(graph, node)?
-                    .log_prob_hvp(
-                        value(state, node)?,
-                        &parameters(graph, state, node)?,
-                        value_tangent,
-                        &parent_tangents,
-                        b,
-                    )
-                    .map_err(|e| match e {
-                        GraphError::NoSecondOrderRule(m) => GraphError::NoSecondOrderRule(format!(
-                            "{m} of node {}",
-                            graph.describe(node)
-                        )),
-                        other => other,
-                    })?
-            };
+        // a node whose value and parameters don't move along the directions has no second-order terms, and a
+        // factor has none (its gradient with respect to its expression is constant)
+        let (value_hvp, parameter_hvps) = if graph[node].is_factor()
+            || (value_tangent.is_none() && parent_tangents.iter().all(Option::is_none))
+        {
+            (None, smallvec::smallvec![None; parents.len()])
+        } else {
+            kind(graph, node)?
+                .log_prob_hvp(
+                    value(state, node)?,
+                    &parameters(graph, state, node)?,
+                    value_tangent,
+                    &parent_tangents,
+                    b,
+                )
+                .map_err(|e| match e {
+                    GraphError::NoSecondOrderRule(m) => GraphError::NoSecondOrderRule(format!(
+                        "{m} of node {}",
+                        graph.describe(node)
+                    )),
+                    other => other,
+                })?
+        };
         if is_wrt[node.0] {
             if let Some(dx) = value_gradient {
                 gradient.add(node, dx)?;
@@ -430,24 +474,25 @@ pub(crate) fn log_prob_hvp(
     Ok((gradient, hvp))
 }
 
-/// The gradient of the joint log probability of every probabilistic node with respect to every latent f64 node.
+/// The gradient of the joint log probability of every probabilistic node and every factor with respect to every
+/// latent f64 node.
 pub fn joint_log_prob_gradient(graph: &Graph, state: &State) -> Result<LogProbGradient> {
-    let of: Vec<NodeId> = graph.probabilistic().collect();
-    let wrt: Vec<NodeId> = of
-        .iter()
-        .copied()
+    let wrt: Vec<NodeId> = graph
+        .probabilistic()
         .filter(|&id| is_latent_double(graph, state, id))
         .collect();
+    let of: Vec<NodeId> = graph.probabilistic().chain(graph.factors()).collect();
     log_prob_gradient(graph, state, &of, &wrt)
 }
 
-/// The gradient of the log likelihood (observed nodes only) with respect to every latent f64 node.
+/// The gradient of the log likelihood (observed nodes and factors) with respect to every latent f64 node.
 pub fn log_likelihood_gradient(graph: &Graph, state: &State) -> Result<LogProbGradient> {
     let probabilistic: Vec<NodeId> = graph.probabilistic().collect();
     let of: Vec<NodeId> = probabilistic
         .iter()
         .copied()
         .filter(|&id| state.is_observed(id))
+        .chain(graph.factors())
         .collect();
     let wrt: Vec<NodeId> = probabilistic
         .into_iter()

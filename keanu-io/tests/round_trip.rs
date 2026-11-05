@@ -377,6 +377,7 @@ fn op_cases() -> Vec<(String, Graph, State)> {
         op_case(Op::ReplaceNan(f64::NEG_INFINITY), &[scalar(f64::NAN)]),
         op_case(Op::Assert(Some("must hold".into())), &[boolean(true)]),
         op_case(Op::Assert(None), &[boolean(true)]),
+        op_case(Op::Factor, &[matrix()]),
     ]);
     for (from, to) in [
         (scalar(0.5), DType::I64),
@@ -696,6 +697,7 @@ fn every_operation_round_trips() {
         "proxy",
         "assert",
         "scan",
+        "factor",
     ];
     assert_eq!(names, every_op.into_iter().collect::<BTreeSet<_>>());
     for (name, graph, state) in &cases {

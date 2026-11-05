@@ -95,7 +95,8 @@ pub fn is_differentiable(graph: &Graph, id: NodeId) -> bool {
             | Op::Softmax { .. }
             | Op::LogSoftmax { .. }
             | Op::Cumulative { .. }
-            | Op::Scan(_) => true,
+            | Op::Scan(_)
+            | Op::Factor => true,
             Op::Reshape(_)
             | Op::Permute(_)
             | Op::Transpose
@@ -1553,6 +1554,8 @@ fn jvp(
             Some(scale(t0, &not_nan_mask(parents)?)?)
         }
         Op::Scan(body) => body.jvp(parents, y, t, b)?,
+        // the sum of every element
+        Op::Factor => t[0].map(|t0| reduce_to(t0.clone(), &[])).transpose()?,
         Op::Lambda(lambda) => {
             let jacobian = lambda.jacobian.as_ref().ok_or_else(|| {
                 GraphError::NotDifferentiable(format!("lambda {} has no jacobian", lambda.name))
@@ -1873,6 +1876,7 @@ fn vjp(
         }
         Op::ReplaceNan(_) => vec![Some(g.mul(&not_nan_mask(parents)?)?)],
         Op::Scan(body) => body.vjp(parents, y, g, b)?,
+        Op::Factor => vec![Some(fit(g.clone(), b, parents[0].shape())?)],
         Op::Lambda(lambda) => {
             let jacobian = lambda.jacobian.as_ref().ok_or_else(|| {
                 GraphError::NotDifferentiable(format!("lambda {} has no jacobian", lambda.name))

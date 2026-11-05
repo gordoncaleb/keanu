@@ -12,6 +12,7 @@ use std::sync::Arc;
 
 /// A set of nodes reached from some starting nodes by walking towards children (downstream) or parents
 /// (upstream), stopping at (but including) probabilistic and observed nodes. The starting nodes are included.
+/// Factor nodes are included where the walk reaches them, but don't stop it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LambdaSection {
     nodes: Vec<NodeId>,
@@ -24,7 +25,7 @@ impl LambdaSection {
         &self.nodes
     }
 
-    /// The probabilistic and observed nodes in the section, in topological order.
+    /// The probabilistic, observed and factor nodes in the section, in topological order.
     pub fn latent_and_observed(&self) -> &[NodeId] {
         &self.latent_and_observed
     }
@@ -59,7 +60,7 @@ fn lambda_section(
     let latent_and_observed = nodes
         .iter()
         .copied()
-        .filter(|&id| is_stop(graph, state, id))
+        .filter(|&id| is_stop(graph, state, id) || graph[id].is_factor())
         .collect();
     LambdaSection {
         nodes,
@@ -68,7 +69,7 @@ fn lambda_section(
 }
 
 /// The nodes whose log probability can change when the values of `from` change: walking towards children and
-/// stopping at probabilistic and observed nodes. Fails if an id is not a node of the graph.
+/// stopping at probabilistic and observed nodes (the factors reached are included). Fails if an id is not a node of the graph.
 pub fn downstream_lambda_section(
     graph: &Graph,
     state: &State,
@@ -105,7 +106,10 @@ fn contradicts_observation(graph: &Graph, state: &State, id: NodeId) -> Result<b
 }
 
 /// A probabilistic model: a shared graph with its latent nodes (unobserved probabilistic nodes) and observed
-/// nodes, as they were in the state the model was created from.
+/// nodes, as they were in the state the model was created from, and its factor nodes.
+///
+/// The joint log probability is the sum of the latent and observed nodes' log probabilities and every factor's
+/// term (see [`Op::Factor`](crate::op::Op::Factor)); the log likelihood includes the factors too.
 ///
 /// The model doesn't own values; every method takes the [`State`] to work on, so one model can serve many
 /// chains.
@@ -114,11 +118,15 @@ pub struct Model {
     graph: Arc<Graph>,
     latents: Vec<NodeId>,
     observed: Vec<NodeId>,
-    /// For each node, the probabilistic and observed nodes whose log probability depends on its value.
+    /// The factor nodes.
+    factors: Vec<NodeId>,
+    /// For each node, the probabilistic, observed and factor nodes whose log probability depends on its value.
     sections: Vec<Option<Vec<NodeId>>>,
-    /// Cached per model: latents then observed nodes.
+    /// Cached per model: latents, then observed nodes, then factors.
     joint: Vec<NodeId>,
-    /// The probabilistic nodes of `joint`, and of `observed`.
+    /// Observed nodes then factors.
+    likelihood: Vec<NodeId>,
+    /// The probabilistic nodes and factors of `joint`, and of `likelihood`.
     probabilistic_joint: Vec<NodeId>,
     probabilistic_observed: Vec<NodeId>,
     /// The latents holding f64 values.
@@ -126,7 +134,8 @@ pub struct Model {
 }
 
 impl Model {
-    /// A model of every latent and observed node of the graph, in the given state. Fails if there are neither.
+    /// A model of every latent, observed and factor node of the graph, in the given state. Fails if there are no
+    /// latent or observed nodes.
     pub fn new(graph: impl Into<Arc<Graph>>, state: &State) -> Result<Self> {
         let graph = graph.into();
         let latents: Vec<NodeId> = graph
@@ -147,10 +156,17 @@ impl Model {
                     .then(|| lambda_section(&graph, state, &[id], true).latent_and_observed)
             })
             .collect();
-        let joint: Vec<NodeId> = latents.iter().chain(&observed).copied().collect();
-        let is_probabilistic = |id: &NodeId| graph[*id].is_probabilistic();
-        let probabilistic_joint = joint.iter().copied().filter(is_probabilistic).collect();
-        let probabilistic_observed = observed.iter().copied().filter(is_probabilistic).collect();
+        let factors: Vec<NodeId> = graph.factors().collect();
+        let joint: Vec<NodeId> = latents
+            .iter()
+            .chain(&observed)
+            .chain(&factors)
+            .copied()
+            .collect();
+        let likelihood: Vec<NodeId> = observed.iter().chain(&factors).copied().collect();
+        let contributes = |id: &NodeId| graph[*id].is_probabilistic() || graph[*id].is_factor();
+        let probabilistic_joint = joint.iter().copied().filter(contributes).collect();
+        let probabilistic_observed = likelihood.iter().copied().filter(contributes).collect();
         let continuous = latents
             .iter()
             .copied()
@@ -160,8 +176,10 @@ impl Model {
             graph,
             latents,
             observed,
+            factors,
             sections,
             joint,
+            likelihood,
             probabilistic_joint,
             probabilistic_observed,
             continuous,
@@ -197,17 +215,24 @@ impl Model {
         &self.observed
     }
 
+    /// The factor nodes (see [`Op::Factor`](crate::op::Op::Factor)), in topological order.
+    pub fn factors(&self) -> &[NodeId] {
+        &self.factors
+    }
+
     /// The node with this label.
     pub fn find(&self, label: &str) -> Option<NodeId> {
         self.graph.find(label)
     }
 
-    /// Log probability of the given latent / observed nodes: the sum of the probabilistic nodes' log probabilities,
-    /// or -∞ if any is impossible (-∞ or NaN) or any observed deterministic node contradicts its observation.
+    /// Log probability of the given latent / observed / factor nodes: the sum of the probabilistic nodes' log
+    /// probabilities and the factors' terms, or -∞ if any is impossible (-∞ or NaN, or a factor that is not finite)
+    /// or any observed deterministic node contradicts its observation.
     fn log_prob_of(&self, state: &State, nodes: &[NodeId]) -> Result<f64> {
         let mut sum = 0.0;
         for &id in nodes {
-            if self.graph[id].is_probabilistic() {
+            let node = &self.graph[id];
+            if node.is_probabilistic() || node.is_factor() {
                 let lp = node_log_prob(&self.graph, state, id)?;
                 if lp == f64::NEG_INFINITY || lp.is_nan() {
                     return Ok(f64::NEG_INFINITY);
@@ -220,14 +245,14 @@ impl Model {
         Ok(sum)
     }
 
-    /// The joint log probability of the latent and observed nodes.
+    /// The joint log probability of the latent and observed nodes, with the factors' terms.
     pub fn log_prob(&self, state: &State) -> Result<f64> {
         self.log_prob_of(state, &self.joint)
     }
 
-    /// The log likelihood: the log probability of the observed nodes.
+    /// The log likelihood: the log probability of the observed nodes, with the factors' terms.
     pub fn log_likelihood(&self, state: &State) -> Result<f64> {
-        self.log_prob_of(state, &self.observed)
+        self.log_prob_of(state, &self.likelihood)
     }
 
     /// The gradient of the joint log probability with respect to each continuous latent.
@@ -240,7 +265,7 @@ impl Model {
         )
     }
 
-    /// The gradient of the log likelihood with respect to each continuous latent.
+    /// The gradient of the log likelihood (with the factors' terms) with respect to each continuous latent.
     pub fn log_likelihood_gradient(&self, state: &State) -> Result<LogProbGradient> {
         log_prob_gradient(
             &self.graph,
@@ -265,7 +290,7 @@ impl Model {
         state.cascade(&self.graph, &from)
     }
 
-    /// The probabilistic and observed nodes whose log probability depends on the values of `nodes`. Fails if an
+    /// The probabilistic, observed and factor nodes whose log probability depends on the values of `nodes`. Fails if an
     /// id is not a node of the model's graph.
     pub fn affected_by(&self, nodes: &[NodeId]) -> Result<Vec<NodeId>> {
         let mut affected: Vec<NodeId> = Vec::new();

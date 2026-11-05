@@ -467,6 +467,9 @@ pub enum Op {
     /// threading the carry (starting at `init`) through the steps, and stacks the carries each step outputs, shape
     /// `[length, carry shape...]`. See [`ScanBody`].
     Scan(Arc<ScanBody>),
+    /// Parents: `expr`, f64 -> the scalar sum of `expr`, which the joint log probability includes as a term (like
+    /// PyMC's `Potential` or Stan's `target +=`). See [`GraphBuilder::factor`](crate::GraphBuilder::factor).
+    Factor,
 }
 
 /// Generates [`Op::name`] and [`Op::NAMES`] from one list of `pattern => "name"` arms, so that the list of names
@@ -544,12 +547,18 @@ op_names! {
     Op::Assert(_) => "assert",
     Op::Distribution(_) => "distribution",
     Op::Scan(_) => "scan",
+    Op::Factor => "factor",
 }
 
 impl Op {
     /// True for nodes whose value is a random draw (sampled from their distribution, or observed).
     pub fn is_probabilistic(&self) -> bool {
         matches!(self, Op::Distribution(_))
+    }
+
+    /// True for factor nodes, whose value is a term of the joint log probability (see [`Op::Factor`]).
+    pub fn is_factor(&self) -> bool {
+        matches!(self, Op::Factor)
     }
 }
 

@@ -96,6 +96,13 @@ impl ScanBody {
                     graph.describe(id)
                 )));
             }
+            if node.is_factor() {
+                return Err(invalid(format!(
+                    "the body's node {} is a factor: scan bodies must be deterministic (add factors outside the \
+                     scan, on its output)",
+                    graph.describe(id)
+                )));
+            }
             if matches!(node.op, Op::Proxy) && node.parents.is_empty() && !is_input[id.0] {
                 return Err(invalid(format!(
                     "the body's proxy {} is neither connected nor an input",

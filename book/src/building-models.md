@@ -79,6 +79,23 @@ A mixture's likelihood doesn't change when components swap labels, so a posterio
 parameters has a copy of each mode per labelling. Order the components to remove the copies, as the
 [Gaussian mixture example](examples.md#a-gaussian-mixture) orders the means.
 
+## Factors
+
+`factor(expr)` adds an arbitrary term to the joint log probability, like PyMC's `Potential` or Stan's
+`target +=`: the factor node's value is the sum of `expr`, and the model's log probability is the sum of its
+probabilistic nodes' log probabilities and its factors' values. Use it for soft constraints, penalties, and
+likelihoods that no distribution provides. A factor that isn't finite (NaN or ±∞) makes the point impossible.
+
+```rust,ignore
+{{#include ../../keanu/tests/book.rs:factor}}
+```
+
+Factors count in the log likelihood (`Model::log_likelihood`), not in the log prior. Their gradients and Hessians
+are those of the expression, so NUTS, the optimizers, variational inference and the Laplace approximation follow
+them, and Metropolis–Hastings updates them incrementally with the nodes a proposal reaches. A factor is a term of
+the density rather than a generative step, so forward sampling, predictive sampling and the particle filter ignore
+it. Factors are saved and loaded with the model, but scan bodies can't hold them.
+
 ## Deterministic nodes
 
 Handles (`DoubleVar`, `IntVar`, `BoolVar`) support:

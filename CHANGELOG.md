@@ -124,6 +124,17 @@ some of the "Same model semantics" guarantees above no longer hold where noted.
 - keanu: new examples `eight_schools`, `radon` (data from the PyMC examples repository, MIT), `gaussian_mixture` and
   `gp_regression`; new book chapters on variational inference and Gaussian processes.
 
+### Applied modelling gaps
+
+Work from `docs/plans/2026-11-05-001-feat-applied-modelling-gaps-plan.md`.
+
+- keanu-graph: **factor nodes** (`Op::Factor`, `GraphBuilder::factor`), terms of the joint log probability like
+  PyMC's `Potential` or Stan's `target +=`. A factor's value is the sum of its expression, and a value that is not
+  finite makes the point impossible. Factors count in the joint log probability and the log likelihood (not the log
+  prior), in their gradients and Hessian-vector products, and in Metropolis–Hastings' incremental updates;
+  `Model::factors`, `Graph::factors`, `Node::is_factor` and `Op::is_factor` list them. Lambda sections include the
+  factors they reach. Scan bodies can't hold factors. The save schema gained `factor`.
+
 ### Code review fixes
 
 Fixes from the 2026-11-04 whole-codebase review. Where a fix changes a result recorded from Java, the golden

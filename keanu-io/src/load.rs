@@ -356,6 +356,7 @@ fn add_node(
         P::SetWithMask(_) => Op::SetWithMask,
         P::ReplaceNan(p) => Op::ReplaceNan(p.value),
         P::Assert(p) => Op::Assert(p.message.clone()),
+        P::Factor(_) => Op::Factor,
         P::Proxy(p) => {
             let dtype: DType = decode(p.dtype)?;
             let proxy = builder.add_proxy(dtype, &shape_of(&p.shape)?)?;

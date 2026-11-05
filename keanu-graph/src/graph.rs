@@ -74,6 +74,10 @@ impl Node {
     pub fn is_probabilistic(&self) -> bool {
         self.op.is_probabilistic()
     }
+    /// Whether the node is a factor, a term of the joint log probability (see [`Op::Factor`]).
+    pub fn is_factor(&self) -> bool {
+        self.op.is_factor()
+    }
 }
 
 /// A computation graph. Immutable once built, and `Send + Sync`, so one graph can be shared by many [`State`]s
@@ -187,6 +191,11 @@ impl Graph {
     /// The probabilistic nodes in topological order.
     pub fn probabilistic(&self) -> impl Iterator<Item = NodeId> + '_ {
         self.ids().filter(|&id| self[id].is_probabilistic())
+    }
+
+    /// The factor nodes (see [`Op::Factor`]) in topological order.
+    pub fn factors(&self) -> impl Iterator<Item = NodeId> + '_ {
+        self.ids().filter(|&id| self[id].is_factor())
     }
 
     /// How error messages name a node: its label, quoted, or `#` and its index if it has none (or is not a node of

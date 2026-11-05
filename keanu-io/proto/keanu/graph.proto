@@ -90,6 +90,8 @@ message Node {
     Empty determinant_sign = 61;
     Empty eigvalsh = 62;
     Empty eigh_vectors = 63;
+    // A term of the joint log probability: the scalar sum of its one parent.
+    Empty factor = 64;
     Scan scan = 100;
   }
 }
