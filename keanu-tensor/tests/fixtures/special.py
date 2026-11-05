@@ -8,8 +8,9 @@ Regenerate with mpmath (pip install mpmath) from the repository root:
 Every value is computed with 50 significant digits and rounded once to the nearest f64. Each case carries the
 relative tolerance the test applies: 1e-12 on a function's normal range, 1e-9 in its tails and for the
 shape-parameter derivatives of the incomplete gamma and beta functions (taken by mpmath's numerical
-differentiation at high precision). Values that are zero or outside the f64 range are left out; the test checks
-those by hand.
+differentiation at high precision, or by quadrature for large shapes), and 1e-9 (1e-8 for the derivatives) for the
+incomplete beta function with shapes of 1e6 and more. Values that are zero or outside the f64 range are left out;
+the test checks those by hand.
 """
 
 import json
@@ -20,6 +21,8 @@ mp.mp.dps = 50
 
 NORMAL = 1e-12
 TAIL = 1e-9
+LARGE_SHAPE = 1e-9
+LARGE_SHAPE_DERIVATIVE = 1e-8
 cases = []
 
 
@@ -123,6 +126,91 @@ for a in [0.1, 0.5, 1.0, 2.5, 10.0, 100.0, 1000.0]:
             else:
                 add("inc_beta_da", [a, b, x], -mp.diff(lambda s: ib_upper(s, B, X), A), TAIL)
                 add("inc_beta_db", [a, b, x], -mp.diff(lambda s: ib_upper(A, s, X), B), TAIL)
+
+
+# Large shapes, where the series and continued fractions would need ~10 sqrt(shape) terms near the peak. mpmath's
+# hypergeometric series don't converge there either, so these come from quadrature of the density (and of its
+# derivative in the shape) over the smaller tail: in steps of `step` (the standard deviation, or the decay length
+# of the density at x if shorter) from x out to 60 steps beyond x or the mean.
+def tail_quad(log_density, d_log_density, x, mean, step, lower):
+    """(the smaller tail's integral, and the derivative of the lower tail's)."""
+    f = lambda t: mp.exp(log_density(t))
+    g = lambda t: d_log_density(t) * f(t)
+    if lower:
+        lo = min(mean, x) - 60 * step
+        pts = [lo + k * step for k in range(int((x - lo) / step) + 1)] + [x]
+        return mp.quad(f, pts), mp.quad(g, pts)
+    hi = max(mean, x) + 60 * step
+    pts = [x] + [x + k * step for k in range(1, int((hi - x) / step) + 1)] + [hi]
+    return mp.quad(f, pts), -mp.quad(g, pts)
+
+
+def gamma_quad(a, x):
+    """(P, Q, dP/da) for a large shape by quadrature."""
+    A, X = mpf(a), mpf(x)
+    lg, psi = mp.loggamma(A), mp.digamma(A)
+    lower = X <= A
+    slope = abs((A - 1) / X - 1)
+    step = min(mp.sqrt(A), 1 / slope) if slope else mp.sqrt(A)
+    small, dp = tail_quad(lambda t: (A - 1) * mp.log(t) - t - lg, lambda t: mp.log(t) - psi, X, A, step, lower)
+    return (small, 1 - small, dp) if lower else (1 - small, small, dp)
+
+
+def add_gamma_logs(a, x, p, q, dp):
+    add("log_gamma_p", [a, x], mp.log(p))
+    add("log_gamma_q", [a, x], mp.log(q))
+    add("log_gamma_p_da", [a, x], dp / p, TAIL)
+    add("log_gamma_q_da", [a, x], -dp / q, TAIL)
+
+
+for a in [1e6, 1e8, 1e11, 1e12]:
+    for c in [-8.0, -3.0, -1.0, -0.1, 0.0, 0.1, 1.0, 3.0, 8.0]:
+        x = a + c * a ** 0.5
+        p, q, dp = gamma_quad(a, x)
+        add("gamma_p", [a, x], p)
+        add("gamma_q", [a, x], q)
+        add("gamma_p_da", [a, x], dp, TAIL)
+        add_gamma_logs(a, x, p, q, dp)
+
+for a, b in [(1e6, 1e6), (1e8, 3e8), (1e10, 1e10), (3e10, 1e10)]:
+    A, B = mpf(a), mpf(b)
+    lb, psi_a, psi_b, psi_ab = mp.log(mp.beta(A, B)), mp.digamma(A), mp.digamma(B), mp.digamma(A + B)
+    mean = A / (A + B)
+    sd = mp.sqrt(A * B / ((A + B) ** 2 * (A + B + 1)))
+    for c in [-8.0, -1.0, 0.0, 0.5, 3.0]:
+        x = float(mean + c * sd)
+        X = mpf(x)
+        lower = X <= mean
+        log_density = lambda t: (A - 1) * mp.log(t) + (B - 1) * mp.log(1 - t) - lb
+        small, da = tail_quad(log_density, lambda t: mp.log(t) - psi_a + psi_ab, X, mean, sd, lower)
+        _, db = tail_quad(log_density, lambda t: mp.log(1 - t) - psi_b + psi_ab, X, mean, sd, lower)
+        i = small if lower else 1 - small
+        # the continued fraction takes ~sqrt(shape) steps here, and its rounding errors accumulate
+        add("inc_beta", [a, b, x], i, LARGE_SHAPE)
+        add("log_inc_beta", [a, b, x], mp.log(i), LARGE_SHAPE)
+        add("inc_beta_da", [a, b, x], da, LARGE_SHAPE_DERIVATIVE)
+        add("inc_beta_db", [a, b, x], db, LARGE_SHAPE_DERIVATIVE)
+        add("log_inc_beta_da", [a, b, x], da / i, LARGE_SHAPE_DERIVATIVE)
+        add("log_inc_beta_db", [a, b, x], db / i, LARGE_SHAPE_DERIVATIVE)
+
+# logs in the far tails, where the functions themselves underflow (or nearly), and the derivatives of the logs
+for a, x in [(201.0, 1.0), (2.0, 800.0), (0.5, 1e4), (10.0, 1e3), (1e3, 10.0), (1e3, 3e3), (50.0, 1e-5),
+             (0.1, 1e-300), (30.0, 500.0), (2.5, 0.3), (150.0, 100.0), (150.0, 220.0)]:
+    A, X = mpf(a), mpf(x)
+    p, q = gp(A, X), gq(A, X)
+    add("log_gamma_p", [a, x], mp.log(p))
+    add("log_gamma_q", [a, x], mp.log(q))
+    add("log_gamma_p_da", [a, x], mp.diff(lambda s: mp.log(gp(s, X)), A), TAIL)
+    add("log_gamma_q_da", [a, x], mp.diff(lambda s: mp.log(gq(s, X)), A), TAIL)
+for a, x in [(1e6, 3e5), (1e6, 2e6), (1e12, 5e11), (1e12, 2e12)]:
+    add_gamma_logs(a, x, *gamma_quad(a, x))
+
+for a, b, x in [(1001.0, 3.0, 0.4), (2.5, 0.5, 1e-140), (901.0, 100.0, 0.001), (0.5, 0.5, 1e-300), (50.0, 50.0, 0.01),
+                (1e3, 1e3, 0.1), (10.0, 2.0, 1e-40), (3.0, 1001.0, 0.9), (2.0, 7.0, 0.3), (0.3, 4.0, 0.95)]:
+    A, B, X = mpf(a), mpf(b), mpf(x)
+    add("log_inc_beta", [a, b, x], mp.log(ib(A, B, X)))
+    add("log_inc_beta_da", [a, b, x], mp.diff(lambda s: mp.log(ib(s, B, X)), A), TAIL)
+    add("log_inc_beta_db", [a, b, x], mp.diff(lambda s: mp.log(ib(A, s, X)), B), TAIL)
 
 # log-scaled modified Bessel functions of the first kind
 for k in [1e-10, 1e-3, 0.1, 1.0, 5.0, 15.0, 29.9, 30.1, 50.0, 100.0, 1e3, 1e4, 1e5, 1e8]:

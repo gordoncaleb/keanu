@@ -22,9 +22,16 @@ fn evaluate(name: &str, x: &[f64]) -> f64 {
         ("gamma_p", &[a, x]) => gamma_p(a, x),
         ("gamma_q", &[a, x]) => gamma_q(a, x),
         ("gamma_p_da", &[a, x]) => gamma_p_da(a, x),
+        ("log_gamma_p", &[a, x]) => log_gamma_p(a, x),
+        ("log_gamma_q", &[a, x]) => log_gamma_q(a, x),
+        ("log_gamma_p_da", &[a, x]) => log_gamma_p_da(a, x),
+        ("log_gamma_q_da", &[a, x]) => log_gamma_q_da(a, x),
         ("inc_beta", &[a, b, x]) => inc_beta(a, b, x),
         ("inc_beta_da", &[a, b, x]) => inc_beta_da(a, b, x),
         ("inc_beta_db", &[a, b, x]) => inc_beta_db(a, b, x),
+        ("log_inc_beta", &[a, b, x]) => log_inc_beta(a, b, x),
+        ("log_inc_beta_da", &[a, b, x]) => log_inc_beta_da(a, b, x),
+        ("log_inc_beta_db", &[a, b, x]) => log_inc_beta_db(a, b, x),
         ("log_bessel_i0", &[x]) => log_bessel_i0(x),
         ("log_bessel_i1", &[x]) => log_bessel_i1(x),
         _ => panic!("unknown fixture function {name} with {} arguments", x.len()),
@@ -199,6 +206,79 @@ fn incomplete_gamma_bounds_and_monotonicity() {
     ] {
         assert!(gamma_p(a, x).is_nan() && gamma_q(a, x).is_nan() && gamma_p_da(a, x).is_nan());
     }
+}
+
+#[test]
+fn incomplete_gamma_is_accurate_for_large_shapes() {
+    // P(a, a) = ½ + (1/3 + 1/(540a) - 25/(6048a²)) / √(2πa) + O(a^-7/2) (Temme's expansion at η = 0, DLMF
+    // 8.12.3). The series used to stop
+    // at its iteration cap without converging, giving P(10¹², 10¹²) = 0.341.
+    for a in [1e4, 1e6, 1e8, 1e11, 1e12, 1e15] {
+        let expected = 0.5
+            + (1.0 / 3.0 + 1.0 / (540.0 * a) - 25.0 / (6048.0 * a * a))
+                / (2.0 * std::f64::consts::PI * a).sqrt();
+        let p = gamma_p(a, a);
+        assert!(
+            (p - expected).abs() < 1e-14,
+            "P({a}, {a}) = {p}, expected {expected}"
+        );
+        assert!((gamma_q(a, a) - (1.0 - expected)).abs() < 1e-14);
+        let log_p = log_gamma_p(a, a);
+        assert!(
+            (log_p - expected.ln()).abs() < 1e-14,
+            "ln P({a}, {a}) = {log_p}, expected {}",
+            expected.ln()
+        );
+        // ∂P/∂a < 0, and ∂ ln P/∂a = (∂P/∂a)/P
+        let dp = gamma_p_da(a, a);
+        assert!(dp < 0.0);
+        assert!((log_gamma_p_da(a, a) - dp / p).abs() < 1e-12 * (dp / p).abs());
+        assert!((log_gamma_q_da(a, a) + dp / gamma_q(a, a)).abs() < 1e-12 * (dp / p).abs());
+    }
+    // continuous across the switches to and from the expansion, in value and in the derivative
+    for a in [100.0, 1e4, 1e9] {
+        for edge in [0.6, 1.4] {
+            let x = a * edge;
+            let below = x * (1.0 - 1e-14);
+            let above = x * (1.0 + 1e-14);
+            for f in [log_gamma_p, log_gamma_q, log_gamma_p_da, log_gamma_q_da] {
+                let (u, v) = (f(a, below), f(a, above));
+                assert!((u - v).abs() <= 1e-9 * u.abs(), "{a} {x}: {u:e} vs {v:e}");
+            }
+        }
+    }
+}
+
+#[test]
+fn logs_of_the_incomplete_functions_in_the_far_tails() {
+    // where P, Q or I underflow, their logs stay finite and agree with the leading asymptotics.
+    // Q(a, x) ~ xᵃ⁻¹ e⁻ˣ / Γ(a) for large x
+    let x = 2000.0f64;
+    let expected = 1.5 * x.ln() - x - ln_gamma(2.5);
+    assert_eq!(gamma_q(2.5, x), 0.0);
+    assert!((log_gamma_q(2.5, x) - expected).abs() < 1e-3);
+    // P(a, x) = xᵃ e⁻ˣ / Γ(a + 1) (1 + x/(a + 1) + x²/((a + 1)(a + 2)) + ...)
+    let expected = 300.0 * 1e-3f64.ln() - 1e-3 - ln_gamma(301.0)
+        + (1e-3 / 301.0 + 1e-6 / (301.0 * 302.0f64)).ln_1p();
+    assert_eq!(gamma_p(300.0, 1e-3), 0.0);
+    assert!((log_gamma_p(300.0, 1e-3) - expected).abs() < 1e-12 * expected.abs());
+    // I_x(a, b) ~ xᵃ / (a B(a, b)) for small x
+    let expected = 4.0 * 1e-100f64.ln() - 4f64.ln() - log_beta(4.0, 3.0);
+    assert_eq!(inc_beta(4.0, 3.0, 1e-100), 0.0);
+    assert!((log_inc_beta(4.0, 3.0, 1e-100) - expected).abs() < 1e-12 * expected.abs());
+    for f in [log_gamma_p_da, log_gamma_q_da] {
+        assert!(f(2.5, x).is_finite() && f(300.0, 1e-3).is_finite());
+    }
+    assert!(log_inc_beta_da(4.0, 3.0, 1e-100).is_finite());
+    assert!(log_inc_beta_db(4.0, 3.0, 1e-100).is_finite());
+    // the ends and invalid arguments
+    assert_eq!(log_gamma_p(2.0, 0.0), f64::NEG_INFINITY);
+    assert_eq!(log_gamma_q(2.0, 0.0), 0.0);
+    assert_eq!(log_gamma_q(2.0, f64::INFINITY), f64::NEG_INFINITY);
+    assert_eq!(log_inc_beta(2.0, 3.0, 0.0), f64::NEG_INFINITY);
+    assert_eq!(log_inc_beta(2.0, 3.0, 1.0), 0.0);
+    assert!(log_gamma_p(-1.0, 1.0).is_nan() && log_gamma_q_da(1.0, -1.0).is_nan());
+    assert!(log_inc_beta(1.0, 1.0, 1.5).is_nan() && log_inc_beta_db(0.0, 1.0, 0.5).is_nan());
 }
 
 #[test]
