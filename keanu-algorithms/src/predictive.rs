@@ -1,0 +1,259 @@
+//! Predictive sampling: draws of observed nodes as the model would generate them, either from the prior or given
+//! each draw of a posterior.
+
+use crate::error::{AlgorithmError, Result};
+use crate::samples::NetworkSamples;
+use crate::support::check_nodes;
+use keanu_distributions::KeanuRng;
+use keanu_graph::{Graph, Model, NodeId, State};
+
+/// Draws prior- and posterior-predictive samples of observed nodes (the "targets").
+///
+/// - [`posterior`](Self::posterior) takes posterior samples of the latents (from MCMC, say) and, for each, draws
+///   the targets from the model given those latent values: the posterior predictive distribution, for checking
+///   the model against the data it was fitted to.
+/// - [`prior`](Self::prior) draws the latents from their priors and then the targets: the prior predictive
+///   distribution, for checking that the priors generate plausible data.
+///
+/// Both work on a copy of the state, so the targets stay observed with their values. The draws are returned as
+/// [`NetworkSamples`] of the targets, with a log probability of 0 recorded for each.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct PredictiveSampler {
+    /// The number of posterior draws to use, evenly spaced through the posterior samples; `None` (the default)
+    /// uses every sample. Only [`posterior`](Self::posterior) uses it.
+    pub draws: Option<usize>,
+}
+
+/// Setters for each setting, for use as `PredictiveSampler::default().with_...(...)`.
+impl PredictiveSampler {
+    /// Sets [`draws`](Self::draws) to `Some(draws)`.
+    #[must_use]
+    pub fn with_draws(mut self, draws: usize) -> Self {
+        self.draws = Some(draws);
+        self
+    }
+}
+
+impl PredictiveSampler {
+    /// A predictive sampler with the default settings, which use every posterior sample.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// One draw of `targets` for each posterior sample (or for [`draws`](Self::draws) of them, evenly spaced).
+    ///
+    /// Each draw sets the sampled nodes' values in a copy of `state`, recomputes the deterministic nodes the
+    /// targets depend on and samples the targets from their distributions given their parents. Observed nodes
+    /// other than the targets keep their observed values; a target downstream of another target is drawn given
+    /// that target's draw.
+    ///
+    /// Fails if `targets` is empty, if a target is not a node of the model's graph
+    /// ([`GraphError::UnknownNode`](keanu_graph::GraphError::UnknownNode)) or not an observed probabilistic node,
+    /// if `samples` doesn't hold every latent the targets depend on, or if [`draws`](Self::draws) is zero or more
+    /// than the number of samples.
+    pub fn posterior(
+        &self,
+        model: &Model,
+        state: &State,
+        samples: &NetworkSamples,
+        targets: &[NodeId],
+        rng: &mut KeanuRng,
+    ) -> Result<NetworkSamples> {
+        let graph = model.graph();
+        check_targets(graph, state, targets)?;
+        check_nodes(graph, samples.nodes())?;
+        let indices = self.thinned(samples.len())?;
+
+        let mut work = state.clone();
+        for &id in targets {
+            work.unobserve(id)?;
+        }
+        // observations other than the targets are fixed, so what they depend on doesn't matter
+        let ancestors = ancestors(graph, targets, |id| work.is_observed(id));
+        let sampled = membership(graph, samples.nodes());
+        let missing: Vec<String> = ancestors
+            .iter()
+            .filter(|&&id| {
+                is_latent(graph, &work, id) && !is_target(targets, id) && !sampled[id.index()]
+            })
+            .map(|&id| describe(graph, id))
+            .collect();
+        if !missing.is_empty() {
+            return Err(AlgorithmError::InvalidArgument(format!(
+                "the targets depend on latents without posterior samples: {}",
+                missing.join(", ")
+            )));
+        }
+        // everything the targets depend on that isn't fixed by an observation or a posterior sample
+        let to_redraw: Vec<NodeId> = ancestors
+            .iter()
+            .copied()
+            .filter(|&id| {
+                !work.is_observed(id) && (!graph[id].is_probabilistic() || is_target(targets, id))
+            })
+            .collect();
+
+        let mut predictive = NetworkSamples::new(graph, targets)?;
+        for index in indices {
+            let sample = samples
+                .sample(index)
+                .ok_or_else(|| AlgorithmError::InvalidArgument("sample out of range".into()))?;
+            for &id in samples.nodes() {
+                if let Some(value) = sample.get(id) {
+                    work.set(graph, id, value)?;
+                }
+            }
+            redraw(graph, &mut work, &to_redraw, targets, rng)?;
+            predictive.record(&work, 0.0)?;
+        }
+        Ok(predictive)
+    }
+
+    /// `count` draws of `targets` from the prior: each draw samples the latents the targets depend on from their
+    /// priors, recomputes the deterministic nodes in between and samples the targets.
+    ///
+    /// Observed nodes other than the targets keep their observed values, as in the
+    /// [`ForwardSampler`](crate::ForwardSampler), so an observed node that a target depends on must not itself
+    /// depend on a latent (make it a target too); observed nodes the targets don't depend on are ignored.
+    ///
+    /// Fails if `targets` is empty, if a target is not a node of the model's graph
+    /// ([`GraphError::UnknownNode`](keanu_graph::GraphError::UnknownNode)) or not an observed probabilistic node,
+    /// or if an observed node the targets depend on depends on a latent.
+    pub fn prior(
+        &self,
+        model: &Model,
+        state: &State,
+        targets: &[NodeId],
+        count: usize,
+        rng: &mut KeanuRng,
+    ) -> Result<NetworkSamples> {
+        let graph = model.graph();
+        check_targets(graph, state, targets)?;
+
+        let mut work = state.clone();
+        for &id in targets {
+            work.unobserve(id)?;
+        }
+        let ancestors = ancestors(graph, targets, |_| false);
+        // whether each ancestor depends on a latent; parents have smaller ids, so they are settled first
+        let mut random = vec![false; graph.len()];
+        for &id in &ancestors {
+            random[id.index()] = graph[id]
+                .parents()
+                .iter()
+                .any(|&p| random[p.index()] || is_latent(graph, &work, p));
+        }
+        let conflicting: Vec<String> = ancestors
+            .iter()
+            .filter(|&&id| work.is_observed(id) && random[id.index()])
+            .map(|&id| describe(graph, id))
+            .collect();
+        if !conflicting.is_empty() {
+            return Err(AlgorithmError::InvalidArgument(format!(
+                "the targets depend on observed nodes that depend on a latent, so a prior draw can't keep their \
+                 observed values; make them targets too: {}",
+                conflicting.join(", ")
+            )));
+        }
+        let to_redraw: Vec<NodeId> = ancestors
+            .iter()
+            .copied()
+            .filter(|&id| !work.is_observed(id))
+            .collect();
+
+        let mut predictive = NetworkSamples::new(graph, targets)?;
+        for _ in 0..count {
+            redraw(graph, &mut work, &to_redraw, targets, rng)?;
+            predictive.record(&work, 0.0)?;
+        }
+        Ok(predictive)
+    }
+
+    /// The indices of the posterior samples to use.
+    fn thinned(&self, len: usize) -> Result<Vec<usize>> {
+        match self.draws {
+            None => Ok((0..len).collect()),
+            Some(draws) if draws == 0 || draws > len => {
+                Err(AlgorithmError::InvalidSetting(format!(
+                    "cannot use {draws} draws of {len} posterior samples; use between 1 and {len}"
+                )))
+            }
+            // evenly spaced, starting with the first; no overflow as draws <= len
+            Some(draws) => Ok((0..draws).map(|i| i * len / draws).collect()),
+        }
+    }
+}
+
+/// An error unless the targets are a non-empty list of observed probabilistic nodes of the graph.
+fn check_targets(graph: &Graph, state: &State, targets: &[NodeId]) -> Result<()> {
+    if targets.is_empty() {
+        return Err(AlgorithmError::InvalidArgument(
+            "no target nodes to draw".into(),
+        ));
+    }
+    check_nodes(graph, targets)?;
+    match targets
+        .iter()
+        .find(|&&id| !graph[id].is_probabilistic() || !state.is_observed(id))
+    {
+        Some(&id) => Err(AlgorithmError::InvalidArgument(format!(
+            "predictive targets must be observed probabilistic nodes, but {} is not",
+            describe(graph, id)
+        ))),
+        None => Ok(()),
+    }
+}
+
+/// The targets and every node they depend on, in topological (id) order, not walking past nodes for which
+/// `stop` holds (which are included).
+fn ancestors(graph: &Graph, targets: &[NodeId], stop: impl Fn(NodeId) -> bool) -> Vec<NodeId> {
+    let mut seen = vec![false; graph.len()];
+    let mut stack = targets.to_vec();
+    while let Some(id) = stack.pop() {
+        if !std::mem::replace(&mut seen[id.index()], true) && !stop(id) {
+            stack.extend_from_slice(graph[id].parents());
+        }
+    }
+    graph.ids().filter(|id| seen[id.index()]).collect()
+}
+
+/// For each node of the graph, whether it is one of `nodes`.
+fn membership(graph: &Graph, nodes: &[NodeId]) -> Vec<bool> {
+    let mut member = vec![false; graph.len()];
+    for id in nodes {
+        member[id.index()] = true;
+    }
+    member
+}
+
+fn is_latent(graph: &Graph, state: &State, id: NodeId) -> bool {
+    graph[id].is_probabilistic() && !state.is_observed(id)
+}
+
+fn is_target(targets: &[NodeId], id: NodeId) -> bool {
+    targets.contains(&id)
+}
+
+fn describe(graph: &Graph, id: NodeId) -> String {
+    match graph[id].label() {
+        Some(label) => format!("{label} ({id:?})"),
+        None => format!("{id:?}"),
+    }
+}
+
+/// Clears `nodes` (in topological order) and recomputes the targets, which samples each cleared probabilistic node
+/// from its distribution given its parents and recomputes each cleared deterministic node.
+fn redraw(
+    graph: &Graph,
+    state: &mut State,
+    nodes: &[NodeId],
+    targets: &[NodeId],
+    rng: &mut KeanuRng,
+) -> Result<()> {
+    for &id in nodes {
+        state.clear(id)?;
+    }
+    state.lazy_eval(graph, targets, rng)?;
+    Ok(())
+}

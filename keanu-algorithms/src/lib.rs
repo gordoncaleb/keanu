@@ -1,6 +1,6 @@
 //! Inference algorithms for [Keanu](https://github.com/gordoncaleb/keanu) models: gradient optimizers and a
 //! non-gradient optimizer (BOBYQA) for MAP and maximum likelihood, MCMC samplers (Metropolis–Hastings, NUTS) and simulated annealing, a particle filter,
-//! forward sampling from the prior, sample containers and chain statistics.
+//! forward sampling from the prior, prior- and posterior-predictive sampling, sample containers and chain statistics.
 //!
 //! ```
 //! use keanu_algorithms::optimizer::{Adam, GradientOptimizer};
@@ -36,6 +36,7 @@ pub mod forward;
 pub mod mcmc;
 pub mod optimizer;
 pub mod particle_filter;
+pub mod predictive;
 pub mod regression;
 pub mod samples;
 pub mod statistics;
@@ -43,4 +44,5 @@ mod support;
 
 pub use error::{AlgorithmError, Result};
 pub use forward::ForwardSampler;
+pub use predictive::PredictiveSampler;
 pub use samples::{NetworkSample, NetworkSamples, Samples};

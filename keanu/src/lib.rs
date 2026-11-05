@@ -87,6 +87,7 @@ pub mod prelude {
         Adam, Bobyqa, ConjugateGradient, GradientOptimizer, NonGradientOptimizer, OptimizedResult,
         OptimizerBounds,
     };
+    pub use crate::algorithms::predictive::PredictiveSampler;
     pub use crate::algorithms::regression::{
         Fitter, LinearRegression, LogisticRegression, PredictiveModel, Prior, RegressionModel,
         Regularization, SamplingFitting, accuracy, coefficient_of_determination,
