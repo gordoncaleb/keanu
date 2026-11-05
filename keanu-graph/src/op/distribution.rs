@@ -138,6 +138,21 @@ pub enum DistributionKind {
     OrderedLogistic,
     /// Parameters: `x_min (i64)`, `x_max (i64)` -> i64 in [x_min, x_max). Support: discrete.
     UniformInt,
+    /// Parameters: `n (i64)`, `alpha`, `beta` -> i64 in 0..=n: a binomial count whose success probability is
+    /// Beta(alpha, beta) distributed. Support: discrete. See [`keanu_distributions::BetaBinomial`].
+    BetaBinomial,
+    /// Parameters: `logit` (the log odds of true) -> bool. Support: discrete. See
+    /// [`keanu_distributions::BernoulliLogit`].
+    BernoulliLogit,
+    /// Parameters: `logit` (the log odds of success), `n (i64)` -> i64. Support: discrete. See
+    /// [`keanu_distributions::BinomialLogit`].
+    BinomialLogit,
+    /// Parameters: `log_mu` (the log of the mean) -> i64. Support: discrete. See
+    /// [`keanu_distributions::PoissonLog`].
+    PoissonLog,
+    /// Parameters: `logit of each category...` (unnormalised log probabilities, all of the same shape) -> i64
+    /// category index. Support: discrete. See [`keanu_distributions::CategoricalLogit`].
+    CategoricalLogit,
     /// A user-defined distribution; its parameters are whatever nodes it was given. Support: whatever
     /// [`CustomDistribution::support`] returns.
     Custom(Arc<dyn CustomDistribution>),
@@ -158,6 +173,19 @@ pub enum DistributionKind {
     /// or censored one); the value type is the component's. Support: the component's support widened to hold
     /// every component's. See [`GraphBuilder::mixture`](crate::GraphBuilder::mixture).
     Mixture(Arc<DistributionKind>),
+    /// The inner count distribution with extra zeros: a structural zero with probability ψ, else a draw from the
+    /// inner kind, so P(0) = ψ + (1 − ψ) p(0) and P(k) = (1 − ψ) p(k) for k ≠ 0. Parameters: the inner kind's
+    /// parameters, then `psi` (in [0, 1]). The inner kind is an element-wise discrete kind with integer values
+    /// (a Poisson, negative binomial, binomial, ...); the value type is i64. Support: discrete. See
+    /// [`GraphBuilder::zero_inflated`](crate::GraphBuilder::zero_inflated).
+    ZeroInflated(Arc<DistributionKind>),
+    /// A hurdle model: zero with probability ψ, else a draw from the inner kind restricted to positive values. For
+    /// a count inner kind P(0) = ψ and P(k) = (1 − ψ) p(k) / (1 − p(0)) for k > 0; for a positive continuous inner
+    /// kind (a gamma, log-normal, ...) a value of exactly 0 has probability ψ and a positive value the density
+    /// (1 − ψ) p(x). Parameters: the inner kind's parameters, then `psi` (in [0, 1]); the value type is the inner
+    /// kind's. Support: discrete for a count, the inner kind's for a continuous one. See
+    /// [`GraphBuilder::hurdle`](crate::GraphBuilder::hurdle).
+    Hurdle(Arc<DistributionKind>),
     /// A hidden Markov model whose observations are drawn from the emission kind with the hidden state's
     /// parameters. Parameters: the emission's parameters, each with a trailing state axis of length K (or 1, or no
     /// axes at all, to share the value between states), then `initial` (the first state's probabilities, \[K\]) and
@@ -300,7 +328,9 @@ macro_rules! distributions {
                 match self {
                     $(DistributionKind::$kind => Some(Cow::Borrowed(&[$(DType::$ptype),+])),)+
                     DistributionKind::Kde(_) => Some(Cow::Borrowed(&[])),
-                    DistributionKind::Categorical | DistributionKind::Custom(_) => None,
+                    DistributionKind::Categorical
+                    | DistributionKind::CategoricalLogit
+                    | DistributionKind::Custom(_) => None,
                     nested_kinds!() => {
                         let (nested, inner) = self.nested_parts();
                         nested.parameter_types(inner)
@@ -309,14 +339,17 @@ macro_rules! distributions {
             }
 
             /// The parameter names, in parent order (e.g. `["mu", "sigma"]` for a Gaussian), or None for a variable
-            /// number of parameters (Categorical, Custom). A kind built around another one has its base's names
-            /// followed by its own (`lower` and `upper` for a truncated or censored kind, `weights` for a mixture,
-            /// `initial` and `transition` for a hidden Markov model).
+            /// number of parameters (Categorical, CategoricalLogit, Custom). A kind built around another one has its
+            /// base's names followed by its own (`lower` and `upper` for a truncated or censored kind, `weights` for
+            /// a mixture, `initial` and `transition` for a hidden Markov model, `psi` for a zero-inflated or hurdle
+            /// kind).
             pub fn parameter_names(&self) -> Option<Cow<'static, [&'static str]>> {
                 match self {
                     $(DistributionKind::$kind => Some(Cow::Borrowed(&[$(stringify!($param)),+])),)+
                     DistributionKind::Kde(_) => Some(Cow::Borrowed(&[])),
-                    DistributionKind::Categorical | DistributionKind::Custom(_) => None,
+                    DistributionKind::Categorical
+                    | DistributionKind::CategoricalLogit
+                    | DistributionKind::Custom(_) => None,
                     nested_kinds!() => {
                         let (nested, inner) = self.nested_parts();
                         nested.parameter_names(inner)
@@ -390,7 +423,7 @@ macro_rules! distributions {
                 match self {
                     $(DistributionKind::$kind => DType::$vtype,)+
                     DistributionKind::Kde(_) => DType::F64,
-                    DistributionKind::Categorical => DType::I64,
+                    DistributionKind::Categorical | DistributionKind::CategoricalLogit => DType::I64,
                     DistributionKind::Custom(c) => c.value_type(),
                     nested_kinds!() => self.nested_parts().1.value_type(),
                 }
@@ -401,11 +434,14 @@ macro_rules! distributions {
                 $($name,)+
                 "kde",
                 "categorical",
+                "categorical_logit",
                 "custom",
                 "truncated",
                 "censored",
                 "mixture",
                 "hidden_markov_model",
+                "zero_inflated",
+                "hurdle",
             ];
 
             /// The [names](Self::name) of the kinds with a CDF, which can be truncated or censored.
@@ -443,6 +479,7 @@ macro_rules! distributions {
                     $(DistributionKind::$kind => $name,)+
                     DistributionKind::Kde(_) => "kde",
                     DistributionKind::Categorical => "categorical",
+                    DistributionKind::CategoricalLogit => "categorical_logit",
                     DistributionKind::Custom(_) => "custom",
                     nested_kinds!() => self.nested_parts().0.name(),
                 }
@@ -459,7 +496,7 @@ macro_rules! distributions {
                         $support
                     })+
                     DistributionKind::Kde(_) => Support::Real,
-                    DistributionKind::Categorical => Support::Discrete,
+                    DistributionKind::Categorical | DistributionKind::CategoricalLogit => Support::Discrete,
                     DistributionKind::Custom(c) => c.support(parameters).map_err(GraphError::Custom)?,
                     nested_kinds!() => {
                         let (nested, inner) = self.nested_parts();
@@ -490,6 +527,9 @@ macro_rules! distributions {
                     }
                     DistributionKind::Categorical => {
                         Value::I64(d::Categorical::new(f64_tensors(parameters)?)?.sample(shape, rng)?)
+                    }
+                    DistributionKind::CategoricalLogit => {
+                        Value::I64(d::CategoricalLogit::new(f64_tensors(parameters)?)?.sample(shape, rng)?)
                     }
                     DistributionKind::Custom(c) => {
                         let value = c
@@ -524,6 +564,9 @@ macro_rules! distributions {
                     DistributionKind::Categorical => {
                         d::Categorical::new(f64_tensors(parameters)?)?.log_prob(value.i64()?)?.sum()
                     }
+                    DistributionKind::CategoricalLogit => {
+                        d::CategoricalLogit::new(f64_tensors(parameters)?)?.log_prob(value.i64()?)?.sum()
+                    }
                     DistributionKind::Custom(c) => c.log_prob(value, parameters).map_err(GraphError::Custom)?,
                     nested_kinds!() => {
                         let (nested, inner) = self.nested_parts();
@@ -546,6 +589,9 @@ macro_rules! distributions {
                     DistributionKind::Kde(kde) => kde.log_prob(value.f64()?),
                     DistributionKind::Categorical => {
                         d::Categorical::new(f64_tensors(parameters)?)?.log_prob(value.i64()?)?
+                    }
+                    DistributionKind::CategoricalLogit => {
+                        d::CategoricalLogit::new(f64_tensors(parameters)?)?.log_prob(value.i64()?)?
                     }
                     DistributionKind::Custom(c) => {
                         DoubleTensor::scalar(c.log_prob(value, parameters).map_err(GraphError::Custom)?)
@@ -574,6 +620,9 @@ macro_rules! distributions {
                     DistributionKind::Kde(kde) => (Some(kde.d_log_prob(value.f64()?)?.x), smallvec::smallvec![]),
                     DistributionKind::Categorical => {
                         super::distribution_hvp::categorical_gradient(value.i64()?, parameters)?
+                    }
+                    DistributionKind::CategoricalLogit => {
+                        super::distribution_hvp::categorical_logit_gradient(value.i64()?, parameters)?
                     }
                     DistributionKind::Custom(c) => {
                         match c.log_prob_gradient(value, parameters).map_err(GraphError::Custom)? {
@@ -628,6 +677,7 @@ macro_rules! distributions {
                     })+
                     DistributionKind::Kde(_)
                     | DistributionKind::Categorical
+                    | DistributionKind::CategoricalLogit
                     | DistributionKind::Custom(_) => {
                         let log_prob = self.log_prob(value, parameters)?;
                         if is_impossible(log_prob) {
@@ -876,6 +926,17 @@ distributions! {
         support = Support::Discrete,
         cdf = none,
         gradient = |_, _| Ok(no_gradient(2));
+    BetaBinomial "beta_binomial" (n: I64, alpha: F64, beta: F64) -> I64 => d::BetaBinomial::new(n, alpha, beta),
+        support = Support::Discrete,
+        cdf = rejection;
+    BernoulliLogit "bernoulli_logit" (logit: F64) -> Bool => d::BernoulliLogit::new(logit),
+        support = Support::Discrete;
+    BinomialLogit "binomial_logit" (logit: F64, n: I64) -> I64 => d::BinomialLogit::new(logit, n),
+        support = Support::Discrete,
+        cdf = none;
+    PoissonLog "poisson_log" (log_mu: F64) -> I64 => d::PoissonLog::new(log_mu),
+        support = Support::Discrete,
+        cdf = none;
 }
 
 impl DistributionKind {

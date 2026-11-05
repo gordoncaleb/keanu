@@ -30,7 +30,7 @@ pub(crate) mod rules;
 
 use super::distribution::{DistributionKind, Univariate};
 use super::nested::{Nested, nested_kinds};
-use super::wrappers;
+use super::{inflated, wrappers};
 use crate::autodiff::{batched_shape, fit, lift, reduce_to};
 use crate::error::{GraphError, Result};
 use crate::value::Value;
@@ -89,7 +89,11 @@ impl DistributionKind {
             | K::Geometric
             | K::Poisson
             | K::NegativeBinomial
-            | K::UniformInt => elementwise_hvp(
+            | K::UniformInt
+            | K::BetaBinomial
+            | K::BernoulliLogit
+            | K::BinomialLogit
+            | K::PoissonLog => elementwise_hvp(
                 self,
                 value,
                 parameters,
@@ -175,6 +179,9 @@ impl DistributionKind {
                 SmallVec::new(),
             )),
             K::Categorical => categorical_hvp(value.i64()?, parameters, parameter_tangents, b),
+            K::CategoricalLogit => {
+                categorical_logit_hvp(value.i64()?, parameters, parameter_tangents, b)
+            }
             nested_kinds!() => Nested::log_prob_hvp(
                 self,
                 value,
@@ -225,6 +232,9 @@ pub(crate) fn elementwise(
         if let Some(wrapper) = nested.wrapper() {
             return wrappers::second_order(wrapper, inner, x, parameters, tangents, b, shape);
         }
+        if let Some(inflation) = nested.inflation() {
+            return inflated::second_order(inflation, inner, x, parameters, tangents, b, shape);
+        }
     }
     let Some(rule) = rules::density_rule(kind) else {
         return Err(GraphError::NoSecondOrderRule(format!(
@@ -236,7 +246,8 @@ pub(crate) fn elementwise(
         let (values, parts) = kind.univariate(Univariate::Density, x, parameters, true)?;
         (spread(&values, shape)?, parts)
     } else {
-        // an element-wise density that can't be a mixture component (the Bernoulli), whose values are never read
+        // an element-wise density that can't be a mixture component (the Bernoulli and its logit form), whose
+        // values are never read
         let len = shape.iter().product();
         (vec![0.0; len], Some(kind.log_prob_gradient(x, parameters)?))
     };
@@ -706,6 +717,61 @@ fn categorical_hvp(
                     product[s * len + i] -=
                         tangent(c) / (probabilities[c][i] * probabilities[c][i]);
                 }
+            }
+        }
+    }
+    let mut parts = SmallVec::new();
+    for (product, p) in products.into_iter().zip(parameters) {
+        parts.push(reduce(Some(product), b, &shape, p.shape())?);
+    }
+    Ok((None, parts))
+}
+
+/// The gradient of the categorical log probability η_x − logsumexp(η) with respect to each logit:
+/// [j = x] − softmax(η)ⱼ, element-wise, summed to each logit's shape (zero where x is not a category).
+pub(super) fn categorical_logit_gradient(
+    x: &keanu_tensor::IntTensor,
+    parameters: &[&Value],
+) -> Result<super::distribution::LogProbGradientParts> {
+    let logits: Vec<&DoubleTensor> = parameters.iter().map(|p| p.f64()).collect::<Result<_>>()?;
+    let gradients = keanu_distributions::CategoricalLogit::new(logits)?.d_log_prob(x)?;
+    let mut parts = SmallVec::new();
+    for (gradient, p) in gradients.into_iter().zip(parameters) {
+        parts.push(Some(reduce_to(gradient, p.shape())?));
+    }
+    Ok((None, parts))
+}
+
+/// The categorical log probability's second derivatives in its logits, −(diag(s) − s sᵀ) with s = softmax(η)
+/// (the same for every category x), contracted with the logits' tangents: −sⱼ ṫⱼ + sⱼ Σₖ sₖ ṫₖ.
+fn categorical_logit_hvp(
+    x: &keanu_tensor::IntTensor,
+    parameters: &[&Value],
+    tangents: &[Option<&DoubleTensor>],
+    b: usize,
+) -> Result<LogProbHvpParts> {
+    let (shape, logits, categories) = categorical_parts(x, parameters)?;
+    let len = categories.len();
+    let tangents = tangents
+        .iter()
+        .map(|t| spread_tangent(*t, b, &shape))
+        .collect::<Result<Vec<_>>>()?;
+    let count = parameters.len();
+    let mut products = vec![vec![0.0; b * len]; count];
+    let mut softmax = vec![0.0; count];
+    for (i, category) in categories.iter().enumerate() {
+        if category.is_none() {
+            continue;
+        }
+        let total = keanu_tensor::special::log_sum_exp(logits.iter().map(|l| l[i]));
+        for (s, l) in softmax.iter_mut().zip(&logits) {
+            *s = (l[i] - total).exp();
+        }
+        for k in 0..b {
+            let tangent = |j: usize| tangents[j].as_ref().map_or(0.0, |t| t[k * len + i]);
+            let mean: f64 = (0..count).map(|j| softmax[j] * tangent(j)).sum();
+            for (j, product) in products.iter_mut().enumerate() {
+                product[k * len + i] = softmax[j] * (mean - tangent(j));
             }
         }
     }

@@ -453,8 +453,9 @@ pub struct Distribution {
     /// The samples and bandwidth of a kernel density estimate (`DISTRIBUTION_KIND_KDE` only).
     #[prost(message, optional, tag = "3")]
     pub kde: ::core::option::Option<Kde>,
-    /// The distribution a nested kind is built around (`DISTRIBUTION_KIND_TRUNCATED`, `DISTRIBUTION_KIND_CENSORED`
-    /// `DISTRIBUTION_KIND_MIXTURE` and `DISTRIBUTION_KIND_HIDDEN_MARKOV_MODEL` only, for which it is required). The node's parents are the base's parameters
+    /// The distribution a nested kind is built around (`DISTRIBUTION_KIND_TRUNCATED`, `DISTRIBUTION_KIND_CENSORED`,
+    /// `DISTRIBUTION_KIND_MIXTURE`, `DISTRIBUTION_KIND_HIDDEN_MARKOV_MODEL`, `DISTRIBUTION_KIND_ZERO_INFLATED` and
+    /// `DISTRIBUTION_KIND_HURDLE` only, for which it is required). The node's parents are the base's parameters
     /// followed by the nested kind's own.
     #[prost(message, optional, tag = "4")]
     pub base: ::core::option::Option<DistributionType>,
@@ -1026,6 +1027,20 @@ pub enum DistributionKind {
     HiddenMarkovModel = 35,
     LinearGaussianStateSpace = 36,
     ZeroSumNormal = 37,
+    /// Parameters: `n`, `alpha`, `beta`.
+    BetaBinomial = 38,
+    /// Parameters: `logit`.
+    BernoulliLogit = 39,
+    /// Parameters: `logit`, `n`.
+    BinomialLogit = 40,
+    /// Parameters: `log_mu`.
+    PoissonLog = 41,
+    /// Parameters: the logit of each category.
+    CategoricalLogit = 42,
+    /// Parameters: the base's, then `psi`.
+    ZeroInflated = 43,
+    /// Parameters: the base's, then `psi`.
+    Hurdle = 44,
 }
 impl DistributionKind {
     /// String value of the enum field names used in the ProtoBuf definition.
@@ -1074,6 +1089,13 @@ impl DistributionKind {
                 "DISTRIBUTION_KIND_LINEAR_GAUSSIAN_STATE_SPACE"
             }
             Self::ZeroSumNormal => "DISTRIBUTION_KIND_ZERO_SUM_NORMAL",
+            Self::BetaBinomial => "DISTRIBUTION_KIND_BETA_BINOMIAL",
+            Self::BernoulliLogit => "DISTRIBUTION_KIND_BERNOULLI_LOGIT",
+            Self::BinomialLogit => "DISTRIBUTION_KIND_BINOMIAL_LOGIT",
+            Self::PoissonLog => "DISTRIBUTION_KIND_POISSON_LOG",
+            Self::CategoricalLogit => "DISTRIBUTION_KIND_CATEGORICAL_LOGIT",
+            Self::ZeroInflated => "DISTRIBUTION_KIND_ZERO_INFLATED",
+            Self::Hurdle => "DISTRIBUTION_KIND_HURDLE",
         }
     }
     /// Creates an enum from field names used in the ProtoBuf definition.
@@ -1119,6 +1141,13 @@ impl DistributionKind {
                 Some(Self::LinearGaussianStateSpace)
             }
             "DISTRIBUTION_KIND_ZERO_SUM_NORMAL" => Some(Self::ZeroSumNormal),
+            "DISTRIBUTION_KIND_BETA_BINOMIAL" => Some(Self::BetaBinomial),
+            "DISTRIBUTION_KIND_BERNOULLI_LOGIT" => Some(Self::BernoulliLogit),
+            "DISTRIBUTION_KIND_BINOMIAL_LOGIT" => Some(Self::BinomialLogit),
+            "DISTRIBUTION_KIND_POISSON_LOG" => Some(Self::PoissonLog),
+            "DISTRIBUTION_KIND_CATEGORICAL_LOGIT" => Some(Self::CategoricalLogit),
+            "DISTRIBUTION_KIND_ZERO_INFLATED" => Some(Self::ZeroInflated),
+            "DISTRIBUTION_KIND_HURDLE" => Some(Self::Hurdle),
             _ => None,
         }
     }

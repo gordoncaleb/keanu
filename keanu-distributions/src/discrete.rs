@@ -6,9 +6,10 @@ use crate::param::{IntoParam, Param};
 use crate::rng::KeanuRng;
 use crate::util::{
     Operand, broadcast_all, digamma, ln_gamma, map, map_n, operand, require, require_ordered,
-    require_probability, safe_ln_times, sample_each, sample_shape, sigmoid, softplus,
+    require_positive, require_probability, safe_ln_times, sample_each, sample_shape, sigmoid,
+    softplus,
 };
-use keanu_tensor::special::{log_beta, log1mexp};
+use keanu_tensor::special::{log_beta, log_sum_exp, log1mexp};
 use keanu_tensor::{BoolTensor, DoubleTensor, IntTensor, Shape};
 
 /// Bernoulli distribution: true with probability `prob_true`.
@@ -844,6 +845,390 @@ impl<'a> OrderedLogistic<'a> {
             })
             .collect();
         Ok(IntTensor::new(&batch, samples)?)
+    }
+}
+
+/// Beta-binomial distribution: the number of successes in `n` trials whose success probability is itself
+/// Beta(α, β) distributed, an over-dispersed binomial with mean nα/(α + β).
+///
+/// P(k) = C(n, k) B(k + α, n − k + β) / B(α, β) for 0 <= k <= n.
+#[derive(Debug, Clone, PartialEq)]
+pub struct BetaBinomial<'a> {
+    /// The number of trials.
+    pub n: Param<'a, i64>,
+    /// The first shape α > 0 (the prior successes).
+    pub alpha: Param<'a>,
+    /// The second shape β > 0 (the prior failures).
+    pub beta: Param<'a>,
+}
+
+/// Derivatives of [`BetaBinomial::log_prob`] (and of its log CDF and survival function).
+#[derive(Debug, Clone, PartialEq)]
+pub struct BetaBinomialGradient {
+    /// With respect to `alpha`.
+    pub alpha: DoubleTensor,
+    /// With respect to `beta`.
+    pub beta: DoubleTensor,
+}
+
+/// The beta-binomial log mass at k: −∞ outside 0..=n or unless α and β are positive.
+pub(crate) fn beta_binomial_log_pmf(k: i64, n: i64, alpha: f64, beta: f64) -> f64 {
+    // `!(..)` also rejects NaN shapes
+    if k < 0 || k > n || !(alpha > 0.0 && beta > 0.0) {
+        return f64::NEG_INFINITY;
+    }
+    let (k, n) = (k as f64, n as f64);
+    ln_gamma(n + 1.0) - ln_gamma(k + 1.0) - ln_gamma(n - k + 1.0)
+        + log_beta(k + alpha, n - k + beta)
+        - log_beta(alpha, beta)
+}
+
+impl<'a> BetaBinomial<'a> {
+    /// Creates the distribution from its parameters.
+    pub fn new(
+        n: impl IntoParam<'a, i64>,
+        alpha: impl IntoParam<'a, f64>,
+        beta: impl IntoParam<'a, f64>,
+    ) -> Self {
+        Self {
+            n: n.into_param(),
+            alpha: alpha.into_param(),
+            beta: beta.into_param(),
+        }
+    }
+
+    /// The element-wise log probability of k, broadcasting k with the parameters (−∞ outside 0..=n, and
+    /// everywhere unless α and β are positive).
+    pub fn log_prob(&self, k: &IntTensor) -> Result<DoubleTensor> {
+        map((k, &*self.n, &*self.alpha, &*self.beta), |(k, n, a, b)| {
+            beta_binomial_log_pmf(k, n, a, b)
+        })
+    }
+
+    /// The element-wise derivatives of [`Self::log_prob`] with respect to α and β:
+    /// ψ(k + α) − ψ(n + α + β) − ψ(α) + ψ(α + β) and ψ(n − k + β) − ψ(n + α + β) − ψ(β) + ψ(α + β) (0 outside the
+    /// support).
+    pub fn d_log_prob(&self, k: &IntTensor) -> Result<BetaBinomialGradient> {
+        let [alpha, beta] = map_n((k, &*self.n, &*self.alpha, &*self.beta), |(k, n, a, b)| {
+            if k < 0 || k > n {
+                return [0.0; 2];
+            }
+            let (k, n) = (k as f64, n as f64);
+            let shared = digamma(a + b) - digamma(n + a + b);
+            [
+                digamma(k + a) - digamma(a) + shared,
+                digamma(n - k + b) - digamma(b) + shared,
+            ]
+        })?;
+        Ok(BetaBinomialGradient { alpha, beta })
+    }
+
+    /// Draws a sample of the given shape (broadcast with the parameters' shapes): a Binomial(n, p) draw with p a
+    /// Beta(α, β) draw. An error unless n is not negative and α and β are positive.
+    pub fn sample(&self, shape: &[usize], rng: &mut KeanuRng) -> Result<IntTensor> {
+        require(&self.n, |n| n >= 0, || "n must not be negative".into())?;
+        require_positive("alpha", &self.alpha)?;
+        require_positive("beta", &self.beta)?;
+        let n = self.n.to_double();
+        sample_each(shape, &[&n, &self.alpha, &self.beta], |params| {
+            let (a, b) = (params[1], params[2]);
+            let x = sample_gamma(1.0, a, rng)?;
+            let y = sample_gamma(1.0, b, rng)?;
+            // both draws can underflow to 0 for tiny shapes: the probability is then nearly 0 or 1, by the mean
+            let p = if x + y > 0.0 {
+                x / (x + y)
+            } else {
+                f64::from(u8::from(a > b))
+            };
+            Ok(sample_binomial(params[0] as i64, p, rng))
+        })
+    }
+}
+
+/// ln σ(t) = −softplus(−t), accurate for every t.
+fn log_sigmoid_of(t: f64) -> f64 {
+    -softplus(-t)
+}
+
+/// Bernoulli distribution parameterised by the log odds of true, ln(p / (1 − p)), as Stan's `bernoulli_logit`.
+/// Its log probabilities are computed as −softplus(∓η), so they stay finite and accurate for any logit.
+#[derive(Debug, Clone, PartialEq)]
+pub struct BernoulliLogit<'a> {
+    /// The log odds of true.
+    pub logit: Param<'a>,
+}
+
+/// Derivative of [`BernoulliLogit::log_prob`] with respect to `logit`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct BernoulliLogitGradient {
+    /// With respect to `logit`.
+    pub logit: DoubleTensor,
+}
+
+impl<'a> BernoulliLogit<'a> {
+    /// Creates the distribution from its parameter.
+    pub fn new(logit: impl IntoParam<'a, f64>) -> Self {
+        Self {
+            logit: logit.into_param(),
+        }
+    }
+
+    /// ln σ(η) where x is true and ln σ(−η) where false.
+    pub fn log_prob(&self, x: &BoolTensor) -> Result<DoubleTensor> {
+        map((x, &*self.logit), |(x, eta)| {
+            log_sigmoid_of(if x { eta } else { -eta })
+        })
+    }
+
+    /// σ(−η) where true and −σ(η) where false.
+    pub fn d_log_prob(&self, x: &BoolTensor) -> Result<BernoulliLogitGradient> {
+        Ok(BernoulliLogitGradient {
+            logit: map((x, &*self.logit), |(x, eta)| {
+                if x { sigmoid(-eta) } else { -sigmoid(eta) }
+            })?,
+        })
+    }
+
+    /// Draws a sample of the given shape (broadcast with the parameter's shape). An error if a logit is NaN.
+    pub fn sample(&self, shape: &[usize], rng: &mut KeanuRng) -> Result<BoolTensor> {
+        require(
+            &self.logit,
+            |eta| !eta.is_nan(),
+            || "the logit must not be NaN".into(),
+        )?;
+        let shape = sample_shape(shape, &[self.logit.shape()])?;
+        let p = self.logit.map(sigmoid);
+        Ok(rng.uniform(&shape).lt(&p)?)
+    }
+}
+
+/// Binomial distribution parameterised by the log odds of success, as Stan's `binomial_logit`: P(k) =
+/// C(n, k) σ(η)^k σ(−η)^(n−k), computed in log space as k ln σ(η) + (n − k) ln σ(−η), finite for any logit.
+#[derive(Debug, Clone, PartialEq)]
+pub struct BinomialLogit<'a> {
+    /// The log odds of success.
+    pub logit: Param<'a>,
+    /// The number of trials.
+    pub n: Param<'a, i64>,
+}
+
+/// Derivative of [`BinomialLogit::log_prob`] with respect to `logit`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct BinomialLogitGradient {
+    /// With respect to `logit`.
+    pub logit: DoubleTensor,
+}
+
+/// k ln σ(η) + (n − k) ln σ(−η), with a zero count contributing nothing (whatever the logit).
+fn binomial_logit_kernel(k: f64, n: f64, eta: f64) -> f64 {
+    let term = |count: f64, t: f64| {
+        if count == 0.0 {
+            0.0
+        } else {
+            count * log_sigmoid_of(t)
+        }
+    };
+    term(k, eta) + term(n - k, -eta)
+}
+
+impl<'a> BinomialLogit<'a> {
+    /// Creates the distribution from its parameters.
+    pub fn new(logit: impl IntoParam<'a, f64>, n: impl IntoParam<'a, i64>) -> Self {
+        Self {
+            logit: logit.into_param(),
+            n: n.into_param(),
+        }
+    }
+
+    /// The element-wise log probability of k, broadcasting k with the parameters (−∞ outside 0..=n).
+    pub fn log_prob(&self, k: &IntTensor) -> Result<DoubleTensor> {
+        map((k, &*self.logit, &*self.n), |(k, eta, n)| {
+            if k < 0 || k > n {
+                return f64::NEG_INFINITY;
+            }
+            let (k, n) = (k as f64, n as f64);
+            ln_gamma(n + 1.0) - ln_gamma(k + 1.0) - ln_gamma(n - k + 1.0)
+                + binomial_logit_kernel(k, n, eta)
+        })
+    }
+
+    /// The element-wise derivative of [`Self::log_prob`] with respect to the logit, k σ(−η) − (n − k) σ(η) = k − nσ(η)
+    /// (0 outside the support).
+    pub fn d_log_prob(&self, k: &IntTensor) -> Result<BinomialLogitGradient> {
+        Ok(BinomialLogitGradient {
+            logit: map((k, &*self.logit, &*self.n), |(k, eta, n)| {
+                if k < 0 || k > n {
+                    return 0.0;
+                }
+                let (k, n) = (k as f64, n as f64);
+                k * sigmoid(-eta) - (n - k) * sigmoid(eta)
+            })?,
+        })
+    }
+
+    /// Draws a sample of the given shape (broadcast with the parameters' shapes): a Binomial(n, σ(η)) draw. An
+    /// error if a logit is NaN or n is negative.
+    pub fn sample(&self, shape: &[usize], rng: &mut KeanuRng) -> Result<IntTensor> {
+        require(
+            &self.logit,
+            |eta| !eta.is_nan(),
+            || "the logit must not be NaN".into(),
+        )?;
+        require(&self.n, |n| n >= 0, || "n must not be negative".into())?;
+        let n = self.n.to_double();
+        sample_each(shape, &[&self.logit, &n], |params| {
+            Ok(sample_binomial(params[1] as i64, sigmoid(params[0]), rng))
+        })
+    }
+}
+
+/// Poisson distribution parameterised by the log of its mean, as Stan's `poisson_log`: ln P(k) =
+/// kη − e^η − ln k!, with no logarithm of the mean taken.
+#[derive(Debug, Clone, PartialEq)]
+pub struct PoissonLog<'a> {
+    /// The log of the mean.
+    pub log_mu: Param<'a>,
+}
+
+/// Derivative of [`PoissonLog::log_prob`] with respect to `log_mu`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct PoissonLogGradient {
+    /// With respect to `log_mu`.
+    pub log_mu: DoubleTensor,
+}
+
+impl<'a> PoissonLog<'a> {
+    /// Creates the distribution from its parameter.
+    pub fn new(log_mu: impl IntoParam<'a, f64>) -> Self {
+        Self {
+            log_mu: log_mu.into_param(),
+        }
+    }
+
+    /// The element-wise log probability of k, broadcasting k with the parameter (−∞ for k < 0, and where e^η
+    /// overflows).
+    pub fn log_prob(&self, k: &IntTensor) -> Result<DoubleTensor> {
+        map((k, &*self.log_mu), |(k, eta)| {
+            if k < 0 {
+                f64::NEG_INFINITY
+            } else if k == 0 {
+                -eta.exp()
+            } else {
+                k as f64 * eta - eta.exp() - ln_gamma(k as f64 + 1.0)
+            }
+        })
+    }
+
+    /// The element-wise derivative of [`Self::log_prob`] with respect to the log mean, k − e^η (0 for k < 0).
+    pub fn d_log_prob(&self, k: &IntTensor) -> Result<PoissonLogGradient> {
+        Ok(PoissonLogGradient {
+            log_mu: map((k, &*self.log_mu), |(k, eta)| {
+                if k < 0 { 0.0 } else { k as f64 - eta.exp() }
+            })?,
+        })
+    }
+
+    /// Draws a sample of the given shape (broadcast with the parameter's shape): a Poisson(e^η) draw. An error
+    /// unless e^η is positive and finite.
+    pub fn sample(&self, shape: &[usize], rng: &mut KeanuRng) -> Result<IntTensor> {
+        sample_each(shape, &[&self.log_mu], |p| sample_poisson(p[0].exp(), rng))
+    }
+}
+
+/// Categorical distribution over category indices 0..k parameterised by unnormalised log probabilities (logits),
+/// one tensor per category: P(x) = e^(η_x) / Σⱼ e^(ηⱼ), computed as η_x − logsumexp(η) so that no exponential
+/// overflows. A logit of −∞ gives its category probability 0.
+#[derive(Debug, Clone, PartialEq)]
+pub struct CategoricalLogit<'a> {
+    /// The logit of each category.
+    pub logits: Vec<Param<'a>>,
+}
+
+impl<'a> CategoricalLogit<'a> {
+    /// Creates the distribution from the logit of each category (owned or borrowed tensors). An error if there are
+    /// no categories.
+    pub fn new<P: IntoParam<'a, f64>>(logits: impl IntoIterator<Item = P>) -> Result<Self> {
+        let logits: Vec<_> = logits.into_iter().map(IntoParam::into_param).collect();
+        if logits.is_empty() {
+            return invalid_parameter("a categorical distribution needs at least one category");
+        }
+        Ok(Self { logits })
+    }
+
+    /// The broadcast shape of `value` and every logit, and the logits broadcast to it.
+    fn layout(&self, value: &[usize]) -> Result<(Shape, Vec<Operand<'_, f64>>)> {
+        let mut shapes = vec![value];
+        shapes.extend(self.logits.iter().map(|p| p.shape()));
+        let shape = broadcast_all(&shapes)?;
+        let logits = self
+            .logits
+            .iter()
+            .map(|p| operand(p, &shape))
+            .collect::<Result<_>>()?;
+        Ok((shape, logits))
+    }
+
+    /// ln Σⱼ e^(ηⱼ) at index i of the broadcast logits.
+    fn log_total(logits: &[Operand<'_, f64>], i: usize) -> f64 {
+        log_sum_exp(logits.iter().map(|l| l.at(i)))
+    }
+
+    /// η_x − logsumexp(η) for each category index x; −∞ for an index that is not a category. NaN where a logit is
+    /// NaN or +∞.
+    pub fn log_prob(&self, x: &IntTensor) -> Result<DoubleTensor> {
+        let (shape, logits) = self.layout(x.shape())?;
+        let x = operand(x, &shape)?;
+        Ok(DoubleTensor::from_fn(&shape, |i| {
+            let total = Self::log_total(&logits, i);
+            match usize::try_from(x.at(i)) {
+                Ok(c) if c < logits.len() => logits[c].at(i) - total,
+                _ => f64::NEG_INFINITY,
+            }
+        }))
+    }
+
+    /// The derivatives of [`Self::log_prob`] with respect to each category's logit, [j = x] − softmax(η)ⱼ, each
+    /// shaped like the broadcast of the value and the logits (0 where x is not a category).
+    pub fn d_log_prob(&self, x: &IntTensor) -> Result<Vec<DoubleTensor>> {
+        let (shape, logits) = self.layout(x.shape())?;
+        let x = operand(x, &shape)?;
+        let len: usize = shape.iter().product();
+        let mut out = vec![vec![0.0; len]; logits.len()];
+        for i in 0..len {
+            let Ok(c) = usize::try_from(x.at(i)) else {
+                continue;
+            };
+            if c >= logits.len() {
+                continue;
+            }
+            let total = Self::log_total(&logits, i);
+            for (j, d) in out.iter_mut().enumerate() {
+                d[i] = f64::from(u8::from(j == c)) - (logits[j].at(i) - total).exp();
+            }
+        }
+        out.into_iter()
+            .map(|d| Ok(DoubleTensor::new(&shape, d)?))
+            .collect()
+    }
+
+    /// Draws a sample of the given shape (broadcast with the logits' shapes). An error if a logit is NaN or +∞, or
+    /// every logit of an element is −∞.
+    pub fn sample(&self, shape: &[usize], rng: &mut KeanuRng) -> Result<IntTensor> {
+        let (shape, logits) = self.layout(shape)?;
+        let len: usize = shape.iter().product();
+        let u = rng.uniform(&shape);
+        let mut samples = Vec::with_capacity(len);
+        for i in 0..len {
+            let total = Self::log_total(&logits, i);
+            if !total.is_finite() {
+                return invalid_parameter(
+                    "categorical logits must not be NaN or +∞, and not all −∞",
+                );
+            }
+            let probabilities = logits.iter().map(|l| (l.at(i) - total).exp());
+            samples.push(select_category(u.as_slice()[i], probabilities) as i64);
+        }
+        Ok(IntTensor::new(&shape, samples)?)
     }
 }
 

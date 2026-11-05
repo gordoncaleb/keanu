@@ -394,9 +394,242 @@ impl GraphBuilder {
 }
 
 impl GraphBuilder {
+    /// A beta-binomial node: successes out of `n` trials whose success probability is Beta(`alpha`, `beta`)
+    /// distributed (see [`keanu_distributions::BetaBinomial`]), an over-dispersed binomial with mean
+    /// nα/(α + β). Its log CDF and survival function are finite sums, so it can be truncated and censored.
+    pub fn beta_binomial<'b>(
+        &'b self,
+        n: impl IntoIntVar<'b>,
+        alpha: impl IntoDoubleVar<'b>,
+        beta: impl IntoDoubleVar<'b>,
+    ) -> IntVar<'b> {
+        self.beta_binomial_node(None, n, alpha, beta)
+    }
+
+    /// Like [`Self::beta_binomial`], with values of the given shape (broadcast with the parameters' shapes).
+    pub fn beta_binomial_with_shape<'b>(
+        &'b self,
+        shape: &[usize],
+        n: impl IntoIntVar<'b>,
+        alpha: impl IntoDoubleVar<'b>,
+        beta: impl IntoDoubleVar<'b>,
+    ) -> IntVar<'b> {
+        self.beta_binomial_node(Some(shape), n, alpha, beta)
+    }
+
+    fn beta_binomial_node<'b>(
+        &'b self,
+        shape: Option<&[usize]>,
+        n: impl IntoIntVar<'b>,
+        alpha: impl IntoDoubleVar<'b>,
+        beta: impl IntoDoubleVar<'b>,
+    ) -> IntVar<'b> {
+        let ids = [
+            n.into_var(self).id(),
+            alpha.into_var(self).id(),
+            beta.into_var(self).id(),
+        ];
+        IntVar::new(
+            self,
+            self.distribution(DistributionKind::BetaBinomial, shape, &ids),
+        )
+    }
+
+    /// True with probability σ(`logit`), the Bernoulli parameterised by its log odds (Stan's `bernoulli_logit`):
+    /// its log probability is computed as −softplus(∓logit), accurate for any logit, so a linear predictor can be
+    /// passed directly.
+    pub fn bernoulli_logit<'b>(&'b self, logit: impl IntoDoubleVar<'b>) -> BoolVar<'b> {
+        let logit = logit.into_var(self).id();
+        BoolVar::new(
+            self,
+            self.distribution(DistributionKind::BernoulliLogit, None, &[logit]),
+        )
+    }
+
+    /// Like [`Self::bernoulli_logit`], with values of the given shape (broadcast with the parameter's shape).
+    pub fn bernoulli_logit_with_shape<'b>(
+        &'b self,
+        shape: &[usize],
+        logit: impl IntoDoubleVar<'b>,
+    ) -> BoolVar<'b> {
+        let logit = logit.into_var(self).id();
+        BoolVar::new(
+            self,
+            self.distribution(DistributionKind::BernoulliLogit, Some(shape), &[logit]),
+        )
+    }
+
+    /// Successes out of `n` trials with success probability σ(`logit`), the binomial parameterised by its log odds
+    /// (Stan's `binomial_logit`), accurate for any logit.
+    pub fn binomial_logit<'b>(
+        &'b self,
+        logit: impl IntoDoubleVar<'b>,
+        n: impl IntoIntVar<'b>,
+    ) -> IntVar<'b> {
+        let ids = [logit.into_var(self).id(), n.into_var(self).id()];
+        IntVar::new(
+            self,
+            self.distribution(DistributionKind::BinomialLogit, None, &ids),
+        )
+    }
+
+    /// Like [`Self::binomial_logit`], with values of the given shape (broadcast with the parameters' shapes).
+    pub fn binomial_logit_with_shape<'b>(
+        &'b self,
+        shape: &[usize],
+        logit: impl IntoDoubleVar<'b>,
+        n: impl IntoIntVar<'b>,
+    ) -> IntVar<'b> {
+        let ids = [logit.into_var(self).id(), n.into_var(self).id()];
+        IntVar::new(
+            self,
+            self.distribution(DistributionKind::BinomialLogit, Some(shape), &ids),
+        )
+    }
+
+    /// A Poisson node with mean e^`log_mu` (Stan's `poisson_log`), for a log-linear predictor: its log probability
+    /// kη − e^η − ln k! takes no logarithm of the mean.
+    pub fn poisson_log<'b>(&'b self, log_mu: impl IntoDoubleVar<'b>) -> IntVar<'b> {
+        let log_mu = log_mu.into_var(self).id();
+        IntVar::new(
+            self,
+            self.distribution(DistributionKind::PoissonLog, None, &[log_mu]),
+        )
+    }
+
+    /// Like [`Self::poisson_log`], with values of the given shape (broadcast with the parameter's shape).
+    pub fn poisson_log_with_shape<'b>(
+        &'b self,
+        shape: &[usize],
+        log_mu: impl IntoDoubleVar<'b>,
+    ) -> IntVar<'b> {
+        let log_mu = log_mu.into_var(self).id();
+        IntVar::new(
+            self,
+            self.distribution(DistributionKind::PoissonLog, Some(shape), &[log_mu]),
+        )
+    }
+
+    /// A category index in 0..logits.len() with probabilities softmax(`logits`): one node of unnormalised log
+    /// probabilities per category, all of the same shape (as [`Self::categorical`] takes probabilities). The log
+    /// probability is ηₓ − logsumexp(η), so no exponential overflows.
+    pub fn categorical_logit<'b>(
+        &'b self,
+        shape: &[usize],
+        logits: &[DoubleVar<'b>],
+    ) -> IntVar<'b> {
+        let ids: Vec<_> = logits.iter().map(|p| p.id()).collect();
+        IntVar::new(
+            self,
+            self.distribution(DistributionKind::CategoricalLogit, Some(shape), &ids),
+        )
+    }
+}
+
+impl GraphBuilder {
+    /// A zero-inflated count: 0 with probability `psi` (a structural zero), else a draw from `inner` with
+    /// `parameters` (its parameter nodes, in its order). So P(0) = ψ + (1 − ψ) p(0) and P(k) = (1 − ψ) p(k) for
+    /// k ≠ 0, computed in log space. The inner kind is an element-wise count distribution (a Poisson, negative
+    /// binomial, binomial, beta-binomial, their logit and log forms, or a truncated count). The value's shape is
+    /// the broadcast of the parameters' and ψ's shapes.
+    ///
+    /// A ψ outside [0, 1] makes every value impossible (log probability −∞), and sampling with it is an error.
+    /// The gradient and Hessian-vector products with respect to ψ and the inner parameters are exact, and Gibbs
+    /// steps enumerate a zero-inflated latent whose inner kind has finitely many values.
+    ///
+    /// ```
+    /// use keanu_graph::{GraphBuilder, IntVar, op::DistributionKind};
+    /// use keanu_tensor::IntTensor;
+    ///
+    /// let b = GraphBuilder::new();
+    /// let rate = b.gamma(1.0, 2.0);
+    /// let psi = b.beta(1.0, 1.0);
+    /// let counts: IntVar = b.zero_inflated(DistributionKind::Poisson, &[rate.id()], psi);
+    /// # let _ = counts;
+    /// b.build()?;
+    /// # Ok::<(), keanu_graph::GraphError>(())
+    /// ```
+    pub fn zero_inflated<'b, V: Var<'b>>(
+        &'b self,
+        inner: DistributionKind,
+        parameters: &[NodeId],
+        psi: impl IntoDoubleVar<'b>,
+    ) -> V {
+        let kind = DistributionKind::ZeroInflated(Arc::new(inner));
+        self.inflated_node(None, kind, parameters, psi.into_var(self))
+    }
+
+    /// Like [`Self::zero_inflated`], with a value of the given shape (broadcast with the parameters' shapes).
+    pub fn zero_inflated_with_shape<'b, V: Var<'b>>(
+        &'b self,
+        shape: &[usize],
+        inner: DistributionKind,
+        parameters: &[NodeId],
+        psi: impl IntoDoubleVar<'b>,
+    ) -> V {
+        let kind = DistributionKind::ZeroInflated(Arc::new(inner));
+        self.inflated_node(Some(shape), kind, parameters, psi.into_var(self))
+    }
+
+    /// A hurdle model: 0 with probability `psi`, else a draw from `inner` with `parameters` restricted to positive
+    /// values. For a count inner kind (as for [`Self::zero_inflated`]) P(0) = ψ and P(k) = (1 − ψ) p(k) / (1 − p(0))
+    /// for k > 0, the inner kind truncated at zero by its own mass there. For a positive continuous inner kind (a
+    /// half Gaussian, half Cauchy, chi-squared, exponential, gamma, inverse gamma, log-normal, Weibull or beta) a value of
+    /// exactly 0 has probability ψ and a positive value the density (1 − ψ) p(x), for data such as rainfall with dry
+    /// days; such a node is meant to be observed. Negative values are impossible. The handle type must match the
+    /// inner kind's value type ([`IntVar`] or [`DoubleVar`]).
+    ///
+    /// Positive counts are drawn by rejection from the inner kind, which fails with an error if it puts too little
+    /// probability above zero.
+    pub fn hurdle<'b, V: Var<'b>>(
+        &'b self,
+        inner: DistributionKind,
+        parameters: &[NodeId],
+        psi: impl IntoDoubleVar<'b>,
+    ) -> V {
+        let kind = DistributionKind::Hurdle(Arc::new(inner));
+        self.inflated_node(None, kind, parameters, psi.into_var(self))
+    }
+
+    /// Like [`Self::hurdle`], with a value of the given shape (broadcast with the parameters' shapes).
+    pub fn hurdle_with_shape<'b, V: Var<'b>>(
+        &'b self,
+        shape: &[usize],
+        inner: DistributionKind,
+        parameters: &[NodeId],
+        psi: impl IntoDoubleVar<'b>,
+    ) -> V {
+        let kind = DistributionKind::Hurdle(Arc::new(inner));
+        self.inflated_node(Some(shape), kind, parameters, psi.into_var(self))
+    }
+
+    fn inflated_node<'b, V: Var<'b>>(
+        &'b self,
+        shape: Option<&[usize]>,
+        kind: DistributionKind,
+        parameters: &[NodeId],
+        psi: DoubleVar<'b>,
+    ) -> V {
+        if kind.value_type() != V::DTYPE {
+            self.record(GraphError::InvalidNode {
+                op: kind.name(),
+                message: format!(
+                    "the inner distribution's values are {:?} but a {:?} node was requested",
+                    kind.value_type(),
+                    V::DTYPE
+                ),
+            });
+        }
+        let mut ids = parameters.to_vec();
+        ids.push(psi.id());
+        V::wrap(self, self.distribution(kind, shape, &ids))
+    }
+}
+
+impl GraphBuilder {
     /// A truncated distribution: `base` (a univariate distribution kind with a CDF: Gaussian, LogNormal,
-    /// Exponential, Gamma, Beta, StudentT, Cauchy, Laplace, Logistic, Uniform, Weibull, Poisson, Binomial or
-    /// NegativeBinomial) with
+    /// Exponential, Gamma, Beta, StudentT, Cauchy, Laplace, Logistic, Uniform, Weibull, Poisson, Binomial,
+    /// BetaBinomial or NegativeBinomial) with
     /// `parameters` (its parameter nodes, in its order), restricted to `[lower, upper]` and renormalised by the
     /// probability the base gives that range. Either bound may be infinite; for a discrete base both must be whole
     /// numbers (or infinite) and the range includes them.
@@ -507,7 +740,8 @@ impl GraphBuilder {
     ///
     /// The component is an element-wise univariate kind: one of the continuous or count distributions with one
     /// value per element (not Dirichlet, MultivariateGaussian, LkjCholesky, ZeroSumNormal, Kde, Categorical,
-    /// Multinomial, OrderedLogistic, Bernoulli, a custom distribution or another mixture), or a truncated or censored one. The
+    /// Multinomial, OrderedLogistic, Bernoulli, BernoulliLogit, CategoricalLogit, a custom distribution or another
+    /// mixture), or a truncated, censored, zero-inflated or hurdle one. The
     /// value has the batch shape: the parameters' shapes without their component axes, broadcast together; use
     /// [`Self::mixture_with_shape`] for a larger one (a vector of observations from one mixture). The log density is
     /// computed as logsumexp_c(log w_c + log p_c(x)), so components far in the tails stay accurate, and its gradient

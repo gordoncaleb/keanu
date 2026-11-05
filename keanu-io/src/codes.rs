@@ -84,7 +84,7 @@ codes! {
 }
 
 /// The schema value of each way of building a kind around another one (see [`DistributionKind::nested`]).
-const NESTED_CODES: [(Nested, proto::DistributionKind); 4] = [
+const NESTED_CODES: [(Nested, proto::DistributionKind); 6] = [
     (Nested::Truncated, proto::DistributionKind::Truncated),
     (Nested::Censored, proto::DistributionKind::Censored),
     (Nested::Mixture, proto::DistributionKind::Mixture),
@@ -92,6 +92,8 @@ const NESTED_CODES: [(Nested, proto::DistributionKind); 4] = [
         Nested::HiddenMarkovModel,
         proto::DistributionKind::HiddenMarkovModel,
     ),
+    (Nested::ZeroInflated, proto::DistributionKind::ZeroInflated),
+    (Nested::Hurdle, proto::DistributionKind::Hurdle),
 ];
 
 /// The schema value of a way of nesting, or None for one without a saved form.
@@ -221,6 +223,11 @@ distribution_codes!(
     OrderedLogistic,
     LinearGaussianStateSpace,
     ZeroSumNormal,
+    BetaBinomial,
+    BernoulliLogit,
+    BinomialLogit,
+    PoissonLog,
+    CategoricalLogit,
 );
 
 #[cfg(test)]
@@ -238,7 +245,7 @@ mod tests {
     }
 
     /// The number of distribution kinds in the schema.
-    const DISTRIBUTION_KINDS: i32 = 37;
+    const DISTRIBUTION_KINDS: i32 = 44;
 
     #[test]
     fn every_schema_value_has_a_variant() {

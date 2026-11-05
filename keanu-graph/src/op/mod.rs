@@ -5,6 +5,7 @@ mod distribution_hvp;
 mod enumerate;
 pub(crate) mod eval;
 mod hmm;
+mod inflated;
 pub(crate) mod log_density;
 mod mixture;
 mod nested;

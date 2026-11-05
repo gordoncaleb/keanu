@@ -1,12 +1,14 @@
-//! Kinds built around another kind: truncated, censored, mixture and hidden Markov model distributions.
+//! Kinds built around another kind: truncated, censored, mixture, hidden Markov model, zero-inflated and hurdle
+//! distributions.
 //!
 //! Each holds its inner kind (the base, component or emission) and takes the inner kind's parameters followed by
 //! its own (see the wrappers module for the layout). [`DistributionKind::nested`] splits such a kind into a
 //! [`Nested`] tag and the inner kind, and the tag's methods here are the one place that dispatches to the
-//! wrappers, mixture and hmm modules, so the distribution table and the second-order rules delegate to them once.
+//! wrappers, mixture, hmm and inflated modules, so the distribution table and the second-order rules delegate to them once.
 
 use super::distribution::{DistributionKind, LogProbGradientParts};
 use super::distribution_hvp::{self, LogProbHvpParts};
+use super::inflated::{self, Inflation};
 use super::wrappers::{self, Wrapper};
 use super::{Support, hmm, mixture};
 use crate::error::Result;
@@ -28,6 +30,10 @@ pub enum Nested {
     Mixture,
     /// [`DistributionKind::HiddenMarkovModel`]: the inner kind is the emission.
     HiddenMarkovModel,
+    /// [`DistributionKind::ZeroInflated`]: the inner kind is the count distribution.
+    ZeroInflated,
+    /// [`DistributionKind::Hurdle`]: the inner kind is the distribution of the positive values.
+    Hurdle,
 }
 
 /// The pattern matching every nested kind, for the exhaustive matches over [`DistributionKind`] (whose arm then
@@ -38,6 +44,8 @@ macro_rules! nested_kinds {
             | DistributionKind::Censored(_)
             | DistributionKind::Mixture(_)
             | DistributionKind::HiddenMarkovModel(_)
+            | DistributionKind::ZeroInflated(_)
+            | DistributionKind::Hurdle(_)
     };
 }
 pub(crate) use nested_kinds;
@@ -62,6 +70,8 @@ impl DistributionKind {
             DistributionKind::Censored(inner) => (Nested::Censored, inner),
             DistributionKind::Mixture(inner) => (Nested::Mixture, inner),
             DistributionKind::HiddenMarkovModel(inner) => (Nested::HiddenMarkovModel, inner),
+            DistributionKind::ZeroInflated(inner) => (Nested::ZeroInflated, inner),
+            DistributionKind::Hurdle(inner) => (Nested::Hurdle, inner),
             _ => return None,
         })
     }
@@ -83,25 +93,38 @@ impl Nested {
             Nested::Censored => DistributionKind::Censored(inner),
             Nested::Mixture => DistributionKind::Mixture(inner),
             Nested::HiddenMarkovModel => DistributionKind::HiddenMarkovModel(inner),
+            Nested::ZeroInflated => DistributionKind::ZeroInflated(inner),
+            Nested::Hurdle => DistributionKind::Hurdle(inner),
         }
     }
 
     /// The names of the parameters this wrapper adds after the inner kind's: `lower` and `upper` for a truncated or
-    /// censored kind, `weights` for a mixture, `initial` and `transition` for a hidden Markov model.
+    /// censored kind, `weights` for a mixture, `initial` and `transition` for a hidden Markov model, `psi` for a
+    /// zero-inflated or hurdle kind.
     pub fn own_parameter_names(self) -> &'static [&'static str] {
         match self {
             Nested::Truncated | Nested::Censored => &["lower", "upper"],
             Nested::Mixture => &["weights"],
             Nested::HiddenMarkovModel => &["initial", "transition"],
+            Nested::ZeroInflated | Nested::Hurdle => &["psi"],
         }
     }
 
-    /// The truncated or censored wrapper, None for a mixture or a hidden Markov model.
+    /// The truncated or censored wrapper, None for the others.
     pub(crate) fn wrapper(self) -> Option<Wrapper> {
         match self {
             Nested::Truncated => Some(Wrapper::Truncated),
             Nested::Censored => Some(Wrapper::Censored),
-            Nested::Mixture | Nested::HiddenMarkovModel => None,
+            _ => None,
+        }
+    }
+
+    /// The zero-inflated or hurdle form, None for the others.
+    pub(crate) fn inflation(self) -> Option<Inflation> {
+        match self {
+            Nested::ZeroInflated => Some(Inflation::ZeroInflated),
+            Nested::Hurdle => Some(Inflation::Hurdle),
+            _ => None,
         }
     }
 
@@ -112,6 +135,8 @@ impl Nested {
             Nested::Censored => "censored",
             Nested::Mixture => "mixture",
             Nested::HiddenMarkovModel => "hidden_markov_model",
+            Nested::ZeroInflated => "zero_inflated",
+            Nested::Hurdle => "hurdle",
         }
     }
 
@@ -136,10 +161,10 @@ impl Nested {
         Some(Cow::Owned(names))
     }
 
-    /// Whether the kind has one value per element with an element-wise density (a truncated or censored kind), so
-    /// that it can itself be a mixture component or an emission.
+    /// Whether the kind has one value per element with an element-wise density (a truncated, censored,
+    /// zero-inflated or hurdle kind), so that it can itself be a mixture component or an emission.
     pub(crate) fn is_elementwise(self) -> bool {
-        self.wrapper().is_some()
+        self.wrapper().is_some() || self.inflation().is_some()
     }
 
     /// Checks that `inner` can be wrapped this way, returning the reason it can't.
@@ -159,6 +184,9 @@ impl Nested {
                  density, so it cannot be a hidden Markov model's emission",
                 inner.name()
             )),
+            Nested::ZeroInflated | Nested::Hurdle => {
+                inflated::check_inner(self.inflation().expect("inflated"), inner)
+            }
             _ => Ok(()),
         }
     }
@@ -173,6 +201,8 @@ impl Nested {
             Nested::Truncated | Nested::Censored => wrappers::support(inner, parameters),
             Nested::Mixture => mixture::support(inner, parameters),
             Nested::HiddenMarkovModel => hmm::support(inner, parameters),
+            Nested::ZeroInflated => inflated::support(Inflation::ZeroInflated, inner, parameters),
+            Nested::Hurdle => inflated::support(Inflation::Hurdle, inner, parameters),
         }
     }
 
@@ -189,6 +219,10 @@ impl Nested {
             Nested::Censored => wrappers::sample_censored(inner, shape, parameters, rng),
             Nested::Mixture => mixture::sample(inner, shape, parameters, rng),
             Nested::HiddenMarkovModel => hmm::sample(inner, shape, parameters, rng),
+            Nested::ZeroInflated => {
+                inflated::sample(Inflation::ZeroInflated, inner, shape, parameters, rng)
+            }
+            Nested::Hurdle => inflated::sample(Inflation::Hurdle, inner, shape, parameters, rng),
         }
     }
 
@@ -209,11 +243,17 @@ impl Nested {
             }
             Nested::Mixture => mixture::log_prob(inner, value, parameters, gradient),
             Nested::HiddenMarkovModel => hmm::log_prob(inner, value, parameters, gradient),
+            Nested::ZeroInflated | Nested::Hurdle => {
+                let inflation = self.inflation().expect("inflated");
+                let (values, gradient) =
+                    inflated::elementwise(inflation, inner, value, parameters, gradient)?;
+                Ok((values.sum(), gradient))
+            }
         }
     }
 
     /// The terms whose sum is [`Self::log_prob`]'s log probability: one per element of the value for a truncated,
-    /// censored or mixture kind, and a scalar for a hidden Markov model.
+    /// censored, mixture, zero-inflated or hurdle kind, and a scalar for a hidden Markov model.
     pub(crate) fn log_prob_terms(
         self,
         inner: &DistributionKind,
@@ -231,6 +271,10 @@ impl Nested {
             Nested::HiddenMarkovModel => Ok(DoubleTensor::scalar(
                 hmm::log_prob(inner, value, parameters, false)?.0,
             )),
+            Nested::ZeroInflated | Nested::Hurdle => {
+                let inflation = self.inflation().expect("inflated");
+                Ok(inflated::elementwise(inflation, inner, value, parameters, false)?.0)
+            }
         }
     }
 
@@ -243,6 +287,11 @@ impl Nested {
         parameters: &[&Value],
         gradient: bool,
     ) -> Option<Result<(DoubleTensor, Option<LogProbGradientParts>)>> {
+        if let Some(inflation) = self.inflation() {
+            return Some(inflated::elementwise(
+                inflation, inner, value, parameters, gradient,
+            ));
+        }
         let wrapper = self.wrapper()?;
         Some(wrappers::elementwise(
             wrapper, inner, value, parameters, gradient,
@@ -262,14 +311,16 @@ impl Nested {
         let (nested, inner) = kind.nested_parts();
         match nested {
             // element-wise, so contracted per element (see `distribution_hvp::elementwise`)
-            Nested::Truncated | Nested::Censored => distribution_hvp::elementwise_hvp(
-                kind,
-                value,
-                parameters,
-                value_tangent,
-                parameter_tangents,
-                b,
-            ),
+            Nested::Truncated | Nested::Censored | Nested::ZeroInflated | Nested::Hurdle => {
+                distribution_hvp::elementwise_hvp(
+                    kind,
+                    value,
+                    parameters,
+                    value_tangent,
+                    parameter_tangents,
+                    b,
+                )
+            }
             Nested::Mixture => mixture::log_prob_hvp(
                 inner,
                 value,

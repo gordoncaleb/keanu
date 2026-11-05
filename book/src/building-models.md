@@ -14,7 +14,9 @@ Each distribution has a builder method taking its parameters, which can be other
 | Continuous | `gaussian`, `half_gaussian`, `cauchy`, `half_cauchy`, `beta`, `chi_squared`, `dirichlet`, `exponential` (takes a rate), `gamma` (scale θ, shape k), `inverse_gamma`, `laplace`, `logistic`, `log_normal`, `multivariate_gaussian`, `pareto`, `student_t`, `triangular`, `uniform`, `weibull` (shape α, scale β), `von_mises` (an angle), `kde` |
 | Zero-sum vectors | `zero_sum_normal(n, sigma)`: n elements summing to zero, N(0, σ² I) restricted to that subspace (`zero_sum_normal_with_shape(&[.., n], sigma)` for a batch); see [Sum-to-zero group effects](#sum-to-zero-group-effects) |
 | Correlation matrices | `lkj_cholesky(k, eta)`: the k × k lower triangular Cholesky factor `L` of a correlation matrix `L Lᵀ` under the LKJ(η) prior (`lkj_cholesky_with_shape(&[.., k, k], eta)` for a batch) |
-| Discrete | `bernoulli` (bool), `binomial`, `categorical`, `geometric`, `multinomial`, `negative_binomial` (mean μ, dispersion α), `ordered_logistic`, `poisson`, `uniform_int` |
+| Discrete | `bernoulli` (bool), `binomial`, `beta_binomial`, `categorical`, `geometric`, `multinomial`, `negative_binomial` (mean μ, dispersion α), `ordered_logistic`, `poisson`, `uniform_int` |
+| Logit and log forms | `bernoulli_logit` (bool), `binomial_logit`, `categorical_logit`, `poisson_log`; see [Zero-inflated, hurdle and logit counts](#zero-inflated-hurdle-and-logit-counts) |
+| Extra zeros | `zero_inflated` and `hurdle` around a count distribution (or, for `hurdle`, a positive continuous one) |
 | Your own | `custom` (see [Custom distributions](custom-distributions.md)) |
 
 ### Counts, durations, angles and ordered categories
@@ -33,6 +35,36 @@ Each distribution has a builder method taking its parameters, which can be other
 ```rust,ignore
 {{#include ../../keanu/tests/book.rs:new_distributions}}
 ```
+
+### Zero-inflated, hurdle and logit counts
+
+- `zero_inflated(kind, parameters, psi)` adds structural zeros to a count distribution: with probability ψ the
+  value is 0, else it is a draw from `kind` (a `poisson`, `negative_binomial`, `binomial`, `beta_binomial`, a logit
+  or log form, or a truncated count) with `parameters`. So P(0) = ψ + (1 − ψ) p(0) and P(k) = (1 − ψ) p(k), as PyMC's
+  `ZeroInflatedPoisson` and its relatives.
+- `hurdle(kind, parameters, psi)` separates the zeros from the positive values: 0 with probability ψ, else a draw from
+  `kind` restricted to positive values, P(k) = (1 − ψ) p(k) / (1 − p(0)). With a positive continuous kind (`gamma`,
+  `log_normal`, `exponential`, `weibull`, ...) a value of exactly 0 has probability ψ and a positive value the
+  density (1 − ψ) p(x), for data such as rainfall with dry days.
+- `beta_binomial(n, alpha, beta)` is a binomial whose success probability is Beta(α, β): over-dispersed successes
+  out of n trials, with mean nα/(α + β). Its log CDF and survival function are finite sums, so it can be truncated
+  and censored too.
+- `bernoulli_logit(eta)`, `binomial_logit(eta, n)` and `categorical_logit(shape, &logits)` take log odds (or
+  unnormalised log probabilities) and `poisson_log(eta)` the log of the mean, as Stan's `bernoulli_logit`,
+  `binomial_logit`, `categorical_logit` and `poisson_log`. Their log probabilities are computed as −softplus(∓η),
+  ηₓ − logsumexp(η) and kη − e^η, so they stay finite and accurate for any linear predictor (a logit of ±700
+  included), with no sigmoid or exponential taken first.
+
+```rust,ignore
+{{#include ../../keanu/tests/book.rs:zero_inflated}}
+```
+
+Each has exact gradients and Hessian-vector products, for NUTS, the optimizers and the Laplace approximation. The
+zero-inflated and hurdle forms, the beta-binomial and the logit and log forms with one value per element can be
+mixture components, `log_density` kinds and children of a marginalised latent, and their pointwise log likelihoods
+have one point per element. As latents, the ones with finitely many values (the beta-binomial, the binomial and
+Bernoulli logit forms, `categorical_logit`, and zero-inflated or hurdle forms of those) are updated by Gibbs steps
+and can be marginalised; the others by the discrete random walk. A ψ outside [0, 1] makes every value impossible.
 
 ### Sum-to-zero group effects
 
@@ -61,7 +93,7 @@ the identification comes from the hierarchical prior.
 it by the probability the base gives that range; `censored(base, parameters, lower, upper)` models values that are
 clipped to the bounds, so a value equal to `lower` has probability P(X ≤ lower) and a value equal to `upper` has
 P(X ≥ upper). The base is a `DistributionKind` with a CDF (Gaussian, LogNormal, Exponential, Gamma, Beta, StudentT,
-Cauchy, Laplace, Logistic, Uniform, Weibull, Poisson, Binomial or NegativeBinomial) and its parameters are node ids, in the base's order.
+Cauchy, Laplace, Logistic, Uniform, Weibull, Poisson, Binomial, BetaBinomial or NegativeBinomial) and its parameters are node ids, in the base's order.
 Either bound may be infinite; for a discrete base the bounds are whole numbers and the range includes them.
 
 ```rust,ignore
@@ -91,7 +123,8 @@ component axis); `mixture_with_shape` gives a larger one, such as a vector of ob
 
 The component can be any distribution with one value per element (the continuous and count distributions, but
 not `dirichlet`, `multivariate_gaussian`, `lkj_cholesky`, `zero_sum_normal`, `kde`, `categorical`, `multinomial`,
-`ordered_logistic` or `bernoulli`), or a truncated or censored one; a mixture itself can't be truncated or mixed again. The log density is
+`ordered_logistic`, `bernoulli`, `bernoulli_logit` or `categorical_logit`), or a truncated, censored, zero-inflated
+or hurdle one; a mixture itself can't be truncated or mixed again. The log density is
 computed as logsumexp_c(log w_c + log p_c(x)), so it stays accurate far in the tails, and its gradient with respect
 to the value, the component parameters and the weights is exact, for NUTS and the optimizers. The support is the
 component's, widened to hold every component's (the smallest lower bound and the largest upper bound). Values are
@@ -116,9 +149,9 @@ likelihoods that no distribution provides. A factor that isn't finite (NaN or ±
 deterministic node: its sum is the log probability a node of that distribution with that value would have, so a
 factor of it gives a likelihood to a value that isn't itself a probabilistic node (such as a transformed
 observation). It works for every distribution with one value per element (the continuous and count distributions,
-`bernoulli`, and truncated and censored ones; not `dirichlet`, `multivariate_gaussian`, `lkj_cholesky`,
+`bernoulli` and `bernoulli_logit`, and truncated, censored, zero-inflated and hurdle ones; not `dirichlet`, `multivariate_gaussian`, `lkj_cholesky`,
 `zero_sum_normal`, `kde`, `categorical`, `multinomial`, `ordered_logistic` or mixtures), its value has the distribution's type (f64, i64 for
-counts, or bool for `bernoulli`), and it differentiates, to second order, as the distribution does.
+counts, or bool for `bernoulli` and `bernoulli_logit`), and it differentiates, to second order, as the distribution does.
 
 ```rust,ignore
 {{#include ../../keanu/tests/book.rs:log_density}}
@@ -149,8 +182,9 @@ counting sampled values); `draw` samples the latent from it, for draws of the or
 {{#include ../../keanu/tests/book.rs:marginalize}}
 ```
 
-The latent's distribution is `bernoulli`, `categorical` or another discrete one whose elements take the same fixed,
-finite set of values (at most 1000; a `uniform_int`, a `binomial` or a truncated count), and every probabilistic node
+The latent's distribution is `bernoulli`, `categorical` (or their logit forms) or another discrete one whose elements
+take the same fixed, finite set of values (at most 1000; a `uniform_int`, a `binomial`, a `beta_binomial` or a
+truncated count), and every probabilistic node
 depending on it is observed and has an element-wise density (as for `log_density`). A scalar latent can reach its
 observations through any deterministic nodes. For a vector latent of shape S, each element's observations must
 depend on that element alone: the observations' shape starts with S (their trailing axes, such as repeated visits

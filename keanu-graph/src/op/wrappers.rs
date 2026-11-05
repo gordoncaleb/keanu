@@ -131,17 +131,17 @@ fn bound_points(bound: &DoubleTensor, shift: f64, discrete: bool) -> Value {
 }
 
 /// A function of the base evaluated element-wise and broadcast to the node's shape.
-struct Evaluated {
-    values: Vec<f64>,
+pub(crate) struct Evaluated {
+    pub(crate) values: Vec<f64>,
     /// With respect to the point it was evaluated at (None for discrete values).
-    x: Option<Vec<f64>>,
+    pub(crate) x: Option<Vec<f64>>,
     /// With respect to each base parameter (None where there is no derivative).
-    parameters: Vec<Option<Vec<f64>>>,
+    pub(crate) parameters: Vec<Option<Vec<f64>>>,
 }
 
 /// `function` of the base at `at`, broadcast to `shape`. Where `infinite` (broadcast) holds, the value is
 /// `at_infinity` and the derivatives are 0.
-fn evaluate(
+pub(crate) fn evaluate(
     base: &DistributionKind,
     function: Univariate,
     at: &Value,
@@ -255,7 +255,7 @@ pub(crate) fn elementwise(
 type Parts = (Vec<f64>, Option<LogProbGradientParts>);
 
 /// Assembles gradient parts from per-element vectors.
-fn parts(
+pub(crate) fn parts(
     shape: &[usize],
     x: Option<Vec<f64>>,
     parameters: Vec<Option<Vec<f64>>>,
@@ -910,9 +910,18 @@ pub(crate) fn second_order(
     struct Side {
         evaluated: Evaluated,
         points: Vec<f64>,
+        /// Whether the bound is finite at each element: at an infinite one the side is a constant (0 or 1), whose
+        /// derivatives are zero whatever its rule gives at the placeholder point.
+        finite: Vec<bool>,
         bound: usize,
         upper: bool,
     }
+    let finite = |bound: &DoubleTensor| -> Result<Vec<bool>> {
+        Ok(broadcast(bound, shape)?
+            .into_iter()
+            .map(f64::is_finite)
+            .collect())
+    };
     let shift = if bounds.discrete { -1.0 } else { 0.0 };
     #[derive(Clone, Copy, PartialEq)]
     enum Case {
@@ -925,10 +934,11 @@ pub(crate) fn second_order(
         Wrapper::Truncated => {
             let low = bound_points(bounds.lower, shift, bounds.discrete);
             let high = bound_points(bounds.upper, 0.0, bounds.discrete);
-            let side = |function, at: &Value, bound, upper, infinite| -> Result<Side> {
-                Ok(Side {
+            let side = |function, at: &Value, bound, upper, infinite, bound_values| {
+                Ok::<_, GraphError>(Side {
                     evaluated: eval(function, at, Some(infinite))?,
                     points: points(at)?,
+                    finite: finite(bound_values)?,
                     bound,
                     upper,
                 })
@@ -941,6 +951,7 @@ pub(crate) fn second_order(
                     lower_index,
                     false,
                     (bounds.lower, f64::NEG_INFINITY),
+                    bounds.lower,
                 )?,
                 side(
                     Univariate::Ccdf,
@@ -948,6 +959,7 @@ pub(crate) fn second_order(
                     lower_index,
                     true,
                     (bounds.lower, 0.0),
+                    bounds.lower,
                 )?,
                 side(
                     Univariate::Cdf,
@@ -955,6 +967,7 @@ pub(crate) fn second_order(
                     upper_index,
                     false,
                     (bounds.upper, 0.0),
+                    bounds.upper,
                 )?,
                 side(
                     Univariate::Ccdf,
@@ -962,6 +975,7 @@ pub(crate) fn second_order(
                     upper_index,
                     true,
                     (bounds.upper, f64::NEG_INFINITY),
+                    bounds.upper,
                 )?,
             ];
             let cases = (0..len)
@@ -982,12 +996,14 @@ pub(crate) fn second_order(
                 Side {
                     evaluated: eval(Univariate::Cdf, &low, None)?,
                     points: points(&low)?,
+                    finite: finite(bounds.lower)?,
                     bound: lower_index,
                     upper: false,
                 },
                 Side {
                     evaluated: eval(Univariate::Ccdf, &high, None)?,
                     points: points(&high)?,
+                    finite: finite(bounds.upper)?,
                     bound: upper_index,
                     upper: true,
                 },
@@ -1029,7 +1045,7 @@ pub(crate) fn second_order(
                 g[j + 1] = cdf_gradient[j + 1];
             }
             cdf.clear();
-            if e.values[i].is_finite() {
+            if e.values[i].is_finite() && side.finite[i] {
                 cdf_rule(side.points[i], point, side.upper, &cdf_gradient, cdf);
             }
             g

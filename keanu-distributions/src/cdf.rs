@@ -14,17 +14,17 @@
 
 use crate::continuous::LN_SQRT_2PI;
 use crate::error::Result;
-use crate::util::{ln_gamma, map, map_n, safe_ln_times, softplus};
+use crate::util::{digamma, ln_gamma, map, map_n, safe_ln_times, softplus};
 use crate::{
-    Beta, BetaGradient, Binomial, BinomialGradient, Cauchy, CauchyGradient, Exponential,
-    ExponentialGradient, Gamma, GammaGradient, Gaussian, GaussianGradient, Laplace,
-    LaplaceGradient, LogNormal, LogNormalGradient, Logistic, LogisticGradient, NegativeBinomial,
-    NegativeBinomialGradient, Poisson, PoissonGradient, StudentT, StudentTGradient, Uniform,
-    UniformGradient, Weibull, WeibullGradient,
+    Beta, BetaBinomial, BetaBinomialGradient, BetaGradient, Binomial, BinomialGradient, Cauchy,
+    CauchyGradient, Exponential, ExponentialGradient, Gamma, GammaGradient, Gaussian,
+    GaussianGradient, Laplace, LaplaceGradient, LogNormal, LogNormalGradient, Logistic,
+    LogisticGradient, NegativeBinomial, NegativeBinomialGradient, Poisson, PoissonGradient,
+    StudentT, StudentTGradient, Uniform, UniformGradient, Weibull, WeibullGradient,
 };
 use keanu_tensor::special::{
     log_beta, log_gamma_p, log_gamma_p_da, log_gamma_q, log_gamma_q_da, log_inc_beta,
-    log_inc_beta_da, log_inc_beta_db, log_ndtr, log1mexp, logit, ndtri,
+    log_inc_beta_da, log_inc_beta_db, log_ndtr, log_sum_exp, log1mexp, logit, ndtri, trigamma,
 };
 use keanu_tensor::{DoubleTensor, IntTensor};
 use std::f64::consts::{LN_2, PI};
@@ -680,6 +680,119 @@ impl Binomial<'_> {
     /// The element-wise derivative of [`Self::log_ccdf`] with respect to p.
     pub fn d_log_ccdf(&self, k: &IntTensor) -> Result<BinomialGradient> {
         self.cdf_gradient(k, true)
+    }
+}
+
+/// A beta-binomial tail probability and its derivatives with respect to the shapes, from
+/// [`BetaBinomial::log_tail`].
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct BetaBinomialTail {
+    /// ln P(X <= k), or ln P(X > k) for the upper tail.
+    pub log_probability: f64,
+    /// Its derivatives with respect to α and β.
+    pub gradient: [f64; 2],
+    /// Its second derivatives with respect to (α, α), (α, β) and (β, β).
+    pub hessian: [f64; 3],
+}
+
+impl BetaBinomial<'_> {
+    /// ln P(X <= k), or ln P(X > k) if `upper`, at one point, with its first and second derivatives with respect to
+    /// α and β. The tail is summed term by term in log space (O(k) terms, or O(n − k) for the upper tail), so it is
+    /// exact for any n but costs time linear in it. With p_j each term, w_j = p_j / Σp and g_j, H_j the gradient and
+    /// Hessian of ln p_j, the gradient is Σ w_j g_j and the Hessian Σ w_j (H_j + g_j g_jᵀ) − (Σ w_j g_j)(Σ w_j g_j)ᵀ.
+    /// Outside 0..n the tail is 0 or 1 (with zero derivatives); it is −∞ unless α and β are positive.
+    pub fn log_tail(k: i64, n: i64, alpha: f64, beta: f64, upper: bool) -> BetaBinomialTail {
+        let constant = |log_probability| BetaBinomialTail {
+            log_probability,
+            gradient: [0.0; 2],
+            hessian: [0.0; 3],
+        };
+        if !(alpha > 0.0 && beta > 0.0) || n < 0 {
+            return constant(f64::NEG_INFINITY);
+        }
+        let (all, none) = (constant(0.0), constant(f64::NEG_INFINITY));
+        let range = match (k < 0, k >= n, upper) {
+            (true, _, false) | (_, true, true) => return none,
+            (true, _, true) | (_, true, false) => return all,
+            (false, false, false) => 0..=k,
+            (false, false, true) => k + 1..=n,
+        };
+        let (a, b, nf) = (alpha, beta, n as f64);
+        let shared = digamma(a + b) - digamma(nf + a + b);
+        let shared2 = trigamma(a + b) - trigamma(nf + a + b);
+        let (da, db) = (digamma(a), digamma(b));
+        let (ta, tb) = (trigamma(a), trigamma(b));
+        let terms: Vec<(f64, [f64; 2], [f64; 3])> = range
+            .map(|j| {
+                let jf = j as f64;
+                (
+                    crate::discrete::beta_binomial_log_pmf(j, n, a, b),
+                    [
+                        digamma(jf + a) - da + shared,
+                        digamma(nf - jf + b) - db + shared,
+                    ],
+                    [
+                        trigamma(jf + a) - ta + shared2,
+                        shared2,
+                        trigamma(nf - jf + b) - tb + shared2,
+                    ],
+                )
+            })
+            .collect();
+        let log_probability = log_sum_exp(terms.iter().map(|t| t.0));
+        let mut gradient = [0.0; 2];
+        let mut second = [0.0; 3];
+        for (lp, g, h) in &terms {
+            let w = ratio(*lp, log_probability);
+            gradient[0] += w * g[0];
+            gradient[1] += w * g[1];
+            second[0] += w * (h[0] + g[0] * g[0]);
+            second[1] += w * (h[1] + g[0] * g[1]);
+            second[2] += w * (h[2] + g[1] * g[1]);
+        }
+        let [ga, gb] = gradient;
+        BetaBinomialTail {
+            log_probability,
+            gradient,
+            hessian: [
+                second[0] - ga * ga,
+                second[1] - ga * gb,
+                second[2] - gb * gb,
+            ],
+        }
+    }
+
+    /// The element-wise log CDF, ln P(X <= k), broadcasting k with the parameters (see [`Self::log_tail`]).
+    pub fn log_cdf(&self, k: &IntTensor) -> Result<DoubleTensor> {
+        self.tail(k, false)
+    }
+
+    /// The element-wise log survival function, ln P(X > k), broadcasting k with the parameters.
+    pub fn log_ccdf(&self, k: &IntTensor) -> Result<DoubleTensor> {
+        self.tail(k, true)
+    }
+
+    fn tail(&self, k: &IntTensor, upper: bool) -> Result<DoubleTensor> {
+        map((k, &*self.n, &*self.alpha, &*self.beta), |(k, n, a, b)| {
+            Self::log_tail(k, n, a, b, upper).log_probability
+        })
+    }
+
+    fn tail_gradient(&self, k: &IntTensor, upper: bool) -> Result<BetaBinomialGradient> {
+        let [alpha, beta] = map_n((k, &*self.n, &*self.alpha, &*self.beta), |(k, n, a, b)| {
+            Self::log_tail(k, n, a, b, upper).gradient
+        })?;
+        Ok(BetaBinomialGradient { alpha, beta })
+    }
+
+    /// The element-wise derivatives of [`Self::log_cdf`] with respect to α and β.
+    pub fn d_log_cdf(&self, k: &IntTensor) -> Result<BetaBinomialGradient> {
+        self.tail_gradient(k, false)
+    }
+
+    /// The element-wise derivatives of [`Self::log_ccdf`] with respect to α and β.
+    pub fn d_log_ccdf(&self, k: &IntTensor) -> Result<BetaBinomialGradient> {
+        self.tail_gradient(k, true)
     }
 }
 

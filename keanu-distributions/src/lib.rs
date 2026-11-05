@@ -37,6 +37,7 @@ mod rng;
 pub mod timeseries;
 mod util;
 
+pub use cdf::BetaBinomialTail;
 pub use continuous::*;
 pub use discrete::*;
 pub use error::{DistributionError, Result};

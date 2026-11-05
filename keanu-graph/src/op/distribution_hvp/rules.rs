@@ -238,9 +238,38 @@ pub(crate) fn density_rule(kind: &DistributionKind) -> Option<DensityRule> {
         },
         K::Poisson => |k, p, h| h.add(1, 1, -k / (p[0] * p[0])),
         K::NegativeBinomial => negative_binomial,
+        K::BetaBinomial => beta_binomial,
+        // ln σ(±η): −σ(η)σ(−η)
+        K::BernoulliLogit => |_, p, h| h.add(1, 1, -sigmoid(p[0]) * sigmoid(-p[0])),
+        // k ln σ(η) + (n − k) ln σ(−η): −nσ(η)σ(−η)
+        K::BinomialLogit => |k, p, h| {
+            let (eta, n) = (p[0], p[1]);
+            if k >= 0.0 && k <= n {
+                h.add(1, 1, -n * sigmoid(eta) * sigmoid(-eta));
+            }
+        },
+        // kη − e^η
+        K::PoissonLog => |k, p, h| {
+            if k >= 0.0 {
+                h.add(1, 1, -p[0].exp());
+            }
+        },
         _ => return None,
     };
     Some(rule)
+}
+
+/// ln C(n, k) + ln B(k + α, n − k + β) − ln B(α, β) (inputs k, n, α, β), with t = ψ₁(α + β) − ψ₁(n + α + β):
+/// ψ₁(k + α) − ψ₁(α) + t, t and ψ₁(n − k + β) − ψ₁(β) + t.
+fn beta_binomial(k: f64, p: &[f64], h: &mut Hessian) {
+    let (n, a, b) = (p[0], p[1], p[2]);
+    if k < 0.0 || k > n {
+        return;
+    }
+    let shared = trigamma(a + b) - trigamma(n + a + b);
+    h.add(2, 2, trigamma(k + a) - trigamma(a) + shared);
+    h.add(2, 3, shared);
+    h.add(3, 3, trigamma(n - k + b) - trigamma(b) + shared);
 }
 
 /// −(ln x − m)²/(2s²) − ln s − ln x, with z = (ln x − m)/s.
@@ -438,6 +467,19 @@ pub(crate) fn cdf_rule(kind: &DistributionKind) -> Option<CdfRule> {
         },
         K::Binomial => binomial_cdf,
         K::NegativeBinomial => negative_binomial_cdf,
+        // the tail is a finite sum, whose Hessian in the shapes is summed with it (inputs k, n, α, β)
+        K::BetaBinomial => |k, p, upper, _, h| {
+            let tail = keanu_distributions::BetaBinomial::log_tail(
+                k as i64,
+                p[0] as i64,
+                p[1],
+                p[2],
+                upper,
+            );
+            h.add(2, 2, tail.hessian[0]);
+            h.add(2, 3, tail.hessian[1]);
+            h.add(3, 3, tail.hessian[2]);
+        },
         _ => return None,
     };
     Some(rule)

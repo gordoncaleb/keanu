@@ -488,6 +488,7 @@ fn distribution_parameters(kind: &DistributionKind) -> Vec<Value> {
         Dirichlet => vec![f64s(&[3], &[1.0, 2.0, 3.0])],
         Multinomial => vec![int(5), f64s(&[3], &[0.2, 0.3, 0.5])],
         Categorical => vec![scalar(0.2), scalar(0.3), scalar(0.5)],
+        CategoricalLogit => vec![scalar(0.2), scalar(-0.3), scalar(0.5)],
         Kde(_) => vec![],
         // each component parameter with a component axis of length 2, then the weights
         Mixture(component) => {
@@ -585,6 +586,15 @@ const DISTRIBUTIONS: &[&str] = &[
     "HiddenMarkovModel(Poisson)",
     "LinearGaussianStateSpace",
     "ZeroSumNormal",
+    "BetaBinomial",
+    "BernoulliLogit",
+    "BinomialLogit",
+    "PoissonLog",
+    "CategoricalLogit",
+    "ZeroInflated(Poisson)",
+    "ZeroInflated(BetaBinomial)",
+    "Hurdle(NegativeBinomial)",
+    "Hurdle(Gamma)",
 ];
 
 fn distribution_kinds() -> Vec<DistributionKind> {
@@ -631,6 +641,15 @@ fn distribution_kinds() -> Vec<DistributionKind> {
         HiddenMarkovModel(Arc::new(Poisson)),
         LinearGaussianStateSpace,
         ZeroSumNormal,
+        BetaBinomial,
+        BernoulliLogit,
+        BinomialLogit,
+        PoissonLog,
+        CategoricalLogit,
+        ZeroInflated(Arc::new(Poisson)),
+        ZeroInflated(Arc::new(BetaBinomial)),
+        Hurdle(Arc::new(NegativeBinomial)),
+        Hurdle(Arc::new(Gamma)),
     ]
 }
 

@@ -300,6 +300,23 @@ Work from `docs/plans/2026-11-05-001-feat-applied-modelling-gaps-plan.md`.
   `keanu_distributions::multivariate::ZERO_SUM_TOLERANCE`) has log probability −∞. The save schema gained
   `DISTRIBUTION_KIND_ZERO_SUM_NORMAL`, and the guide's "Building models" chapter a section on sum-to-zero group
   effects.
+- keanu-distributions, keanu-graph, keanu-io: **count distributions and logit parameterisations**.
+  `BetaBinomial(n, α, β)` (`GraphBuilder::beta_binomial`), with a log CDF and survival function summed term by term
+  (and `BetaBinomial::log_tail`, `BetaBinomialTail`, their first and second shape derivatives), so it can be
+  truncated and censored. `ZeroInflated(kind)` and `Hurdle(kind)` (`zero_inflated`, `hurdle` and their
+  `_with_shape` forms) are kinds built around another one, with parameters the inner kind's followed by `psi`:
+  zero-inflated counts have P(0) = ψ + (1 − ψ) p(0); hurdle counts P(0) = ψ and P(k) = (1 − ψ) p(k) / (1 − p(0)); a
+  hurdle around a positive continuous kind (half Gaussian, half Cauchy, chi-squared, exponential, gamma, inverse
+  gamma, log-normal, Weibull or beta) gives a value of exactly 0 probability ψ. `BernoulliLogit`, `BinomialLogit`,
+  `PoissonLog` and `CategoricalLogit` (`bernoulli_logit`, `binomial_logit`, `poisson_log`, `categorical_logit`) take
+  log odds, unnormalised log probabilities or the log mean, with log probabilities computed as −softplus(∓η),
+  ηₓ − logsumexp(η) and kη − e^η, finite at logits of ±700. Each kind samples, and has exact gradients and
+  Hessian-vector products; those with one value per element are mixture components, `log_density` kinds and
+  children of marginalised latents, and those with finitely many values (`DistributionKind::finite_support`) are
+  Gibbs-sampled and can be marginalised. The truncated and censored second-order rules no longer evaluate the base's
+  CDF rule at an infinite bound's placeholder point (which only the beta-binomial's tail rule made nonzero). The
+  save schema gained `DISTRIBUTION_KIND_BETA_BINOMIAL`, `_BERNOULLI_LOGIT`, `_BINOMIAL_LOGIT`, `_POISSON_LOG`,
+  `_CATEGORICAL_LOGIT`, `_ZERO_INFLATED` and `_HURDLE`, and the guide's "Building models" chapter a section on them.
 
 ### Code review fixes
 

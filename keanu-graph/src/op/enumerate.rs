@@ -8,10 +8,10 @@ use std::ops::RangeInclusive;
 
 impl DistributionKind {
     /// Whether every element of the distribution's value has finitely many possible values whatever its
-    /// parameters, and the elements can be changed one at a time: the Bernoulli, binomial, categorical, ordered
-    /// logistic and discrete uniform, and a truncated binomial. A truncated Poisson or negative binomial can have
-    /// finitely many values too, when its upper bound is finite, which only
-    /// [`finite_support`](Self::finite_support) can tell.
+    /// parameters, and the elements can be changed one at a time: the Bernoulli, binomial, beta-binomial,
+    /// categorical, ordered logistic and discrete uniform (and their logit forms), and a truncated, zero-inflated or
+    /// hurdle form of one of these. A truncated Poisson or negative binomial can have finitely many values too, when
+    /// its upper bound is finite, which only [`finite_support`](Self::finite_support) can tell.
     ///
     /// The elements of a multinomial draw must sum to its count, so they can't be changed one at a time, and it is
     /// not counted.
@@ -21,15 +21,21 @@ impl DistributionKind {
             | DistributionKind::Binomial
             | DistributionKind::Categorical
             | DistributionKind::OrderedLogistic
-            | DistributionKind::UniformInt => true,
-            DistributionKind::Truncated(base) => base.has_finite_support(),
+            | DistributionKind::UniformInt
+            | DistributionKind::BetaBinomial
+            | DistributionKind::BernoulliLogit
+            | DistributionKind::BinomialLogit
+            | DistributionKind::CategoricalLogit => true,
+            DistributionKind::Truncated(base)
+            | DistributionKind::ZeroInflated(base)
+            | DistributionKind::Hurdle(base) => base.has_finite_support(),
             _ => false,
         }
     }
 
     /// The values each element of a value of `shape` can take, given the parameters' values, when there are finitely
     /// many: for each element in row-major order, the smallest and largest value (0 and 1, for false and true, for
-    /// a boolean value). `None` when an element has infinitely many values (a Poisson, negative binomial or
+    /// a boolean value). A zero-inflated or hurdle kind takes its inner kind's values and 0. `None` when an element has infinitely many values (a Poisson, negative binomial or
     /// geometric count, or a truncation of one with no finite upper bound), the value is continuous, or the elements
     /// can't be enumerated one at a time (a multinomial, mixture, hidden Markov model, censored or custom
     /// distribution).
@@ -48,8 +54,10 @@ impl DistributionKind {
         let len: usize = shape.iter().product();
         let fixed = |lo: i64, hi: i64| Some(vec![lo..=hi; len]);
         Ok(match self {
-            DistributionKind::Bernoulli => fixed(0, 1),
-            DistributionKind::Categorical => fixed(0, parameters.len() as i64 - 1),
+            DistributionKind::Bernoulli | DistributionKind::BernoulliLogit => fixed(0, 1),
+            DistributionKind::Categorical | DistributionKind::CategoricalLogit => {
+                fixed(0, parameters.len() as i64 - 1)
+            }
             DistributionKind::OrderedLogistic => {
                 let &[_, cutpoints] = parameters else {
                     return Err(self.wrong_parameters());
@@ -57,9 +65,13 @@ impl DistributionKind {
                 let categories = cutpoints.f64()?.shape().last().copied().unwrap_or(0) + 1;
                 fixed(0, categories as i64 - 1)
             }
-            DistributionKind::Binomial => {
-                let &[_, n] = parameters else {
-                    return Err(self.wrong_parameters());
+            DistributionKind::Binomial
+            | DistributionKind::BinomialLogit
+            | DistributionKind::BetaBinomial => {
+                let n = match (self, parameters) {
+                    (DistributionKind::BetaBinomial, &[n, _, _]) => n,
+                    (DistributionKind::Binomial | DistributionKind::BinomialLogit, &[_, n]) => n,
+                    _ => return Err(self.wrong_parameters()),
                 };
                 Some(
                     broadcast_int(n.i64()?, shape)?
@@ -106,6 +118,19 @@ impl DistributionKind {
                     support.push(clamp_bound(lo.ceil()).max(*range.start())..=hi);
                 }
                 Some(support)
+            }
+            DistributionKind::ZeroInflated(inner) | DistributionKind::Hurdle(inner) => {
+                let Some((_, inner_parameters)) = parameters.split_last() else {
+                    return Err(self.wrong_parameters());
+                };
+                inner
+                    .finite_support(inner_parameters, shape)?
+                    .map(|ranges| {
+                        ranges
+                            .into_iter()
+                            .map(|r| (*r.start()).min(0)..=(*r.end()).max(0))
+                            .collect()
+                    })
             }
             _ => None,
         })

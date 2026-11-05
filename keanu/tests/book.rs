@@ -227,6 +227,53 @@ fn truncated_and_censored() -> keanu::Result<()> {
 }
 
 #[test]
+fn zero_inflated_hurdle_and_logit_counts() -> keanu::Result<()> {
+    // ANCHOR: zero_inflated
+    use keanu::graph::op::DistributionKind;
+
+    let b = GraphBuilder::new();
+
+    // fish caught per visit: some visitors never fish (structural zeros), the rest catch Poisson(λ)
+    let lambda = b.gamma(2.0, 2.0);
+    let never_fish = b.beta(1.0, 1.0);
+    let catch: IntVar =
+        b.zero_inflated_with_shape(&[6], DistributionKind::Poisson, &[lambda.id()], never_fish);
+    b.observe(catch, IntTensor::vector(vec![0, 0, 3, 0, 5, 2]));
+
+    // daily rainfall: dry with probability ψ, else a gamma amount (a value of exactly 0 is a dry day)
+    let (scale, shape) = (b.half_gaussian(5.0), b.half_gaussian(5.0));
+    let dry = b.beta(1.0, 1.0);
+    let rain: DoubleVar = b.hurdle_with_shape(
+        &[5],
+        DistributionKind::Gamma,
+        &[scale.id(), shape.id()],
+        dry,
+    );
+    b.observe(rain, DoubleTensor::vector(vec![0.0, 4.2, 0.0, 11.5, 0.7]));
+
+    // successes out of 20 with over-dispersed success probabilities
+    let litter = b.beta_binomial_with_shape(&[3], 20, b.half_gaussian(5.0), b.half_gaussian(5.0));
+    b.observe(litter, IntTensor::vector(vec![3, 15, 9]));
+
+    // logistic and Poisson regressions straight from a linear predictor, accurate for any logit
+    let (intercept, slope) = (b.gaussian(0.0, 2.0), b.gaussian(0.0, 2.0));
+    let x = b.constant(DoubleTensor::vector(vec![-1.0, 0.0, 1.0, 2.0]));
+    let linear = intercept + slope * x;
+    let passed = b.bernoulli_logit(linear);
+    b.observe(passed, BoolTensor::vector(vec![false, false, true, true]));
+    let events = b.poisson_log(linear);
+    b.observe(events, IntTensor::vector(vec![0, 1, 3, 6]));
+
+    let (graph, mut state) = b.build()?;
+    let nodes: Vec<NodeId> = graph.ids().collect();
+    state.lazy_eval(&graph, &nodes, &mut KeanuRng::seed_from_u64(1))?;
+    let model = Model::new(graph, &state)?;
+    assert!(model.log_prob(&state)?.is_finite());
+    // ANCHOR_END: zero_inflated
+    Ok(())
+}
+
+#[test]
 fn mixtures() -> keanu::Result<()> {
     // ANCHOR: mixture
     use keanu::graph::op::DistributionKind;

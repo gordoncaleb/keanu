@@ -451,8 +451,9 @@ message Distribution {
   repeated uint64 shape = 2;
   // The samples and bandwidth of a kernel density estimate (`DISTRIBUTION_KIND_KDE` only).
   Kde kde = 3;
-  // The distribution a nested kind is built around (`DISTRIBUTION_KIND_TRUNCATED`, `DISTRIBUTION_KIND_CENSORED`
-  // `DISTRIBUTION_KIND_MIXTURE` and `DISTRIBUTION_KIND_HIDDEN_MARKOV_MODEL` only, for which it is required). The node's parents are the base's parameters
+  // The distribution a nested kind is built around (`DISTRIBUTION_KIND_TRUNCATED`, `DISTRIBUTION_KIND_CENSORED`,
+  // `DISTRIBUTION_KIND_MIXTURE`, `DISTRIBUTION_KIND_HIDDEN_MARKOV_MODEL`, `DISTRIBUTION_KIND_ZERO_INFLATED` and
+  // `DISTRIBUTION_KIND_HURDLE` only, for which it is required). The node's parents are the base's parameters
   // followed by the nested kind's own.
   DistributionType base = 4;
 }
@@ -516,6 +517,20 @@ enum DistributionKind {
   DISTRIBUTION_KIND_HIDDEN_MARKOV_MODEL = 35;
   DISTRIBUTION_KIND_LINEAR_GAUSSIAN_STATE_SPACE = 36;
   DISTRIBUTION_KIND_ZERO_SUM_NORMAL = 37;
+  // Parameters: `n`, `alpha`, `beta`.
+  DISTRIBUTION_KIND_BETA_BINOMIAL = 38;
+  // Parameters: `logit`.
+  DISTRIBUTION_KIND_BERNOULLI_LOGIT = 39;
+  // Parameters: `logit`, `n`.
+  DISTRIBUTION_KIND_BINOMIAL_LOGIT = 40;
+  // Parameters: `log_mu`.
+  DISTRIBUTION_KIND_POISSON_LOG = 41;
+  // Parameters: the logit of each category.
+  DISTRIBUTION_KIND_CATEGORICAL_LOGIT = 42;
+  // Parameters: the base's, then `psi`.
+  DISTRIBUTION_KIND_ZERO_INFLATED = 43;
+  // Parameters: the base's, then `psi`.
+  DISTRIBUTION_KIND_HURDLE = 44;
 }
 
 // A kernel density estimate's fixed samples and bandwidth.

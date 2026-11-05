@@ -198,8 +198,8 @@ impl MarginalizedLatent {
 ///
 /// A latent `z` of shape S can be marginalised when:
 ///
-/// - it is unobserved, with a Bernoulli, categorical or element-wise discrete distribution (a discrete uniform,
-///   binomial or truncated count) whose elements all take the same finitely many values (at most
+/// - it is unobserved, with a Bernoulli, categorical (or one of their logit forms) or element-wise discrete
+///   distribution (a discrete uniform, binomial, beta-binomial, truncated count or zero-inflated binomial) whose elements all take the same finitely many values (at most
 ///   [`MAX_MARGINALIZED_VALUES`]), fixed rather than depending on a latent;
 /// - every probabilistic node that depends on it through deterministic nodes (a "child") is observed and has an
 ///   element-wise log density (see [`GraphBuilder::log_density`](crate::GraphBuilder::log_density)), and no factor
@@ -379,6 +379,8 @@ enum Prior {
     Density,
     /// As ln pₖ − ln Σⱼ pⱼ from the categorical's probability parameters.
     Categorical,
+    /// As ηₖ − logsumexpⱼ ηⱼ from the categorical's logit parameters.
+    CategoricalLogit,
 }
 
 /// One latent marginalised out of one graph.
@@ -468,13 +470,15 @@ impl Step {
         let kind = &distribution.kind;
         let prior = match kind {
             DistributionKind::Categorical => Prior::Categorical,
+            DistributionKind::CategoricalLogit => Prior::CategoricalLogit,
             k if k.value_type() != DType::F64 && has_elementwise_density(k) => Prior::Density,
             k => {
                 return Err(reject(
                     z,
                     format!(
                         "has a {} distribution; only Bernoulli, categorical and element-wise discrete \
-                         distributions (discrete uniform, binomial, truncated counts) can be marginalised",
+                         distributions with finitely many values (discrete uniform, binomial, beta-binomial, \
+                         truncated counts) can be marginalised",
                         k.name()
                     ),
                 ));
@@ -650,6 +654,16 @@ impl Step {
                 }
                 Some(out.add(Op::Unary(UnaryOp::Ln), &[total])?)
             }
+            Prior::CategoricalLogit => {
+                let stacked = out.add(Op::Stack(-1), &z_parameters)?;
+                Some(out.add(
+                    Op::Reduce {
+                        kind: ReduceOp::LogSumExp,
+                        axes: Some(vec![-1]),
+                    },
+                    &[stacked],
+                )?)
+            }
             Prior::Density => None,
         };
         let children: Vec<NodeId> = (0..n).filter(|&id| child[id]).map(NodeId).collect();
@@ -712,6 +726,10 @@ impl Step {
                     let p = z_parameters[(value - values.start()) as usize];
                     let ln = out.add(Op::Unary(UnaryOp::Ln), &[p])?;
                     out.add(Op::Binary(BinaryOp::Sub), &[ln, log_total])?
+                }
+                (Prior::CategoricalLogit, Some(log_total)) => {
+                    let eta = z_parameters[(value - values.start()) as usize];
+                    out.add(Op::Binary(BinaryOp::Sub), &[eta, log_total])?
                 }
                 _ => {
                     let mut parents = vec![k];
@@ -787,8 +805,10 @@ fn support(
 ) -> Result<RangeInclusive<i64>> {
     let node = &graph[z];
     match kind {
-        DistributionKind::Bernoulli => return Ok(0..=1),
-        DistributionKind::Categorical => return Ok(0..=node.parents.len() as i64 - 1),
+        DistributionKind::Bernoulli | DistributionKind::BernoulliLogit => return Ok(0..=1),
+        DistributionKind::Categorical | DistributionKind::CategoricalLogit => {
+            return Ok(0..=node.parents.len() as i64 - 1);
+        }
         _ => {}
     }
     // the parameters that set the support: the integer ones, and a truncation's bounds

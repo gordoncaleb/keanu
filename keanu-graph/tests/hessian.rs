@@ -1347,6 +1347,108 @@ fn distribution_cases() -> Vec<DistributionCase> {
             let y = b.ordered_logistic(eta, cutpoints);
             b.observe(y, ints(&[0, 1, 2, 3]));
         }),
+        case("beta_binomial", |b| {
+            let (alpha, beta) = (positive(b, 1.7), positive(b, 2.4));
+            let y = b.beta_binomial_with_shape(&[3], 6, alpha, beta * 0.5);
+            b.observe(y, ints(&[0, 2, 6]));
+        }),
+        case("bernoulli_logit", |b| {
+            let logit = latent_vector(b, &[-0.8, 1.3]);
+            let y = b.bernoulli_logit(logit);
+            b.observe(y, keanu_tensor::BoolTensor::vector(vec![true, false]));
+        }),
+        case("binomial_logit", |b| {
+            let logit = latent_vector(b, &[-0.4, 0.9, 2.0]);
+            let y = b.binomial_logit(logit, 5);
+            b.observe(y, ints(&[0, 3, 5]));
+        }),
+        case("poisson_log", |b| {
+            let log_mu = latent_vector(b, &[-0.3, 0.8]);
+            let y = b.poisson_log(log_mu);
+            b.observe(y, ints(&[0, 4]));
+        }),
+        case("categorical_logit", |b| {
+            let logits = [
+                scalar_latent(b, 0.2),
+                scalar_latent(b, -0.5),
+                scalar_latent(b, 0.9),
+            ];
+            let y = b.categorical_logit(&[3], &logits);
+            b.observe(y, ints(&[2, 0, 1]));
+        }),
+        case("zero_inflated poisson", |b| {
+            let rate = positive(b, 2.2);
+            let psi = scalar_latent(b, -0.4).sigmoid();
+            let y: IntVar<'_> = b.zero_inflated_with_shape(&[3], K::Poisson, &[rate.id()], psi);
+            b.observe(y, ints(&[0, 1, 4]));
+        }),
+        case("zero_inflated negative_binomial", |b| {
+            let params = [positive(b, 2.5).id(), positive(b, 1.5).id()];
+            let psi = scalar_latent(b, 0.3).sigmoid();
+            let y: IntVar<'_> = b.zero_inflated_with_shape(&[3], K::NegativeBinomial, &params, psi);
+            b.observe(y, ints(&[0, 0, 3]));
+        }),
+        case("zero_inflated binomial_logit", |b| {
+            let params = [scalar_latent(b, -0.2).id(), b.int_scalar(4).id()];
+            let psi = scalar_latent(b, -0.7).sigmoid();
+            let y: IntVar<'_> = b.zero_inflated_with_shape(&[2], K::BinomialLogit, &params, psi);
+            b.observe(y, ints(&[0, 2]));
+        }),
+        case("hurdle poisson_log", |b| {
+            let log_mu = scalar_latent(b, 0.4);
+            let psi = scalar_latent(b, -0.3).sigmoid();
+            let y: IntVar<'_> = b.hurdle_with_shape(&[3], K::PoissonLog, &[log_mu.id()], psi);
+            b.observe(y, ints(&[0, 1, 3]));
+        }),
+        case("hurdle beta_binomial", |b| {
+            let params = [
+                b.int_scalar(5).id(),
+                positive(b, 1.4).id(),
+                positive(b, 2.1).id(),
+            ];
+            let psi = scalar_latent(b, 0.2).sigmoid();
+            let y: IntVar<'_> = b.hurdle_with_shape(&[3], K::BetaBinomial, &params, psi);
+            b.observe(y, ints(&[0, 2, 5]));
+        }),
+        case("hurdle gamma", |b| {
+            let params = [positive(b, 0.9).id(), positive(b, 2.3).id()];
+            let psi = scalar_latent(b, -0.5).sigmoid();
+            let y: DoubleVar<'_> = b.hurdle_with_shape(&[3], K::Gamma, &params, psi);
+            b.observe(y, v(&[0.0, 0.7, 2.6]));
+            // a latent positive value
+            let x: DoubleVar<'_> = b.hurdle(K::Gamma, &params, psi);
+            b.set_value(x, DoubleTensor::scalar(1.3));
+        }),
+        case("a mixture of zero-inflated Poissons", |b| {
+            let params = [
+                positive_vector(b, &[1.0, 4.0]).id(),
+                b.constant(v(&[0.3, 0.1])).id(),
+            ];
+            let weights = latent_vector(b, &[0.3, -0.2]).softmax(0);
+            let kind = K::ZeroInflated(Arc::new(K::Poisson));
+            let y: IntVar<'_> = b.mixture_with_shape(&[3], kind, &params, weights);
+            b.observe(y, ints(&[0, 2, 5]));
+        }),
+        case("truncated beta_binomial", |b| {
+            let params = [
+                b.int_scalar(8).id(),
+                positive_vector(b, &[1.4, 1.4, 1.4]).id(),
+                positive(b, 2.1).id(),
+            ];
+            let y: IntVar<'_> = b.truncated(K::BetaBinomial, &params, 1.0, 6.0);
+            b.observe(y, ints(&[1, 4, 6]));
+            let z: IntVar<'_> = b.truncated(K::BetaBinomial, &params, 2.0, f64::INFINITY);
+            b.observe(z, ints(&[2, 5, 8]));
+        }),
+        case("censored beta_binomial", |b| {
+            let params = [
+                b.int_scalar(8).id(),
+                positive_vector(b, &[1.4, 1.4, 1.4]).id(),
+                positive(b, 2.1).id(),
+            ];
+            let y: IntVar<'_> = b.censored(K::BetaBinomial, &params, 1.0, 6.0);
+            b.observe(y, ints(&[1, 4, 6]));
+        }),
         case("uniform_int (no continuous parameters)", |b| {
             let y = b.uniform_int(0, 5);
             b.observe(y, IntTensor::scalar(2));

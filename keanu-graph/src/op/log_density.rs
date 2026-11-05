@@ -1,9 +1,10 @@
 //! The log-density op ([`Op::LogDensity`](super::Op::LogDensity)): the element-wise log density of a value under an
 //! element-wise distribution, as a deterministic node. Its value, first derivatives and second derivatives reuse the
 //! distribution's element-wise rules (`DistributionKind::univariate` and the scalar second-order rules), so a
-//! log density on the graph differentiates exactly as the same distribution's node does. The Bernoulli, whose value
-//! is boolean and which therefore can't be a mixture component, has an element-wise density too: its value and
-//! derivatives come from its node's unreduced log probability terms and gradient, which are element-wise.
+//! log density on the graph differentiates exactly as the same distribution's node does. The Bernoulli and its logit
+//! form, whose values are boolean and which therefore can't be mixture components, have element-wise densities too:
+//! their values and derivatives come from their nodes' unreduced log probability terms and gradients, which are
+//! element-wise.
 
 use super::distribution::{DistributionKind, LogProbGradientParts, Univariate};
 use super::distribution_hvp::{elementwise, spread, spread_tangent};
@@ -20,9 +21,13 @@ fn invalid(message: String) -> GraphError {
 }
 
 /// Whether `kind` has an element-wise log density, so that a log density node of it can be built: the
-/// [element-wise](DistributionKind::is_elementwise) kinds and the Bernoulli.
+/// [element-wise](DistributionKind::is_elementwise) kinds, the Bernoulli and its logit form.
 pub(crate) fn has_elementwise_density(kind: &DistributionKind) -> bool {
-    kind.is_elementwise() || matches!(kind, DistributionKind::Bernoulli)
+    kind.is_elementwise()
+        || matches!(
+            kind,
+            DistributionKind::Bernoulli | DistributionKind::BernoulliLogit
+        )
 }
 
 /// The element-wise log density of `value` given the parameters and, with `gradient`, its element-wise derivatives
@@ -36,7 +41,7 @@ fn density(
     if kind.is_elementwise() {
         return kind.univariate(Univariate::Density, value, parameters, gradient);
     }
-    // the Bernoulli: its terms and gradient are element-wise, broadcast with the parameter
+    // the Bernoulli and its logit form: their terms and gradients are element-wise, broadcast with the parameter
     let terms = kind.log_prob_terms(value, parameters)?;
     let parts = if gradient {
         Some(kind.log_prob_gradient(value, parameters)?)

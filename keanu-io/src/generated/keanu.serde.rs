@@ -1606,6 +1606,13 @@ impl serde::Serialize for DistributionKind {
             Self::HiddenMarkovModel => "DISTRIBUTION_KIND_HIDDEN_MARKOV_MODEL",
             Self::LinearGaussianStateSpace => "DISTRIBUTION_KIND_LINEAR_GAUSSIAN_STATE_SPACE",
             Self::ZeroSumNormal => "DISTRIBUTION_KIND_ZERO_SUM_NORMAL",
+            Self::BetaBinomial => "DISTRIBUTION_KIND_BETA_BINOMIAL",
+            Self::BernoulliLogit => "DISTRIBUTION_KIND_BERNOULLI_LOGIT",
+            Self::BinomialLogit => "DISTRIBUTION_KIND_BINOMIAL_LOGIT",
+            Self::PoissonLog => "DISTRIBUTION_KIND_POISSON_LOG",
+            Self::CategoricalLogit => "DISTRIBUTION_KIND_CATEGORICAL_LOGIT",
+            Self::ZeroInflated => "DISTRIBUTION_KIND_ZERO_INFLATED",
+            Self::Hurdle => "DISTRIBUTION_KIND_HURDLE",
         };
         serializer.serialize_str(variant)
     }
@@ -1655,6 +1662,13 @@ impl<'de> serde::Deserialize<'de> for DistributionKind {
             "DISTRIBUTION_KIND_HIDDEN_MARKOV_MODEL",
             "DISTRIBUTION_KIND_LINEAR_GAUSSIAN_STATE_SPACE",
             "DISTRIBUTION_KIND_ZERO_SUM_NORMAL",
+            "DISTRIBUTION_KIND_BETA_BINOMIAL",
+            "DISTRIBUTION_KIND_BERNOULLI_LOGIT",
+            "DISTRIBUTION_KIND_BINOMIAL_LOGIT",
+            "DISTRIBUTION_KIND_POISSON_LOG",
+            "DISTRIBUTION_KIND_CATEGORICAL_LOGIT",
+            "DISTRIBUTION_KIND_ZERO_INFLATED",
+            "DISTRIBUTION_KIND_HURDLE",
         ];
 
         struct GeneratedVisitor;
@@ -1733,6 +1747,13 @@ impl<'de> serde::Deserialize<'de> for DistributionKind {
                     "DISTRIBUTION_KIND_HIDDEN_MARKOV_MODEL" => Ok(DistributionKind::HiddenMarkovModel),
                     "DISTRIBUTION_KIND_LINEAR_GAUSSIAN_STATE_SPACE" => Ok(DistributionKind::LinearGaussianStateSpace),
                     "DISTRIBUTION_KIND_ZERO_SUM_NORMAL" => Ok(DistributionKind::ZeroSumNormal),
+                    "DISTRIBUTION_KIND_BETA_BINOMIAL" => Ok(DistributionKind::BetaBinomial),
+                    "DISTRIBUTION_KIND_BERNOULLI_LOGIT" => Ok(DistributionKind::BernoulliLogit),
+                    "DISTRIBUTION_KIND_BINOMIAL_LOGIT" => Ok(DistributionKind::BinomialLogit),
+                    "DISTRIBUTION_KIND_POISSON_LOG" => Ok(DistributionKind::PoissonLog),
+                    "DISTRIBUTION_KIND_CATEGORICAL_LOGIT" => Ok(DistributionKind::CategoricalLogit),
+                    "DISTRIBUTION_KIND_ZERO_INFLATED" => Ok(DistributionKind::ZeroInflated),
+                    "DISTRIBUTION_KIND_HURDLE" => Ok(DistributionKind::Hurdle),
                     _ => Err(serde::de::Error::unknown_variant(value, FIELDS)),
                 }
             }
