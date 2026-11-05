@@ -3,7 +3,7 @@
 use crate::autodiff::reverse_from_seeds;
 use crate::error::{GraphError, Result};
 use crate::graph::{Graph, NodeId};
-use crate::op::{DistributionKind, LogProbGradientParts, Op};
+use crate::op::{DistributionKind, LogProbGradientParts, Op, Support};
 use crate::state::State;
 use crate::value::{DType, Value};
 use keanu_tensor::DoubleTensor;
@@ -36,6 +36,18 @@ pub fn node_log_prob(graph: &Graph, state: &State, id: NodeId) -> Result<f64> {
 pub fn node_log_prob_at(graph: &Graph, state: &State, id: NodeId, v: &Value) -> Result<f64> {
     let kind = kind(graph, id)?;
     kind.log_prob(v, &parameters(graph, state, id)?)
+}
+
+/// The support of a probabilistic node's distribution given its parameters' current values (see [`Support`]).
+/// An error if the node is not probabilistic or a parameter has no value.
+pub fn node_support(graph: &Graph, state: &State, id: NodeId) -> Result<Support> {
+    match graph.node(id).ok_or(GraphError::UnknownNode(id))?.op() {
+        Op::Distribution(op) => op.kind.support(&parameters(graph, state, id)?),
+        _ => Err(GraphError::InvalidValue(format!(
+            "node #{} is not probabilistic, so it has no support",
+            id.0
+        ))),
+    }
 }
 
 /// The values of a node's parameters (its parents), for a node of the graph.

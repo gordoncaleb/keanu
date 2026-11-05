@@ -7,63 +7,107 @@ use keanu_distributions::KeanuRng;
 use keanu_tensor::{DoubleTensor, Shape};
 use std::sync::Arc;
 
+/// The set of values a distribution gives positive density (or mass), which decides how a gradient based algorithm
+/// maps the node to unconstrained space.
+///
+/// Bounds are tensors that broadcast with the node's value, so a distribution whose bounds are parameters (Uniform,
+/// Triangular, Pareto) reports them element-wise. Bounds are reported as the parameters give them, valid or not (a
+/// Uniform with `x_max <= x_min` reports that interval anyway). Whether a bound itself is in the support (Uniform's
+/// `[x_min, x_max)`) is not recorded: it has probability zero for a continuous distribution.
+#[derive(Debug, Clone, PartialEq)]
+#[non_exhaustive]
+pub enum Support {
+    /// Every real number.
+    Real,
+    /// Real numbers greater than the lower bound.
+    GreaterThan(DoubleTensor),
+    /// Real numbers between the lower and the upper bound.
+    Interval(DoubleTensor, DoubleTensor),
+    /// Non-negative vectors summing to 1, over the value's last dimension.
+    Simplex,
+    /// Strictly increasing vectors, over the value's last dimension.
+    Ordered,
+    /// Lower triangular Cholesky factors of correlation matrices, over the value's last two dimensions: a positive
+    /// diagonal and rows of unit length.
+    CorrelationCholesky,
+    /// Angles, for distributions of directions such as the von Mises: a value and the same value plus any multiple
+    /// of 2π are the same point, so the value is mapped to unconstrained space with a circular transform.
+    Circular,
+    /// Integer or boolean values: the node is not continuous, so it has no unconstrained form.
+    Discrete,
+}
+
+impl Support {
+    /// Real numbers greater than a scalar lower bound.
+    pub fn greater_than(lower: f64) -> Self {
+        Support::GreaterThan(DoubleTensor::scalar(lower))
+    }
+
+    /// Real numbers between scalar lower and upper bounds.
+    pub fn interval(lower: f64, upper: f64) -> Self {
+        Support::Interval(DoubleTensor::scalar(lower), DoubleTensor::scalar(upper))
+    }
+}
+
 /// The distribution of a probabilistic node. The node's parents are the parameters, in the order listed.
 #[derive(Debug, Clone)]
 #[non_exhaustive]
 pub enum DistributionKind {
-    /// Parameters: `mu`, `sigma`
+    /// Parameters: `mu`, `sigma`. Support: real.
     Gaussian,
-    /// Parameters: `sigma`
+    /// Parameters: `sigma`. Support: greater than 0.
     HalfGaussian,
-    /// Parameters: `location`, `scale`
+    /// Parameters: `location`, `scale`. Support: real.
     Cauchy,
-    /// Parameters: `scale`
+    /// Parameters: `scale`. Support: greater than 0.
     HalfCauchy,
-    /// Parameters: `alpha`, `beta`, on [0, 1]
+    /// Parameters: `alpha`, `beta`. Support: the interval [0, 1].
     Beta,
-    /// Parameters: `k (i64)`
+    /// Parameters: `k (i64)`. Support: greater than 0.
     ChiSquared,
-    /// Parameters: `concentration`; the value has the concentration's shape
+    /// Parameters: `concentration`; the value has the concentration's shape. Support: the simplex over the last
+    /// dimension.
     Dirichlet,
-    /// Parameters: `rate`
+    /// Parameters: `rate`. Support: greater than 0.
     Exponential,
-    /// Parameters: `theta (scale)`, `k (shape)`
+    /// Parameters: `theta (scale)`, `k (shape)`. Support: greater than 0.
     Gamma,
-    /// Parameters: `alpha`, `beta`
+    /// Parameters: `alpha`, `beta`. Support: greater than 0.
     InverseGamma,
-    /// Parameters: `mu`, `beta`
+    /// Parameters: `mu`, `beta`. Support: real.
     Laplace,
-    /// Parameters: `mu`, `s`
+    /// Parameters: `mu`, `s`. Support: real.
     Logistic,
-    /// Parameters: `mu`, `sigma`
+    /// Parameters: `mu`, `sigma`. Support: greater than 0.
     LogNormal,
-    /// Parameters: `mu`, `covariance`; the value's last dimension is the event dimension
+    /// Parameters: `mu`, `covariance`; the value's last dimension is the event dimension. Support: real.
     MultivariateGaussian,
-    /// Parameters: `location`, `scale`
+    /// Parameters: `location` (the minimum value), `scale` (the shape). Support: greater than `location`.
     Pareto,
-    /// Parameters: `v (i64)`
+    /// Parameters: `v (i64)`. Support: real.
     StudentT,
-    /// Parameters: `x_min`, `x_max`, `c`
+    /// Parameters: `x_min`, `x_max`, `c`. Support: the interval [`x_min`, `x_max`].
     Triangular,
-    /// Parameters: `x_min`, `x_max`
+    /// Parameters: `x_min`, `x_max`. Support: the interval [`x_min`, `x_max`).
     Uniform,
-    /// No parameters: a kernel density estimate from fixed samples.
+    /// No parameters: a kernel density estimate from fixed samples. Support: real.
     Kde(Arc<d::Kde>),
-    /// Parameters: `probability of true` -> bool
+    /// Parameters: `probability of true` -> bool. Support: discrete.
     Bernoulli,
-    /// Parameters: `p`, `n (i64)` -> i64
+    /// Parameters: `p`, `n (i64)` -> i64. Support: discrete.
     Binomial,
-    /// Parameters: `probability of each category...` -> i64 category index
+    /// Parameters: `probability of each category...` -> i64 category index. Support: discrete.
     Categorical,
-    /// Parameters: `p` -> i64
+    /// Parameters: `p` -> i64. Support: discrete.
     Geometric,
-    /// Parameters: `n (i64)`, `p` -> i64
+    /// Parameters: `n (i64)`, `p` -> i64. Support: discrete.
     Multinomial,
-    /// Parameters: `mu` -> i64
+    /// Parameters: `mu` -> i64. Support: discrete.
     Poisson,
-    /// Parameters: `x_min (i64)`, `x_max (i64)` -> i64 in [x_min, x_max)
+    /// Parameters: `x_min (i64)`, `x_max (i64)` -> i64 in [x_min, x_max). Support: discrete.
     UniformInt,
-    /// A user-defined distribution; its parameters are whatever nodes it was given.
+    /// A user-defined distribution; its parameters are whatever nodes it was given. Support: whatever
+    /// [`CustomDistribution::support`] returns.
     Custom(Arc<dyn CustomDistribution>),
 }
 
@@ -103,6 +147,17 @@ pub trait CustomDistribution: Send + Sync + std::fmt::Debug {
     ) -> std::result::Result<Value, String> {
         let _ = (shape, parameters, rng);
         Err("this custom distribution cannot be sampled".into())
+    }
+
+    /// The support of the distribution given the parameters' values. By default every real number for f64 values
+    /// and [`Support::Discrete`] for i64 and bool values. Override it for a bounded distribution so that gradient
+    /// based algorithms keep the node inside its support.
+    fn support(&self, parameters: &[&Value]) -> std::result::Result<Support, String> {
+        let _ = parameters;
+        Ok(match self.value_type() {
+            DType::F64 => Support::Real,
+            DType::I64 | DType::Bool => Support::Discrete,
+        })
     }
 }
 
@@ -160,10 +215,13 @@ macro_rules! gradient {
 /// for an f64 value. A row can override either: `sample = f` is called as `f(&distribution, shape, rng)` and
 /// `gradient = f` as `f(&distribution, x)` (both non-capturing closures or functions). `fused = f`, called as
 /// `f(&distribution, x)`, computes the summed log probability and the gradient together for
-/// `log_prob_and_gradient`; it must return exactly what the separate methods do.
+/// `log_prob_and_gradient`; it must return exactly what the separate methods do. Every row states its support as
+/// `support = expression`, an expression of the parameters' tensors (bound to the parameters' names) giving a
+/// [`Support`].
 macro_rules! distributions {
     ($(
-        $kind:ident $name:literal ($($param:ident: $ptype:ident),+) -> $vtype:ident => $build:expr
+        $kind:ident $name:literal ($($param:ident: $ptype:ident),+) -> $vtype:ident => $build:expr,
+        support = $support:expr
         $(, sample = $sample:expr)? $(, gradient = $gradient:expr)? $(, fused = $fused:expr)?;
     )+) => {
         impl DistributionKind {
@@ -193,6 +251,22 @@ macro_rules! distributions {
                     DistributionKind::Categorical => "categorical",
                     DistributionKind::Custom(_) => "custom",
                 }
+            }
+
+            /// The distribution's support given its parameters' values (see [`Support`]). Bounds that are parameters
+            /// are the parameters' values.
+            pub fn support(&self, parameters: &[&Value]) -> Result<Support> {
+                Ok(match self {
+                    $(DistributionKind::$kind => {
+                        let &[$($param),+] = parameters else { return Err(self.wrong_parameters()) };
+                        $(let $param = tensor!($ptype, $param);)+
+                        let _ = ($($param,)+);
+                        $support
+                    })+
+                    DistributionKind::Kde(_) => Support::Real,
+                    DistributionKind::Categorical => Support::Discrete,
+                    DistributionKind::Custom(c) => c.support(parameters).map_err(GraphError::Custom)?,
+                })
             }
 
             /// Draws a value of the given shape from the distribution given its parameters' values.
@@ -352,33 +426,57 @@ pub(crate) fn is_impossible(log_prob: f64) -> bool {
 
 distributions! {
     Gaussian "gaussian" (mu: F64, sigma: F64) -> F64 => d::Gaussian::new(mu, sigma),
+        support = Support::Real,
         fused = gaussian_log_prob_and_gradient;
-    HalfGaussian "half_gaussian" (sigma: F64) -> F64 => d::HalfGaussian::new(sigma);
-    Cauchy "cauchy" (location: F64, scale: F64) -> F64 => d::Cauchy::new(location, scale);
-    HalfCauchy "half_cauchy" (scale: F64) -> F64 => d::HalfCauchy::new(scale);
-    Beta "beta" (alpha: F64, beta: F64) -> F64 => d::Beta::standard(alpha, beta);
-    ChiSquared "chi_squared" (k: I64) -> F64 => d::ChiSquared::new(k);
+    HalfGaussian "half_gaussian" (sigma: F64) -> F64 => d::HalfGaussian::new(sigma),
+        support = Support::greater_than(0.0);
+    Cauchy "cauchy" (location: F64, scale: F64) -> F64 => d::Cauchy::new(location, scale),
+        support = Support::Real;
+    HalfCauchy "half_cauchy" (scale: F64) -> F64 => d::HalfCauchy::new(scale),
+        support = Support::greater_than(0.0);
+    Beta "beta" (alpha: F64, beta: F64) -> F64 => d::Beta::standard(alpha, beta),
+        support = Support::interval(0.0, 1.0);
+    ChiSquared "chi_squared" (k: I64) -> F64 => d::ChiSquared::new(k),
+        support = Support::greater_than(0.0);
     Dirichlet "dirichlet" (concentration: F64) -> F64 => d::Dirichlet::new(concentration),
+        support = Support::Simplex,
         sample = |dist: &d::Dirichlet<'_>, _, rng| dist.sample(rng);
-    Exponential "exponential" (rate: F64) -> F64 => d::Exponential::new(rate);
-    Gamma "gamma" (theta: F64, k: F64) -> F64 => d::Gamma::new(theta, k);
-    InverseGamma "inverse_gamma" (alpha: F64, beta: F64) -> F64 => d::InverseGamma::new(alpha, beta);
-    Laplace "laplace" (mu: F64, beta: F64) -> F64 => d::Laplace::new(mu, beta);
-    Logistic "logistic" (mu: F64, s: F64) -> F64 => d::Logistic::new(mu, s);
-    LogNormal "log_normal" (mu: F64, sigma: F64) -> F64 => d::LogNormal::new(mu, sigma);
+    Exponential "exponential" (rate: F64) -> F64 => d::Exponential::new(rate),
+        support = Support::greater_than(0.0);
+    Gamma "gamma" (theta: F64, k: F64) -> F64 => d::Gamma::new(theta, k),
+        support = Support::greater_than(0.0);
+    InverseGamma "inverse_gamma" (alpha: F64, beta: F64) -> F64 => d::InverseGamma::new(alpha, beta),
+        support = Support::greater_than(0.0);
+    Laplace "laplace" (mu: F64, beta: F64) -> F64 => d::Laplace::new(mu, beta),
+        support = Support::Real;
+    Logistic "logistic" (mu: F64, s: F64) -> F64 => d::Logistic::new(mu, s),
+        support = Support::Real;
+    LogNormal "log_normal" (mu: F64, sigma: F64) -> F64 => d::LogNormal::new(mu, sigma),
+        support = Support::greater_than(0.0);
     MultivariateGaussian "multivariate_gaussian" (mu: F64, covariance: F64) -> F64 =>
-        d::MultivariateGaussian::new(mu, covariance);
-    Pareto "pareto" (location: F64, scale: F64) -> F64 => d::Pareto::new(location, scale);
-    StudentT "student_t" (v: I64) -> F64 => d::StudentT::new(v);
-    Triangular "triangular" (x_min: F64, x_max: F64, c: F64) -> F64 => d::Triangular::new(x_min, x_max, c);
+        d::MultivariateGaussian::new(mu, covariance),
+        support = Support::Real;
+    Pareto "pareto" (location: F64, scale: F64) -> F64 => d::Pareto::new(location, scale),
+        support = Support::GreaterThan(location.clone());
+    StudentT "student_t" (v: I64) -> F64 => d::StudentT::new(v),
+        support = Support::Real;
+    Triangular "triangular" (x_min: F64, x_max: F64, c: F64) -> F64 => d::Triangular::new(x_min, x_max, c),
+        support = Support::Interval(x_min.clone(), x_max.clone());
     Uniform "uniform" (x_min: F64, x_max: F64) -> F64 => d::Uniform::new(x_min, x_max),
+        support = Support::Interval(x_min.clone(), x_max.clone()),
         gradient = uniform_gradient;
-    Bernoulli "bernoulli" (prob_true: F64) -> Bool => d::Bernoulli::new(prob_true);
-    Binomial "binomial" (p: F64, n: I64) -> I64 => d::Binomial::new(p, n);
-    Geometric "geometric" (p: F64) -> I64 => d::Geometric::new(p);
-    Multinomial "multinomial" (n: I64, p: F64) -> I64 => d::Multinomial::new(n, p)?;
-    Poisson "poisson" (mu: F64) -> I64 => d::Poisson::new(mu);
+    Bernoulli "bernoulli" (prob_true: F64) -> Bool => d::Bernoulli::new(prob_true),
+        support = Support::Discrete;
+    Binomial "binomial" (p: F64, n: I64) -> I64 => d::Binomial::new(p, n),
+        support = Support::Discrete;
+    Geometric "geometric" (p: F64) -> I64 => d::Geometric::new(p),
+        support = Support::Discrete;
+    Multinomial "multinomial" (n: I64, p: F64) -> I64 => d::Multinomial::new(n, p)?,
+        support = Support::Discrete;
+    Poisson "poisson" (mu: F64) -> I64 => d::Poisson::new(mu),
+        support = Support::Discrete;
     UniformInt "uniform_int" (x_min: I64, x_max: I64) -> I64 => d::UniformInt::new(x_min, x_max),
+        support = Support::Discrete,
         gradient = |_, _| Ok(no_gradient(2));
 }
 

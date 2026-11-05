@@ -54,10 +54,10 @@ pub use graph::{Graph, Node, NodeId};
 pub use logprob::{
     LogProbGradient, NodeLogProbGradient, joint_log_prob, joint_log_prob_gradient, log_likelihood,
     log_likelihood_gradient, log_prior, log_prob, log_prob_gradient, node_log_prob,
-    node_log_prob_at, node_log_prob_gradient,
+    node_log_prob_at, node_log_prob_gradient, node_support,
 };
 pub use model::{LambdaSection, Model, downstream_lambda_section, upstream_lambda_section};
-pub use op::{CustomDistribution, CustomGradient};
+pub use op::{CustomDistribution, CustomGradient, Support};
 pub use state::State;
 pub use value::{DType, Value};
 pub use vars::{BoolVar, DoubleVar, IntVar, IntoBoolVar, IntoDoubleVar, IntoIntVar, Var};

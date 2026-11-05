@@ -5,7 +5,9 @@ pub(crate) mod eval;
 mod shape;
 
 pub(crate) use distribution::LogProbGradientParts;
-pub use distribution::{CustomDistribution, CustomGradient, DistributionKind, DistributionOp};
+pub use distribution::{
+    CustomDistribution, CustomGradient, DistributionKind, DistributionOp, Support,
+};
 pub(crate) use eval::eval;
 pub(crate) use shape::output_type;
 
