@@ -1613,6 +1613,9 @@ impl serde::Serialize for DistributionKind {
             Self::CategoricalLogit => "DISTRIBUTION_KIND_CATEGORICAL_LOGIT",
             Self::ZeroInflated => "DISTRIBUTION_KIND_ZERO_INFLATED",
             Self::Hurdle => "DISTRIBUTION_KIND_HURDLE",
+            Self::GaussianRandomWalk => "DISTRIBUTION_KIND_GAUSSIAN_RANDOM_WALK",
+            Self::Autoregressive => "DISTRIBUTION_KIND_AUTOREGRESSIVE",
+            Self::Garch11 => "DISTRIBUTION_KIND_GARCH11",
         };
         serializer.serialize_str(variant)
     }
@@ -1669,6 +1672,9 @@ impl<'de> serde::Deserialize<'de> for DistributionKind {
             "DISTRIBUTION_KIND_CATEGORICAL_LOGIT",
             "DISTRIBUTION_KIND_ZERO_INFLATED",
             "DISTRIBUTION_KIND_HURDLE",
+            "DISTRIBUTION_KIND_GAUSSIAN_RANDOM_WALK",
+            "DISTRIBUTION_KIND_AUTOREGRESSIVE",
+            "DISTRIBUTION_KIND_GARCH11",
         ];
 
         struct GeneratedVisitor;
@@ -1754,6 +1760,9 @@ impl<'de> serde::Deserialize<'de> for DistributionKind {
                     "DISTRIBUTION_KIND_CATEGORICAL_LOGIT" => Ok(DistributionKind::CategoricalLogit),
                     "DISTRIBUTION_KIND_ZERO_INFLATED" => Ok(DistributionKind::ZeroInflated),
                     "DISTRIBUTION_KIND_HURDLE" => Ok(DistributionKind::Hurdle),
+                    "DISTRIBUTION_KIND_GAUSSIAN_RANDOM_WALK" => Ok(DistributionKind::GaussianRandomWalk),
+                    "DISTRIBUTION_KIND_AUTOREGRESSIVE" => Ok(DistributionKind::Autoregressive),
+                    "DISTRIBUTION_KIND_GARCH11" => Ok(DistributionKind::Garch11),
                     _ => Err(serde::de::Error::unknown_variant(value, FIELDS)),
                 }
             }

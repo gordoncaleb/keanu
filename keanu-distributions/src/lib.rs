@@ -33,6 +33,7 @@ mod error;
 pub mod kde;
 pub mod multivariate;
 mod param;
+pub mod processes;
 mod rng;
 pub mod timeseries;
 mod util;
@@ -44,6 +45,10 @@ pub use error::{DistributionError, Result};
 pub use kde::{Kde, KdeGradient};
 pub use multivariate::*;
 pub use param::{IntoParam, Param};
+pub use processes::{
+    Autoregressive, AutoregressiveGradient, Garch11, Garch11Gradient, GaussianRandomWalk,
+    GaussianRandomWalkGradient,
+};
 pub use rng::KeanuRng;
 pub use timeseries::{
     FutureStep, HiddenMarkovChain, HiddenMarkovChainGradient, KalmanFilter, KalmanSmoother,

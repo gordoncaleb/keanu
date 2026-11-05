@@ -243,3 +243,86 @@ fn hidden_markov_posteriors_decode_each_draw() {
     assert_eq!(sampled.len(), 2);
     assert_eq!(sampled[0].len(), 6);
 }
+
+/// The posterior mean and standard deviation of a scalar node.
+fn mean_sd(samples: &NetworkSamples, id: NodeId) -> (f64, f64) {
+    let draws = samples.f64(id).unwrap();
+    let values: Vec<f64> = draws.as_slice().iter().map(|t| t.as_slice()[0]).collect();
+    let n = values.len() as f64;
+    let mean = values.iter().sum::<f64>() / n;
+    let var = values.iter().map(|v| (v - mean) * (v - mean)).sum::<f64>() / n;
+    (mean, var.sqrt())
+}
+
+#[test]
+fn nuts_recovers_autoregressive_and_garch_parameters() {
+    use keanu_algorithms::mcmc::nuts::Nuts;
+    use keanu_distributions::{Autoregressive, Garch11};
+    let s = DoubleTensor::scalar;
+    let mut rng = KeanuRng::seed_from_u64(4);
+
+    // AR(1): rho = 0.7, sigma = 0.5, 400 steps
+    let data = Autoregressive::new(
+        s(0.0),
+        DoubleTensor::vector(vec![0.7]),
+        s(0.5),
+        s(0.0),
+        s(1.0),
+    )
+    .sample(&[400], &mut rng)
+    .unwrap();
+    let b = GraphBuilder::new();
+    let rho = b.uniform_with_shape(&[1], -1.0, 1.0);
+    let sigma = b.half_gaussian(2.0);
+    let x = b.autoregressive(400, 0.0, rho, sigma, 0.0, 1.0);
+    b.observe(x, data);
+    b.set_value(rho, DoubleTensor::vector(vec![0.0]));
+    b.set_value(sigma, s(1.0));
+    let (rho, sigma) = (rho.id(), sigma.id());
+    let (graph, mut state) = b.build().unwrap();
+    let model = Model::new(graph, &state).unwrap();
+    let samples = Nuts::default()
+        .sample(&model, &mut state, &[rho, sigma], 800, &mut rng)
+        .unwrap()
+        .drop(300)
+        .unwrap();
+    for (id, truth, what) in [(rho, 0.7, "rho"), (sigma, 0.5, "sigma")] {
+        let (mean, sd) = mean_sd(&samples, id);
+        assert!((mean - truth).abs() < 4.0 * sd, "{what}: {mean} ± {sd}");
+    }
+
+    // GARCH(1,1): omega = 0.1, alpha = 0.15, beta = 0.7, 1000 returns, (alpha, beta, rest) ~ Dirichlet(1, 1, 1)
+    let returns = Garch11::new(s(0.1), s(0.15), s(0.7), s(1.0))
+        .sample(&[1000], &mut rng)
+        .unwrap();
+    let b = GraphBuilder::new();
+    let weights = b.dirichlet(DoubleTensor::vector(vec![1.0, 1.0, 1.0]));
+    let omega = b.half_gaussian(1.0);
+    let r = b.garch11(1000, omega, weights.slice("0"), weights.slice("1"), 1.0);
+    b.observe(r, returns);
+    b.set_value(weights, DoubleTensor::vector(vec![0.2, 0.5, 0.3]));
+    b.set_value(omega, s(0.3));
+    let (weights, omega) = (weights.id(), omega.id());
+    let (graph, mut state) = b.build().unwrap();
+    let model = Model::new(graph, &state).unwrap();
+    let samples = Nuts::default()
+        .sample(&model, &mut state, &[weights, omega], 800, &mut rng)
+        .unwrap()
+        .drop(300)
+        .unwrap();
+    let draws = samples.f64(weights).unwrap();
+    let persistence: Vec<f64> = draws
+        .as_slice()
+        .iter()
+        .map(|w| w.as_slice()[0] + w.as_slice()[1])
+        .collect();
+    let n = persistence.len() as f64;
+    let mean = persistence.iter().sum::<f64>() / n;
+    let sd = (persistence.iter().map(|p| (p - mean).powi(2)).sum::<f64>() / n).sqrt();
+    assert!(
+        (mean - 0.85).abs() < 4.0 * sd,
+        "alpha + beta: {mean} ± {sd}"
+    );
+    let (mean, sd) = mean_sd(&samples, omega);
+    assert!((mean - 0.1).abs() < 4.0 * sd, "omega: {mean} ± {sd}");
+}

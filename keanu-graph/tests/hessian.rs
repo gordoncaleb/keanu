@@ -1522,6 +1522,59 @@ fn distribution_cases() -> Vec<DistributionCase> {
                 b.set_value(y, t(&[4, 1], &[0.3, -0.1, 0.8, 0.5]));
             },
         ),
+        // time-series processes, with latent values and parameters, and a batch with per-series parameters
+        case("a Gaussian random walk", |b| {
+            let x = b.gaussian_random_walk(
+                4,
+                scalar_latent(b, 0.2),
+                positive(b, 0.7),
+                scalar_latent(b, -0.1),
+                positive(b, 1.5),
+            );
+            b.set_value(x, v(&[0.3, 0.9, 0.4, 1.6]));
+            let y = b.gaussian_random_walk_with_shape(
+                &[2, 3],
+                latent_vector(b, &[0.1, -0.3]),
+                positive(b, 0.9),
+                0.0,
+                positive_vector(b, &[1.2, 0.6]),
+            );
+            b.observe(y, t(&[2, 3], &[0.2, 0.5, 0.1, -0.4, 0.3, 0.6]));
+        }),
+        case("an autoregressive process", |b| {
+            let rho = latent_vector(b, &[0.6, -0.3]);
+            let x = b.autoregressive(
+                5,
+                scalar_latent(b, 0.1),
+                rho,
+                positive(b, 0.8),
+                scalar_latent(b, 0.2),
+                positive(b, 2.0),
+            );
+            b.set_value(x, v(&[0.3, -0.2, 0.5, 0.9, 0.1]));
+            let y = b.autoregressive_with_shape(
+                &[2, 4],
+                0.0,
+                latent(b, t(&[2, 1], &[0.4, -0.5])),
+                positive_vector(b, &[0.7, 1.1]),
+                0.0,
+                1.0,
+            );
+            b.observe(y, t(&[2, 4], &[0.2, 0.5, 0.1, -0.4, 0.3, 0.6, -0.2, 0.1]));
+        }),
+        case("a GARCH(1,1) process", |b| {
+            // alpha and beta well inside the stationary region
+            let x = b.garch11(
+                5,
+                positive(b, 0.1),
+                probabilities(b, &[0.25]).reshape(&[]),
+                probabilities(b, &[0.6]).reshape(&[]),
+                positive(b, 0.9),
+            );
+            b.set_value(x, v(&[0.3, -1.2, 0.5, 2.1, -0.4]));
+            let y = b.garch11_with_shape(&[2, 3], positive_vector(b, &[0.2, 0.1]), 0.1, 0.5, 1.0);
+            b.observe(y, t(&[2, 3], &[0.2, -0.9, 0.4, 1.4, 0.3, -0.6]));
+        }),
         // mixtures
         case("a mixture of Gaussians", |b| {
             let params = [

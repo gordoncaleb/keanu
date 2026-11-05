@@ -1041,6 +1041,12 @@ pub enum DistributionKind {
     ZeroInflated = 43,
     /// Parameters: the base's, then `psi`.
     Hurdle = 44,
+    /// Parameters: `mu`, `sigma`, `init_mu`, `init_sigma`.
+    GaussianRandomWalk = 45,
+    /// Parameters: `constant`, `rho`, `sigma`, `init_mu`, `init_sigma`.
+    Autoregressive = 46,
+    /// Parameters: `omega`, `alpha`, `beta`, `initial_vol`.
+    Garch11 = 47,
 }
 impl DistributionKind {
     /// String value of the enum field names used in the ProtoBuf definition.
@@ -1096,6 +1102,9 @@ impl DistributionKind {
             Self::CategoricalLogit => "DISTRIBUTION_KIND_CATEGORICAL_LOGIT",
             Self::ZeroInflated => "DISTRIBUTION_KIND_ZERO_INFLATED",
             Self::Hurdle => "DISTRIBUTION_KIND_HURDLE",
+            Self::GaussianRandomWalk => "DISTRIBUTION_KIND_GAUSSIAN_RANDOM_WALK",
+            Self::Autoregressive => "DISTRIBUTION_KIND_AUTOREGRESSIVE",
+            Self::Garch11 => "DISTRIBUTION_KIND_GARCH11",
         }
     }
     /// Creates an enum from field names used in the ProtoBuf definition.
@@ -1148,6 +1157,9 @@ impl DistributionKind {
             "DISTRIBUTION_KIND_CATEGORICAL_LOGIT" => Some(Self::CategoricalLogit),
             "DISTRIBUTION_KIND_ZERO_INFLATED" => Some(Self::ZeroInflated),
             "DISTRIBUTION_KIND_HURDLE" => Some(Self::Hurdle),
+            "DISTRIBUTION_KIND_GAUSSIAN_RANDOM_WALK" => Some(Self::GaussianRandomWalk),
+            "DISTRIBUTION_KIND_AUTOREGRESSIVE" => Some(Self::Autoregressive),
+            "DISTRIBUTION_KIND_GARCH11" => Some(Self::Garch11),
             _ => None,
         }
     }

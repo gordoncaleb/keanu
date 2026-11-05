@@ -531,6 +531,12 @@ enum DistributionKind {
   DISTRIBUTION_KIND_ZERO_INFLATED = 43;
   // Parameters: the base's, then `psi`.
   DISTRIBUTION_KIND_HURDLE = 44;
+  // Parameters: `mu`, `sigma`, `init_mu`, `init_sigma`.
+  DISTRIBUTION_KIND_GAUSSIAN_RANDOM_WALK = 45;
+  // Parameters: `constant`, `rho`, `sigma`, `init_mu`, `init_sigma`.
+  DISTRIBUTION_KIND_AUTOREGRESSIVE = 46;
+  // Parameters: `omega`, `alpha`, `beta`, `initial_vol`.
+  DISTRIBUTION_KIND_GARCH11 = 47;
 }
 
 // A kernel density estimate's fixed samples and bandwidth.

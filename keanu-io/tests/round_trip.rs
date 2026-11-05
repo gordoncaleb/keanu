@@ -524,6 +524,9 @@ fn distribution_parameters(kind: &DistributionKind) -> Vec<Value> {
                 "c" => scalar(1.0),
                 "p" | "prob_true" => scalar(0.4),
                 "cutpoints" => f64s(&[2], &[-0.5, 0.5]),
+                "rho" => f64s(&[2], &[0.5, -0.2]),
+                "alpha" if matches!(kind, Garch11) => scalar(0.2),
+                "beta" if matches!(kind, Garch11) => scalar(0.3),
                 "lower" => scalar(-1.0),
                 "upper" => scalar(2.0),
                 _ => scalar(0.5),
@@ -595,6 +598,9 @@ const DISTRIBUTIONS: &[&str] = &[
     "ZeroInflated(BetaBinomial)",
     "Hurdle(NegativeBinomial)",
     "Hurdle(Gamma)",
+    "GaussianRandomWalk",
+    "Autoregressive",
+    "Garch11",
 ];
 
 fn distribution_kinds() -> Vec<DistributionKind> {
@@ -650,6 +656,9 @@ fn distribution_kinds() -> Vec<DistributionKind> {
         ZeroInflated(Arc::new(BetaBinomial)),
         Hurdle(Arc::new(NegativeBinomial)),
         Hurdle(Arc::new(Gamma)),
+        GaussianRandomWalk,
+        Autoregressive,
+        Garch11,
     ]
 }
 
@@ -675,7 +684,11 @@ fn distribution_cases() -> Vec<(String, Graph, State)> {
             let zero_sum = matches!(kind, DistributionKind::ZeroSumNormal);
             let series = matches!(
                 kind,
-                DistributionKind::HiddenMarkovModel(_) | DistributionKind::LinearGaussianStateSpace
+                DistributionKind::HiddenMarkovModel(_)
+                    | DistributionKind::LinearGaussianStateSpace
+                    | DistributionKind::GaussianRandomWalk
+                    | DistributionKind::Autoregressive
+                    | DistributionKind::Garch11
             );
             let requested = if lkj {
                 Some(&[3, 3][..])

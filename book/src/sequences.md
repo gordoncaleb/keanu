@@ -101,6 +101,33 @@ The same methods exist at fixed parameter values on `keanu_distributions::Linear
 each step's emission log probabilities under each state, which `DistributionKind::hidden_markov_chain` computes for a
 node's value and parameters. The [HMM example](examples.md) decodes its regimes this way.
 
+## Random walks, autoregressions and GARCH
+
+Three processes defined by a recursion have distributions of their own, so a whole series is one node with an exact
+log density, gradient and Hessian-vector products (no node per step). Each follows PyMC's distribution of the same
+name. The value is a series with **time on its last axis**, [..., T]; leading axes are a batch of independent series,
+and each parameter is a scalar or broadcasts to the batch shape.
+
+```rust,ignore
+{{#include ../../keanu/tests/book.rs:processes}}
+```
+
+- `gaussian_random_walk(T, mu, sigma, init_mu, init_sigma)`: x₀ ~ N(init_mu, init_sigma) and
+  x_t = x_{t−1} + N(mu, sigma), so `mu` is the drift. T counts every value, so PyMC's `steps` is T − 1.
+- `autoregressive(T, constant, rho, sigma, init_mu, init_sigma)`: AR(p) with `rho` the coefficients of lags 1 to p
+  ([p], or [..., p] for a batch): the first p values are N(init_mu, init_sigma) and each later one
+  N(constant + Σᵢ ρᵢ x_{t−i}, sigma). The process is conditioned on those first values rather than started from its
+  stationary distribution, and the coefficients are not required to be stationary. For a stationary AR(1), pass
+  init_mu = c / (1 − ρ) and init_sigma = σ / √(1 − ρ²) as nodes of ρ and σ.
+- `garch11(T, omega, alpha, beta, initial_vol)`: r_t ~ N(0, σ_t) with σ₀ = initial_vol and
+  σ_t² = ω + α r_{t−1}² + β σ_{t−1}². The parameters must satisfy ω > 0, α ≥ 0, β ≥ 0, α + β < 1 (covariance
+  stationarity) and initial_vol > 0; outside that region the series is impossible (log probability −∞, which NUTS
+  treats as a divergence) and drawing it is an error. A prior that stays inside, such as the first two coordinates
+  of a Dirichlet above, avoids the boundary.
+
+The `_with_shape` forms take a batch shape. `keanu_distributions::{GaussianRandomWalk, Autoregressive, Garch11}`
+give the log densities, gradients, Hessian-vector products and simulation directly.
+
 ## Scan: a loop in one node
 
 A sequence adds one group of nodes per item, so building a 10,000-step model makes tens of thousands of nodes. When

@@ -337,6 +337,20 @@ Work from `docs/plans/2026-11-05-001-feat-applied-modelling-gaps-plan.md`.
   `sample_states`), from `NetworkSamples` or `ChainSamples`, with the node's parameters evaluated from each draw.
   keanu-graph gained `DistributionKind::hidden_markov_chain`. The HMM example decodes its regimes, and the guide's
   sequences chapter has a section on smoothing, decoding and forecasting.
+- keanu-distributions, keanu-graph and keanu-io: **time-series distributions** (the new
+  `keanu_distributions::processes` module), each over the last axis of a value [..., T] with a batch of series in
+  the leading axes and parameters broadcasting to the batch shape, as PyMC's distributions of the same names:
+  `GaussianRandomWalk(mu, sigma, init_mu, init_sigma)` (x₀ ~ N(init_mu, init_sigma), then steps of N(mu, sigma); T
+  counts the initial value, so PyMC's `steps` is T − 1), `Autoregressive(constant, rho, sigma, init_mu, init_sigma)`
+  (AR(p) with `rho` [..., p] the coefficients of lags 1 to p, conditioned on its first p values, which are
+  N(init_mu, init_sigma); no stationarity is imposed) and `Garch11(omega, alpha, beta, initial_vol)` (r_t ~ N(0, σ_t)
+  with σ_t² = ω + α r_{t−1}² + β σ_{t−1}²). Non-positive scales give a NaN log density; GARCH parameters outside
+  ω > 0, α ≥ 0, β ≥ 0, α + β < 1 and initial_vol > 0 give −∞ and are an error to sample. Gradients are written out
+  by hand and Hessian-vector products are that code on dual numbers, both exact. The graph has the kinds
+  `DistributionKind::GaussianRandomWalk`, `Autoregressive` and `Garch11` (real support) with builder methods
+  `gaussian_random_walk`, `autoregressive` and `garch11` and their `_with_shape` forms; the save schema gained
+  `DISTRIBUTION_KIND_GAUSSIAN_RANDOM_WALK`, `_AUTOREGRESSIVE` and `_GARCH11`, and the guide's sequences chapter a
+  section on them.
 
 ### Code review fixes
 

@@ -948,6 +948,163 @@ impl GraphBuilder {
     }
 }
 
+impl GraphBuilder {
+    /// A Gaussian random walk of `steps` values (see [`keanu_distributions::GaussianRandomWalk`], as PyMC's
+    /// `GaussianRandomWalk`): the first value is N(`init_mu`, `init_sigma`) and each later one the one before plus
+    /// N(`mu`, `sigma`). PyMC's `steps` counts the steps after the initial value, so it is `steps − 1` here. Every
+    /// parameter must be a scalar here; see [`Self::gaussian_random_walk_with_shape`] for a batch of series.
+    ///
+    /// ```
+    /// use keanu_graph::GraphBuilder;
+    ///
+    /// let b = GraphBuilder::new();
+    /// let drift = b.gaussian(0.0, 1.0);
+    /// let scale = b.half_gaussian(1.0);
+    /// let walk = b.gaussian_random_walk(50, drift, scale, 0.0, 10.0);
+    /// assert_eq!(walk.shape(), vec![50]);
+    /// b.build()?;
+    /// # Ok::<(), keanu_graph::GraphError>(())
+    /// ```
+    pub fn gaussian_random_walk<'b>(
+        &'b self,
+        steps: usize,
+        mu: impl IntoDoubleVar<'b>,
+        sigma: impl IntoDoubleVar<'b>,
+        init_mu: impl IntoDoubleVar<'b>,
+        init_sigma: impl IntoDoubleVar<'b>,
+    ) -> DoubleVar<'b> {
+        self.gaussian_random_walk_with_shape(&[steps], mu, sigma, init_mu, init_sigma)
+    }
+
+    /// Like [`Self::gaussian_random_walk`], with a batch of independent series: `shape` is [..., T], time last, and
+    /// each parameter broadcasts to the batch shape [...] (one value per series, or shared).
+    pub fn gaussian_random_walk_with_shape<'b>(
+        &'b self,
+        shape: &[usize],
+        mu: impl IntoDoubleVar<'b>,
+        sigma: impl IntoDoubleVar<'b>,
+        init_mu: impl IntoDoubleVar<'b>,
+        init_sigma: impl IntoDoubleVar<'b>,
+    ) -> DoubleVar<'b> {
+        let ids = [
+            mu.into_var(self).id(),
+            sigma.into_var(self).id(),
+            init_mu.into_var(self).id(),
+            init_sigma.into_var(self).id(),
+        ];
+        DoubleVar::new(
+            self,
+            self.distribution(DistributionKind::GaussianRandomWalk, Some(shape), &ids),
+        )
+    }
+
+    /// An autoregressive process AR(p) of `steps` values (see [`keanu_distributions::Autoregressive`], as PyMC's
+    /// `AR`): the first p values are N(`init_mu`, `init_sigma`) and each later one
+    /// N(`constant` + Σᵢ ρᵢ x_{t−i}, `sigma`), with `rho` the vector `[p]` of the coefficients of lags 1 to p. The
+    /// process is conditioned on its first p values rather than started from its stationary distribution; for a
+    /// stationary AR(1) pass `init_mu` = c / (1 − ρ) and `init_sigma` = σ / √(1 − ρ²) as nodes of ρ and σ.
+    ///
+    /// ```
+    /// use keanu_graph::GraphBuilder;
+    /// use keanu_tensor::DoubleTensor;
+    ///
+    /// let b = GraphBuilder::new();
+    /// let rho = b.uniform_with_shape(&[2], -1.0, 1.0);
+    /// let sigma = b.half_gaussian(1.0);
+    /// let x = b.autoregressive(100, 0.0, rho, sigma, 0.0, 1.0);
+    /// b.observe(x, DoubleTensor::zeros(&[100]));
+    /// b.build()?;
+    /// # Ok::<(), keanu_graph::GraphError>(())
+    /// ```
+    pub fn autoregressive<'b>(
+        &'b self,
+        steps: usize,
+        constant: impl IntoDoubleVar<'b>,
+        rho: impl IntoDoubleVar<'b>,
+        sigma: impl IntoDoubleVar<'b>,
+        init_mu: impl IntoDoubleVar<'b>,
+        init_sigma: impl IntoDoubleVar<'b>,
+    ) -> DoubleVar<'b> {
+        self.autoregressive_with_shape(&[steps], constant, rho, sigma, init_mu, init_sigma)
+    }
+
+    /// Like [`Self::autoregressive`], with a batch of independent series: `shape` is [..., T], time last; `rho` is
+    /// [..., p] and every other parameter broadcasts to the batch shape [...].
+    pub fn autoregressive_with_shape<'b>(
+        &'b self,
+        shape: &[usize],
+        constant: impl IntoDoubleVar<'b>,
+        rho: impl IntoDoubleVar<'b>,
+        sigma: impl IntoDoubleVar<'b>,
+        init_mu: impl IntoDoubleVar<'b>,
+        init_sigma: impl IntoDoubleVar<'b>,
+    ) -> DoubleVar<'b> {
+        let ids = [
+            constant.into_var(self).id(),
+            rho.into_var(self).id(),
+            sigma.into_var(self).id(),
+            init_mu.into_var(self).id(),
+            init_sigma.into_var(self).id(),
+        ];
+        DoubleVar::new(
+            self,
+            self.distribution(DistributionKind::Autoregressive, Some(shape), &ids),
+        )
+    }
+
+    /// A GARCH(1,1) series of `steps` values (see [`keanu_distributions::Garch11`], as PyMC's `GARCH11`):
+    /// r_t ~ N(0, σ_t) with σ_0 = `initial_vol` and σ_t² = `omega` + `alpha` r_{t−1}² + `beta` σ_{t−1}². Parameters
+    /// outside ω > 0, α ≥ 0, β ≥ 0, α + β < 1 and `initial_vol` > 0 make the series impossible (log probability −∞)
+    /// and are an error to sample, so give α and β a prior on that region, such as the first two coordinates of a
+    /// Dirichlet.
+    ///
+    /// ```
+    /// use keanu_graph::GraphBuilder;
+    /// use keanu_tensor::DoubleTensor;
+    ///
+    /// let b = GraphBuilder::new();
+    /// // (alpha, beta, 1 − alpha − beta) on the simplex keeps the process stationary
+    /// let weights = b.dirichlet(DoubleTensor::vector(vec![2.0, 6.0, 2.0]));
+    /// let omega = b.half_gaussian(1.0);
+    /// let returns = b.garch11(250, omega, weights.slice("0"), weights.slice("1"), 1.0);
+    /// b.observe(returns, DoubleTensor::zeros(&[250]));
+    /// b.build()?;
+    /// # Ok::<(), keanu_graph::GraphError>(())
+    /// ```
+    pub fn garch11<'b>(
+        &'b self,
+        steps: usize,
+        omega: impl IntoDoubleVar<'b>,
+        alpha: impl IntoDoubleVar<'b>,
+        beta: impl IntoDoubleVar<'b>,
+        initial_vol: impl IntoDoubleVar<'b>,
+    ) -> DoubleVar<'b> {
+        self.garch11_with_shape(&[steps], omega, alpha, beta, initial_vol)
+    }
+
+    /// Like [`Self::garch11`], with a batch of independent series: `shape` is [..., T], time last, and each
+    /// parameter broadcasts to the batch shape [...].
+    pub fn garch11_with_shape<'b>(
+        &'b self,
+        shape: &[usize],
+        omega: impl IntoDoubleVar<'b>,
+        alpha: impl IntoDoubleVar<'b>,
+        beta: impl IntoDoubleVar<'b>,
+        initial_vol: impl IntoDoubleVar<'b>,
+    ) -> DoubleVar<'b> {
+        let ids = [
+            omega.into_var(self).id(),
+            alpha.into_var(self).id(),
+            beta.into_var(self).id(),
+            initial_vol.into_var(self).id(),
+        ];
+        DoubleVar::new(
+            self,
+            self.distribution(DistributionKind::Garch11, Some(shape), &ids),
+        )
+    }
+}
+
 /// Two tensors broadcast to their common shape.
 fn broadcast_pair(
     a: &DoubleTensor,

@@ -228,6 +228,9 @@ distribution_codes!(
     BinomialLogit,
     PoissonLog,
     CategoricalLogit,
+    GaussianRandomWalk,
+    Autoregressive,
+    Garch11,
 );
 
 #[cfg(test)]
@@ -245,7 +248,7 @@ mod tests {
     }
 
     /// The number of distribution kinds in the schema.
-    const DISTRIBUTION_KINDS: i32 = 44;
+    const DISTRIBUTION_KINDS: i32 = 47;
 
     #[test]
     fn every_schema_value_has_a_variant() {

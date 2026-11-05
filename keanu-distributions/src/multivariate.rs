@@ -40,7 +40,10 @@ fn with_suffix(prefix: &[usize], suffix: &[usize]) -> Vec<isize> {
 
 /// Reduces a gradient computed at the broadcast shape to `target_shape` (which broadcasts to it): sums the
 /// extra leading dimensions and every dimension that the target has as size 1.
-fn sum_over_batch(batched: &DoubleTensor, target_shape: &[usize]) -> Result<DoubleTensor> {
+pub(crate) fn sum_over_batch(
+    batched: &DoubleTensor,
+    target_shape: &[usize],
+) -> Result<DoubleTensor> {
     let extra = batched.rank() - target_shape.len();
     let axes: Vec<isize> = (0..batched.rank())
         .filter(|&axis| {

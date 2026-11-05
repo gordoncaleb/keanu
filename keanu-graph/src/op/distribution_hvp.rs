@@ -15,7 +15,8 @@
 //!   ordered logistic, KDE)
 //!   have closed forms of their own here;
 //! - the linear Gaussian state space model differentiates the Kalman filter's reverse pass in forward mode (see
-//!   [`keanu_distributions::LinearGaussianStateSpace::hvp`]).
+//!   [`keanu_distributions::LinearGaussianStateSpace::hvp`]), and the Gaussian random walk, AR(p) and GARCH(1,1)
+//!   their hand-written reverse passes, on dual numbers (see [`keanu_distributions::processes`]).
 //!
 //! A rule's derivatives are those of the first-order gradient it sits next to, including where that gradient
 //! follows a convention: the uniform has no derivative with respect to its bounds, so its second derivatives are
@@ -185,6 +186,14 @@ impl DistributionKind {
             nested_kinds!() => Nested::log_prob_hvp(
                 self,
                 value,
+                parameters,
+                value_tangent,
+                parameter_tangents,
+                b,
+            ),
+            K::GaussianRandomWalk | K::Autoregressive | K::Garch11 => process_hvp(
+                self,
+                value.f64()?,
                 parameters,
                 value_tangent,
                 parameter_tangents,
@@ -859,6 +868,51 @@ fn linear_gaussian_state_space_hvp(
             Some(g.observation_covariance),
         ],
     ))
+}
+
+/// The Gaussian random walk, AR(p) and GARCH(1,1): their gradients differentiated in forward mode (see
+/// [`keanu_distributions::GaussianRandomWalk::hvp`]).
+fn process_hvp(
+    kind: &DistributionKind,
+    x: &DoubleTensor,
+    parameters: &[&Value],
+    x_tangent: Option<&DoubleTensor>,
+    tangents: &[Option<&DoubleTensor>],
+    b: usize,
+) -> Result<LogProbHvpParts> {
+    let p: Vec<&DoubleTensor> = parameters.iter().map(|p| p.f64()).collect::<Result<_>>()?;
+    let x_tangent = x_tangent
+        .map(|t| fit(t.clone(), b, x.shape()))
+        .transpose()?;
+    let tangents: Vec<Option<DoubleTensor>> = tangents
+        .iter()
+        .zip(&p)
+        .map(|(t, p)| t.map(|t| fit(t.clone(), b, p.shape())).transpose())
+        .collect::<Result<_>>()?;
+    let tangents: Vec<Option<&DoubleTensor>> = tangents.iter().map(Option::as_ref).collect();
+    let x_tangent = x_tangent.as_ref();
+    let (hx, hp): (DoubleTensor, Vec<DoubleTensor>) = match (kind, p.as_slice()) {
+        (DistributionKind::GaussianRandomWalk, &[mu, sigma, m0, s0]) => {
+            let g = keanu_distributions::GaussianRandomWalk::new(mu, sigma, m0, s0)
+                .hvp(x, x_tangent, &tangents, b)?;
+            (g.x, vec![g.mu, g.sigma, g.init_mu, g.init_sigma])
+        }
+        (DistributionKind::Autoregressive, &[c, rho, sigma, m0, s0]) => {
+            let g = keanu_distributions::Autoregressive::new(c, rho, sigma, m0, s0)
+                .hvp(x, x_tangent, &tangents, b)?;
+            (
+                g.x,
+                vec![g.constant, g.rho, g.sigma, g.init_mu, g.init_sigma],
+            )
+        }
+        (DistributionKind::Garch11, &[omega, alpha, beta, v0]) => {
+            let g = keanu_distributions::Garch11::new(omega, alpha, beta, v0)
+                .hvp(x, x_tangent, &tangents, b)?;
+            (g.x, vec![g.omega, g.alpha, g.beta, g.initial_vol])
+        }
+        _ => return Err(kind.wrong_parameters()),
+    };
+    Ok((Some(hx), hp.into_iter().map(Some).collect()))
 }
 
 /// The multivariate Gaussian, with r = x − μ, P = Σ⁻¹ and a = P r: the gradient is (−a, a, ½(a aᵀ − P)) in

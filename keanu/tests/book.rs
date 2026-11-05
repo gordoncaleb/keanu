@@ -1035,6 +1035,51 @@ fn smoothing_and_forecasting() -> keanu::Result<()> {
 }
 
 #[test]
+fn time_series_processes() -> keanu::Result<()> {
+    // ANCHOR: processes
+    use keanu::distributions::Garch11;
+
+    // 500 simulated daily returns with volatility clustering
+    let truth = Garch11::new(
+        DoubleTensor::scalar(0.05),
+        DoubleTensor::scalar(0.1),
+        DoubleTensor::scalar(0.8),
+        DoubleTensor::scalar(1.0),
+    );
+    let returns = truth.sample(&[500], &mut KeanuRng::seed_from_u64(3))?;
+
+    let b = GraphBuilder::new();
+    // (alpha, beta, 1 − alpha − beta) on the simplex: the process stays stationary under NUTS
+    let weights = b.dirichlet(DoubleTensor::vector(vec![1.0, 1.0, 1.0]));
+    let omega = b.half_gaussian(1.0);
+    let r = b.garch11(500, omega, weights.slice("0"), weights.slice("1"), 1.0);
+    b.observe(r, returns);
+    // a smooth trend as a Gaussian random walk prior, and an AR(2) series, side by side
+    let trend = b.gaussian_random_walk(100, 0.0, 0.1, 0.0, 1.0);
+    let rho = b.uniform_with_shape(&[2], -0.5, 0.5);
+    let ar = b.autoregressive(100, 0.0, rho, 1.0, 0.0, 1.0);
+    assert_eq!((trend.shape(), ar.shape()), (vec![100], vec![100]));
+
+    b.set_value(weights, DoubleTensor::vector(vec![0.2, 0.5, 0.3]));
+    b.set_value(omega, DoubleTensor::scalar(0.2));
+    let (weights, omega) = (weights.id(), omega.id());
+    let (graph, mut state) = b.build()?;
+    let model = Model::new(graph, &state)?;
+    let samples = Nuts::default().sample(
+        &model,
+        &mut state,
+        &[weights, omega],
+        400,
+        &mut KeanuRng::seed_from_u64(1),
+    )?;
+    let alpha_beta = samples.f64(weights).unwrap().mean()?;
+    let persistence = alpha_beta.as_slice()[0] + alpha_beta.as_slice()[1];
+    assert!(persistence > 0.5 && persistence < 1.0);
+    // ANCHOR_END: processes
+    Ok(())
+}
+
+#[test]
 fn kalman_filters() -> keanu::Result<()> {
     // ANCHOR: kalman
     // a local level model: a random walk level observed with noise, with an unknown level noise scale

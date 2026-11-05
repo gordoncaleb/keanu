@@ -201,6 +201,21 @@ pub enum DistributionKind {
     /// [`keanu_distributions::LinearGaussianStateSpace`] and
     /// [`GraphBuilder::linear_gaussian_state_space`](crate::GraphBuilder::linear_gaussian_state_space).
     LinearGaussianStateSpace,
+    /// Parameters: `mu` (the drift), `sigma`, `init_mu`, `init_sigma`; the value is a series [..., T] (time last,
+    /// T > 0, set by the node's shape) whose first value is N(`init_mu`, `init_sigma`) and each later one the one
+    /// before plus N(`mu`, `sigma`). Each parameter broadcasts to the batch shape [...]. Support: real. See
+    /// [`keanu_distributions::GaussianRandomWalk`].
+    GaussianRandomWalk,
+    /// Parameters: `constant`, `rho` (the coefficients of lags 1 to p, [..., p]), `sigma`, `init_mu`, `init_sigma`;
+    /// the value is a series [..., T] (time last) whose first p values are N(`init_mu`, `init_sigma`) and each
+    /// later one N(c + Σᵢ ρᵢ x_{t−i}, σ). Every parameter (`rho` without its lag axis) broadcasts to the batch
+    /// shape. Support: real. See [`keanu_distributions::Autoregressive`].
+    Autoregressive,
+    /// Parameters: `omega`, `alpha`, `beta`, `initial_vol`; the value is a series [..., T] (time last) with
+    /// r_t ~ N(0, σ_t), σ_0 = `initial_vol` and σ_t² = ω + α r_{t−1}² + β σ_{t−1}². Each parameter broadcasts to
+    /// the batch shape; parameters outside ω > 0, α, β ≥ 0, α + β < 1, `initial_vol` > 0 make the value impossible.
+    /// Support: real. See [`keanu_distributions::Garch11`].
+    Garch11,
 }
 
 /// A user-defined distribution for a probabilistic node.
@@ -882,6 +897,16 @@ distributions! {
             observation_covariance
         ),
         support = Support::Real;
+    GaussianRandomWalk "gaussian_random_walk" (mu: F64, sigma: F64, init_mu: F64, init_sigma: F64) -> F64 =>
+        d::GaussianRandomWalk::new(mu, sigma, init_mu, init_sigma),
+        support = Support::Real;
+    Autoregressive "autoregressive" (
+        constant: F64, rho: F64, sigma: F64, init_mu: F64, init_sigma: F64
+    ) -> F64 => d::Autoregressive::new(constant, rho, sigma, init_mu, init_sigma),
+        support = Support::Real;
+    Garch11 "garch11" (omega: F64, alpha: F64, beta: F64, initial_vol: F64) -> F64 =>
+        d::Garch11::new(omega, alpha, beta, initial_vol),
+        support = Support::Real;
     Pareto "pareto" (location: F64, scale: F64) -> F64 => d::Pareto::new(location, scale),
         support = Support::GreaterThan(location.clone()),
         cdf = none;
@@ -1131,6 +1156,43 @@ impl DistributionOp {
                     return Err(invalid(format!(
                         "sigma of shape {sigma:?} does not broadcast to the batch shape {batch:?}"
                     )));
+                }
+                Ok(Shape::from_slice(shape))
+            }
+            DistributionKind::GaussianRandomWalk
+            | DistributionKind::Autoregressive
+            | DistributionKind::Garch11 => {
+                let shape = requested.unwrap_or(&[]);
+                let [batch @ .., steps] = shape else {
+                    return Err(invalid(format!(
+                        "needs a shape [..., T] for its series of T steps, not {shape:?}"
+                    )));
+                };
+                if *steps == 0 {
+                    return Err(invalid(format!(
+                        "needs a shape [..., T] for its series of T steps, with T > 0, not {shape:?}"
+                    )));
+                }
+                let names = kind.parameter_names().unwrap_or_default();
+                for (name, (_, p)) in names.iter().zip(parameters) {
+                    let p_batch = if *name == "rho" {
+                        match p.split_last() {
+                            Some((&lags, b)) if lags > 0 => b,
+                            _ => {
+                                return Err(invalid(format!(
+                                    "rho must have a trailing axis of at least one lag, not shape {p:?}"
+                                )));
+                            }
+                        }
+                    } else {
+                        p
+                    };
+                    let broadcast = keanu_tensor::broadcast_shape(batch, p_batch).ok();
+                    if broadcast.as_ref().map(|b| b.as_slice()) != Some(batch) {
+                        return Err(invalid(format!(
+                            "{name} of shape {p:?} does not broadcast to the batch shape {batch:?}"
+                        )));
+                    }
                 }
                 Ok(Shape::from_slice(shape))
             }
