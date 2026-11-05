@@ -27,6 +27,12 @@
 //! doesn't remove them either. The same corner keeps NUTS's step size near 0.1, so most trajectories take 31 to 63
 //! leapfrog steps. The example reports the count; its test checks that it stays below 1% of the draws.
 //!
+//! The Stan User's Guide's own form, with no day-0 state (h_1 = mu + sigma / sqrt(1 − phi²) · eps_1 and the
+//! recursion from day 2), doesn't remove them either. Measured on 2026-11-05 with 4 chains of 500 draws, over seeds
+//! 1 to 8: this example (target 0.95) had 2, 2, 2, 1, 1, 1, 0 and 44 divergences; Stan's form with this example's
+//! priors had 4, 215, 2, 32, 3, 6, 4, 3 at target 0.8 and 5, 0, 2, 3, 9, 0, 3, 1 at 0.95; and with Stan's priors
+//! (phi ~ Uniform(−1, 1), mu ~ Cauchy(0, 10)) 1, 91, 5, 4, 6, 2, 62, 28 at 0.8 and 2, 11, 9, 0, 0, 0, 1, 1 at 0.95.
+//!
 //! Data: `data/returns.csv` holds T = 200 daily returns simulated from the model with mu = −1, phi = 0.9 and
 //! sigma = 0.4, by [`simulate`] with seed [`DATA_SEED`]. Its columns are the day, the true log variance h_t and the
 //! return r_t; the example's test checks that [`simulate`] still reproduces the file (regenerate it with

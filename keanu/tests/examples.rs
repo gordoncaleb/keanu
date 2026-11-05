@@ -365,7 +365,10 @@ fn stochastic_volatility_data_is_reproducible() {
 fn stochastic_volatility_recovers_the_simulated_parameters() {
     // 4 chains of 500 draws after 500 adaptation steps each, on the 200 bundled days. Over seeds 1 to 7, 0 to 2 of
     // the 2000 draws diverged and the largest R-hat (of the three parameters and the 200 log variances) was 1.0065 to
-    // 1.0109; seed 8, with a chain that lingered where phi nears 1, had 44 divergences and an R-hat of 1.023.
+    // 1.0109; seed 8, with a chain that lingered where phi nears 1, had 44 divergences and an R-hat of 1.023
+    // (re-measured on 2026-11-05 with Stan's divergence criterion: unchanged). The Stan User's Guide's
+    // parameterisation doesn't reach zero divergences either (see the example's documentation), so the tolerance
+    // stays.
     let draws = 500;
     let r = stochastic_volatility::run(1, draws).unwrap();
     // a few trajectories in a thousand diverge where phi nears 1 (see the example's documentation)
