@@ -1,4 +1,4 @@
-//! Choosing a sampler for a model (Java's `Keanu.Sampling.MCMC.withDefaultConfigFor` and `DifferentiableChecker`).
+//! Choosing a sampler for a model.
 
 use crate::error::Result;
 use crate::mcmc::SamplingOptions;

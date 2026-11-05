@@ -64,7 +64,7 @@ impl Column {
     }
 }
 
-/// Samples of a set of nodes, with the log probability recorded for each sample (Java's `NetworkSamples`).
+/// Samples of a set of nodes, with the log probability recorded for each sample.
 #[derive(Debug, Clone, PartialEq)]
 pub struct NetworkSamples {
     nodes: Vec<NodeId>,
@@ -235,7 +235,7 @@ impl NetworkSamples {
     }
 }
 
-/// One sample of every sampled node (Java's `NetworkState`).
+/// One sample of every sampled node.
 #[derive(Debug, Clone, Copy)]
 pub struct NetworkSample<'a> {
     samples: &'a NetworkSamples,

@@ -108,8 +108,7 @@ pub struct NodeLogProbGradient {
     pub parameters: Vec<Option<DoubleTensor>>,
 }
 
-/// ∂ log p(node) / ∂ value and ∂ log p(node) / ∂ parameter for each parameter, following the Java vertices'
-/// `dLogProb`.
+/// ∂ log p(node) / ∂ value and ∂ log p(node) / ∂ parameter for each parameter.
 pub fn node_log_prob_gradient(
     graph: &Graph,
     state: &State,
@@ -128,8 +127,7 @@ fn node_gradient_parts(graph: &Graph, state: &State, id: NodeId) -> Result<LogPr
     kind.log_prob_gradient(v, &parameters(graph, state, id)?)
 }
 
-/// Sums a gradient over the dimensions that a tensor of `target` shape was broadcast along (as Java's
-/// `AutoDiffBroadcast.correctForBroadcastPartialReverse`).
+/// Sums a gradient over the dimensions that a tensor of `target` shape was broadcast along.
 fn sum_to_shape(t: DoubleTensor, target: &[usize]) -> Result<DoubleTensor> {
     if t.shape() == target {
         return Ok(t);
@@ -237,7 +235,7 @@ fn is_latent_double(graph: &Graph, state: &State, id: NodeId) -> bool {
 }
 
 /// The gradient of the total log probability of the probabilistic nodes `of` with respect to the latents in
-/// `wrt` (as Java's `LogProbGradientCalculator`).
+/// `wrt`.
 ///
 /// For each node in `of`: the derivative with respect to its own value is included if it is an unobserved f64
 /// node, and the derivatives with respect to its parameters are propagated in reverse mode through

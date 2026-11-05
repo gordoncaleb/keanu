@@ -4,7 +4,7 @@
 
 use keanu::prelude::*;
 
-/// The results the Java example reports.
+/// The results the example reports.
 #[derive(Debug)]
 pub struct Results {
     /// The most frequently sampled switch day.
@@ -89,7 +89,7 @@ pub fn run(seed: u64, sample_count: usize) -> keanu::Result<Results> {
     })
 }
 
-/// The number of samples the Java example takes.
+/// The default number of samples (as many as Keanu's original example took).
 pub const DEFAULT_SAMPLES: usize = 1000;
 
 #[allow(dead_code)]

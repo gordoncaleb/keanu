@@ -1,8 +1,5 @@
 //! Probabilistic models over a graph: the latent and observed nodes, their joint log probability and its gradient,
 //! and the lambda sections that let samplers update the log probability incrementally.
-//!
-//! This is the equivalent of Java's `BayesianNetwork`, `KeanuProbabilisticModel`,
-//! `KeanuProbabilisticModelWithGradient` and `LambdaSection`.
 
 use crate::error::{GraphError, Result};
 use crate::graph::{Graph, NodeId};
@@ -283,7 +280,7 @@ impl Model {
         Ok(affected)
     }
 
-    /// Java's `probeForNonZeroProbability`: if the current state is impossible (log prob of -infinity or NaN),
+    /// If the current state is impossible (log prob of -infinity or NaN),
     /// repeatedly samples every latent from its prior, in dependency order, cascading each value, until the state is
     /// possible. Gives up with an error after `attempts` tries. Values missing from the state (e.g. latents that
     /// were never set) are sampled first.
@@ -318,7 +315,7 @@ impl Model {
 
     /// Applies a proposal (new values for some latents, cascading to their deterministic descendants) and returns
     /// the new joint log probability, computed incrementally from `log_prob_before` (the log probability before
-    /// the proposal) by recomputing only the affected nodes, as Java's `KeanuProbabilisticModel.logProbAfter`.
+    /// the proposal) by recomputing only the affected nodes.
     pub fn log_prob_after(
         &self,
         state: &mut State,

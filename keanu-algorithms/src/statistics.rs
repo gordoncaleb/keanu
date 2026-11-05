@@ -3,7 +3,7 @@
 /// The autocorrelation of a series at lags 0, 1, ..., n - 1: the autocovariance at each lag (with a 1/n
 /// normalisation) divided by the variance. Computed with an FFT of the mean-centred, zero-padded series.
 ///
-/// A constant series has zero variance, so its autocorrelation is NaN (as in Java). An empty series gives an
+/// A constant series has zero variance, so its autocorrelation is NaN. An empty series gives an
 /// empty result.
 pub fn autocorrelation(series: &[f64]) -> Vec<f64> {
     let autocovariance = autocovariance(series);

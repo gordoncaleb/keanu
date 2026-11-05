@@ -73,8 +73,7 @@ fn current(state: &State, id: NodeId) -> Result<Value> {
         .ok_or_else(|| keanu_graph::GraphError::MissingValue(id).into())
 }
 
-/// Proposes each chosen node's new value from its prior given its parents' current values (Java's
-/// `PriorProposalDistribution`).
+/// Proposes each chosen node's new value from its prior given its parents' current values.
 ///
 /// When several dependent nodes are proposed at once, each is drawn given the parents' values from *before* the
 /// proposal, so q(x' | x) is evaluated, and recorded, while the proposal is created. The reverse move would draw
@@ -139,8 +138,7 @@ impl ProposalDistribution for PriorProposal {
     }
 }
 
-/// Proposes a random walk step: each chosen (f64) node's value plus Gaussian noise (Java's
-/// `GaussianProposalDistribution`). The proposal is symmetric, so it adds no Hastings correction.
+/// Proposes a random walk step: each chosen (f64) node's value plus Gaussian noise. The proposal is symmetric, so it adds no Hastings correction.
 #[derive(Debug, Clone, PartialEq)]
 pub struct GaussianProposal {
     default_sigma: Option<DoubleTensor>,
@@ -226,7 +224,7 @@ impl ProposalDistribution for GaussianProposal {
     }
 }
 
-/// Observes proposals as a chain runs (Java's `ProposalListener`).
+/// Observes proposals as a chain runs.
 pub trait ProposalListener {
     /// Called when a proposal is created.
     fn on_proposal_created(&mut self, proposal: &Proposal);
@@ -234,7 +232,7 @@ pub trait ProposalListener {
     fn on_proposal_rejected(&mut self, proposal: &Proposal);
 }
 
-/// Counts proposals and rejections per node (Java's `AcceptanceRateTracker`).
+/// Counts proposals and rejections per node.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct AcceptanceRateTracker {
     proposed: HashMap<NodeId, usize>,

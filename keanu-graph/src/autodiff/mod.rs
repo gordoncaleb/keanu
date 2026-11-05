@@ -4,10 +4,10 @@
 //! ∂of[i...]/∂wrt[j...].
 //!
 //! Internally every tangent (forward mode) and cotangent (reverse mode) carries a leading batch axis: forward
-//! tangents are `[wrt length, node shape...]` and reverse cotangents `[of length, node shape...]`. This is the Java
-//! implementation's layout (`[wrt..., of...]` forward, `[of..., wrt...]` reverse) with the outer shape flattened.
+//! tangents are `[wrt length, node shape...]` and reverse cotangents `[of length, node shape...]`. That is the
+//! layout `[wrt..., of...]` forward and `[of..., wrt...]` reverse with the outer shape flattened.
 //!
-//! Traversal follows the Java `Differentiator`:
+//! Traversal:
 //! - forward mode starts at the `wrt` node (identity, or nothing if it is observed) and visits descendants that
 //!   are non-probabilistic and differentiable;
 //! - reverse mode starts at the `of` node and visits differentiable ancestors in decreasing id order, recording and

@@ -13,7 +13,7 @@ use crate::samples::NetworkSamples;
 use keanu_distributions::KeanuRng;
 use keanu_graph::{Graph, NodeId, State};
 
-/// A chain that can be advanced one step at a time (Java's `SamplingAlgorithm`).
+/// A chain that can be advanced one step at a time.
 pub trait SamplingAlgorithm {
     /// Advances the chain by one step, leaving `state` at the chain's current position.
     fn step(&mut self, state: &mut State, rng: &mut KeanuRng) -> Result<()>;
@@ -28,7 +28,7 @@ pub trait SamplingAlgorithm {
     fn sampled_nodes(&self) -> &[NodeId];
 }
 
-/// How many steps to throw away and how often to record (Java's `NetworkSamplesGenerator` settings).
+/// How many steps to throw away and how often to record.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct SamplingOptions {
@@ -65,7 +65,7 @@ impl Default for SamplingOptions {
 }
 
 /// Runs a chain for `total` steps: drops the first `options.drop`, then records every
-/// `options.down_sample_interval`-th of the rest (Java's `NetworkSamplesGenerator.generate`).
+/// `options.down_sample_interval`-th of the rest.
 pub fn generate(
     algorithm: &mut impl SamplingAlgorithm,
     state: &mut State,

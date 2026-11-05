@@ -61,7 +61,7 @@ pub fn run(seed: u64, sample_count: usize) -> keanu::Result<Posteriors> {
     })
 }
 
-/// The number of samples the Java example takes.
+/// The default number of samples (as many as Keanu's original example took).
 pub const DEFAULT_SAMPLES: usize = 100;
 
 #[allow(dead_code)]

@@ -12,7 +12,7 @@ use keanu_tensor::DoubleTensor;
 use std::collections::HashMap;
 use std::ops::ControlFlow;
 
-/// BOBYQA settings (Java's `BOBYQA` builder).
+/// BOBYQA settings.
 ///
 /// As in PRIMA, some settings that can't be used as given are adjusted rather than rejected, without warning (for
 /// n latent dimensions):
@@ -115,7 +115,7 @@ impl Bobyqa {
     }
 }
 
-/// Bounds on individual latents for the non-gradient optimizer (Java's `OptimizerBounds`). A bound is a scalar
+/// Bounds on individual latents for the non-gradient optimizer. A bound is a scalar
 /// (applied to every element) or a tensor shaped like the latent.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct OptimizerBounds {
@@ -148,7 +148,7 @@ impl OptimizerBounds {
 }
 
 /// Finds the latent values that maximize the log probability or log likelihood of a model without using
-/// gradients (Java's `NonGradientOptimizer`), with BOBYQA.
+/// gradients, with BOBYQA.
 ///
 /// BOBYQA works on the latents' constrained values ([`Space::Constrained`]): it is a bounded optimizer, so instead
 /// of transforming the latents it bounds each element of a latent with a lower or interval support (a scale, a

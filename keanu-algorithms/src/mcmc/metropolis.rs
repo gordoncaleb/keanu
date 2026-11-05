@@ -10,7 +10,7 @@ use keanu_graph::{Graph, Model, NodeId, State, Value, downstream_lambda_section}
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, PoisonError};
 
-/// Which latent nodes each Metropolis–Hastings step proposes new values for (Java's `MHStepVariableSelector`).
+/// Which latent nodes each Metropolis–Hastings step proposes new values for.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum VariableSelector {
@@ -31,15 +31,14 @@ impl VariableSelector {
     }
 }
 
-/// How a rejected proposal is undone (Java's `ProposalRejectionStrategy`).
+/// How a rejected proposal is undone.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum RejectionStrategy {
-    /// Snapshot every value the proposal can change and restore them (Java's `RollBackToCachedValuesOnRejection`).
+    /// Snapshot every value the proposal can change and restore them.
     #[default]
     RollbackToCachedValues,
-    /// Restore the proposed nodes' old values and recompute their deterministic descendants (Java's
-    /// `RollbackAndCascadeOnRejection`).
+    /// Restore the proposed nodes' old values and recompute their deterministic descendants.
     RollbackAndCascade,
 }
 
@@ -53,7 +52,7 @@ pub struct StepResult {
     pub log_prob: f64,
 }
 
-/// One Metropolis–Hastings step (Java's `MetropolisHastingsStep`).
+/// One Metropolis–Hastings step.
 #[derive(Debug)]
 pub struct MetropolisHastingsStep<'m> {
     model: &'m Model,
@@ -213,7 +212,7 @@ impl<'m> MetropolisHastingsStep<'m> {
     }
 }
 
-/// Metropolis–Hastings configuration (Java's `MetropolisHastings`). Defaults: prior proposals, one latent per
+/// Metropolis–Hastings configuration. Defaults: prior proposals, one latent per
 /// step and rollback to cached values. A configuration can be shared by many chains.
 ///
 /// Set it up with `MetropolisHastings::new().proposal(...).selector(...).rejection(...)`.
@@ -323,7 +322,7 @@ impl MetropolisHastings {
     }
 }
 
-/// A running Metropolis–Hastings chain (Java's `MetropolisHastingsSampler`).
+/// A running Metropolis–Hastings chain.
 pub struct MetropolisHastingsSampler<'m> {
     step: MetropolisHastingsStep<'m>,
     selector: VariableSelector,

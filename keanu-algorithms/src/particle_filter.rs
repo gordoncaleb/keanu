@@ -1,4 +1,4 @@
-//! A particle filter for finding probable states of a model (Java's `ParticleFilter`).
+//! A particle filter for finding probable states of a model.
 //!
 //! The model is considered one observation at a time, together with the latents that observation depends on
 //! (ordered so that observations with the fewest new latents come first). For each increment every particle samples
@@ -12,7 +12,7 @@ use keanu_distributions::KeanuRng;
 use keanu_graph::{Graph, Model, NodeId, State, Value, node_log_prob, upstream_lambda_section};
 use std::collections::{BTreeMap, BTreeSet};
 
-/// Particle filter settings. Defaults follow Java's `ParticleFilterBuilder`.
+/// Particle filter settings.
 #[derive(Debug, Clone, Copy, PartialEq)]
 #[non_exhaustive]
 pub struct ParticleFilter {
@@ -124,7 +124,7 @@ impl Particle {
 
 /// For each observed node, the latents it depends on that no earlier observation depends on, in the order the
 /// filter considers them: repeatedly the observation with the fewest remaining latent dependencies (ties broken
-/// by node id). Java's `LatentIncrementSort`.
+/// by node id).
 ///
 /// Only a count of remaining dependencies is kept per observation, so memory is linear in the size of the graph.
 /// An observation's remaining latents are found when it is chosen, by walking up from it and stopping at latents

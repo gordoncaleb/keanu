@@ -1,4 +1,4 @@
-//! Linear and logistic regression, and fitting models to data (Java's `model` package).
+//! Linear and logistic regression, and fitting models to data.
 //!
 //! ```
 //! use keanu_algorithms::regression::{RegressionModel, Regularization, coefficient_of_determination};
@@ -35,7 +35,7 @@ use keanu_graph::{DoubleVar, GraphBuilder, Model, NodeId, State, Value};
 use keanu_tensor::{BoolTensor, DoubleTensor, Element, Tensor};
 use std::sync::Arc;
 
-/// A model that makes predictions from inputs (Java's `PredictiveModel`).
+/// A model that makes predictions from inputs.
 pub trait PredictiveModel {
     /// The input type.
     type Input;
@@ -46,15 +46,15 @@ pub trait PredictiveModel {
     fn predict(&self, input: &Self::Input) -> Result<Self::Output>;
 }
 
-/// How to fit a model's latents to its observations (Java's `ModelFitter` implementations).
+/// How to fit a model's latents to its observations.
 #[derive(Debug, Clone)]
 #[non_exhaustive]
 pub enum Fitter {
-    /// Maximize the log likelihood of the observations (Java's `MaximumLikelihoodModelFitter`).
+    /// Maximize the log likelihood of the observations.
     MaxLikelihood(Algorithm),
-    /// Maximize the joint log probability (Java's `MAPModelFitter`).
+    /// Maximize the joint log probability.
     MaxAPosteriori(Algorithm),
-    /// Sample the posterior and set the latents to the most probable sample (Java's `SamplingModelFitter`).
+    /// Sample the posterior and set the latents to the most probable sample.
     Sampling(Box<SamplingFitting>),
 }
 
@@ -132,8 +132,7 @@ impl Fitter {
     }
 }
 
-/// The prior on the regression weights and intercept, and which fitter is used by default (Java's
-/// `RegressionRegularization`).
+/// The prior on the regression weights and intercept, and which fitter is used by default.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 #[non_exhaustive]
 pub enum Regularization {
@@ -247,7 +246,7 @@ fn as_matrix<T: Element>(data: &Tensor<T>) -> Result<Tensor<T>> {
     })
 }
 
-/// Configures a [`RegressionModel`] (Java's `RegressionModelBuilder`).
+/// Configures a [`RegressionModel`].
 #[derive(Debug, Clone)]
 pub struct RegressionBuilder<O: RegressionOutput> {
     inputs: DoubleTensor,
@@ -404,8 +403,8 @@ impl<O: RegressionOutput> RegressionBuilder<O> {
     }
 }
 
-/// A regression model: outputs depend on a linear combination of the inputs, `x · weights + intercept`
-/// (Java's `RegressionModel`). Linear regression observes `Gaussian(x · w + b, 1)`; logistic regression observes
+/// A regression model: outputs depend on a linear combination of the inputs, `x · weights + intercept`.
+/// Linear regression observes `Gaussian(x · w + b, 1)`; logistic regression observes
 /// `Bernoulli(sigmoid(x · w + b))`.
 ///
 /// Inputs are matrices of shape `[samples, features]`; a vector is taken to be samples of a single feature.

@@ -9,7 +9,7 @@ use keanu_graph::{
 };
 
 /// Samples from the prior by sampling each latent in topological order and recomputing the deterministic nodes
-/// in between (Java's `Forward` sampler).
+/// in between.
 ///
 /// Observations are kept as they are, so forward sampling only makes sense when no observation depends on a
 /// latent; that case is an error.

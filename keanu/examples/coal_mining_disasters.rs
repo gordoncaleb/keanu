@@ -55,7 +55,7 @@ pub fn run(seed: u64, sample_count: usize) -> keanu::Result<i64> {
     Ok(mode.to_scalar().unwrap())
 }
 
-/// The number of samples the Java example takes.
+/// The default number of samples (as many as Keanu's original example took).
 pub const DEFAULT_SAMPLES: usize = 500;
 
 #[allow(dead_code)]

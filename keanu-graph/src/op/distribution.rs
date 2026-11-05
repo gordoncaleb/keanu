@@ -169,8 +169,7 @@ pub enum DistributionKind {
     LinearGaussianStateSpace,
 }
 
-/// A user-defined distribution for a probabilistic node, the equivalent of implementing a custom probabilistic
-/// vertex in Java.
+/// A user-defined distribution for a probabilistic node.
 ///
 /// Only [`log_prob`](Self::log_prob) is required. Implement [`log_prob_gradient`](Self::log_prob_gradient) to use
 /// the node with gradient based algorithms (NUTS, gradient optimizers), and [`sample`](Self::sample) to sample it
@@ -527,8 +526,7 @@ macro_rules! distributions {
                 })
             }
 
-            /// The gradient of [`Self::log_prob`] with respect to `value` and each parameter, following the Java
-            /// vertices' `dLogProb`.
+            /// The gradient of [`Self::log_prob`] with respect to `value` and each parameter.
             pub(crate) fn log_prob_gradient(
                 &self,
                 value: &Value,

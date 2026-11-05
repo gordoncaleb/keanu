@@ -115,9 +115,8 @@ impl OptimizedResult {
     }
 }
 
-/// Finds the latent values that maximize the log probability or log likelihood of a model by gradient ascent
-/// (Java's `GradientOptimizer`). The default algorithm is [`Lbfgs`], in unconstrained space (see the
-/// [module documentation](self)).
+/// Finds the latent values that maximize the log probability or log likelihood of a model by gradient ascent.
+/// The default algorithm is [`Lbfgs`], in unconstrained space (see the [module documentation](self)).
 #[derive(Debug, Clone)]
 pub struct GradientOptimizer<'m> {
     model: &'m Model,

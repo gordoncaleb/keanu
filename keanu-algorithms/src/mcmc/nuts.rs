@@ -264,7 +264,7 @@ impl Default for Nuts {
     }
 }
 
-/// What NUTS recorded while sampling (Java's NUTS `Statistics`).
+/// What NUTS recorded while sampling.
 #[derive(Debug, Clone, Default, PartialEq)]
 #[non_exhaustive]
 pub struct NutsStatistics {
@@ -939,7 +939,7 @@ impl Integrator<'_, '_> {
         })
     }
 
-    /// Builds a subtree of 2^height leapfrog steps from `from` in `direction` (Java's `Tree.buildTree`).
+    /// Builds a subtree of 2^height leapfrog steps from `from` in `direction`.
     fn build(
         &self,
         state: &mut State,
@@ -989,7 +989,7 @@ impl Integrator<'_, '_> {
         Ok(tree)
     }
 
-    /// Doubles the trajectory in a random direction (Java's `Tree.grow`).
+    /// Doubles the trajectory in a random direction.
     fn grow(
         &self,
         state: &mut State,
@@ -1032,7 +1032,7 @@ impl Integrator<'_, '_> {
     }
 }
 
-/// A running NUTS chain (Java's `NUTSSampler`). It owns its adapted step size and potential.
+/// A running NUTS chain. It owns its adapted step size and potential.
 #[derive(Debug)]
 pub struct NutsSampler<'m> {
     param: Parameterisation<'m>,

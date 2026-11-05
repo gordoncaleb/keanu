@@ -1,5 +1,5 @@
 //! Sequences (plates): repeating a piece of model once per item, with proxies linking each item to the previous
-//! one. The equivalent of Java's `SequenceBuilder`, `SequenceItem` and `Sequence`.
+//! one.
 //!
 //! Nodes added to an item are labelled `[name.]Sequence_Item_<index>.<identifier>.<label>`, where the identifier
 //! numbers the sequences built with one [`GraphBuilder`] (1, 2, ...). A proxy for label `x` (labelled

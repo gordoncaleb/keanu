@@ -18,7 +18,7 @@
 //!
 //! (The hyperprior is truncated at a very large a + b, see [`MAX_LN_SIZE`], which changes nothing measurable.)
 //!
-//! In Java this needed custom probabilistic vertex classes. Run with `cargo run --example custom_distribution`.
+//! Run with `cargo run --example custom_distribution`.
 
 use keanu::prelude::*;
 use keanu::tensor::special::{digamma, ln_gamma};

@@ -1,4 +1,4 @@
-//! Node values and their propagation through a graph (Java's `VertexValuePropagation`).
+//! Node values and their propagation through a graph.
 
 use crate::error::{GraphError, Result};
 use crate::graph::{Graph, NodeId};
@@ -91,7 +91,7 @@ impl State {
         Ok(())
     }
 
-    /// Sets a node's value. Observed nodes keep their observed value (the call is ignored), as in Java.
+    /// Sets a node's value. Observed nodes keep their observed value (the call is ignored).
     pub fn set(&mut self, graph: &Graph, id: NodeId, value: impl Into<Value>) -> Result<()> {
         let value = value.into();
         self.check(graph, id, &value)?;
@@ -261,7 +261,7 @@ impl State {
         distribution.sample(&parents, rng)
     }
 
-    /// Java's `updateVertexValue`: sample a probabilistic node with no value, or recompute a deterministic one
+    /// Samples a probabilistic node with no value, or recomputes a deterministic one
     /// that isn't observed.
     fn update(&mut self, graph: &Graph, id: NodeId, rng: Option<&mut KeanuRng>) -> Result<()> {
         let node = &graph[id];
