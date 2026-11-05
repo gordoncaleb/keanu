@@ -278,9 +278,11 @@ impl GraphBuilder {
         self.try_distribution(kind, shape, parameters)
     }
 
-    /// Adds an unconnected proxy node of the given type and shape.
-    pub fn add_proxy(&self, dtype: DType, shape: &[usize]) -> NodeId {
-        self.proxy(dtype, shape)
+    /// Adds an unconnected proxy node of the given type and shape. Fails, adding nothing, if the shape has more
+    /// elements than any node may have.
+    pub fn add_proxy(&self, dtype: DType, shape: &[usize]) -> Result<NodeId> {
+        check_shape("proxy", shape)?;
+        Ok(self.proxy(dtype, shape))
     }
 
     /// Connects a proxy node to the (earlier) node it stands for.
@@ -423,7 +425,16 @@ impl GraphBuilder {
 
     // ----- proxies -----
 
-    fn proxy(&self, dtype: DType, shape: &[usize]) -> NodeId {
+    /// Adds an unconnected proxy node. If the shape has too many elements the error is recorded and a scalar proxy
+    /// is added instead so that building can continue.
+    pub(crate) fn proxy(&self, dtype: DType, shape: &[usize]) -> NodeId {
+        let shape = match check_shape("proxy", shape) {
+            Ok(()) => shape,
+            Err(e) => {
+                self.record(e);
+                &[]
+            }
+        };
         self.push(
             Node {
                 op: Op::Proxy,
@@ -794,6 +805,7 @@ impl GraphBuilder {
         let shape = self.with_types(parameters, |types| {
             DistributionOp::value_shape(&kind, shape, types)
         })?;
+        check_shape(kind.name(), &shape)?;
         Ok(self.push(
             Node {
                 op: Op::Distribution(DistributionOp {
@@ -824,6 +836,12 @@ impl GraphBuilder {
                 self.placeholder(dtype)
             })
     }
+}
+
+/// An error if a node of `shape` would have more elements than any node may have (see
+/// [`output_type`](crate::op::output_type), which applies the same cap to inferred shapes).
+fn check_shape(op: &'static str, shape: &[usize]) -> Result<()> {
+    crate::op::check_element_count(shape).map_err(|message| GraphError::InvalidNode { op, message })
 }
 
 /// A scan body is evaluated from its operations alone, so it can't hold observations or values set while building.

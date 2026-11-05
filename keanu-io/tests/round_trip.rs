@@ -391,9 +391,9 @@ fn op_cases() -> Vec<(String, Graph, State)> {
     // proxies: connected, and unconnected
     let b = GraphBuilder::new();
     let x = constant(&b, matrix());
-    let proxy = b.add_proxy(DType::F64, &[2, 3]);
+    let proxy = b.add_proxy(DType::F64, &[2, 3]).unwrap();
     b.connect_ids(proxy, x).unwrap();
-    b.add_proxy(DType::I64, &[4]);
+    b.add_proxy(DType::I64, &[4]).unwrap();
     let (graph, state) = b.build().unwrap();
     cases.push(("Proxy".into(), graph, state));
     cases.push(scan_case());

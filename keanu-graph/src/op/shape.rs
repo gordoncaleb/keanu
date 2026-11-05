@@ -24,14 +24,18 @@ pub(crate) fn element_count(shape: &[usize]) -> Option<usize> {
         .filter(|&n| n <= MAX_ELEMENTS)
 }
 
-fn check_elements(op: &Op, shape: &[usize]) -> Result<()> {
+/// An error message if a node of `shape` would have more than [`MAX_ELEMENTS`] elements.
+pub(crate) fn check_element_count(shape: &[usize]) -> std::result::Result<(), String> {
     match element_count(shape) {
         Some(_) => Ok(()),
-        None => Err(invalid(
-            op,
-            format!("the shape {shape:?} has too many elements (at most {MAX_ELEMENTS})"),
+        None => Err(format!(
+            "the shape {shape:?} has too many elements (at most {MAX_ELEMENTS})"
         )),
     }
+}
+
+fn check_elements(op: &Op, shape: &[usize]) -> Result<()> {
+    check_element_count(shape).map_err(|message| invalid(op, message))
 }
 
 fn square_batch(op: &Op, shape: &[usize]) -> Result<()> {

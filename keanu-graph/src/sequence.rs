@@ -235,7 +235,7 @@ impl<'b> SequenceItem<'b> {
     }
 
     fn proxy_for(&mut self, label: &str, dtype: DType, shape: &[usize]) -> NodeId {
-        let id = self.builder.add_proxy(dtype, shape);
+        let id = self.builder.proxy(dtype, shape);
         let proxy_label = proxy_label_for(label);
         self.add_id(&proxy_label, id);
         self.proxies.push((proxy_label, id));

@@ -17,7 +17,7 @@ pub use distribution::{
 pub(crate) use eval::eval;
 pub use nested::Nested;
 pub use scan::ScanBody;
-pub(crate) use shape::output_type;
+pub(crate) use shape::{check_element_count, output_type};
 
 use crate::error::Result;
 use crate::value::{DType, Value};

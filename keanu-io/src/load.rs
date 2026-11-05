@@ -279,7 +279,7 @@ fn add_node(builder: &GraphBuilder, op: &P, parents: &[NodeId]) -> Result<NodeId
         P::Assert(p) => Op::Assert(p.message.clone()),
         P::Proxy(p) => {
             let dtype: DType = decode(p.dtype)?;
-            let proxy = builder.add_proxy(dtype, &shape_of(&p.shape)?);
+            let proxy = builder.add_proxy(dtype, &shape_of(&p.shape)?)?;
             match parents {
                 [] => {}
                 [parent] => builder.connect_ids(proxy, *parent)?,

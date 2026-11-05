@@ -118,7 +118,7 @@ fn untyped_errors_are_returned_even_when_an_earlier_error_is_pending() {
         ),
         Err(GraphError::NotObservable(_))
     ));
-    let proxy = b.add_proxy(DType::F64, &[]);
+    let proxy = b.add_proxy(DType::F64, &[]).unwrap();
     assert!(matches!(
         b.connect_ids(proxy, a.id()),
         Err(GraphError::Proxy(_))
@@ -292,4 +292,30 @@ fn shapes_too_large_to_allocate_are_errors_not_panics() {
         keanu_graph::op::ScanBody::new(graph, 1 << 62, carry, vec![], vec![], out),
         Err(GraphError::InvalidNode { .. })
     ));
+}
+
+#[test]
+fn explicit_shapes_over_the_element_cap_are_errors() {
+    // [2^31, 2^31] has 2^62 elements: it fits in a usize but no value of that size can be allocated, so the builder
+    // rejects it as it does inferred shapes
+    let huge = [1usize << 31, 1 << 31];
+    let b = GraphBuilder::new();
+    let mu = b.scalar(0.0).id();
+    let sigma = b.scalar(1.0).id();
+    assert!(matches!(
+        b.add_distribution(DistributionKind::Gaussian, Some(&huge), &[mu, sigma]),
+        Err(GraphError::InvalidNode { .. })
+    ));
+    assert!(matches!(
+        b.add_proxy(DType::F64, &huge),
+        Err(GraphError::InvalidNode { .. })
+    ));
+    // on error nothing is added, and shapes under the cap are still accepted
+    assert_eq!(b.node_count(), 2);
+    assert!(b.add_proxy(DType::F64, &[2, 3]).is_ok());
+    assert!(b.build().is_ok());
+    // the typed proxies record the error for build
+    let b = GraphBuilder::new();
+    let _ = b.double_proxy(&huge);
+    assert!(matches!(b.build(), Err(GraphError::InvalidNode { .. })));
 }
