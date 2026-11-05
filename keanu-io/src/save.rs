@@ -183,6 +183,20 @@ fn save_op(graph: &Graph, id: NodeId) -> Result<P> {
             constants: body.constants().iter().map(|&c| index(c)).collect(),
             output: index(body.output()),
         }),
+        Op::Ode(body) => {
+            let options = body.options();
+            P::Ode(proto::Ode {
+                body: Some(save_graph(body.graph(), None)?),
+                time: index(body.time()),
+                state: index(body.state()),
+                parameters: body.parameters().iter().map(|&p| index(p)).collect(),
+                output: index(body.output()),
+                solver: encode(&options.solver)?,
+                rtol: options.rtol,
+                atol: options.atol,
+                max_steps: options.max_steps as u64,
+            })
+        }
         Op::Factor => P::Factor(empty()),
         Op::LogDensity(kind) => P::LogDensity(proto::LogDensity {
             kind: Some(
@@ -199,7 +213,7 @@ fn index(id: NodeId) -> u32 {
     id.index() as u32
 }
 
-/// The saved form of a graph and, with a state, its values. A scan body is saved without values.
+/// The saved form of a graph and, with a state, its values. A scan or ODE body is saved without values.
 fn save_graph(graph: &Graph, state: Option<&State>) -> Result<proto::Graph> {
     if u32::try_from(graph.len()).is_err() {
         return Err(IoError::NotSaveable(format!(

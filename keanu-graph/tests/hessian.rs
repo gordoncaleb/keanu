@@ -545,6 +545,20 @@ fn general_cases() -> Vec<Case> {
             Expect::NoRule("my_lambda"),
         ),
         (
+            "an ODE, which has no second-order rule",
+            |b| {
+                let k = latent(b, DoubleTensor::scalar(0.5));
+                let y0 = b.constant(DoubleTensor::vector(vec![1.0]));
+                let times = b.constant(DoubleTensor::vector(vec![1.0, 2.0]));
+                let options = keanu_graph::ode::OdeOptions::default();
+                let y = b.ode(y0, times, b.scalar(0.0), &[k], options, |_, _, y, p| {
+                    -(p[0] * y)
+                });
+                observe(b, y);
+            },
+            Expect::NoRule("the ODE op"),
+        ),
+        (
             "a Gaussian in its value, mu and sigma",
             |b| {
                 let mu = latent(b, DoubleTensor::scalar(0.3));

@@ -555,6 +555,12 @@ fn vjp_tangent(
             }
             other => other,
         })?,
+        Op::Ode(_) => {
+            return Err(GraphError::NoSecondOrderRule(format!(
+                "the ODE op (node {})",
+                graph.describe(id)
+            )));
+        }
         Op::Lambda(lambda) => {
             return Err(GraphError::NoSecondOrderRule(format!(
                 "the lambda {:?} (node {})",

@@ -409,7 +409,50 @@ fn op_cases() -> Vec<(String, Graph, State)> {
     let (graph, state) = b.build().unwrap();
     cases.push(("Proxy".into(), graph, state));
     cases.push(scan_case());
+    cases.push(ode_case());
     cases
+}
+
+/// ODEs: Lotka–Volterra with the stiff solver and its own tolerances and a labelled body node, and a decay with
+/// the default options, a matrix parameter and no output times.
+fn ode_case() -> (String, Graph, State) {
+    use keanu_graph::ode::{OdeOptions, OdeSolver};
+    let b = GraphBuilder::new();
+    let theta = b.constant(DoubleTensor::vector(vec![1.0, 0.5, 0.75, 0.25]));
+    let times = b.constant(DoubleTensor::vector(vec![0.5, 1.0, 2.0]));
+    let y0 = b.constant(DoubleTensor::vector(vec![2.0, 1.0]));
+    let options = OdeOptions::new(OdeSolver::Stiff)
+        .with_tolerances(1e-8, 1e-9)
+        .with_max_steps(5000);
+    let lv = b.ode(
+        y0,
+        times,
+        b.scalar(0.0),
+        &[theta],
+        options,
+        |body, _t, y, p| {
+            let (prey, predator) = (y.take(&[0]), y.take(&[1]));
+            let p = |i: usize| p[0].take(&[i]);
+            let growth = (p(0) * prey - p(1) * prey * predator).label("growth");
+            body.stack(0, &[growth, p(2) * prey * predator - p(3) * predator])
+        },
+    );
+    b.set_label_of(lv.id(), "lv").unwrap();
+    let rates = b.constant(DoubleTensor::new(&[2, 2], vec![-1.0, 0.0, 0.5, -2.0]).unwrap());
+    b.ode(
+        y0,
+        b.constant(DoubleTensor::vector(vec![])),
+        b.scalar(-1.0),
+        &[rates],
+        OdeOptions::default(),
+        |_, t, y, p| p[0].matmul(y.reshape(&[2, 1])).reshape(&[2]) * t.cos(),
+    );
+    let (graph, mut state) = b.build().unwrap();
+    let all: Vec<NodeId> = graph.ids().collect();
+    state
+        .lazy_eval(&graph, &all, &mut KeanuRng::seed_from_u64(0))
+        .unwrap();
+    ("Ode".into(), graph, state)
 }
 
 /// Scans: one with per-step inputs, constants and a labelled body holding a nested scan, and one of zero steps.
@@ -709,6 +752,7 @@ fn every_operation_round_trips() {
         "proxy",
         "assert",
         "scan",
+        "ode",
         "factor",
         "log_density",
     ];

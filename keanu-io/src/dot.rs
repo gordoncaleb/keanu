@@ -1,7 +1,7 @@
 //! Graphviz DOT export.
 
 use crate::Metadata;
-use keanu_graph::op::{BinaryOp, DistributionKind, LogicOp, Op, ScanBody};
+use keanu_graph::op::{BinaryOp, DistributionKind, LogicOp, OdeBody, Op, ScanBody};
 use keanu_graph::{Graph, NodeId, State, Value};
 use std::fmt::Write;
 
@@ -48,9 +48,9 @@ fn scalar_value(value: &Value) -> Option<String> {
 }
 
 /// A Graphviz DOT description of the graph. With `state`, scalar values are shown in the node labels; constants
-/// always show their scalar value. Distribution edges are labelled with the parameter names. A scan's body is drawn
-/// as a cluster subgraph (nodes named `"<scan>.<body node>"`, recursively for nested scans), with a dashed edge from
-/// the body's output to the scan node.
+/// always show their scalar value. Distribution edges are labelled with the parameter names. A scan's or ODE's body
+/// is drawn as a cluster subgraph (nodes named `"<scan>.<body node>"`, recursively for nested bodies), with a dashed
+/// edge from the body's output to the scan or ODE node.
 pub fn to_dot(graph: &Graph, state: Option<&State>, metadata: &Metadata) -> String {
     let mut out = String::from("digraph BayesianNetwork {\n");
     if !metadata.is_empty() {
@@ -74,26 +74,48 @@ fn dot_id(prefix: &str, id: NodeId, edge: bool) -> String {
     }
 }
 
-/// The role of a scan body's input node: `carry`, `xs[i]` or `constants[i]`.
-fn input_name(body: &ScanBody, id: NodeId) -> Option<String> {
-    if id == body.carry() {
-        return Some("carry".into());
-    }
-    if let Some(i) = body.xs().iter().position(|&x| x == id) {
-        return Some(format!("xs[{i}]"));
-    }
-    let i = body.constants().iter().position(|&c| c == id)?;
-    Some(format!("constants[{i}]"))
+/// A nested body: a scan's or an ODE's.
+#[derive(Clone, Copy)]
+enum Body<'a> {
+    Scan(&'a ScanBody),
+    Ode(&'a OdeBody),
 }
 
-/// Writes a graph's edges, node labels and scan body clusters, naming its nodes with `prefix`. In a scan body
-/// (`scan`), the inputs are labelled by their role.
+/// The role of a body's input node: `carry`, `xs[i]` or `constants[i]` in a scan, `t`, `y` or `parameters[i]` in
+/// an ODE.
+fn input_name(body: Body<'_>, id: NodeId) -> Option<String> {
+    match body {
+        Body::Scan(body) => {
+            if id == body.carry() {
+                return Some("carry".into());
+            }
+            if let Some(i) = body.xs().iter().position(|&x| x == id) {
+                return Some(format!("xs[{i}]"));
+            }
+            let i = body.constants().iter().position(|&c| c == id)?;
+            Some(format!("constants[{i}]"))
+        }
+        Body::Ode(body) => {
+            if id == body.time() {
+                return Some("t".into());
+            }
+            if id == body.state() {
+                return Some("y".into());
+            }
+            let i = body.parameters().iter().position(|&p| p == id)?;
+            Some(format!("parameters[{i}]"))
+        }
+    }
+}
+
+/// Writes a graph's edges, node labels and scan and ODE body clusters, naming its nodes with `prefix`. In a body
+/// (`body`), the inputs are labelled by their role.
 fn write_graph(
     out: &mut String,
     graph: &Graph,
     state: Option<&State>,
     prefix: &str,
-    scan: Option<&ScanBody>,
+    body: Option<Body<'_>>,
 ) {
     for child in graph.ids() {
         let node = &graph[child];
@@ -120,29 +142,36 @@ fn write_graph(
             "{}[label=\"{}\"]",
             dot_id(prefix, id, false),
             escape(
-                &scan
-                    .and_then(|s| input_name(s, id))
+                &body
+                    .and_then(|b| input_name(b, id))
                     .unwrap_or_else(|| node_label(graph, state, id))
             )
         );
     }
     for id in graph.ids() {
-        if let Op::Scan(body) = graph[id].op() {
-            let inner = format!("{prefix}{}.", id.index());
-            let _ = writeln!(
-                out,
-                "subgraph \"cluster_{inner}\" {{\nlabel=\"scan body ({} steps)\"",
-                body.length()
-            );
-            write_graph(out, body.graph(), None, &inner, Some(body));
-            out.push_str("}\n");
-            let _ = writeln!(
-                out,
-                "{} -> {} [style=dashed]",
-                dot_id(&inner, body.output(), true),
-                dot_id(prefix, id, true)
-            );
-        }
+        let (body, title, output) = match graph[id].op() {
+            Op::Scan(body) => (
+                body.graph(),
+                format!("scan body ({} steps)", body.length()),
+                (Body::Scan(body), body.output()),
+            ),
+            Op::Ode(body) => (
+                body.graph(),
+                "ODE body (dy/dt)".to_owned(),
+                (Body::Ode(body), body.output()),
+            ),
+            _ => continue,
+        };
+        let inner = format!("{prefix}{}.", id.index());
+        let _ = writeln!(out, "subgraph \"cluster_{inner}\" {{\nlabel=\"{title}\"");
+        write_graph(out, body, None, &inner, Some(output.0));
+        out.push_str("}\n");
+        let _ = writeln!(
+            out,
+            "{} -> {} [style=dashed]",
+            dot_id(&inner, output.1, true),
+            dot_id(prefix, id, true)
+        );
     }
 }
 

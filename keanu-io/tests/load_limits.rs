@@ -72,6 +72,24 @@ fn a_scan_doing_too_much_work_is_rejected() {
 }
 
 #[test]
+fn an_ode_with_too_high_a_step_limit_is_rejected() {
+    let ode = |max_steps: usize| {
+        file(|b| {
+            let y0 = b.constant(keanu_tensor::DoubleTensor::vector(vec![1.0]));
+            let times = b.constant(keanu_tensor::DoubleTensor::vector(vec![1.0]));
+            let options = keanu_graph::ode::OdeOptions::default().with_max_steps(max_steps);
+            b.ode(y0, times, b.scalar(0.0), &[], options, |_, _, y, _| -y);
+        })
+    };
+    assert!(load_protobuf(&ode(10_000_000)).is_ok());
+    let bytes = ode(10_000_001);
+    assert!(rejected(load_protobuf(&bytes)));
+    let mut options = LoadOptions::default();
+    options.max_ode_steps = usize::MAX;
+    assert!(load_protobuf_with(&bytes, &options).is_ok());
+}
+
+#[test]
 fn nodes_with_too_many_elements_are_rejected() {
     // a broadcast to [2^32] (32 GiB) is within the hard cap but over the default per-node limit of 2^31 elements
     let bytes = file(|b| {

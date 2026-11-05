@@ -324,23 +324,32 @@ impl Model {
         attempts: usize,
         rng: &mut keanu_distributions::KeanuRng,
     ) -> Result<()> {
+        // an evaluation that fails at an impossible point (a failed ODE solve) leaves the state impossible
+        let possible = |evaluated: Result<()>| -> Result<bool> {
+            match evaluated {
+                Err(e) if e.is_impossible_point() => Ok(false),
+                Err(e) => Err(e),
+                Ok(()) => Ok(true),
+            }
+        };
         let impossible = |state: &State| -> Result<bool> {
             let log_prob = self.log_prob(state)?;
             Ok(log_prob == f64::NEG_INFINITY || log_prob.is_nan())
         };
         // sample any latent without a value from its prior, and compute the deterministic nodes
         let all: Vec<NodeId> = (0..self.graph.len()).map(NodeId::from_index).collect();
-        state.lazy_eval(&self.graph, &all, rng)?;
+        let mut evaluated = possible(state.lazy_eval(&self.graph, &all, rng))?;
         let mut attempt = 0;
-        while impossible(state)? {
+        while !evaluated || impossible(state)? {
             if attempt == attempts {
                 return Err(GraphError::InvalidValue(format!(
                     "failed to find a state with non-zero probability in {attempts} attempts"
                 )));
             }
+            evaluated = true;
             for &latent in &self.latents {
                 let value = state.sample_prior(&self.graph, latent, rng)?;
-                state.set_and_cascade(&self.graph, latent, value)?;
+                evaluated &= possible(state.set_and_cascade(&self.graph, latent, value))?;
             }
             attempt += 1;
         }
@@ -349,7 +358,9 @@ impl Model {
 
     /// Applies a proposal (new values for some latents, cascading to their deterministic descendants) and returns
     /// the new joint log probability, computed incrementally from `log_prob_before` (the log probability before
-    /// the proposal) by recomputing only the affected nodes.
+    /// the proposal) by recomputing only the affected nodes. A proposal whose cascade fails at an impossible point
+    /// ([`GraphError::is_impossible_point`], such as a failed ODE solve) gives −∞; the state's deterministic values
+    /// are then incomplete until the latents are set again (as rejecting the proposal does).
     pub fn log_prob_after(
         &self,
         state: &mut State,
@@ -359,7 +370,10 @@ impl Model {
         let ids: Vec<NodeId> = proposal.iter().map(|(id, _)| *id).collect();
         let affected = self.affected_by(&ids)?;
         let before = self.log_prob_of(state, &affected)?;
-        self.set_and_cascade(state, proposal.iter().cloned())?;
+        match self.set_and_cascade(state, proposal.iter().cloned()) {
+            Err(e) if e.is_impossible_point() => return Ok(f64::NEG_INFINITY),
+            result => result?,
+        }
         let after = self.log_prob_of(state, &affected)?;
         if !(before.is_finite() && after.is_finite() && log_prob_before.is_finite()) {
             // an impossible state on either side can't be updated incrementally
@@ -370,7 +384,8 @@ impl Model {
 
     /// The joint log probability and, unless it is impossible (-∞), its gradient with respect to each continuous
     /// latent: exactly [`Self::log_prob`] and [`Self::log_prob_gradient`], in one pass that evaluates each node's
-    /// distribution once (for gradient based samplers, which need both at every step).
+    /// distribution once (for gradient based samplers, which need both at every step). A gradient that fails at an
+    /// impossible point ([`GraphError::is_impossible_point`]) gives (−∞, None).
     pub fn log_prob_and_gradient(&self, state: &State) -> Result<(f64, Option<LogProbGradient>)> {
         self.log_prob_and_gradient_of(state, &self.continuous)
     }
@@ -412,12 +427,15 @@ impl Model {
                 return Ok((f64::NEG_INFINITY, None));
             }
         }
-        let joint = crate::logprob::log_prob_and_gradient(
+        let joint = match crate::logprob::log_prob_and_gradient(
             &self.graph,
             state,
             &self.probabilistic_joint,
             wrt,
-        )?;
+        ) {
+            Err(e) if e.is_impossible_point() => return Ok((f64::NEG_INFINITY, None)),
+            joint => joint?,
+        };
         Ok(match joint {
             Some((log_prob, gradient)) => (log_prob, Some(gradient)),
             None => (f64::NEG_INFINITY, None),

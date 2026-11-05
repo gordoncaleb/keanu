@@ -96,6 +96,7 @@ pub fn is_differentiable(graph: &Graph, id: NodeId) -> bool {
             | Op::LogSoftmax { .. }
             | Op::Cumulative { .. }
             | Op::Scan(_)
+            | Op::Ode(_)
             | Op::Factor
             | Op::LogDensity(_) => true,
             Op::Reshape(_)
@@ -1561,6 +1562,7 @@ fn jvp(
             Some(scale(t0, &not_nan_mask(parents)?)?)
         }
         Op::Scan(body) => body.jvp(parents, y, t, b)?,
+        Op::Ode(body) => body.jvp(parents, y, t, b)?,
         // the sum of every element
         Op::Factor => t[0].map(|t0| reduce_to(t0.clone(), &[])).transpose()?,
         Op::LogDensity(kind) => crate::op::log_density::jvp(kind, parents, t, b, &out_shape)?,
@@ -1888,6 +1890,15 @@ fn vjp(
         }
         Op::ReplaceNan(_) => vec![Some(g.mul(&not_nan_mask(parents)?)?)],
         Op::Scan(body) => body.vjp(parents, y, g, b)?,
+        Op::Ode(body) => {
+            // constants never lead to a latent, so their sensitivities aren't integrated
+            let needed: SmallVec<[bool; 8]> = node
+                .parents
+                .iter()
+                .map(|&p| is_differentiable(graph, p) && !matches!(graph[p].op, Op::Constant(_)))
+                .collect();
+            body.vjp(parents, y, g, b, &needed)?
+        }
         Op::Factor => vec![Some(fit(g.clone(), b, parents[0].shape())?)],
         Op::LogDensity(kind) => crate::op::log_density::vjp(kind, parents, g, &out_shape)?,
         Op::Lambda(lambda) => {

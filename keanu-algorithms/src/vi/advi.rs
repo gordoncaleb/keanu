@@ -468,9 +468,7 @@ impl Target<'_, '_> {
         let mut sum = 0.0;
         for _ in 0..samples {
             let (_, zeta) = q.draw(rng);
-            self.param.to_state(&zeta, self.state)?;
-            let log_prob =
-                self.param.model().log_prob(self.state)? + self.param.log_det_jacobian(&zeta)?;
+            let log_prob = self.param.log_prob(&zeta, true, self.state)?;
             if !log_prob.is_finite() {
                 return Ok(f64::NEG_INFINITY);
             }

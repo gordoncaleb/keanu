@@ -837,7 +837,7 @@ impl GraphBuilder {
         let body = inner
             .build()
             .and_then(|(graph, state)| {
-                check_body_state(&graph, &state)?;
+                check_body_state("scan", &graph, &state)?;
                 crate::op::ScanBody::new(graph, length, carry, step_inputs, constant_inputs, output)
             })
             .map_err(|e| match e {
@@ -862,6 +862,107 @@ impl GraphBuilder {
         DoubleVar::new(
             self,
             self.add(Op::Scan(Arc::new(body)), &parents, DType::F64),
+        )
+    }
+
+    /// The solution of the ordinary differential equation dy/dt = f(t, y, θ), y(t0) = y0, at each of the output
+    /// `times`: an f64 node of shape `[T, n]` whose row i is y(tᵢ), for tᵢ the i-th output time.
+    ///
+    /// `y0` is the initial state, a vector of n elements; `times` a vector of T output times, which must be finite,
+    /// strictly increasing and after `t0` (a scalar) whenever the node is evaluated; and `parameters` the values θ
+    /// that f depends on, of any shapes. `rhs` builds f on a fresh builder, given placeholders for the time (a
+    /// scalar), the state (`[n]`) and each parameter, and returns dy/dt, which must have the state's shape. As for
+    /// [`scan`](Self::scan), the body is deterministic and sees only its placeholders: pass outer values in as
+    /// parameters.
+    ///
+    /// `options` choose the solver ([`OdeSolver::Rk45`](crate::ode::OdeSolver::Rk45) for non-stiff problems,
+    /// [`OdeSolver::Stiff`](crate::ode::OdeSolver::Stiff) for stiff ones), the tolerances and the step limit (see
+    /// [`OdeOptions`](crate::ode::OdeOptions); the defaults are Stan's). A solve that fails at some parameter values
+    /// evaluates to [`GraphError::SolverFailed`], which models and inference algorithms treat as an impossible
+    /// point.
+    ///
+    /// The node is differentiable to first order in `y0`, `times`, `t0` and `parameters`, by forward sensitivities:
+    /// a gradient integrates n·(1 + p) equations, for p the number of elements of the parents (other than the times
+    /// and constants) it is taken through. It has no second-order rule, so Hessian-vector products (and the Laplace
+    /// approximation) fail with [`GraphError::NoSecondOrderRule`].
+    ///
+    /// ```
+    /// use keanu_graph::GraphBuilder;
+    /// use keanu_graph::ode::OdeOptions;
+    /// use keanu_tensor::DoubleTensor;
+    ///
+    /// // exponential decay dy/dt = -k y
+    /// let b = GraphBuilder::new();
+    /// let k = b.scalar(0.5);
+    /// let times = b.constant(DoubleTensor::vector(vec![1.0, 2.0]));
+    /// let y = b.ode(b.constant(DoubleTensor::vector(vec![3.0])), times, b.scalar(0.0), &[k], OdeOptions::default(),
+    ///     |_, _t, y, theta| -(theta[0] * y));
+    /// assert_eq!(y.shape(), vec![2, 1]);
+    /// let y = y.id();
+    /// let (graph, mut state) = b.build()?;
+    /// state.eval(&graph, &[y], &mut keanu_distributions::KeanuRng::seed_from_u64(0))?;
+    /// let solution = state.f64(y).unwrap().as_slice();
+    /// assert!((solution[1] - 3.0 * (-1.0f64).exp()).abs() < 1e-5);
+    /// # Ok::<(), keanu_graph::GraphError>(())
+    /// ```
+    pub fn ode<'b, F>(
+        &'b self,
+        y0: DoubleVar<'b>,
+        times: DoubleVar<'b>,
+        t0: DoubleVar<'b>,
+        parameters: &[DoubleVar<'b>],
+        options: crate::ode::OdeOptions,
+        rhs: F,
+    ) -> DoubleVar<'b>
+    where
+        F: for<'s> FnOnce(
+            &'s GraphBuilder,
+            DoubleVar<'s>,
+            DoubleVar<'s>,
+            &[DoubleVar<'s>],
+        ) -> DoubleVar<'s>,
+    {
+        let (y0, times, t0) = (self.own(y0), self.own(times), self.own(t0));
+        let parameters: Vec<DoubleVar<'b>> = parameters.iter().map(|&p| self.own(p)).collect();
+        let shape = |v: DoubleVar<'b>| self.dtype_shape(v.id()).1;
+        let inner = GraphBuilder::new();
+        let time = inner.double_proxy(&[]);
+        let state = inner.double_proxy(&shape(y0));
+        let parameter_inputs: Vec<DoubleVar<'_>> = parameters
+            .iter()
+            .map(|&p| inner.double_proxy(&shape(p)))
+            .collect();
+        let output = inner.own(rhs(&inner, time, state, &parameter_inputs));
+        let (time, state, output) = (time.id(), state.id(), output.id());
+        let parameter_inputs: Vec<NodeId> = parameter_inputs.iter().map(|v| v.id()).collect();
+        let body = inner
+            .build()
+            .and_then(|(graph, body_state)| {
+                check_body_state("ode", &graph, &body_state)?;
+                crate::op::OdeBody::new(graph, time, state, parameter_inputs, output, options)
+            })
+            .map_err(|e| match e {
+                e @ GraphError::InvalidNode { op: "ode", .. } => e,
+                e => GraphError::InvalidNode {
+                    op: "ode",
+                    message: format!("in the body: {e}"),
+                },
+            });
+        let body = match body {
+            Ok(body) => body,
+            Err(e) => {
+                self.record(e);
+                return DoubleVar::new(self, self.placeholder(DType::F64));
+            }
+        };
+        let parents: Vec<NodeId> = [y0, times, t0]
+            .into_iter()
+            .chain(parameters)
+            .map(|v| v.id())
+            .collect();
+        DoubleVar::new(
+            self,
+            self.add(Op::Ode(Arc::new(body)), &parents, DType::F64),
         )
     }
 
@@ -918,8 +1019,9 @@ fn check_shape(op: &'static str, shape: &[usize]) -> Result<()> {
     crate::op::check_element_count(shape).map_err(|message| GraphError::InvalidNode { op, message })
 }
 
-/// A scan body is evaluated from its operations alone, so it can't hold observations or values set while building.
-fn check_body_state(graph: &Graph, state: &State) -> Result<()> {
+/// A scan or ODE body is evaluated from its operations alone, so it can't hold observations or values set while
+/// building.
+fn check_body_state(op: &'static str, graph: &Graph, state: &State) -> Result<()> {
     for id in graph.ids() {
         let unchanged = match (&graph[id].op, state.value(id)) {
             _ if state.is_observed(id) => false,
@@ -928,9 +1030,9 @@ fn check_body_state(graph: &Graph, state: &State) -> Result<()> {
         };
         if !unchanged {
             return Err(GraphError::InvalidNode {
-                op: "scan",
+                op,
                 message: format!(
-                    "the body's node {id:?} is observed or has a value set: scan bodies are computed from \
+                    "the body's node {id:?} is observed or has a value set: {op} bodies are computed from \
                      their inputs alone"
                 ),
             });

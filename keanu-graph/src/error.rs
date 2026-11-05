@@ -1,4 +1,5 @@
 use crate::graph::NodeId;
+use crate::ode::SolverFailed;
 use keanu_distributions::DistributionError;
 use keanu_tensor::TensorError;
 use std::fmt;
@@ -69,6 +70,21 @@ pub enum GraphError {
         /// Why, completing a sentence whose subject is the node.
         reason: String,
     },
+    /// An ODE solve (see [`Op::Ode`](crate::op::Op::Ode)) could not be completed at these values: the step limit
+    /// was reached, the step size underflowed or the state became non-finite. The model has no usable value there,
+    /// so models and inference algorithms treat it as an impossible point (see [`Self::is_impossible_point`]).
+    SolverFailed(SolverFailed),
+}
+
+impl GraphError {
+    /// True for errors that mean a point has zero probability rather than that the model or its use is wrong:
+    /// [`Self::SolverFailed`]. [`Model`](crate::Model)'s log probability methods,
+    /// [`Parameterisation::log_prob_and_gradient`](crate::Parameterisation::log_prob_and_gradient) and the inference
+    /// algorithms give −∞ for such points (a rejected proposal, a divergent NUTS trajectory, a rejected optimizer
+    /// step) instead of failing.
+    pub fn is_impossible_point(&self) -> bool {
+        matches!(self, Self::SolverFailed(_))
+    }
 }
 
 impl fmt::Display for GraphError {
@@ -111,6 +127,7 @@ impl fmt::Display for GraphError {
                 node,
                 reason,
             } => write!(f, "cannot marginalise {latent}: {node} {reason}"),
+            Self::SolverFailed(failed) => write!(f, "{failed}"),
         }
     }
 }

@@ -8,6 +8,7 @@ mod hmm;
 pub(crate) mod log_density;
 mod mixture;
 mod nested;
+mod ode;
 mod scan;
 mod shape;
 mod wrappers;
@@ -18,6 +19,7 @@ pub use distribution::{
 };
 pub(crate) use eval::eval;
 pub use nested::Nested;
+pub use ode::OdeBody;
 pub use scan::ScanBody;
 pub(crate) use shape::{check_element_count, output_type};
 
@@ -473,6 +475,15 @@ pub enum Op {
     /// threading the carry (starting at `init`) through the steps, and stacks the carries each step outputs, shape
     /// `[length, carry shape...]`. See [`ScanBody`].
     Scan(Arc<ScanBody>),
+    /// Parents: `y0` (`[n]`), `times` (`[T]`), `t0` (scalar), `parameters...`, f64 -> the solution of the ODE
+    /// dy/dt = f(t, y, parameters) with y(t0) = y0 at each output time, shape `[T, n]`, where f is the body graph.
+    /// The times must be finite, strictly increasing and after `t0` whenever the node is evaluated. A solve that
+    /// fails (the step limit, a step size underflow or a non-finite state) is [`GraphError::SolverFailed`], which
+    /// models treat as an impossible point. Differentiable to first order by forward sensitivities in every parent;
+    /// it has no second-order rule. See [`OdeBody`] and [`GraphBuilder::ode`](crate::GraphBuilder::ode).
+    ///
+    /// [`GraphError::SolverFailed`]: crate::GraphError::SolverFailed
+    Ode(Arc<OdeBody>),
     /// Parents: `expr`, f64 -> the scalar sum of `expr`, which the joint log probability includes as a term (like
     /// PyMC's `Potential` or Stan's `target +=`). See [`GraphBuilder::factor`](crate::GraphBuilder::factor).
     Factor,
@@ -561,6 +572,7 @@ op_names! {
     Op::Assert(_) => "assert",
     Op::Distribution(_) => "distribution",
     Op::Scan(_) => "scan",
+    Op::Ode(_) => "ode",
     Op::Factor => "factor",
     Op::LogDensity(_) => "log_density",
 }

@@ -58,8 +58,8 @@ pub(crate) fn sample_approximation(
     let mut samples = NetworkSamples::new(model.graph(), nodes)?;
     for _ in 0..count {
         let z = draw();
-        param.to_state(&z, state)?;
-        let log_prob = model.log_prob(state)?;
+        // a draw where the model can't be evaluated (a failed ODE solve) is recorded as impossible
+        let log_prob = param.log_prob(&z, false, state)?;
         samples.record(state, log_prob)?;
     }
     Ok(samples)

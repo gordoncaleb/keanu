@@ -328,10 +328,29 @@ impl Elements {
     }
 }
 
-/// Sets a latent's value and recomputes its deterministic descendants.
-fn set(model: &Model, state: &mut State, id: NodeId, value: Value) -> Result<()> {
-    model.set_and_cascade(state, [(id, value)])?;
-    Ok(())
+/// Sets a latent's value and recomputes its deterministic descendants. False if the cascade failed at an
+/// impossible point (such as a failed ODE solve), where the value has zero probability.
+fn set(model: &Model, state: &mut State, id: NodeId, value: Value) -> Result<bool> {
+    match model.set_and_cascade(state, [(id, value)]) {
+        Ok(()) => Ok(true),
+        Err(e) if e.is_impossible_point() => Ok(false),
+        Err(e) => Err(e.into()),
+    }
+}
+
+/// The local log probability after setting a latent's value: −∞ where the cascade fails at an impossible point.
+fn local_after(
+    model: &Model,
+    state: &mut State,
+    id: NodeId,
+    value: Value,
+    affected: &[NodeId],
+) -> Result<f64> {
+    Ok(if set(model, state, id, value)? {
+        model.local_log_prob(state, affected)?
+    } else {
+        f64::NEG_INFINITY
+    })
 }
 
 /// The joint log probability after a change of `delta` in the local log probability: exact when both sides are
@@ -382,9 +401,14 @@ impl GibbsSampler<'_> {
                     let lp = if x == current {
                         local
                     } else {
-                        set(self.model, state, target.id, elements.with(i, x)?)?;
                         in_state = x;
-                        self.model.local_log_prob(state, &target.affected)?
+                        local_after(
+                            self.model,
+                            state,
+                            target.id,
+                            elements.with(i, x)?,
+                            &target.affected,
+                        )?
                     };
                     weights.push(lp);
                 }
@@ -625,8 +649,8 @@ impl DiscreteMetropolisSampler<'_> {
                     continue;
                 };
                 let before = self.model.local_log_prob(state, affected)?;
-                set(self.model, state, id, elements.with(i, proposed)?)?;
-                let after = self.model.local_log_prob(state, affected)?;
+                let after =
+                    local_after(self.model, state, id, elements.with(i, proposed)?, affected)?;
                 let accept = !is_impossible(after)
                     && (is_impossible(before) || rng.next_f64().ln() < after - before);
                 if accept {

@@ -96,6 +96,7 @@ message Node {
     // The matrix exponential of each square matrix.
     Empty matrix_exp = 66;
     Scan scan = 100;
+    Ode ode = 101;
   }
 }
 
@@ -410,6 +411,37 @@ message Scan {
   repeated uint32 constants = 5;
   // The body's output.
   uint32 output = 6;
+}
+
+// An ODE solution: dy/dt = f(t, y, parameters) with y(t0) = y0, at each output time. Its parents are the initial
+// state y0 ([n]), the output times ([T]), the initial time t0 (a scalar), then one per `parameters` entry, and its
+// value has shape [T, n]. The body is a nested graph, deterministic and without stored values, whose inputs are
+// unconnected f64 proxies: the time (a scalar), the state ([n]) and each parameter. Its `output` node is dy/dt ([n]).
+message Ode {
+  Graph body = 1;
+  // The body's time input.
+  uint32 time = 2;
+  // The body's state input.
+  uint32 state = 3;
+  // The body's parameter inputs.
+  repeated uint32 parameters = 4;
+  // The body's output, dy/dt.
+  uint32 output = 5;
+  OdeSolver solver = 6;
+  // The relative and absolute tolerances.
+  double rtol = 7;
+  double atol = 8;
+  // The most steps a solve may take.
+  uint64 max_steps = 9;
+}
+
+// The integration method of an ODE.
+enum OdeSolver {
+  ODE_SOLVER_UNSPECIFIED = 0;
+  // Dormand-Prince 5(4), for non-stiff problems.
+  ODE_SOLVER_RK45 = 1;
+  // A Rosenbrock method (Rodas4's coefficients), for stiff problems.
+  ODE_SOLVER_STIFF = 2;
 }
 
 // A probabilistic node. Its parents are the distribution's parameters, in the order the distribution documents.

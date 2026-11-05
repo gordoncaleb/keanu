@@ -6,7 +6,8 @@ use crate::error::{IoError, Result};
 use crate::proto;
 use crate::proto::node::Op as P;
 use crate::save::FORMAT_VERSION;
-use keanu_graph::op::{Op, ScanBody};
+use keanu_graph::ode::OdeOptions;
+use keanu_graph::op::{OdeBody, Op, ScanBody};
 use keanu_graph::{DType, Graph, GraphBuilder, NodeId, State, Value};
 use keanu_tensor::{BoolTensor, DoubleTensor, IntTensor};
 use std::sync::Arc;
@@ -46,6 +47,9 @@ pub struct LoadOptions {
     /// The most work any scan may do, counted as its steps times the work of its body: the sum, over the body's
     /// nodes, of each node's element count (at least 1), with a nested scan counting its own work. Default 2^32.
     pub max_scan_work: u64,
+    /// The largest step limit ([`OdeOptions::max_steps`]) any ODE may have. Default 10^7, ten times the default
+    /// limit.
+    pub max_ode_steps: usize,
 }
 
 impl Default for LoadOptions {
@@ -54,6 +58,7 @@ impl Default for LoadOptions {
             max_elements: 1 << 31,
             max_scan_steps: 1 << 24,
             max_scan_work: 1 << 32,
+            max_ode_steps: 10_000_000,
         }
     }
 }
@@ -248,6 +253,38 @@ fn scan_body(p: &proto::Scan, options: &LoadOptions) -> Result<ScanBody> {
     Ok(body)
 }
 
+/// The body of a saved ODE.
+fn ode_body(p: &proto::Ode, options: &LoadOptions) -> Result<OdeBody> {
+    let saved = p
+        .body
+        .as_ref()
+        .ok_or_else(|| IoError::Decode("an ODE has no body".into()))?;
+    if !saved.values.is_empty() {
+        return Err(IoError::Decode("an ODE body has stored values".into()));
+    }
+    let id = |i: u32| -> Result<NodeId> { Ok(NodeId::from_index(usize_of(u64::from(i))?)) };
+    let parameters = p.parameters.iter().map(|&i| id(i)).collect::<Result<_>>()?;
+    let max_steps = usize_of(p.max_steps)?;
+    if max_steps > options.max_ode_steps {
+        return Err(IoError::Decode(format!(
+            "a step limit of {max_steps} is more than the limit of {}",
+            options.max_ode_steps
+        )));
+    }
+    let solver_options = OdeOptions::new(decode(p.solver)?)
+        .with_tolerances(p.rtol, p.atol)
+        .with_max_steps(max_steps);
+    let (graph, _) = load_graph(saved, options)?;
+    Ok(OdeBody::new(
+        graph,
+        id(p.time)?,
+        id(p.state)?,
+        parameters,
+        id(p.output)?,
+        solver_options,
+    )?)
+}
+
 /// Adds the node of a saved operation.
 fn add_node(
     builder: &GraphBuilder,
@@ -376,6 +413,11 @@ fn add_node(
         P::Scan(p) => {
             Op::Scan(Arc::new(scan_body(p, options).map_err(|e| {
                 IoError::Decode(format!("in the scan body: {e}"))
+            })?))
+        }
+        P::Ode(p) => {
+            Op::Ode(Arc::new(ode_body(p, options).map_err(|e| {
+                IoError::Decode(format!("in the ODE body: {e}"))
             })?))
         }
         P::Distribution(p) => {

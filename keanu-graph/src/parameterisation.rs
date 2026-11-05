@@ -374,6 +374,33 @@ impl<'m> Parameterisation<'m> {
         )
     }
 
+    /// [`to_state`](Self::to_state), returning false instead of failing where the cascade fails at an impossible
+    /// point ([`GraphError::is_impossible_point`], such as a failed ODE solve). The state's deterministic values are
+    /// then incomplete until the latents are set again.
+    pub fn try_to_state(&self, z: &[f64], state: &mut State) -> Result<bool> {
+        match self.to_state(z, state) {
+            Ok(()) => Ok(true),
+            Err(e) if e.is_impossible_point() => Ok(false),
+            Err(e) => Err(e),
+        }
+    }
+
+    /// Sets the latents to their values at `z` (as [`to_state`](Self::to_state)) and returns the joint log
+    /// probability there: with `jacobian`, plus [`log_det_jacobian`](Self::log_det_jacobian), as
+    /// [`log_prob_and_gradient`](Self::log_prob_and_gradient). −∞ where the model is impossible, including where
+    /// evaluating it fails at an impossible point (as [`try_to_state`](Self::try_to_state)).
+    pub fn log_prob(&self, z: &[f64], jacobian: bool, state: &mut State) -> Result<f64> {
+        if !self.try_to_state(z, state)? {
+            return Ok(f64::NEG_INFINITY);
+        }
+        let log_prob = self.model.log_prob(state)?;
+        if jacobian && log_prob.is_finite() {
+            Ok(log_prob + self.log_det_jacobian(z)?)
+        } else {
+            Ok(log_prob)
+        }
+    }
+
     /// The point of the latents' current values: the inverse of [`to_state`](Self::to_state).
     ///
     /// # Errors
@@ -440,6 +467,10 @@ impl<'m> Parameterisation<'m> {
     /// whose maxima are the constrained maxima, as optimizers need. In [`Space::Constrained`] the Jacobian is zero
     /// and both are exactly [`Model::log_prob_and_gradient`].
     ///
+    /// A point where evaluating the model fails at an impossible point ([`GraphError::is_impossible_point`], such as
+    /// a failed ODE solve) gives (−∞, None), and the state's deterministic values are then incomplete until the
+    /// latents are set again.
+    ///
     /// Fails if `z` has the wrong length or the model cannot be evaluated.
     pub fn log_prob_and_gradient(
         &self,
@@ -447,7 +478,9 @@ impl<'m> Parameterisation<'m> {
         jacobian: bool,
         state: &mut State,
     ) -> Result<(f64, Option<Vec<f64>>)> {
-        self.to_state(z, state)?;
+        if !self.try_to_state(z, state)? {
+            return Ok((f64::NEG_INFINITY, None));
+        }
         let (log_prob, gradient) = self.model.log_prob_and_gradient_of(state, &self.latents)?;
         let Some(gradient) = gradient else {
             return Ok((log_prob, None));

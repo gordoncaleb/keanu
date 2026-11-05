@@ -491,7 +491,10 @@ impl<'m> Objective<'m> {
     /// The fitness at the flat vector `x` (which is applied to the state).
     pub(crate) fn value_flat(&self, state: &mut State, x: &[f64]) -> Result<f64> {
         self.count();
-        self.apply_flat(state, x)?;
+        // a point where the model fails to evaluate as impossible (a failed ODE solve) is a rejected step
+        if !self.param.try_to_state(x, state)? {
+            return Ok(f64::NEG_INFINITY);
+        }
         self.fitness_of(state, x)
     }
 
@@ -533,7 +536,9 @@ impl<'m> Objective<'m> {
             let (_, gradient) = self.param.log_prob_and_gradient(x, true, state)?;
             return Ok(gradient.unwrap_or_else(|| vec![f64::NAN; x.len()]));
         }
-        self.apply_flat(state, x)?;
+        if !self.param.try_to_state(x, state)? {
+            return Ok(vec![f64::NAN; x.len()]);
+        }
         let model = self.param.model();
         let gradient = match self.fitness {
             Fitness::LogProb => model.log_prob_gradient(state)?,

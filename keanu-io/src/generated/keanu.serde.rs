@@ -3264,6 +3264,9 @@ impl serde::Serialize for Node {
                 node::Op::Scan(v) => {
                     struct_ser.serialize_field("scan", v)?;
                 }
+                node::Op::Ode(v) => {
+                    struct_ser.serialize_field("ode", v)?;
+                }
             }
         }
         struct_ser.end()
@@ -3353,6 +3356,7 @@ impl<'de> serde::Deserialize<'de> for Node {
             "matrix_exp",
             "matrixExp",
             "scan",
+            "ode",
         ];
 
         #[allow(clippy::enum_variant_names)]
@@ -3417,6 +3421,7 @@ impl<'de> serde::Deserialize<'de> for Node {
             LogDensity,
             MatrixExp,
             Scan,
+            Ode,
         }
         impl<'de> serde::Deserialize<'de> for GeneratedField {
             fn deserialize<D>(deserializer: D) -> std::result::Result<GeneratedField, D::Error>
@@ -3498,6 +3503,7 @@ impl<'de> serde::Deserialize<'de> for Node {
                             "logDensity" | "log_density" => Ok(GeneratedField::LogDensity),
                             "matrixExp" | "matrix_exp" => Ok(GeneratedField::MatrixExp),
                             "scan" => Ok(GeneratedField::Scan),
+                            "ode" => Ok(GeneratedField::Ode),
                             _ => Err(serde::de::Error::unknown_field(value, FIELDS)),
                         }
                     }
@@ -3936,6 +3942,13 @@ impl<'de> serde::Deserialize<'de> for Node {
                             op__ = map_.next_value::<::std::option::Option<_>>()?.map(node::Op::Scan)
 ;
                         }
+                        GeneratedField::Ode => {
+                            if op__.is_some() {
+                                return Err(serde::de::Error::duplicate_field("ode"));
+                            }
+                            op__ = map_.next_value::<::std::option::Option<_>>()?.map(node::Op::Ode)
+;
+                        }
                     }
                 }
                 Ok(Node {
@@ -3946,6 +3959,327 @@ impl<'de> serde::Deserialize<'de> for Node {
             }
         }
         deserializer.deserialize_struct("keanu.Node", FIELDS, GeneratedVisitor)
+    }
+}
+impl serde::Serialize for Ode {
+    #[allow(deprecated)]
+    fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        use serde::ser::SerializeStruct;
+        let mut len = 0;
+        if self.body.is_some() {
+            len += 1;
+        }
+        if self.time != 0 {
+            len += 1;
+        }
+        if self.state != 0 {
+            len += 1;
+        }
+        if !self.parameters.is_empty() {
+            len += 1;
+        }
+        if self.output != 0 {
+            len += 1;
+        }
+        if self.solver != 0 {
+            len += 1;
+        }
+        if self.rtol != 0. {
+            len += 1;
+        }
+        if self.atol != 0. {
+            len += 1;
+        }
+        if self.max_steps != 0 {
+            len += 1;
+        }
+        let mut struct_ser = serializer.serialize_struct("keanu.Ode", len)?;
+        if let Some(v) = self.body.as_ref() {
+            struct_ser.serialize_field("body", v)?;
+        }
+        if self.time != 0 {
+            struct_ser.serialize_field("time", &self.time)?;
+        }
+        if self.state != 0 {
+            struct_ser.serialize_field("state", &self.state)?;
+        }
+        if !self.parameters.is_empty() {
+            struct_ser.serialize_field("parameters", &self.parameters)?;
+        }
+        if self.output != 0 {
+            struct_ser.serialize_field("output", &self.output)?;
+        }
+        if self.solver != 0 {
+            let v = OdeSolver::try_from(self.solver)
+                .map_err(|_| serde::ser::Error::custom(format!("Invalid variant {}", self.solver)))?;
+            struct_ser.serialize_field("solver", &v)?;
+        }
+        if self.rtol != 0. {
+            struct_ser.serialize_field("rtol", &self.rtol)?;
+        }
+        if self.atol != 0. {
+            struct_ser.serialize_field("atol", &self.atol)?;
+        }
+        if self.max_steps != 0 {
+            #[allow(clippy::needless_borrow)]
+            #[allow(clippy::needless_borrows_for_generic_args)]
+            struct_ser.serialize_field("maxSteps", ToString::to_string(&self.max_steps).as_str())?;
+        }
+        struct_ser.end()
+    }
+}
+impl<'de> serde::Deserialize<'de> for Ode {
+    #[allow(deprecated)]
+    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        const FIELDS: &[&str] = &[
+            "body",
+            "time",
+            "state",
+            "parameters",
+            "output",
+            "solver",
+            "rtol",
+            "atol",
+            "max_steps",
+            "maxSteps",
+        ];
+
+        #[allow(clippy::enum_variant_names)]
+        enum GeneratedField {
+            Body,
+            Time,
+            State,
+            Parameters,
+            Output,
+            Solver,
+            Rtol,
+            Atol,
+            MaxSteps,
+        }
+        impl<'de> serde::Deserialize<'de> for GeneratedField {
+            fn deserialize<D>(deserializer: D) -> std::result::Result<GeneratedField, D::Error>
+            where
+                D: serde::Deserializer<'de>,
+            {
+                struct GeneratedVisitor;
+
+                impl serde::de::Visitor<'_> for GeneratedVisitor {
+                    type Value = GeneratedField;
+
+                    fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                        write!(formatter, "expected one of: {:?}", &FIELDS)
+                    }
+
+                    #[allow(unused_variables)]
+                    fn visit_str<E>(self, value: &str) -> std::result::Result<GeneratedField, E>
+                    where
+                        E: serde::de::Error,
+                    {
+                        match value {
+                            "body" => Ok(GeneratedField::Body),
+                            "time" => Ok(GeneratedField::Time),
+                            "state" => Ok(GeneratedField::State),
+                            "parameters" => Ok(GeneratedField::Parameters),
+                            "output" => Ok(GeneratedField::Output),
+                            "solver" => Ok(GeneratedField::Solver),
+                            "rtol" => Ok(GeneratedField::Rtol),
+                            "atol" => Ok(GeneratedField::Atol),
+                            "maxSteps" | "max_steps" => Ok(GeneratedField::MaxSteps),
+                            _ => Err(serde::de::Error::unknown_field(value, FIELDS)),
+                        }
+                    }
+                }
+                deserializer.deserialize_identifier(GeneratedVisitor)
+            }
+        }
+        struct GeneratedVisitor;
+        impl<'de> serde::de::Visitor<'de> for GeneratedVisitor {
+            type Value = Ode;
+
+            fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                formatter.write_str("struct keanu.Ode")
+            }
+
+            fn visit_map<V>(self, mut map_: V) -> std::result::Result<Ode, V::Error>
+                where
+                    V: serde::de::MapAccess<'de>,
+            {
+                let mut body__ = None;
+                let mut time__ = None;
+                let mut state__ = None;
+                let mut parameters__ = None;
+                let mut output__ = None;
+                let mut solver__ = None;
+                let mut rtol__ = None;
+                let mut atol__ = None;
+                let mut max_steps__ = None;
+                while let Some(k) = map_.next_key()? {
+                    match k {
+                        GeneratedField::Body => {
+                            if body__.is_some() {
+                                return Err(serde::de::Error::duplicate_field("body"));
+                            }
+                            body__ = map_.next_value()?;
+                        }
+                        GeneratedField::Time => {
+                            if time__.is_some() {
+                                return Err(serde::de::Error::duplicate_field("time"));
+                            }
+                            time__ = 
+                                Some(map_.next_value::<::pbjson::private::NumberDeserialize<_>>()?.0)
+                            ;
+                        }
+                        GeneratedField::State => {
+                            if state__.is_some() {
+                                return Err(serde::de::Error::duplicate_field("state"));
+                            }
+                            state__ = 
+                                Some(map_.next_value::<::pbjson::private::NumberDeserialize<_>>()?.0)
+                            ;
+                        }
+                        GeneratedField::Parameters => {
+                            if parameters__.is_some() {
+                                return Err(serde::de::Error::duplicate_field("parameters"));
+                            }
+                            parameters__ = 
+                                Some(map_.next_value::<Vec<::pbjson::private::NumberDeserialize<_>>>()?
+                                    .into_iter().map(|x| x.0).collect())
+                            ;
+                        }
+                        GeneratedField::Output => {
+                            if output__.is_some() {
+                                return Err(serde::de::Error::duplicate_field("output"));
+                            }
+                            output__ = 
+                                Some(map_.next_value::<::pbjson::private::NumberDeserialize<_>>()?.0)
+                            ;
+                        }
+                        GeneratedField::Solver => {
+                            if solver__.is_some() {
+                                return Err(serde::de::Error::duplicate_field("solver"));
+                            }
+                            solver__ = Some(map_.next_value::<OdeSolver>()? as i32);
+                        }
+                        GeneratedField::Rtol => {
+                            if rtol__.is_some() {
+                                return Err(serde::de::Error::duplicate_field("rtol"));
+                            }
+                            rtol__ = 
+                                Some(map_.next_value::<::pbjson::private::NumberDeserialize<_>>()?.0)
+                            ;
+                        }
+                        GeneratedField::Atol => {
+                            if atol__.is_some() {
+                                return Err(serde::de::Error::duplicate_field("atol"));
+                            }
+                            atol__ = 
+                                Some(map_.next_value::<::pbjson::private::NumberDeserialize<_>>()?.0)
+                            ;
+                        }
+                        GeneratedField::MaxSteps => {
+                            if max_steps__.is_some() {
+                                return Err(serde::de::Error::duplicate_field("maxSteps"));
+                            }
+                            max_steps__ = 
+                                Some(map_.next_value::<::pbjson::private::NumberDeserialize<_>>()?.0)
+                            ;
+                        }
+                    }
+                }
+                Ok(Ode {
+                    body: body__,
+                    time: time__.unwrap_or_default(),
+                    state: state__.unwrap_or_default(),
+                    parameters: parameters__.unwrap_or_default(),
+                    output: output__.unwrap_or_default(),
+                    solver: solver__.unwrap_or_default(),
+                    rtol: rtol__.unwrap_or_default(),
+                    atol: atol__.unwrap_or_default(),
+                    max_steps: max_steps__.unwrap_or_default(),
+                })
+            }
+        }
+        deserializer.deserialize_struct("keanu.Ode", FIELDS, GeneratedVisitor)
+    }
+}
+impl serde::Serialize for OdeSolver {
+    #[allow(deprecated)]
+    fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        let variant = match self {
+            Self::Unspecified => "ODE_SOLVER_UNSPECIFIED",
+            Self::Rk45 => "ODE_SOLVER_RK45",
+            Self::Stiff => "ODE_SOLVER_STIFF",
+        };
+        serializer.serialize_str(variant)
+    }
+}
+impl<'de> serde::Deserialize<'de> for OdeSolver {
+    #[allow(deprecated)]
+    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        const FIELDS: &[&str] = &[
+            "ODE_SOLVER_UNSPECIFIED",
+            "ODE_SOLVER_RK45",
+            "ODE_SOLVER_STIFF",
+        ];
+
+        struct GeneratedVisitor;
+
+        impl serde::de::Visitor<'_> for GeneratedVisitor {
+            type Value = OdeSolver;
+
+            fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                write!(formatter, "expected one of: {:?}", &FIELDS)
+            }
+
+            fn visit_i64<E>(self, v: i64) -> std::result::Result<Self::Value, E>
+            where
+                E: serde::de::Error,
+            {
+                i32::try_from(v)
+                    .ok()
+                    .and_then(|x| x.try_into().ok())
+                    .ok_or_else(|| {
+                        serde::de::Error::invalid_value(serde::de::Unexpected::Signed(v), &self)
+                    })
+            }
+
+            fn visit_u64<E>(self, v: u64) -> std::result::Result<Self::Value, E>
+            where
+                E: serde::de::Error,
+            {
+                i32::try_from(v)
+                    .ok()
+                    .and_then(|x| x.try_into().ok())
+                    .ok_or_else(|| {
+                        serde::de::Error::invalid_value(serde::de::Unexpected::Unsigned(v), &self)
+                    })
+            }
+
+            fn visit_str<E>(self, value: &str) -> std::result::Result<Self::Value, E>
+            where
+                E: serde::de::Error,
+            {
+                match value {
+                    "ODE_SOLVER_UNSPECIFIED" => Ok(OdeSolver::Unspecified),
+                    "ODE_SOLVER_RK45" => Ok(OdeSolver::Rk45),
+                    "ODE_SOLVER_STIFF" => Ok(OdeSolver::Stiff),
+                    _ => Err(serde::de::Error::unknown_variant(value, FIELDS)),
+                }
+            }
+        }
+        deserializer.deserialize_any(GeneratedVisitor)
     }
 }
 impl serde::Serialize for Permute {

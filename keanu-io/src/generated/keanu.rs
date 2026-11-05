@@ -34,7 +34,7 @@ pub struct Node {
     pub label: ::prost::alloc::string::String,
     #[prost(
         oneof = "node::Op",
-        tags = "10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64, 65, 66, 100"
+        tags = "10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64, 65, 66, 100, 101"
     )]
     pub op: ::core::option::Option<node::Op>,
 }
@@ -160,6 +160,8 @@ pub mod node {
         MatrixExp(super::Empty),
         #[prost(message, tag = "100")]
         Scan(super::Scan),
+        #[prost(message, tag = "101")]
+        Ode(super::Ode),
     }
 }
 /// The parameters of an operation that has none.
@@ -408,6 +410,37 @@ pub struct Scan {
     /// The body's output.
     #[prost(uint32, tag = "6")]
     pub output: u32,
+}
+/// An ODE solution: dy/dt = f(t, y, parameters) with y(t0) = y0, at each output time. Its parents are the initial
+/// state y0 (\[n\]), the output times (\[T\]), the initial time t0 (a scalar), then one per `parameters` entry, and its
+/// value has shape \[T, n\]. The body is a nested graph, deterministic and without stored values, whose inputs are
+/// unconnected f64 proxies: the time (a scalar), the state (\[n\]) and each parameter. Its `output` node is dy/dt (\[n\]).
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct Ode {
+    #[prost(message, optional, tag = "1")]
+    pub body: ::core::option::Option<Graph>,
+    /// The body's time input.
+    #[prost(uint32, tag = "2")]
+    pub time: u32,
+    /// The body's state input.
+    #[prost(uint32, tag = "3")]
+    pub state: u32,
+    /// The body's parameter inputs.
+    #[prost(uint32, repeated, tag = "4")]
+    pub parameters: ::prost::alloc::vec::Vec<u32>,
+    /// The body's output, dy/dt.
+    #[prost(uint32, tag = "5")]
+    pub output: u32,
+    #[prost(enumeration = "OdeSolver", tag = "6")]
+    pub solver: i32,
+    /// The relative and absolute tolerances.
+    #[prost(double, tag = "7")]
+    pub rtol: f64,
+    #[prost(double, tag = "8")]
+    pub atol: f64,
+    /// The most steps a solve may take.
+    #[prost(uint64, tag = "9")]
+    pub max_steps: u64,
 }
 /// A probabilistic node. Its parents are the distribution's parameters, in the order the distribution documents.
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -912,6 +945,38 @@ impl ArgOp {
             "ARG_OP_ARG_MIN" => Some(Self::ArgMin),
             "ARG_OP_NAN_ARG_MAX" => Some(Self::NanArgMax),
             "ARG_OP_NAN_ARG_MIN" => Some(Self::NanArgMin),
+            _ => None,
+        }
+    }
+}
+/// The integration method of an ODE.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
+#[repr(i32)]
+pub enum OdeSolver {
+    Unspecified = 0,
+    /// Dormand-Prince 5(4), for non-stiff problems.
+    Rk45 = 1,
+    /// A Rosenbrock method (Rodas4's coefficients), for stiff problems.
+    Stiff = 2,
+}
+impl OdeSolver {
+    /// String value of the enum field names used in the ProtoBuf definition.
+    ///
+    /// The values are not transformed in any way and thus are considered stable
+    /// (if the ProtoBuf definition does not change) and safe for programmatic use.
+    pub fn as_str_name(&self) -> &'static str {
+        match self {
+            Self::Unspecified => "ODE_SOLVER_UNSPECIFIED",
+            Self::Rk45 => "ODE_SOLVER_RK45",
+            Self::Stiff => "ODE_SOLVER_STIFF",
+        }
+    }
+    /// Creates an enum from field names used in the ProtoBuf definition.
+    pub fn from_str_name(value: &str) -> ::core::option::Option<Self> {
+        match value {
+            "ODE_SOLVER_UNSPECIFIED" => Some(Self::Unspecified),
+            "ODE_SOLVER_RK45" => Some(Self::Rk45),
+            "ODE_SOLVER_STIFF" => Some(Self::Stiff),
             _ => None,
         }
     }

@@ -6,6 +6,7 @@ use crate::error::{IoError, Result};
 use crate::proto;
 use keanu_distributions::Kde;
 use keanu_graph::DType;
+use keanu_graph::ode::OdeSolver;
 use keanu_graph::op::{
     ArgOp, BinaryOp, CompareOp, CumulativeOp, DistributionKind, LogicOp, Nested, Predicate,
     ReduceOp, UnaryOp,
@@ -79,6 +80,7 @@ codes! {
     "cumulative op": CumulativeOp => CumulativeOp { CumSum => Sum, CumProd => Product }
     "arg reduction": ArgOp => ArgOp { ArgMax, ArgMin, NanArgMax, NanArgMin }
     "type": DType => DType { F64, I64, Bool }
+    "ODE solver": OdeSolver => OdeSolver { Rk45, Stiff }
 }
 
 /// The schema value of each way of building a kind around another one (see [`DistributionKind::nested`]).

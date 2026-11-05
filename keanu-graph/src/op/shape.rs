@@ -79,6 +79,7 @@ fn infer(op: &Op, parents: &[(DType, &[usize])]) -> Result<(DType, Shape)> {
         )),
         Op::Lambda(l) => Ok((l.dtype, Shape::from_slice(&l.shape))),
         Op::Scan(body) => body.output_type(parents),
+        Op::Ode(body) => body.output_type(parents),
         Op::MatMul {
             transpose_left,
             transpose_right,
@@ -731,6 +732,10 @@ fn check_arity(op: &Op, count: usize) -> Result<()> {
             (n, Some(n))
         }
         Op::Scan(body) => {
+            let n = body.parent_count();
+            (n, Some(n))
+        }
+        Op::Ode(body) => {
             let n = body.parent_count();
             (n, Some(n))
         }

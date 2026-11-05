@@ -256,6 +256,22 @@ Work from `docs/plans/2026-11-05-001-feat-applied-modelling-gaps-plan.md`.
   over both; the stiff solver uses the combined system's block triangular Jacobian, whose off-diagonal block comes
   from `SensitivitySystem::sensitivity_jacobian_product` (a central difference by default). keanu-tensor gained
   `LuFactorization`, an LU factorisation for repeated solves.
+- keanu-graph: **ODE op** (`Op::Ode(Arc<OdeBody>)`, `GraphBuilder::ode`), the solution of dy/dt = f(t, y, θ) at
+  given output times, shape `[T, n]`, where f is a nested deterministic body graph built like a scan's from
+  placeholders for the time, the state and each parameter. Its parents are the initial state, the output times,
+  the initial time and the parameters, all differentiable to first order by forward sensitivities whose right-hand
+  side J S + ∂f/∂θ comes from one batched forward sweep through the body; the times' partials are f(tᵢ, y(tᵢ)).
+  Reverse mode integrates one sensitivity column per element of each parent that is not a constant. The value is
+  solved without sensitivities and the gradient solves again with them. Body nodes that depend only on the
+  parameters are computed once per solve. There is no second-order rule (`NoSecondOrderRule`, so no Laplace
+  approximation). Output times that are not strictly increasing after the initial time are an invalid node. A solve
+  that fails is the new `GraphError::SolverFailed`, which `GraphError::is_impossible_point` reports and which is
+  treated as an impossible point: `Model::log_prob_after`, `log_prob_and_gradient*` and
+  `probe_for_non_zero_probability`, the new `Parameterisation::try_to_state` and `Parameterisation::log_prob`, and
+  `Parameterisation::log_prob_and_gradient` give −∞; NUTS counts the trajectory as divergent, Metropolis–Hastings,
+  Gibbs and discrete Metropolis reject the value, the optimizers reject the step, and ADVI reports a non-finite
+  ELBO as for any impossible draw. The save schema gained `ode` and `OdeSolver`, `LoadOptions::max_ode_steps`
+  (default 10⁷) caps a loaded step limit, and the DOT export draws ODE bodies as clusters.
 
 ### Code review fixes
 
