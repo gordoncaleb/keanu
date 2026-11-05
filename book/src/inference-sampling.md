@@ -97,8 +97,8 @@ Metropolis–Hastings always works on the latents' own values: its proposals are
 `sample_with_statistics` returns `NutsStatistics` alongside the samples. Two of its diagnostics are always
 recorded, whatever `save_statistics` says:
 
-- **Divergences.** A trajectory is divergent when its Hamiltonian drifts by at least `max_energy_change` from
-  where it started: the leapfrog integrator has gone unstable, usually in a region of high curvature such as the neck
+- **Divergences.** A trajectory is divergent when its Hamiltonian rises more than `max_energy_change` above
+  where it started (as in Stan; a fall in energy is not a divergence): the leapfrog integrator has gone unstable, usually in a region of high curvature such as the neck
   of a funnel. The chain can't explore such a region properly, so its draws may be biased even when R-hat and the
   effective sample size look fine. `divergent_steps` lists the divergent steps after adaptation,
   `divergence_count()` counts them and `divergent_flags()` gives one flag per step. Any divergence is worth

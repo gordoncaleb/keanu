@@ -139,7 +139,7 @@ impl Default for QuadraticPotential {
 }
 
 /// NUTS configuration. The defaults are Stan's where Stan has the setting (target acceptance probability 0.8, tree
-/// height 10, divergence at an energy change of 1000, and its adaptation schedule; see [`QuadraticPotential`]),
+/// height 10, divergence at an energy increase of 1000, and its adaptation schedule; see [`QuadraticPotential`]),
 /// with 1000 adaptation steps. The configuration holds no state, so it can be reused for any number of runs and
 /// shared by parallel chains; each run adapts its own step size and potential.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -163,7 +163,8 @@ pub struct Nuts {
     pub adapt_potential: bool,
     /// The mean acceptance probability step size adaptation aims for (Stan's `delta`). Default 0.8.
     pub target_acceptance_prob: f64,
-    /// A trajectory whose energy changes by at least this much is divergent.
+    /// A trajectory whose energy rises by more than this from where it started (or becomes NaN) is divergent, as
+    /// in Stan (`max_deltaH`). A fall in energy, however large, is not a divergence.
     pub max_energy_change: f64,
     /// The maximum tree height (at most 2^height leapfrog steps per sample).
     pub max_tree_height: usize,
@@ -280,8 +281,8 @@ pub struct NutsStatistics {
     pub tree_size: Vec<usize>,
     /// The (0-based) steps after adaptation whose trajectory diverged. Always recorded.
     ///
-    /// A trajectory diverges when its Hamiltonian moves at least [`Nuts::max_energy_change`] from where it started
-    /// (or becomes NaN): the leapfrog integrator has gone unstable, typically in a region of high curvature such as
+    /// A trajectory diverges when its Hamiltonian rises more than [`Nuts::max_energy_change`] above where it
+    /// started (or becomes NaN): the leapfrog integrator has gone unstable, typically in a region of high curvature such as
     /// the neck of a funnel. Divergences mean the chain may not reach that region, so its draws can be biased even
     /// when other diagnostics look healthy; reparameterising the model (for example in non-centred form) or raising
     /// [`Nuts::target_acceptance_prob`] usually removes them. [`divergence_count`](Self::divergence_count) and
@@ -903,7 +904,8 @@ impl Integrator<'_, '_> {
     ) -> Result<Tree> {
         let after = Rc::new(self.leapfrog(state, from, step_size * direction)?);
         let energy_change = after.energy - self.start_energy;
-        if energy_change.abs() >= self.max_energy_change || energy_change.is_nan() {
+        // as in Stan, only an increase is divergent: a large fall in energy is a very likely move, not instability
+        if energy_change > self.max_energy_change || energy_change.is_nan() {
             return Ok(Tree {
                 sum_momentum: after.momentum.clone(),
                 forward: Rc::clone(&after),
@@ -1275,5 +1277,52 @@ mod tests {
         assert!((actual - expected).abs() < 1e-12, "{actual} vs {expected}");
         let sd = potential.standard_deviation[0].to_scalar().unwrap();
         assert!((sd - expected.sqrt()).abs() < 1e-12);
+    }
+
+    /// Whether one leapfrog step from x = 0.3 with momentum 0.5, in a trajectory that started at energy
+    /// `start_energy`, is divergent.
+    fn diverges_from(start_energy: f64) -> bool {
+        let b = keanu_graph::GraphBuilder::new();
+        let x = b.gaussian(0.0, 1.0);
+        let x = x.id();
+        let (graph, mut state) = b.build().unwrap();
+        state.set(&graph, x, DoubleTensor::scalar(0.3)).unwrap();
+        let model = Model::new(graph, &state).unwrap();
+        let param = Parameterisation::new(&model, &state).unwrap();
+        let shapes = vec![vec![]];
+        let position = [DoubleTensor::scalar(0.3)];
+        let potential = PotentialState::new(&QuadraticPotential::default(), 0, &position);
+        let (log_prob, gradient) =
+            log_prob_and_gradient_at(&param, &shapes, &mut state, &concat(&position)).unwrap();
+        let from = LeapfrogState::new(
+            Rc::new(position.to_vec()),
+            vec![DoubleTensor::scalar(0.5)],
+            Rc::new(gradient),
+            log_prob,
+            &potential,
+        )
+        .unwrap();
+        let integrator = Integrator {
+            param: &param,
+            shapes: &shapes,
+            potential: &potential,
+            start_energy,
+            max_energy_change: 1000.0,
+            in_state: RefCell::new(None),
+        };
+        let tree = integrator.base_case(&mut state, &from, 1.0, 0.1).unwrap();
+        assert_eq!(tree.proposal.is_none(), tree.diverged);
+        tree.diverged
+    }
+
+    #[test]
+    fn only_an_energy_increase_is_a_divergence() {
+        // the step's energy is about 1: a trajectory that started 2000 above it has fallen, which (as in Stan)
+        // is not a divergence; one that started 2000 below has risen, which is
+        assert!(!diverges_from(2000.0));
+        assert!(diverges_from(-2000.0));
+        assert!(!diverges_from(0.0));
+        // Stan's comparison is strict, and a NaN energy change is divergent
+        assert!(diverges_from(f64::NAN));
     }
 }
