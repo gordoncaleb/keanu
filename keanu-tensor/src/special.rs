@@ -2,6 +2,9 @@
 
 use std::f64::consts::PI;
 
+mod jet;
+use jet::Jet;
+
 /// The Euler–Mascheroni constant. Defined here rather than taken from `std::f64::consts::EULER_GAMMA`, which needs
 /// Rust 1.94, to keep the minimum supported Rust version lower.
 #[allow(clippy::approx_constant)]
@@ -269,46 +272,48 @@ fn ln_gamma_1p(a: f64) -> f64 {
 }
 
 /// Evaluates the continued fraction b₀ + a₁ / (b₁ + a₂ / (b₂ + ...)) by the modified Lentz algorithm (Lentz 1976;
-/// Thompson and Barnett 1986), together with its derivatives with respect to `K` parameters by differentiating
-/// each step (forward mode). `coefficient(n)` gives (aₙ, ∂aₙ, bₙ, ∂bₙ) for n >= 1; `b0` must be non-zero.
-/// `None` if it has not converged within [`MAX_ITERATIONS`] steps.
+/// Thompson and Barnett 1986), in jets, so with its first and second derivatives with respect to `K` parameters
+/// from differentiating each step (forward mode). `coefficient(n)` gives (aₙ, bₙ) for n >= 1; `b0` must be
+/// non-zero. It has converged when a step changes the value by a relative rounding error, and each gradient
+/// entry by a few, and each Hessian entry by a few relative to its own size or to the product of the gradient
+/// entries over the value (the Hessian's scale in the log of the fraction, which is what its callers use). `None`
+/// if it has not converged within [`MAX_ITERATIONS`] steps.
 fn continued_fraction<const K: usize>(
-    b0: f64,
-    db0: [f64; K],
-    mut coefficient: impl FnMut(usize) -> (f64, [f64; K], f64, [f64; K]),
-) -> Option<(f64, [f64; K])> {
+    b0: Jet<K>,
+    mut coefficient: impl FnMut(usize) -> (Jet<K>, Jet<K>),
+) -> Option<Jet<K>> {
     const TINY: f64 = 1e-300;
     let mut f = b0;
-    let mut df = db0;
-    let (mut c, mut dc) = (f, df);
-    let (mut d, mut dd) = (0.0, [0.0; K]);
+    let mut c = f;
+    let mut d = Jet::constant(0.0);
+    let tolerance = 4.0 * f64::EPSILON;
     for n in 1..=MAX_ITERATIONS {
-        let (a, da, b, db) = coefficient(n);
+        let (a, b) = coefficient(n);
         // Dₙ = 1 / (bₙ + aₙ Dₙ₋₁)
         let mut den = b + a * d;
-        if den == 0.0 {
-            den = TINY;
+        if den.v == 0.0 {
+            den.v = TINY;
         }
-        let d_next = 1.0 / den;
+        d = den.recip();
         // Cₙ = bₙ + aₙ / Cₙ₋₁
-        let mut c_next = b + a / c;
-        if c_next == 0.0 {
-            c_next = TINY;
+        c = b + a / c;
+        if c.v == 0.0 {
+            c.v = TINY;
         }
-        let delta = c_next * d_next;
-        let mut derivatives_converged = true;
-        for k in 0..K {
-            let dd_next = -(db[k] + da[k] * d + a * dd[k]) * d_next * d_next;
-            let dc_next = db[k] + da[k] / c - a * dc[k] / (c * c);
-            // fₙ = fₙ₋₁ Cₙ Dₙ
-            let df_next = df[k] * delta + f * (dc_next * d_next + c_next * dd_next);
-            derivatives_converged &= (df_next - df[k]).abs() <= 4.0 * f64::EPSILON * df_next.abs();
-            (dd[k], dc[k], df[k]) = (dd_next, dc_next, df_next);
-        }
-        (c, d) = (c_next, d_next);
-        f *= delta;
-        if (delta - 1.0).abs() <= f64::EPSILON && derivatives_converged {
-            return Some((f, df));
+        let delta = c * d;
+        // fₙ = fₙ₋₁ Cₙ Dₙ
+        let next = f * delta;
+        let converged = (delta.v - 1.0).abs() <= f64::EPSILON
+            && (0..K).all(|i| {
+                (next.g[i] - f.g[i]).abs() <= tolerance * next.g[i].abs()
+                    && (0..K).all(|j| {
+                        let scale = next.h[i][j].abs() + (next.g[i] * next.g[j] / next.v).abs();
+                        (next.h[i][j] - f.h[i][j]).abs() <= tolerance * scale
+                    })
+            });
+        f = next;
+        if converged {
+            return Some(f);
         }
     }
     None
@@ -346,11 +351,14 @@ fn erfcx_cf(x: f64) -> f64 {
     }
     let z = x * x;
     // converges within a few hundred steps for x >= 1.5
-    continued_fraction::<0>(z + 0.5, [], |n| {
+    continued_fraction::<0>(Jet::constant(z + 0.5), |n| {
         let n = n as f64;
-        (-n * (2.0 * n - 1.0) / 2.0, [], z + 0.5 + 2.0 * n, [])
+        (
+            Jet::constant(-n * (2.0 * n - 1.0) / 2.0),
+            Jet::constant(z + 0.5 + 2.0 * n),
+        )
     })
-    .map_or(f64::NAN, |(f, [])| x * FRAC_1_SQRT_PI / f)
+    .map_or(f64::NAN, |f| x * FRAC_1_SQRT_PI / f.v)
 }
 
 /// e^(-x²/2), with x² split so that its rounding error doesn't reach the exponential (as in Cody's CALERF).
@@ -412,6 +420,43 @@ pub fn erfcx(x: f64) -> f64 {
     } else {
         erfcx_cf(x)
     }
+}
+
+/// Above this argument the derivatives of erfcx come from its asymptotic series rather than from erfcx itself
+/// (whose derivative formulas cancel by a factor of about 2x² there).
+const ERFCX_ASYMPTOTIC: f64 = 10.0;
+
+/// erfcx of a jet, for an argument w >= 0. Its derivatives are erfcx'(w) = 2w erfcx(w) − 2/√π and
+/// erfcx''(w) = 2 erfcx(w) + 2w erfcx'(w), or for w >= [`ERFCX_ASYMPTOTIC`] the term-by-term derivatives of the
+/// asymptotic series erfcx(w) = Σₙ (−1)ⁿ (2n − 1)!! / (√π 2ⁿ w^(2n+1)) (DLMF 7.12.1), which don't cancel.
+fn erfcx_jet<const K: usize>(w: Jet<K>) -> Jet<K> {
+    let e = erfcx(w.v);
+    if K == 0 {
+        return Jet::constant(e);
+    }
+    let (e1, e2) = if w.v >= ERFCX_ASYMPTOTIC {
+        let inv = 1.0 / w.v;
+        let u = 0.5 * inv * inv;
+        let (mut term, mut d1, mut d2) = (1.0f64, 0.0, 0.0);
+        for n in 0..200 {
+            let odd = (2 * n + 1) as f64;
+            let (t1, t2) = (-odd * term, odd * (odd + 1.0) * term);
+            d1 += t1;
+            d2 += t2;
+            if t2.abs() <= 1e-17 * d2.abs() {
+                break;
+            }
+            term *= -odd * u;
+        }
+        (
+            FRAC_1_SQRT_PI * d1 * inv * inv,
+            FRAC_1_SQRT_PI * d2 * inv * inv * inv,
+        )
+    } else {
+        let e1 = 2.0 * w.v * e - 2.0 * FRAC_1_SQRT_PI;
+        (e1, 2.0 * e + 2.0 * w.v * e1)
+    };
+    w.chain(e, e1, e2)
 }
 
 /// erf⁻¹(y) for |y| <= ½ by Halley's iteration on erf(w) - y, from the first two terms of the Maclaurin series.
@@ -854,168 +899,177 @@ const TEMME: [[f64; 21]; 8] = [
     ],
 ];
 
-/// The regularised incomplete gamma functions at one point, directly and in log space, with their derivatives
-/// with respect to the shape (NaN unless asked for).
+/// The regularised incomplete gamma functions at one point, directly and in log space, as jets in the shape (K = 0
+/// for the values alone, K = 1 for their first and second shape derivatives too).
 #[derive(Clone, Copy)]
-struct IncGamma {
-    p: f64,
-    q: f64,
-    log_p: f64,
-    log_q: f64,
-    /// ∂P/∂a.
-    dp: f64,
-    /// ∂ ln P/∂a.
-    dlog_p: f64,
-    /// ∂ ln Q/∂a.
-    dlog_q: f64,
+struct IncGamma<const K: usize> {
+    p: Jet<K>,
+    q: Jet<K>,
+    log_p: Jet<K>,
+    log_q: Jet<K>,
 }
 
-impl IncGamma {
-    const NAN: IncGamma = IncGamma {
-        p: f64::NAN,
-        q: f64::NAN,
-        log_p: f64::NAN,
-        log_q: f64::NAN,
-        dp: f64::NAN,
-        dlog_p: f64::NAN,
-        dlog_q: f64::NAN,
+impl<const K: usize> IncGamma<K> {
+    const NAN: IncGamma<K> = IncGamma {
+        p: Jet::NAN,
+        q: Jet::NAN,
+        log_p: Jet::NAN,
+        log_q: Jet::NAN,
     };
+}
+
+/// (ln(1 + d) − d + d²/2) / d³ = 1/3 − d/4 + d²/5 − ..., from its series for |d| <= ¼ (where the closed form
+/// cancels).
+fn cubic_log_remainder(d: f64) -> f64 {
+    if d.abs() > 0.25 {
+        return (d.ln_1p() - d + 0.5 * d * d) / (d * d * d);
+    }
+    let mut power = 1.0;
+    let mut sum = 0.0;
+    for k in 3..80 {
+        let term = power / k as f64;
+        sum += if k % 2 == 1 { term } else { -term };
+        if term.abs() <= 1e-17 * sum.abs() {
+            break;
+        }
+        power *= d;
+    }
+    sum
 }
 
 /// Temme's uniform asymptotic expansion (DLMF 8.12.3; Temme 1979, as used by DiDonato and Morris 1986),
 /// Q(a, x) = ½ erfc(η √(a/2)) + e^(-aη²/2) / √(2πa) Σₖ Cₖ(η) a⁻ᵏ with η = sign(x - a) √(2 (λ - 1 - ln λ)) and
 /// λ = x/a, for a >= [`TEMME_MIN_SHAPE`] and |λ - 1| <= [`TEMME_MAX_DEVIATION`]. The smaller of P and Q is formed
 /// as e^(-aη²/2) / √(2πa) (√(πa/2) erfcx(|η| √(a/2)) ± S), which keeps its relative precision (and its log stays
-/// finite) far into the tails. The shape derivative differentiates the expansion analytically, with
-/// ∂η/∂a = -(λ - 1) / (η a).
-fn inc_gamma_temme(a: f64, x: f64, derivative: bool) -> IncGamma {
-    let d = (x - a) / a;
-    // λ - 1 - ln λ = η²/2
-    let half_eta2 = if d.abs() <= 0.25 {
-        -ln_1p_minus(d)
+/// finite) far into the tails. The shape derivatives differentiate the expansion in jets; η is a function of
+/// d = λ - 1 whose derivatives η' = r / (1 + d) and η'' = -2 r³ (ln(1 + d) - d + d²/2) / (d³ (1 + d)²), with
+/// r = d/η, are formed without the cancellation of differentiating the square root near η = 0.
+fn inc_gamma_temme<const K: usize>(a: f64, x: f64) -> IncGamma<K> {
+    let shape = Jet::<K>::var(a, 0);
+    let d0 = (x - a) / a;
+    // d = x/a - 1
+    let d = shape.chain(d0, -x / (a * a), 2.0 * x / (a * a * a));
+    // λ - 1 - ln λ = η²/2 = d - ln(1 + d), whose derivatives in d are d/(1 + d) and 1/(1 + d)²
+    let half_eta2_value = if d0.abs() <= 0.25 {
+        -ln_1p_minus(d0)
     } else {
-        d - d.ln_1p()
+        d0 - d0.ln_1p()
     };
-    let eta = (2.0 * half_eta2).sqrt().copysign(d);
-    // S = Σ Cₖ(η) a⁻ᵏ, its derivative in η, and its derivative in a at fixed η
-    let inv = 1.0 / a;
-    let (mut s, mut s_eta, mut s_a) = (0.0, 0.0, 0.0);
-    for (k, row) in TEMME.iter().enumerate().rev() {
-        let (mut c, mut dc) = (0.0, 0.0);
-        for &coefficient in row.iter().rev() {
-            dc = dc * eta + c;
-            c = c * eta + coefficient;
-        }
-        let power = inv.powi(k as i32);
-        s += c * power;
-        s_eta += dc * power;
-        s_a -= k as f64 * c * power * inv;
+    let inv_1pd = 1.0 / (1.0 + d0);
+    let half_eta2 = d.chain(half_eta2_value, d0 * inv_1pd, inv_1pd * inv_1pd);
+    let eta_value = (2.0 * half_eta2_value).sqrt().copysign(d0);
+    // (λ - 1)/η → 1 as η → 0
+    let ratio = if eta_value == 0.0 {
+        1.0
+    } else {
+        d0 / eta_value
+    };
+    let eta = d.chain(
+        eta_value,
+        ratio * inv_1pd,
+        -2.0 * cubic_log_remainder(d0) * ratio.powi(3) * inv_1pd * inv_1pd,
+    );
+    // S = Σ Cₖ(η) a⁻ᵏ, by Horner's rule in η and in 1/a
+    let inv = shape.recip();
+    let mut s = Jet::constant(0.0);
+    for row in TEMME.iter().rev() {
+        let c = row
+            .iter()
+            .rev()
+            .fold(Jet::constant(0.0), |c, &coefficient| c * eta + coefficient);
+        s = s * inv + c;
     }
-    let log_scale = -a * half_eta2 - 0.5 * (2.0 * PI * a).ln();
-    let scale = log_scale.exp();
-    let erfc_part = (0.5 * PI * a).sqrt() * erfcx((a * half_eta2).sqrt());
+    let log_scale = -(shape * half_eta2) - 0.5 * (shape * (2.0 * PI)).ln();
     // the smaller of P and Q is scale * bracket
-    let upper = d >= 0.0;
+    let upper = d0 >= 0.0;
+    let w = if upper { eta } else { -eta } * (shape * 0.5).sqrt();
+    let erfc_part = (shape * (0.5 * PI)).sqrt() * erfcx_jet(w);
     let bracket = if upper { erfc_part + s } else { erfc_part - s };
-    let small = scale * bracket;
     let log_small = log_scale + bracket.ln();
+    let small = log_small.exp_with(log_scale.v.exp() * bracket.v);
     let large = 1.0 - small;
     let log_large = (-small).ln_1p();
-    let (p, q, log_p, log_q) = if upper {
-        (large, small, log_large, log_small)
+    if upper {
+        IncGamma {
+            p: large,
+            q: small,
+            log_p: log_large,
+            log_q: log_small,
+        }
     } else {
-        (small, large, log_small, log_large)
-    };
-    if !derivative {
-        return IncGamma {
-            p,
-            q,
-            log_p,
-            log_q,
-            ..IncGamma::NAN
-        };
-    }
-    // ∂Q/∂a = scale * t, where (λ - 1)/η → 1 as η → 0
-    let ratio = if eta == 0.0 { 1.0 } else { d / eta };
-    let t = ratio - 0.5 * eta + (d - half_eta2 - 0.5 * inv) * s - ratio * inv * s_eta + s_a;
-    let dq = scale * t;
-    let (dlog_p, dlog_q) = if upper {
-        (-dq / p, t / bracket)
-    } else {
-        (-t / bracket, dq / q)
-    };
-    IncGamma {
-        p,
-        q,
-        log_p,
-        log_q,
-        dp: -dq,
-        dlog_p,
-        dlog_q,
+        IncGamma {
+            p: small,
+            q: large,
+            log_p: log_small,
+            log_q: log_large,
+        }
     }
 }
 
-/// The incomplete gamma functions P and Q, their logs, and (when asked for) their shape derivatives.
+/// The incomplete gamma functions P and Q and their logs, as jets in the shape (with its first and second
+/// derivatives for K = 1).
 ///
 /// For a >= 100 and x within 40% of a, from Temme's uniform asymptotic expansion ([`inc_gamma_temme`]). Otherwise,
 /// for x < a + 1, P comes from the series P = xᵃe⁻ˣ/Γ(a+1) Σ xⁿ / ((a+1)...(a+n)) (DLMF 8.7.1), and
-/// its derivative from differentiating the series term by term, whose terms are then all of one sign. Q is
+/// its derivatives from differentiating the series term by term, whose terms are then all of one sign. Q is
 /// 1 - P, unless P > 0.9, when Q is computed directly from the series of DiDonato and Morris (1986) as
-/// 1 - xᵃ/Γ(1+a) - xᵃ/Γ(1+a) a Σₙ₌₁ (-x)ⁿ / ((a+n) n!), keeping its relative precision for small a.
-/// For x >= a + 1, Q comes from Legendre's continued fraction (DLMF 8.9.2), its derivative from differentiating
-/// the modified Lentz recurrences, and P is 1 - Q. The logs use the prefactor xᵃe⁻ˣ/Γ(a) in log space, so they
-/// stay finite where P or Q underflows.
+/// 1 - xᵃ/Γ(1+a) - xᵃ/Γ(1+a) a Σₙ₌₁ (-x)ⁿ / ((a+n) n!), keeping its relative precision for small a (its
+/// derivatives are -P's). For x >= a + 1, Q comes from Legendre's continued fraction (DLMF 8.9.2), its
+/// derivatives from differentiating the modified Lentz recurrences, and P is 1 - Q. The logs use the prefactor
+/// xᵃe⁻ˣ/Γ(a) in log space, so they stay finite where P or Q underflows; the prefactor's shape derivatives are
+/// ln x - ψ(a) and -ψ₁(a) (with ψ(a + 1) and ψ₁(a + 1) for the series' xᵃe⁻ˣ/Γ(a+1), which keeps them accurate
+/// for small a).
 ///
 /// Everything is NaN if a series or continued fraction fails to converge within [`MAX_ITERATIONS`] terms
 /// (which the switch to Temme's expansion for large a near the transition is there to prevent).
 ///
 /// Stan's `grad_reg_inc_gamma` (Stan Math, BSD-3) instead uses the DLMF 8.7.3 series and a ten-term asymptotic
 /// expansion for z >= 8; the step-by-step derivatives used here are accurate to rounding over the whole range.
-fn inc_gamma(a: f64, x: f64, derivative: bool) -> IncGamma {
+fn inc_gamma<const K: usize>(a: f64, x: f64) -> IncGamma<K> {
     if a.is_nan() || x.is_nan() || a <= 0.0 || x < 0.0 || a.is_infinite() {
         return IncGamma::NAN;
     }
+    let zero = Jet::constant(0.0);
     if x == 0.0 {
         return IncGamma {
-            p: 0.0,
-            q: 1.0,
-            log_p: f64::NEG_INFINITY,
-            log_q: 0.0,
-            dp: 0.0,
-            dlog_p: f64::NAN,
-            dlog_q: 0.0,
+            p: zero,
+            q: Jet::constant(1.0),
+            log_p: Jet::without_derivatives(f64::NEG_INFINITY),
+            log_q: zero,
         };
     }
     if x.is_infinite() {
         return IncGamma {
-            p: 1.0,
-            q: 0.0,
-            log_p: 0.0,
-            log_q: f64::NEG_INFINITY,
-            dp: 0.0,
-            dlog_p: 0.0,
-            dlog_q: f64::NAN,
+            p: Jet::constant(1.0),
+            q: zero,
+            log_p: zero,
+            log_q: Jet::without_derivatives(f64::NEG_INFINITY),
         };
     }
     if a >= TEMME_MIN_SHAPE && ((x - a) / a).abs() <= TEMME_MAX_DEVIATION {
-        return inc_gamma_temme(a, x, derivative);
+        return inc_gamma_temme(a, x);
     }
+    let shape = Jet::<K>::var(a, 0);
     let (exponent, multiplier) = gamma_prefix_parts(a, x);
     let log_prefix = exponent + multiplier.ln();
     let prefix = exponent.exp() * multiplier;
     if x < a + 1.0 {
-        let front = prefix / a;
-        let (mut term, mut sum) = (1.0, 1.0);
-        // ∂term/∂a and its sum
-        let (mut dterm, mut dsum) = (0.0f64, 0.0f64);
+        // ln(xᵃe⁻ˣ/Γ(a + 1))
+        let log_front = if K == 0 {
+            Jet::constant(log_prefix - a.ln())
+        } else {
+            shape.chain(
+                log_prefix - a.ln(),
+                x.ln() - digamma(a + 1.0),
+                -trigamma(a + 1.0),
+            )
+        };
+        let (mut term, mut sum) = (Jet::constant(1.0), Jet::constant(1.0));
         let mut converged = false;
         for n in 1..=MAX_ITERATIONS {
-            let an = a + n as f64;
-            term *= x / an;
-            dterm = dterm * x / an - term / an;
-            sum += term;
-            dsum += dterm;
-            if term <= 1e-17 * sum && dterm.abs() <= 1e-17 * dsum.abs() {
+            term = term * (x / (shape + n as f64));
+            sum = sum + term;
+            if term.negligible(&sum, 1e-17) {
                 converged = true;
                 break;
             }
@@ -1023,10 +1077,11 @@ fn inc_gamma(a: f64, x: f64, derivative: bool) -> IncGamma {
         if !converged {
             return IncGamma::NAN;
         }
-        let p = front * sum;
-        let log_p = log_prefix - a.ln() + sum.ln();
-        let q = if p <= 0.9 {
-            1.0 - p
+        let log_p = log_front + sum.ln();
+        let p = log_p.exp_with(prefix / a * sum.v);
+        let (q, log_q) = if p.v <= 0.9 {
+            // 1 - P rounds away a tiny P, but ln(1 - P) keeps it
+            (1.0 - p, (-p).ln_1p())
         } else {
             let u = a * x.ln() - ln_gamma_1p(a);
             let (mut c, mut s) = (1.0, 0.0f64);
@@ -1043,49 +1098,30 @@ fn inc_gamma(a: f64, x: f64, derivative: bool) -> IncGamma {
             if !converged {
                 return IncGamma::NAN;
             }
-            -u.exp_m1() - u.exp() * a * s
+            let mut q = -p;
+            q.v = -u.exp_m1() - u.exp() * a * s;
+            (q, q.ln())
         };
-        let (dp, dlog_p, dlog_q) = if derivative {
-            let dlog_p = x.ln() - digamma(a + 1.0) + dsum / sum;
-            let dp = p * dlog_p;
-            (dp, dlog_p, -dp / q)
-        } else {
-            (f64::NAN, f64::NAN, f64::NAN)
-        };
-        IncGamma {
-            p,
-            q,
-            log_p,
-            // 1 - P rounds away a tiny P, but ln(1 - P) keeps it
-            log_q: if p <= 0.9 { (-p).ln_1p() } else { q.ln() },
-            dp,
-            dlog_p,
-            dlog_q,
-        }
+        IncGamma { p, q, log_p, log_q }
     } else {
-        let Some((g, [dg])) = continued_fraction(x + 1.0 - a, [-1.0], |n| {
+        let log_prefix = if K == 0 {
+            Jet::constant(log_prefix)
+        } else {
+            shape.chain(log_prefix, x.ln() - digamma(a), -trigamma(a))
+        };
+        let Some(g) = continued_fraction(x + 1.0 - shape, |n| {
             let n = n as f64;
-            (-n * (n - a), [n], x + 2.0 * n + 1.0 - a, [-1.0])
+            ((shape - n) * n, x + 2.0 * n + 1.0 - shape)
         }) else {
             return IncGamma::NAN;
         };
-        let q = prefix / g;
-        let p = 1.0 - q;
-        let (dp, dlog_p, dlog_q) = if derivative {
-            let dlog_q = x.ln() - digamma(a) - dg / g;
-            let dp = -q * dlog_q;
-            (dp, dp / p, dlog_q)
-        } else {
-            (f64::NAN, f64::NAN, f64::NAN)
-        };
+        let log_q = log_prefix - g.ln();
+        let q = log_q.exp_with(prefix / g.v);
         IncGamma {
-            p,
+            p: 1.0 - q,
             q,
             log_p: (-q).ln_1p(),
-            log_q: log_prefix - g.ln(),
-            dp,
-            dlog_p,
-            dlog_q,
+            log_q,
         }
     }
 }
@@ -1096,82 +1132,84 @@ fn inc_gamma(a: f64, x: f64, derivative: bool) -> IncGamma {
 /// Accurate for large shapes too, through Temme's uniform asymptotic expansion near x = a for a >= 100. NaN in
 /// the (not expected to be reachable) case that the series or continued fraction fails to converge.
 pub fn gamma_p(a: f64, x: f64) -> f64 {
-    inc_gamma(a, x, false).p
+    inc_gamma::<0>(a, x).p.v
 }
 
 /// The regularised upper incomplete gamma function Q(a, x) = Γ(a, x) / Γ(a) = 1 - P(a, x), computed directly so
 /// that it keeps its relative precision in the upper tail.
 pub fn gamma_q(a: f64, x: f64) -> f64 {
-    inc_gamma(a, x, false).q
+    inc_gamma::<0>(a, x).q.v
 }
 
 /// ∂P(a, x)/∂a, the derivative of the regularised lower incomplete gamma function with respect to its shape
 /// (∂Q/∂a is its negation).
 pub fn gamma_p_da(a: f64, x: f64) -> f64 {
-    inc_gamma(a, x, true).dp
+    inc_gamma::<1>(a, x).p.g[0]
+}
+
+/// ∂²P(a, x)/∂a², the second derivative of the regularised lower incomplete gamma function with respect to its
+/// shape (∂²Q/∂a² is its negation), from differentiating the same series, continued fraction or asymptotic
+/// expansion as [`gamma_p_da`] to second order.
+pub fn gamma_p_da2(a: f64, x: f64) -> f64 {
+    inc_gamma::<1>(a, x).p.h[0][0]
 }
 
 /// ln P(a, x), the log of the regularised lower incomplete gamma function, finite and accurate far into the lower
 /// tail where P itself underflows (-∞ at x = 0, NaN where [`gamma_p`] is).
 pub fn log_gamma_p(a: f64, x: f64) -> f64 {
-    inc_gamma(a, x, false).log_p
+    inc_gamma::<0>(a, x).log_p.v
 }
 
 /// ln Q(a, x), the log of the regularised upper incomplete gamma function, finite and accurate far into the upper
 /// tail where Q itself underflows (-∞ at x = ∞, NaN where [`gamma_q`] is).
 pub fn log_gamma_q(a: f64, x: f64) -> f64 {
-    inc_gamma(a, x, false).log_q
+    inc_gamma::<0>(a, x).log_q.v
 }
 
 /// ∂ ln P(a, x)/∂a, formed as a ratio that stays finite where P and ∂P/∂a underflow (NaN at x = 0, where
 /// ln P = -∞).
 pub fn log_gamma_p_da(a: f64, x: f64) -> f64 {
-    inc_gamma(a, x, true).dlog_p
+    inc_gamma::<1>(a, x).log_p.g[0]
 }
 
 /// ∂ ln Q(a, x)/∂a, formed as a ratio that stays finite where Q and ∂Q/∂a underflow (NaN at x = ∞, where
 /// ln Q = -∞).
 pub fn log_gamma_q_da(a: f64, x: f64) -> f64 {
-    inc_gamma(a, x, true).dlog_q
+    inc_gamma::<1>(a, x).log_q.g[0]
+}
+
+/// ∂² ln P(a, x)/∂a², finite where P underflows, like [`log_gamma_p_da`] (NaN at x = 0).
+pub fn log_gamma_p_da2(a: f64, x: f64) -> f64 {
+    inc_gamma::<1>(a, x).log_p.h[0][0]
+}
+
+/// ∂² ln Q(a, x)/∂a², finite where Q underflows, like [`log_gamma_q_da`] (NaN at x = ∞).
+pub fn log_gamma_q_da2(a: f64, x: f64) -> f64 {
+    inc_gamma::<1>(a, x).log_q.h[0][0]
 }
 
 // ---------------------------------------------------------------------------------------------------------------
 // Regularised incomplete beta function
 
-/// The regularised incomplete beta function at one point, directly and in log space, with its derivatives with
-/// respect to the shapes (NaN unless asked for).
+/// The regularised incomplete beta function at one point, directly and in log space, as jets in the shapes (K = 0
+/// for the values alone, K = 2 for their first and second derivatives with respect to a and b too).
 #[derive(Clone, Copy)]
-struct IncBeta {
-    value: f64,
-    log_value: f64,
-    da: f64,
-    db: f64,
-    /// ∂ ln I/∂a.
-    dlog_a: f64,
-    /// ∂ ln I/∂b.
-    dlog_b: f64,
+struct IncBeta<const K: usize> {
+    value: Jet<K>,
+    log_value: Jet<K>,
 }
 
-impl IncBeta {
-    const NAN: IncBeta = IncBeta {
-        value: f64::NAN,
-        log_value: f64::NAN,
-        da: f64::NAN,
-        db: f64::NAN,
-        dlog_a: f64::NAN,
-        dlog_b: f64::NAN,
+impl<const K: usize> IncBeta<K> {
+    const NAN: IncBeta<K> = IncBeta {
+        value: Jet::NAN,
+        log_value: Jet::NAN,
     };
 
-    /// I and its derivatives from 1 - I, which is not small.
-    fn complement(self) -> IncBeta {
-        let value = 1.0 - self.value;
+    /// I from 1 - I, which is not small.
+    fn complement(self) -> IncBeta<K> {
         IncBeta {
-            value,
+            value: 1.0 - self.value,
             log_value: (-self.value).ln_1p(),
-            da: -self.da,
-            db: -self.db,
-            dlog_a: -self.da / value,
-            dlog_b: -self.db / value,
         }
     }
 }
@@ -1203,57 +1241,69 @@ fn log_beta_prefix(a: f64, b: f64, x: f64, ln_x: f64, ln_y: f64) -> f64 {
     term(a, ln_x, d1) + term(b, ln_y, d2) + stirling
 }
 
-/// I_x(a, b) and its log and shape derivatives from the continued fraction DLMF 8.17.22 (evaluated by modified
-/// Lentz), for x at most about the mean, given ln x and ln(1 - x) for accuracy.
-fn inc_beta_cf(a: f64, b: f64, x: f64, ln_x: f64, ln_y: f64, derivative: bool) -> IncBeta {
-    let log_front = log_beta_prefix(a, b, x, ln_x, ln_y) - a.ln();
-    let Some((g, [dga, dgb])) = continued_fraction(1.0, [0.0, 0.0], |n| {
+/// ln(xᵃ yᵇ / (a B(a, b))), the continued fraction's prefactor, as a jet in the shapes: its derivatives are
+/// ln x - ψ(a + 1) + ψ(a + b) and ln y - ψ(b) + ψ(a + b), and its second derivatives ψ₁(a + b) - ψ₁(a + 1),
+/// ψ₁(a + b) and ψ₁(a + b) - ψ₁(b).
+fn log_beta_front<const K: usize>(
+    (a, b): (Jet<K>, Jet<K>),
+    x: f64,
+    ln_x: f64,
+    ln_y: f64,
+) -> Jet<K> {
+    let value = log_beta_prefix(a.v, b.v, x, ln_x, ln_y) - a.v.ln();
+    if K == 0 {
+        return Jet::constant(value);
+    }
+    let (shared, shared2) = (digamma(a.v + b.v), trigamma(a.v + b.v));
+    Jet::bivariate(
+        value,
+        (a, b),
+        (
+            ln_x - digamma(a.v + 1.0) + shared,
+            ln_y - digamma(b.v) + shared,
+        ),
+        (
+            shared2 - trigamma(a.v + 1.0),
+            shared2,
+            shared2 - trigamma(b.v),
+        ),
+    )
+}
+
+/// I_x(a, b) and its log from the continued fraction DLMF 8.17.22 (evaluated by modified Lentz), for x at most
+/// about the mean, given ln x and ln(1 - x) for accuracy, as jets in the shapes `a` and `b` (which are jet
+/// variables, in either order).
+fn inc_beta_cf<const K: usize>(
+    (a, b): (Jet<K>, Jet<K>),
+    x: f64,
+    ln_x: f64,
+    ln_y: f64,
+) -> IncBeta<K> {
+    let log_front = log_beta_front((a, b), x, ln_x, ln_y);
+    let Some(g) = continued_fraction(Jet::constant(1.0), |n| {
         let m = (n / 2) as f64;
+        let one = Jet::constant(1.0);
         if n % 2 == 1 {
             // d_(2m+1) = -(a+m)(a+b+m) x / ((a+2m)(a+2m+1))
             let den = (a + 2.0 * m) * (a + 2.0 * m + 1.0);
-            let d = -(a + m) * (a + b + m) * x / den;
-            let dda = d
-                * (1.0 / (a + m) + 1.0 / (a + b + m)
-                    - 1.0 / (a + 2.0 * m)
-                    - 1.0 / (a + 2.0 * m + 1.0));
-            let ddb = -(a + m) * x / den;
-            (d, [dda, ddb], 1.0, [0.0, 0.0])
+            (-((a + m) * (a + b + m) * x) / den, one)
         } else {
             // d_(2m) = m(b-m) x / ((a+2m-1)(a+2m))
             let den = (a + 2.0 * m - 1.0) * (a + 2.0 * m);
-            let d = m * (b - m) * x / den;
-            let dda = -d * (1.0 / (a + 2.0 * m - 1.0) + 1.0 / (a + 2.0 * m));
-            let ddb = m * x / den;
-            (d, [dda, ddb], 1.0, [0.0, 0.0])
+            ((b - m) * (m * x) / den, one)
         }
     }) else {
         return IncBeta::NAN;
     };
     let log_value = log_front - g.ln();
-    let value = log_value.exp();
-    if !derivative {
-        return IncBeta {
-            value,
-            log_value,
-            ..IncBeta::NAN
-        };
-    }
-    // ∂/∂a ln(xᵃ yᵇ / (a B(a, b))) = ln x - ψ(a + 1) + ψ(a + b), and likewise for b
-    let shared = digamma(a + b);
-    let dlog_a = ln_x - digamma(a + 1.0) + shared - dga / g;
-    let dlog_b = ln_y - digamma(b) + shared - dgb / g;
     IncBeta {
-        value,
+        value: log_value.exp(),
         log_value,
-        da: value * dlog_a,
-        db: value * dlog_b,
-        dlog_a,
-        dlog_b,
     }
 }
 
-/// I_x(a, b), its log and (when asked for) its shape derivatives.
+/// I_x(a, b) and its log, as jets in the shapes (with their first and second derivatives with respect to a and b
+/// for K = 2).
 ///
 /// Uses the continued fraction for x <= (a+1)/(a+b+2) and the symmetry I_x(a, b) = 1 - I_(1-x)(b, a) beyond, so
 /// the continued fraction converges quickly. The shape derivatives come from differentiating the continued fraction
@@ -1262,7 +1312,7 @@ fn inc_beta_cf(a: f64, b: f64, x: f64, ln_x: f64, ln_y: f64, derivative: bool) -
 /// without cancellation ([`log_beta_prefix`]), and the rounding errors of the continued fraction's many steps
 /// near the mean then limit the relative accuracy to about 1e-11 at shapes of 10¹⁰ (1e-8 at 10¹⁴). Everything is
 /// NaN if the continued fraction fails to converge within [`MAX_ITERATIONS`] steps.
-fn inc_beta_all(a: f64, b: f64, x: f64, derivative: bool) -> IncBeta {
+fn inc_beta_all<const K: usize>(a: f64, b: f64, x: f64) -> IncBeta<K> {
     if a.is_nan()
         || b.is_nan()
         || x.is_nan()
@@ -1276,37 +1326,24 @@ fn inc_beta_all(a: f64, b: f64, x: f64, derivative: bool) -> IncBeta {
     }
     if x == 0.0 {
         return IncBeta {
-            value: 0.0,
-            log_value: f64::NEG_INFINITY,
-            da: 0.0,
-            db: 0.0,
-            dlog_a: f64::NAN,
-            dlog_b: f64::NAN,
+            value: Jet::constant(0.0),
+            log_value: Jet::without_derivatives(f64::NEG_INFINITY),
         };
     }
     if x == 1.0 {
         return IncBeta {
-            value: 1.0,
-            log_value: 0.0,
-            da: 0.0,
-            db: 0.0,
-            dlog_a: 0.0,
-            dlog_b: 0.0,
+            value: Jet::constant(1.0),
+            log_value: Jet::constant(0.0),
         };
     }
+    let shapes = (Jet::var(a, 0), Jet::var(b, 1));
     let y = 1.0 - x;
     let ln_x = x.ln();
     let ln_y = if x < 0.5 { (-x).ln_1p() } else { y.ln() };
     if x > (a + 1.0) / (a + b + 2.0) {
-        let swapped = inc_beta_cf(b, a, y, ln_y, ln_x, derivative);
-        IncBeta {
-            da: swapped.db,
-            db: swapped.da,
-            ..swapped
-        }
-        .complement()
+        inc_beta_cf((shapes.1, shapes.0), y, ln_y, ln_x).complement()
     } else {
-        inc_beta_cf(a, b, x, ln_x, ln_y, derivative)
+        inc_beta_cf(shapes, x, ln_x, ln_y)
     }
 }
 
@@ -1316,33 +1353,63 @@ fn inc_beta_all(a: f64, b: f64, x: f64, derivative: bool) -> IncBeta {
 /// Accurate to about 1e-11 relative for shapes up to 10¹⁰, degrading slowly beyond (1e-8 at 10¹⁴). NaN in the
 /// (not expected to be reachable) case that its continued fraction fails to converge.
 pub fn inc_beta(a: f64, b: f64, x: f64) -> f64 {
-    inc_beta_all(a, b, x, false).value
+    inc_beta_all::<0>(a, b, x).value.v
 }
 
 /// ∂I_x(a, b)/∂a, the derivative of the regularised incomplete beta function with respect to a.
 pub fn inc_beta_da(a: f64, b: f64, x: f64) -> f64 {
-    inc_beta_all(a, b, x, true).da
+    inc_beta_all::<2>(a, b, x).value.g[0]
 }
 
 /// ∂I_x(a, b)/∂b, the derivative of the regularised incomplete beta function with respect to b.
 pub fn inc_beta_db(a: f64, b: f64, x: f64) -> f64 {
-    inc_beta_all(a, b, x, true).db
+    inc_beta_all::<2>(a, b, x).value.g[1]
+}
+
+/// ∂²I_x(a, b)/∂a², from differentiating the same continued fraction as [`inc_beta_da`] to second order.
+pub fn inc_beta_da2(a: f64, b: f64, x: f64) -> f64 {
+    inc_beta_all::<2>(a, b, x).value.h[0][0]
+}
+
+/// ∂²I_x(a, b)/∂a∂b.
+pub fn inc_beta_dadb(a: f64, b: f64, x: f64) -> f64 {
+    inc_beta_all::<2>(a, b, x).value.h[0][1]
+}
+
+/// ∂²I_x(a, b)/∂b².
+pub fn inc_beta_db2(a: f64, b: f64, x: f64) -> f64 {
+    inc_beta_all::<2>(a, b, x).value.h[1][1]
 }
 
 /// ln I_x(a, b), the log of the regularised incomplete beta function, finite and accurate far into the lower tail
 /// where I itself underflows (-∞ at x = 0, NaN where [`inc_beta`] is).
 pub fn log_inc_beta(a: f64, b: f64, x: f64) -> f64 {
-    inc_beta_all(a, b, x, false).log_value
+    inc_beta_all::<0>(a, b, x).log_value.v
 }
 
 /// ∂ ln I_x(a, b)/∂a, formed as a ratio that stays finite where I and ∂I/∂a underflow (NaN at x = 0).
 pub fn log_inc_beta_da(a: f64, b: f64, x: f64) -> f64 {
-    inc_beta_all(a, b, x, true).dlog_a
+    inc_beta_all::<2>(a, b, x).log_value.g[0]
 }
 
 /// ∂ ln I_x(a, b)/∂b, formed as a ratio that stays finite where I and ∂I/∂b underflow (NaN at x = 0).
 pub fn log_inc_beta_db(a: f64, b: f64, x: f64) -> f64 {
-    inc_beta_all(a, b, x, true).dlog_b
+    inc_beta_all::<2>(a, b, x).log_value.g[1]
+}
+
+/// ∂² ln I_x(a, b)/∂a², finite where I underflows, like [`log_inc_beta_da`] (NaN at x = 0).
+pub fn log_inc_beta_da2(a: f64, b: f64, x: f64) -> f64 {
+    inc_beta_all::<2>(a, b, x).log_value.h[0][0]
+}
+
+/// ∂² ln I_x(a, b)/∂a∂b (NaN at x = 0).
+pub fn log_inc_beta_dadb(a: f64, b: f64, x: f64) -> f64 {
+    inc_beta_all::<2>(a, b, x).log_value.h[0][1]
+}
+
+/// ∂² ln I_x(a, b)/∂b² (NaN at x = 0).
+pub fn log_inc_beta_db2(a: f64, b: f64, x: f64) -> f64 {
+    inc_beta_all::<2>(a, b, x).log_value.h[1][1]
 }
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -1412,11 +1479,17 @@ mod tests {
     #[test]
     fn a_continued_fraction_that_does_not_converge_gives_none() {
         // 1 - 1/(1 - 1/(1 - ...)) cycles through 0, ∞, 1 for ever
-        let result = continued_fraction::<1>(1.0, [0.0], |_| (-1.0, [0.0], 1.0, [0.0]));
+        let one = Jet::<1>::constant(1.0);
+        let result = continued_fraction(one, |_| (-one, one));
         assert!(result.is_none());
         // and one that converges: 1 + 1/(1 + 1/(1 + ...)) is the golden ratio
-        let (f, _) = continued_fraction::<1>(1.0, [0.0], |_| (1.0, [0.0], 1.0, [0.0])).unwrap();
-        assert!((f - (1.0 + 5f64.sqrt()) / 2.0).abs() < 1e-15);
+        let f = continued_fraction(one, |_| (one, one)).unwrap();
+        assert!((f.v - (1.0 + 5f64.sqrt()) / 2.0).abs() < 1e-15);
+        // with its derivatives: t + t²/(t + t²/(t + ...)) = t (1 + √5)/2 has derivative (1 + √5)/2 and none higher
+        let t = Jet::<1>::var(2.0, 0);
+        let f = continued_fraction(t, |_| (t * t, t)).unwrap();
+        assert!((f.g[0] - (1.0 + 5f64.sqrt()) / 2.0).abs() < 1e-14);
+        assert!(f.h[0][0].abs() < 1e-14);
     }
 
     #[test]

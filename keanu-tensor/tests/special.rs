@@ -26,12 +26,21 @@ fn evaluate(name: &str, x: &[f64]) -> f64 {
         ("log_gamma_q", &[a, x]) => log_gamma_q(a, x),
         ("log_gamma_p_da", &[a, x]) => log_gamma_p_da(a, x),
         ("log_gamma_q_da", &[a, x]) => log_gamma_q_da(a, x),
+        ("gamma_p_da2", &[a, x]) => gamma_p_da2(a, x),
+        ("log_gamma_p_da2", &[a, x]) => log_gamma_p_da2(a, x),
+        ("log_gamma_q_da2", &[a, x]) => log_gamma_q_da2(a, x),
         ("inc_beta", &[a, b, x]) => inc_beta(a, b, x),
         ("inc_beta_da", &[a, b, x]) => inc_beta_da(a, b, x),
         ("inc_beta_db", &[a, b, x]) => inc_beta_db(a, b, x),
         ("log_inc_beta", &[a, b, x]) => log_inc_beta(a, b, x),
         ("log_inc_beta_da", &[a, b, x]) => log_inc_beta_da(a, b, x),
         ("log_inc_beta_db", &[a, b, x]) => log_inc_beta_db(a, b, x),
+        ("inc_beta_da2", &[a, b, x]) => inc_beta_da2(a, b, x),
+        ("inc_beta_dadb", &[a, b, x]) => inc_beta_dadb(a, b, x),
+        ("inc_beta_db2", &[a, b, x]) => inc_beta_db2(a, b, x),
+        ("log_inc_beta_da2", &[a, b, x]) => log_inc_beta_da2(a, b, x),
+        ("log_inc_beta_dadb", &[a, b, x]) => log_inc_beta_dadb(a, b, x),
+        ("log_inc_beta_db2", &[a, b, x]) => log_inc_beta_db2(a, b, x),
         ("log_bessel_i0", &[x]) => log_bessel_i0(x),
         ("log_bessel_i1", &[x]) => log_bessel_i1(x),
         _ => panic!("unknown fixture function {name} with {} arguments", x.len()),
@@ -247,6 +256,111 @@ fn incomplete_gamma_is_accurate_for_large_shapes() {
             }
         }
     }
+}
+
+#[test]
+fn second_shape_derivatives_match_differences_of_the_first_in_every_regime() {
+    let close = |exact: f64, fd: f64, scale: f64, what: &str| {
+        assert!(
+            (exact - fd).abs() <= 1e-6 * scale,
+            "{what}: exact {exact:e}, differences {fd:e}"
+        );
+    };
+    // the series (x < a + 1), the continued fraction and Temme's expansion (a >= 100, |x - a| <= 0.4 a)
+    for (a, x) in [
+        (0.05, 0.01),
+        (0.7, 1.2),
+        (2.5, 1.0),
+        (2.5, 8.0),
+        (30.0, 25.0),
+        (30.0, 60.0),
+        (150.0, 100.0),
+        (150.0, 160.0),
+        (1e4, 9800.0),
+        (1e4, 1.5e4),
+    ] {
+        let h = 1e-5 * a;
+        let what = format!("({a}, {x})");
+        let fd = |f: fn(f64, f64) -> f64| (f(a + h, x) - f(a - h, x)) / (2.0 * h);
+        let p = gamma_p_da2(a, x);
+        let fd_p = fd(gamma_p_da);
+        close(p, fd_p, fd_p.abs() + gamma_p_da(a, x).abs() / a, &what);
+        for (f, df) in [
+            (
+                log_gamma_p_da2 as fn(f64, f64) -> f64,
+                log_gamma_p_da as fn(f64, f64) -> f64,
+            ),
+            (log_gamma_q_da2, log_gamma_q_da),
+        ] {
+            let fd_log = fd(df);
+            close(f(a, x), fd_log, fd_log.abs() + df(a, x).abs() / a, &what);
+        }
+    }
+    // the incomplete beta function's continued fraction on either side of the mean, and its symmetry
+    for (a, b, x) in [
+        (0.3f64, 0.7f64, 0.2),
+        (2.0, 5.0, 0.1),
+        (2.0, 5.0, 0.6),
+        (40.0, 3.0, 0.95),
+        (300.0, 500.0, 0.4),
+    ] {
+        let h = 1e-5 * a.min(b);
+        let what = format!("({a}, {b}, {x})");
+        let d_a = |f: fn(f64, f64, f64) -> f64| (f(a + h, b, x) - f(a - h, b, x)) / (2.0 * h);
+        let d_b = |f: fn(f64, f64, f64) -> f64| (f(a, b + h, x) - f(a, b - h, x)) / (2.0 * h);
+        let scale = |fd: f64, first: f64| fd.abs() + first.abs() / a.min(b);
+        let (aa, ab, bb) = (d_a(inc_beta_da), d_b(inc_beta_da), d_b(inc_beta_db));
+        close(
+            inc_beta_da2(a, b, x),
+            aa,
+            scale(aa, inc_beta_da(a, b, x)),
+            &what,
+        );
+        close(
+            inc_beta_dadb(a, b, x),
+            ab,
+            scale(ab, inc_beta_da(a, b, x)),
+            &what,
+        );
+        close(
+            inc_beta_db2(a, b, x),
+            bb,
+            scale(bb, inc_beta_db(a, b, x)),
+            &what,
+        );
+        let (aa, ab, bb) = (
+            d_a(log_inc_beta_da),
+            d_b(log_inc_beta_da),
+            d_b(log_inc_beta_db),
+        );
+        let first = log_inc_beta_da(a, b, x).abs() + log_inc_beta_db(a, b, x).abs();
+        close(log_inc_beta_da2(a, b, x), aa, scale(aa, first), &what);
+        close(log_inc_beta_dadb(a, b, x), ab, scale(ab, first), &what);
+        close(log_inc_beta_db2(a, b, x), bb, scale(bb, first), &what);
+        // I_x(a, b) = 1 - I_(1-x)(b, a)
+        let tol = 1e-12 * inc_beta_da2(a, b, x).abs().max(1e-300);
+        assert!((inc_beta_da2(a, b, x) + inc_beta_db2(b, a, 1.0 - x)).abs() <= tol * 1e3);
+    }
+    // continuous across the switches to and from Temme's expansion
+    for a in [100.0, 1e4] {
+        for edge in [0.6, 1.4] {
+            let x = a * edge;
+            let (below, above) = (x * (1.0 - 1e-14), x * (1.0 + 1e-14));
+            for f in [gamma_p_da2, log_gamma_p_da2, log_gamma_q_da2] {
+                let (u, v) = (f(a, below), f(a, above));
+                assert!((u - v).abs() <= 1e-9 * u.abs(), "{a} {x}: {u:e} vs {v:e}");
+            }
+        }
+    }
+    // the ends: P and I are constant there, and their logs' derivatives don't exist where they are -∞
+    assert_eq!(gamma_p_da2(2.0, 0.0), 0.0);
+    assert_eq!(gamma_p_da2(2.0, f64::INFINITY), 0.0);
+    assert_eq!(log_gamma_q_da2(2.0, 0.0), 0.0);
+    assert!(log_gamma_p_da2(2.0, 0.0).is_nan() && log_gamma_q_da2(2.0, f64::INFINITY).is_nan());
+    assert_eq!(inc_beta_dadb(2.0, 3.0, 0.0), 0.0);
+    assert_eq!(log_inc_beta_db2(2.0, 3.0, 1.0), 0.0);
+    assert!(log_inc_beta_da2(2.0, 3.0, 0.0).is_nan());
+    assert!(gamma_p_da2(-1.0, 1.0).is_nan() && inc_beta_db2(1.0, 0.0, 0.5).is_nan());
 }
 
 #[test]
