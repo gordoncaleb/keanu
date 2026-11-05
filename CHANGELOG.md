@@ -116,6 +116,11 @@ some of the "Same model semantics" guarantees above no longer hold where noted.
     `QuadraticPotential::adaptation_window` now means the first slow window (default 25, was 100), new
     `initial_buffer` and `terminal_buffer`; `initial_mean` and `initial_weight` are deprecated and ignored. NUTS draws
     for a given seed change.
+  - keanu-algorithms: NUTS counts only energy *increases* beyond `max_energy_change` (or NaN) as divergences, as Stan
+    does.
+  - keanu-graph: public `Op::NAMES`, `DistributionKind::NAMES`, `DistributionKind::CDF_NAMES` and
+    `DistributionKind::name`; `transform` and keanu-distributions' continuous distributions are split into modules
+    by family (public paths unchanged).
 - keanu: new examples `eight_schools`, `radon` (data from the PyMC examples repository, MIT), `gaussian_mixture` and
   `gp_regression`; new book chapters on variational inference and Gaussian processes.
 
