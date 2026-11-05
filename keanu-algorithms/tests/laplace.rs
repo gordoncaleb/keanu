@@ -290,3 +290,71 @@ fn a_circular_latent_is_unsupported() {
         other => panic!("expected an unsupported circular latent, got {other:?}"),
     }
 }
+
+/// With observations exactly at the mean, the density of log sigma grows without bound as sigma goes to 0: the
+/// mode is on the boundary.
+#[test]
+fn a_mode_on_the_boundary_is_an_error() {
+    let b = GraphBuilder::new();
+    let sigma = b.half_gaussian(1.0).label("sigma");
+    b.set_value(sigma, DoubleTensor::scalar(1.0));
+    let y = b.gaussian_with_shape(&[3], 0.0, sigma);
+    b.observe(y, DoubleTensor::vector(vec![0.0; 3]));
+    let (graph, mut state) = b.build().unwrap();
+    let model = Model::new(graph, &state).unwrap();
+    match Laplace::new().fit(&model, &mut state) {
+        Err(AlgorithmError::ModeOnBoundary(latent)) => assert_eq!(latent, "sigma"),
+        other => panic!("expected a mode on the boundary, got {other:?}"),
+    }
+}
+
+/// A lone HalfGaussian(1) has its MAP on the boundary, but the density of log sigma, −e^{2z}/2 + z, has an
+/// interior mode at z = 0: the Laplace approximation is fine.
+#[test]
+fn a_lone_half_gaussian_has_an_interior_mode_in_log_space() {
+    let b = GraphBuilder::new();
+    let sigma = b.half_gaussian(1.0).label("sigma");
+    b.set_value(sigma, DoubleTensor::scalar(3.0));
+    let (graph, mut state) = b.build().unwrap();
+    let model = Model::new(graph, &state).unwrap();
+    let result = Laplace::new().fit(&model, &mut state).unwrap();
+    assert!(result.mode()[0].abs() < 1e-6, "{:?}", result.mode());
+}
+
+#[test]
+fn discrete_latents_and_impossible_starts_are_errors() {
+    let b = GraphBuilder::new();
+    let mu = b.gaussian(0.0, 1.0);
+    b.set_value(mu, DoubleTensor::scalar(0.0));
+    b.poisson(mu.exp()).label("count");
+    let (graph, mut state) = b.build().unwrap();
+    let model = Model::new(graph, &state).unwrap();
+    match Laplace::new().fit(&model, &mut state) {
+        Err(AlgorithmError::DiscreteLatents(names)) => assert_eq!(names, vec!["count"]),
+        other => panic!("expected discrete latents, got {other:?}"),
+    }
+
+    // a positive latent at a negative value has no unconstrained point
+    let b = GraphBuilder::new();
+    let sigma = b.half_gaussian(1.0);
+    b.set_value(sigma, DoubleTensor::scalar(-1.0));
+    let (graph, mut state) = b.build().unwrap();
+    let model = Model::new(graph, &state).unwrap();
+    assert_eq!(
+        Laplace::new().fit(&model, &mut state).unwrap_err(),
+        AlgorithmError::ImpossibleStart
+    );
+
+    // a real latent whose log probability at the start is impossible
+    let b = GraphBuilder::new();
+    let x = b.gaussian(0.0, 1.0);
+    b.set_value(x, DoubleTensor::scalar(0.0));
+    let y = b.uniform(x, x + 1.0);
+    b.observe(y, DoubleTensor::scalar(5.0));
+    let (graph, mut state) = b.build().unwrap();
+    let model = Model::new(graph, &state).unwrap();
+    assert_eq!(
+        Laplace::new().fit(&model, &mut state).unwrap_err(),
+        AlgorithmError::ImpossibleStart
+    );
+}
