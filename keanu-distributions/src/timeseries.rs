@@ -145,16 +145,7 @@ impl<'a> HiddenMarkovChain<'a> {
         if total == f64::NEG_INFINITY || total.is_nan() {
             return Ok((total, None));
         }
-        let log_a: Vec<f64> = self.transition.as_slice().iter().map(|p| p.ln()).collect();
-        // β_t(i) = log p(observations after t | state i at t); β_{T−1} = 0
-        let mut beta = vec![0.0; t_len * k];
-        for t in (0..t_len - 1).rev() {
-            for i in 0..k {
-                beta[t * k + i] = log_sum_exp(
-                    (0..k).map(|j| log_a[i * k + j] + e[(t + 1) * k + j] + beta[(t + 1) * k + j]),
-                );
-            }
-        }
+        let beta = self.backward(e, t_len, k);
         let posterior: Vec<f64> = alpha
             .iter()
             .zip(&beta)
@@ -226,6 +217,147 @@ impl<'a> HiddenMarkovChain<'a> {
             states.into_iter().map(|s| s as i64).collect(),
         )?)
     }
+
+    /// The most probable state path given the observations (emission log probabilities [T, K], as for
+    /// [`Self::log_likelihood`]), by the Viterbi algorithm in log space: δ_0(j) = log π_j + e_0j,
+    /// δ_t(j) = max_i(δ_{t−1}(i) + log A_ij) + e_tj, then back-tracking from the best last state. Returns the
+    /// path and its log joint probability log p(z, x). Ties go to the lowest state index.
+    ///
+    /// # Errors
+    ///
+    /// An error if the chain or the emission's shape is invalid, or if every path is impossible.
+    pub fn viterbi(&self, emission: &DoubleTensor) -> Result<(Vec<usize>, f64)> {
+        let (t_len, k) = self.steps(emission)?;
+        let e = emission.as_slice();
+        let log_a: Vec<f64> = self.transition.as_slice().iter().map(|p| p.ln()).collect();
+        let mut delta: Vec<f64> = self
+            .initial
+            .as_slice()
+            .iter()
+            .zip(e)
+            .map(|(p, e)| p.ln() + e)
+            .collect();
+        let mut back = vec![0usize; t_len * k];
+        for t in 1..t_len {
+            let mut next = vec![f64::NEG_INFINITY; k];
+            for (j, next) in next.iter_mut().enumerate() {
+                let (mut best, mut arg) = (f64::NEG_INFINITY, 0);
+                for (i, d) in delta.iter().enumerate() {
+                    let v = d + log_a[i * k + j];
+                    if v > best {
+                        (best, arg) = (v, i);
+                    }
+                }
+                *next = best + e[t * k + j];
+                back[t * k + j] = arg;
+            }
+            delta = next;
+        }
+        let (mut best, mut state) = (f64::NEG_INFINITY, 0);
+        for (j, &d) in delta.iter().enumerate() {
+            if d > best {
+                (best, state) = (d, j);
+            }
+        }
+        if !best.is_finite() {
+            return impossible_observations();
+        }
+        let mut path = vec![0; t_len];
+        path[t_len - 1] = state;
+        for t in (1..t_len).rev() {
+            state = back[t * k + state];
+            path[t - 1] = state;
+        }
+        Ok((path, best))
+    }
+
+    /// The posterior probability of each state at each step given every observation (emission log probabilities
+    /// [T, K], as for [`Self::log_likelihood`]): γ_t(j) = p(z_t = j | x), [T, K], by the forward-backward
+    /// algorithm. Each row sums to 1.
+    ///
+    /// # Errors
+    ///
+    /// An error if the chain or the emission's shape is invalid, or if the observations are impossible.
+    pub fn posterior_marginals(&self, emission: &DoubleTensor) -> Result<DoubleTensor> {
+        let (t_len, k) = self.steps(emission)?;
+        let e = emission.as_slice();
+        let alpha = self.forward(e, t_len, k);
+        let total = log_sum_exp(alpha[(t_len - 1) * k..].iter().copied());
+        if !total.is_finite() {
+            return impossible_observations();
+        }
+        let beta = self.backward(e, t_len, k);
+        let posterior = alpha
+            .iter()
+            .zip(&beta)
+            .map(|(a, b)| {
+                let v = a + b;
+                if v == f64::NEG_INFINITY {
+                    0.0
+                } else {
+                    (v - total).exp()
+                }
+            })
+            .collect();
+        Ok(DoubleTensor::new(&[t_len, k], posterior)?)
+    }
+
+    /// Draws a state path from its posterior given the observations (emission log probabilities [T, K], as for
+    /// [`Self::log_likelihood`]), by forward filtering and backward sampling: the last state from
+    /// p(z_{T−1} | x) ∝ exp α_{T−1}, then each earlier one from p(z_t = i | z_{t+1}, x) ∝ exp(α_t(i)) A_{i, z_{t+1}}.
+    /// (Contrast [`Self::sample_states`], which draws from the prior.)
+    ///
+    /// # Errors
+    ///
+    /// An error if the chain or the emission's shape is invalid, or if the observations are impossible.
+    pub fn sample_posterior_states(
+        &self,
+        emission: &DoubleTensor,
+        rng: &mut KeanuRng,
+    ) -> Result<Vec<usize>> {
+        let (t_len, k) = self.steps(emission)?;
+        let alpha = self.forward(emission.as_slice(), t_len, k);
+        let a = self.transition.as_slice();
+        let draw = |logs: &[f64], rng: &mut KeanuRng| -> Result<usize> {
+            let total = log_sum_exp(logs.iter().copied());
+            if !total.is_finite() {
+                return impossible_observations();
+            }
+            let p: Vec<f64> = logs.iter().map(|l| (l - total).exp()).collect();
+            Ok(pick(&p, rng))
+        };
+        let mut path = vec![0; t_len];
+        path[t_len - 1] = draw(&alpha[(t_len - 1) * k..], rng)?;
+        for t in (0..t_len - 1).rev() {
+            let next = path[t + 1];
+            let logs: Vec<f64> = (0..k)
+                .map(|i| alpha[t * k + i] + a[i * k + next].ln())
+                .collect();
+            path[t] = draw(&logs, rng)?;
+        }
+        Ok(path)
+    }
+
+    /// The backward variables β_t(i) = log p(x_{t+1}..x_{T−1} | z_t = i), [T, K] flattened.
+    fn backward(&self, e: &[f64], t_len: usize, k: usize) -> Vec<f64> {
+        let log_a: Vec<f64> = self.transition.as_slice().iter().map(|p| p.ln()).collect();
+        let mut beta = vec![0.0; t_len * k];
+        for t in (0..t_len - 1).rev() {
+            for i in 0..k {
+                beta[t * k + i] = log_sum_exp(
+                    (0..k).map(|j| log_a[i * k + j] + e[(t + 1) * k + j] + beta[(t + 1) * k + j]),
+                );
+            }
+        }
+        beta
+    }
+}
+
+/// The error of a posterior computation for observations of probability zero.
+fn impossible_observations<T>() -> Result<T> {
+    Err(DistributionError::InvalidValue(
+        "the observations are impossible under the model (probability zero), so they have no posterior".into(),
+    ))
 }
 
 /// An index drawn with the given probabilities (which sum to 1 within tolerance).
@@ -467,6 +599,75 @@ pub struct KalmanFilter {
     pub covariances: DoubleTensor,
 }
 
+/// The Rauch–Tung–Striebel smoother's output for a series: see [`LinearGaussianStateSpace::smooth`].
+#[derive(Debug, Clone, PartialEq)]
+#[non_exhaustive]
+pub struct KalmanSmoother {
+    /// The log likelihood of the observations.
+    pub log_likelihood: f64,
+    /// The smoothed means E[x_t | y_0..T−1], [T, d].
+    pub means: DoubleTensor,
+    /// The smoothed covariances Var[x_t | y_0..T−1], [T, d, d].
+    pub covariances: DoubleTensor,
+}
+
+/// The model's matrices for one step after the observed series, for [`LinearGaussianStateSpace::forecast_with`]:
+/// the transition matrix F and noise covariance Q that move the state into the step, and the observation matrix H
+/// and noise covariance R that observe it there.
+#[derive(Debug, Clone, PartialEq)]
+pub struct FutureStep {
+    /// The transition matrix F, [d, d], from the previous step's state to this one's.
+    pub transition_matrix: DoubleTensor,
+    /// The transition noise covariance Q, [d, d].
+    pub transition_covariance: DoubleTensor,
+    /// The observation matrix H, [m, d].
+    pub observation_matrix: DoubleTensor,
+    /// The observation noise covariance R, [m, m].
+    pub observation_covariance: DoubleTensor,
+}
+
+impl FutureStep {
+    /// A step from its transition matrix and covariance and its observation matrix and covariance.
+    pub fn new(
+        transition_matrix: DoubleTensor,
+        transition_covariance: DoubleTensor,
+        observation_matrix: DoubleTensor,
+        observation_covariance: DoubleTensor,
+    ) -> Self {
+        Self {
+            transition_matrix,
+            transition_covariance,
+            observation_matrix,
+            observation_covariance,
+        }
+    }
+}
+
+/// The predictive distribution of the steps after an observed series, from [`LinearGaussianStateSpace::forecast`]:
+/// the Gaussian marginals of each future step's state and observation given every observation, h steps.
+#[derive(Debug, Clone, PartialEq)]
+#[non_exhaustive]
+pub struct StateSpaceForecast {
+    /// The predicted state means E[x_{T+k} | y_0..T−1], [h, d].
+    pub state_means: DoubleTensor,
+    /// The predicted state covariances, [h, d, d].
+    pub state_covariances: DoubleTensor,
+    /// The predicted observation means E[y_{T+k} | y_0..T−1] = H m, [h, m].
+    pub observation_means: DoubleTensor,
+    /// The predicted observation covariances H P Hᵀ + R, [h, m, m].
+    pub observation_covariances: DoubleTensor,
+}
+
+/// A simulated path of states and observations, from [`LinearGaussianStateSpace::sample_forecast`].
+#[derive(Debug, Clone, PartialEq)]
+#[non_exhaustive]
+pub struct StateSpacePath {
+    /// The states, [h, d].
+    pub states: DoubleTensor,
+    /// The observations, [h, m].
+    pub observations: DoubleTensor,
+}
+
 /// One step of the filter, kept for the reverse pass.
 struct Step<A> {
     /// The predicted mean and covariance of x_t given y_0..t−1.
@@ -687,6 +888,50 @@ fn psd_factor(a: &DoubleTensor, what: &str) -> Result<DoubleTensor> {
     Ok(DoubleTensor::new(&[n, n], l)?)
 }
 
+/// A draw from N(mean, covariance) for a column `mean` [n, 1] and a positive semidefinite covariance [n, n].
+fn gaussian_draw(
+    mean: &DoubleTensor,
+    covariance: &DoubleTensor,
+    what: &str,
+    rng: &mut KeanuRng,
+) -> Result<DoubleTensor> {
+    let n = mean.shape()[0];
+    let factor = psd_factor(covariance, what)?;
+    let z: Vec<f64> = (0..n).map(|_| rng.next_gaussian()).collect();
+    Ok(mean.add(&factor.matmul(&DoubleTensor::new(&[n, 1], z)?)?)?)
+}
+
+/// The inverse of a symmetric positive semidefinite matrix by its Cholesky factor, or, where it is singular, its
+/// Moore–Penrose pseudo-inverse from its eigendecomposition (eigenvalues below 10⁻¹² of the largest taken as 0).
+fn psd_pseudo_inverse(a: &DoubleTensor) -> Result<DoubleTensor> {
+    if let Some((inverse, _)) = a.spd_inverse()? {
+        return Ok(inverse);
+    }
+    let n = a.shape()[0];
+    let (values, vectors) = a.eigh()?;
+    let largest = values
+        .as_slice()
+        .iter()
+        .fold(0.0, |m: f64, v| m.max(v.abs()));
+    let tolerance = 1e-12 * largest;
+    let q = vectors.as_slice();
+    let mut inverse = vec![0.0; n * n];
+    for (k, &lambda) in values.as_slice().iter().enumerate() {
+        if lambda.is_nan() {
+            return invalid_parameter("a predicted state covariance is not finite");
+        }
+        if lambda <= tolerance {
+            continue;
+        }
+        for i in 0..n {
+            for j in 0..n {
+                inverse[i * n + j] += q[i * n + k] * q[j * n + k] / lambda;
+            }
+        }
+    }
+    Ok(DoubleTensor::new(&[n, n], inverse)?)
+}
+
 impl<'a> LinearGaussianStateSpace<'a> {
     /// Creates the model from its parameters: the initial mean `[d]` and covariance [d, d], the transition matrix
     /// and noise covariance [d, d], the observation matrix [m, d] and the observation noise covariance [m, m].
@@ -821,6 +1066,325 @@ impl<'a> LinearGaussianStateSpace<'a> {
             log_likelihood: forward.log_likelihood,
             means: DoubleTensor::new(&[t_len, d], means)?,
             covariances: DoubleTensor::new(&[t_len, d, d], covariances)?,
+        })
+    }
+
+    /// The filter over a series whose every innovation covariance is positive definite (an error otherwise), with
+    /// the model's matrices, the state dimension and the number of steps.
+    fn complete_filter(
+        &self,
+        x: &DoubleTensor,
+    ) -> Result<(Matrices<DoubleTensor>, Forward<DoubleTensor>, usize, usize)> {
+        let (t_len, d, _) = self.steps(x.shape())?;
+        let forward = self.forward(x, false)?;
+        if forward.steps.len() < t_len || !forward.log_likelihood.is_finite() {
+            return impossible_observations();
+        }
+        Ok((self.matrices(d)?, forward, t_len, d))
+    }
+
+    /// The smoother's gain J_t = P_t|t Fᵀ P_{t+1|t}⁻¹ for each step but the last (a pseudo-inverse where the
+    /// predicted covariance is singular), and the covariance of x_t given x_{t+1} and y_0..t in the Joseph-like
+    /// form (I − J F) P_t|t (I − J F)ᵀ + J Q Jᵀ, which is positive semidefinite by construction (and equals
+    /// P_t|t − J P_{t+1|t} Jᵀ).
+    fn smoother_gains(
+        p: &Matrices<DoubleTensor>,
+        steps: &[Step<DoubleTensor>],
+    ) -> Result<Vec<(DoubleTensor, DoubleTensor)>> {
+        steps
+            .windows(2)
+            .map(|w| {
+                let inverse = psd_pseudo_inverse(&w[1].covariance)?;
+                let j = w[0]
+                    .filtered_covariance
+                    .matmul_transposed(&p.f, false, true)?
+                    .matmul(&inverse)?;
+                let a = p.identity.sub(&j.matmul(&p.f)?)?;
+                let conditional = sym(&a
+                    .matmul(&w[0].filtered_covariance)?
+                    .matmul_transposed(&a, false, true)?
+                    .add(&j.matmul(&p.q)?.matmul_transposed(&j, false, true)?)?)?;
+                Ok((j, conditional))
+            })
+            .collect()
+    }
+
+    /// The Rauch–Tung–Striebel smoother: the mean and covariance of the state at each step given every observation
+    /// `x` ([T, m]). It runs the same Joseph-form filter as [`Self::log_prob`], then recurses backwards with
+    /// m_t|T = m_t|t + J_t (m_{t+1}|T − m_{t+1}|t) and P_t|T = C_t + J_t P_{t+1}|T J_tᵀ, where J_t = P_t|t Fᵀ
+    /// P_{t+1}|t⁻¹ and C_t = (I − J_t F) P_t|t (I − J_t F)ᵀ + J_t Q J_tᵀ (so the smoothed covariances stay positive
+    /// semidefinite). A singular predicted covariance P_{t+1}|t (a deterministic part of the state) is inverted
+    /// with its pseudo-inverse.
+    ///
+    /// # Errors
+    ///
+    /// An error if the shapes are invalid or the observations are impossible (an innovation covariance is not
+    /// positive definite).
+    pub fn smooth(&self, x: &DoubleTensor) -> Result<KalmanSmoother> {
+        let (p, forward, t_len, d) = self.complete_filter(x)?;
+        let steps = &forward.steps;
+        let mut means = vec![0.0; t_len * d];
+        let mut covariances = vec![0.0; t_len * d * d];
+        if let Some(last) = steps.last() {
+            let gains = Self::smoother_gains(&p, steps)?;
+            let mut mean = last.filtered_mean.clone();
+            let mut covariance = last.filtered_covariance.clone();
+            for t in (0..t_len).rev() {
+                if t + 1 < t_len {
+                    let (j, conditional) = &gains[t];
+                    mean = steps[t]
+                        .filtered_mean
+                        .add(&j.matmul(&mean.sub(&steps[t + 1].mean)?)?)?;
+                    covariance = sym(&conditional
+                        .add(&j.matmul(&covariance)?.matmul_transposed(j, false, true)?)?)?;
+                }
+                means[t * d..(t + 1) * d].copy_from_slice(mean.as_slice());
+                covariances[t * d * d..(t + 1) * d * d].copy_from_slice(covariance.as_slice());
+            }
+        }
+        Ok(KalmanSmoother {
+            log_likelihood: forward.log_likelihood,
+            means: DoubleTensor::new(&[t_len, d], means)?,
+            covariances: DoubleTensor::new(&[t_len, d, d], covariances)?,
+        })
+    }
+
+    /// Draws the hidden states from their joint posterior given the observations `x` ([T, m]), by forward
+    /// filtering and backward sampling (Carter and Kohn, 1994; Frühwirth-Schnatter, 1994): the last state from
+    /// its filtered distribution N(m_{T−1}|T−1, P_{T−1}|T−1), then each earlier one from
+    /// N(m_t|t + J_t (x_{t+1} − m_{t+1}|t), C_t) with the smoother's gain and conditional covariance (see
+    /// [`Self::smooth`]). Returns the states, [T, d].
+    ///
+    /// # Errors
+    ///
+    /// As for [`Self::smooth`].
+    pub fn sample_posterior_states(
+        &self,
+        x: &DoubleTensor,
+        rng: &mut KeanuRng,
+    ) -> Result<DoubleTensor> {
+        let (p, forward, t_len, d) = self.complete_filter(x)?;
+        let steps = &forward.steps;
+        let mut states = vec![0.0; t_len * d];
+        if let Some(last) = steps.last() {
+            let gains = Self::smoother_gains(&p, steps)?;
+            let mut state = gaussian_draw(
+                &last.filtered_mean,
+                &last.filtered_covariance,
+                "a filtered covariance",
+                rng,
+            )?;
+            states[(t_len - 1) * d..].copy_from_slice(state.as_slice());
+            for t in (0..t_len - 1).rev() {
+                let (j, conditional) = &gains[t];
+                let mean = steps[t]
+                    .filtered_mean
+                    .add(&j.matmul(&state.sub(&steps[t + 1].mean)?)?)?;
+                state = gaussian_draw(&mean, conditional, "a smoothing covariance", rng)?;
+                states[t * d..(t + 1) * d].copy_from_slice(state.as_slice());
+            }
+        }
+        Ok(DoubleTensor::new(&[t_len, d], states)?)
+    }
+
+    /// The model's own matrices as `horizon` future steps: forecasting a time-invariant model.
+    fn invariant_future(&self, horizon: usize) -> Vec<FutureStep> {
+        let step = FutureStep::new(
+            self.transition_matrix.clone().into_owned(),
+            self.transition_covariance.clone().into_owned(),
+            self.observation_matrix.clone().into_owned(),
+            self.observation_covariance.clone().into_owned(),
+        );
+        vec![step; horizon]
+    }
+
+    /// Checks each future step's shapes against the model's dimensions.
+    fn check_future(&self, future: &[FutureStep], d: usize, m: usize) -> Result<()> {
+        for (k, step) in future.iter().enumerate() {
+            let shapes = [
+                ("transition matrix", step.transition_matrix.shape(), [d, d]),
+                (
+                    "transition covariance",
+                    step.transition_covariance.shape(),
+                    [d, d],
+                ),
+                (
+                    "observation matrix",
+                    step.observation_matrix.shape(),
+                    [m, d],
+                ),
+                (
+                    "observation covariance",
+                    step.observation_covariance.shape(),
+                    [m, m],
+                ),
+            ];
+            for (what, shape, expected) in shapes {
+                if shape != expected {
+                    return invalid_parameter(format!(
+                        "the {what} of future step {k} must have shape {expected:?}, not {shape:?}"
+                    ));
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// The state's distribution at the last observed step given every observation, or None for an empty series
+    /// (whose first future step is the initial state).
+    fn last_filtered(&self, x: &DoubleTensor) -> Result<Option<(DoubleTensor, DoubleTensor)>> {
+        let (_, forward, _, _) = self.complete_filter(x)?;
+        Ok(forward
+            .steps
+            .into_iter()
+            .last()
+            .map(|s| (s.filtered_mean, s.filtered_covariance)))
+    }
+
+    /// The predictive distribution of the next `horizon` steps after the observations `x` ([T, m]) of a
+    /// time-invariant model: [`Self::forecast_with`] with the model's own matrices at every future step. Each step's
+    /// state mean moves by m ← F m and its covariance by P ← F P Fᵀ + Q from the last filtered state, so for a
+    /// local level model (F = H = 1) the k-th step's observation variance is P_{T−1}|T−1 + k Q + R.
+    ///
+    /// # Errors
+    ///
+    /// As for [`Self::forecast_with`].
+    pub fn forecast(&self, x: &DoubleTensor, horizon: usize) -> Result<StateSpaceForecast> {
+        self.forecast_with(x, &self.invariant_future(horizon))
+    }
+
+    /// The predictive distribution of the steps after the observations `x` ([T, m]), one per entry of `future`,
+    /// which gives each step's matrices (for a time-varying model, or regressors known in advance): from the
+    /// filtered state at the last observed step, the state moves by step k's transition matrix and noise and is
+    /// observed with its observation matrix and noise. For an empty series (T = 0) the first future step is the
+    /// initial state, and its transition matrix and covariance are not used.
+    ///
+    /// # Errors
+    ///
+    /// An error if the shapes are invalid (the future steps' included) or the observations are impossible.
+    pub fn forecast_with(
+        &self,
+        x: &DoubleTensor,
+        future: &[FutureStep],
+    ) -> Result<StateSpaceForecast> {
+        let (_, d, m) = self.steps(x.shape())?;
+        self.check_future(future, d, m)?;
+        let h = future.len();
+        let mut state = self.last_filtered(x)?;
+        let (mut sm, mut sc, mut om, mut oc) = (
+            Vec::with_capacity(h * d),
+            Vec::with_capacity(h * d * d),
+            Vec::with_capacity(h * m),
+            Vec::with_capacity(h * m * m),
+        );
+        for step in future {
+            let (mean, covariance) = match state {
+                Some((mean, covariance)) => {
+                    let f = &step.transition_matrix;
+                    (
+                        f.matmul(&mean)?,
+                        sym(&f
+                            .matmul(&covariance)?
+                            .matmul_transposed(f, false, true)?
+                            .add(&step.transition_covariance)?)?,
+                    )
+                }
+                None => (
+                    self.initial_mean.reshape(&[d as isize, 1])?,
+                    self.initial_covariance.clone().into_owned(),
+                ),
+            };
+            let hm = &step.observation_matrix;
+            sm.extend_from_slice(mean.as_slice());
+            sc.extend_from_slice(covariance.as_slice());
+            om.extend_from_slice(hm.matmul(&mean)?.as_slice());
+            oc.extend_from_slice(
+                sym(&hm
+                    .matmul(&covariance)?
+                    .matmul_transposed(hm, false, true)?
+                    .add(&step.observation_covariance)?)?
+                .as_slice(),
+            );
+            state = Some((mean, covariance));
+        }
+        Ok(StateSpaceForecast {
+            state_means: DoubleTensor::new(&[h, d], sm)?,
+            state_covariances: DoubleTensor::new(&[h, d, d], sc)?,
+            observation_means: DoubleTensor::new(&[h, m], om)?,
+            observation_covariances: DoubleTensor::new(&[h, m, m], oc)?,
+        })
+    }
+
+    /// Draws one path of the next `horizon` steps after the observations `x` of a time-invariant model, jointly
+    /// over the steps: [`Self::sample_forecast_with`] with the model's own matrices.
+    ///
+    /// # Errors
+    ///
+    /// As for [`Self::sample_forecast_with`].
+    pub fn sample_forecast(
+        &self,
+        x: &DoubleTensor,
+        horizon: usize,
+        rng: &mut KeanuRng,
+    ) -> Result<StateSpacePath> {
+        self.sample_forecast_with(x, &self.invariant_future(horizon), rng)
+    }
+
+    /// Draws one path of the steps after the observations `x` ([T, m]), one per entry of `future` (see
+    /// [`Self::forecast_with`]): the state at the last observed step from its filtered distribution, then each
+    /// future state and observation by simulating the model forward. Unlike draws from each step's marginal in
+    /// [`StateSpaceForecast`], the steps of one path are jointly distributed (for intervals of sums or maxima).
+    ///
+    /// # Errors
+    ///
+    /// As for [`Self::forecast_with`], and if a covariance is not positive semidefinite.
+    pub fn sample_forecast_with(
+        &self,
+        x: &DoubleTensor,
+        future: &[FutureStep],
+        rng: &mut KeanuRng,
+    ) -> Result<StateSpacePath> {
+        let (_, d, m) = self.steps(x.shape())?;
+        self.check_future(future, d, m)?;
+        let h = future.len();
+        let mut state = self
+            .last_filtered(x)?
+            .map(|(mean, covariance)| {
+                gaussian_draw(&mean, &covariance, "a filtered covariance", rng)
+            })
+            .transpose()?;
+        let (mut states, mut observations) = (Vec::with_capacity(h * d), Vec::with_capacity(h * m));
+        for step in future {
+            let next = match state {
+                Some(previous) => step
+                    .transition_matrix
+                    .matmul(&previous)?
+                    .add(&gaussian_draw(
+                        &DoubleTensor::zeros(&[d, 1]),
+                        &step.transition_covariance,
+                        "the transition covariance",
+                        rng,
+                    )?)?,
+                None => gaussian_draw(
+                    &self.initial_mean.reshape(&[d as isize, 1])?,
+                    &self.initial_covariance,
+                    "the initial covariance",
+                    rng,
+                )?,
+            };
+            let y = step.observation_matrix.matmul(&next)?.add(&gaussian_draw(
+                &DoubleTensor::zeros(&[m, 1]),
+                &step.observation_covariance,
+                "the observation covariance",
+                rng,
+            )?)?;
+            states.extend_from_slice(next.as_slice());
+            observations.extend_from_slice(y.as_slice());
+            state = Some(next);
+        }
+        Ok(StateSpacePath {
+            states: DoubleTensor::new(&[h, d], states)?,
+            observations: DoubleTensor::new(&[h, m], observations)?,
         })
     }
 

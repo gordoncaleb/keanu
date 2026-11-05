@@ -42,7 +42,7 @@ continuous or discrete, and its parameters carry a trailing state axis.
 - The log density is computed by the log-space forward algorithm in O(T K²) and its gradient by the backward
   algorithm, both exact. Drawing a value simulates the chain and then each observation. For the chain alone,
   `keanu_distributions::HiddenMarkovChain` gives the log likelihood of any per-state emission log probabilities, the
-  smoothed state marginals (its gradient with respect to them) and simulated state paths.
+  smoothed state marginals, the Viterbi path and simulated state paths (see below).
 
 **Linear-Gaussian state-space models.** `linear_gaussian_state_space(steps, initial_mean, initial_covariance,
 transition_matrix, transition_covariance, observation_matrix, observation_covariance)` is the model of the Kalman
@@ -63,6 +63,43 @@ x_{t+1} = F x_t + N(0, Q), observed as y_t = H x_t + N(0, R) in dimension m. The
   approximation and anything else that needs Hessians. Covariance gradients are symmetric, as for the multivariate
   Gaussian.
 - `keanu_distributions::LinearGaussianStateSpace::filter` returns the filtered means and covariances at each step.
+
+## Smoothing, decoding and forecasting
+
+The hidden states of both models are summed or integrated out of the likelihood, so a sampler draws only the
+parameters. The states, and the future, are recovered afterwards: each draw of the parameters gives them an exact
+conditional distribution, and repeating the computation over the draws gives their posterior with the parameters'
+uncertainty included. `keanu_algorithms::timeseries` does this for a node, evaluating its parameters at each draw
+(deterministic parents included), so the samples must record every latent the parameters depend on.
+
+```rust,ignore
+{{#include ../../keanu/tests/book.rs:smoothing}}
+```
+
+**State-space models.** `StateSpacePosterior::new(&model, &state, node, &samples)` (or `from_chains` for
+`ChainSamples`) holds each draw's model, and gives at each draw:
+
+- `smooth`: the Rauch–Tung–Striebel smoother's means and covariances of the states given every observation. It runs
+  the same Joseph-form filter as the log density and keeps its covariances positive semidefinite; a singular
+  predicted covariance (a part of the state that is known exactly) uses its pseudo-inverse. `mean_states` averages
+  the smoothed means over the draws.
+- `sample_states`: a draw of the whole state path from its posterior, by forward filtering and backward sampling,
+  so that states and parameters together are draws from their joint posterior.
+- `forecast(h)`: the Gaussian predictive distribution of the next h states and observations, from the last filtered
+  state, for a time-invariant model; `sample_forecast(h, rng)` simulates one future path per draw, jointly over its
+  steps (for intervals of totals or maxima). `forecast_with` and `sample_forecast_with` take each future step's
+  matrices (`FutureStep`) from a closure of the draw, for time-varying models or known future inputs.
+
+The same methods exist at fixed parameter values on `keanu_distributions::LinearGaussianStateSpace`: `smooth`,
+`sample_posterior_states`, `forecast`, `forecast_with`, `sample_forecast` and `sample_forecast_with`.
+
+**Hidden Markov models.** `HiddenMarkovPosterior::new(&model, &state, node, &samples)` gives each draw's
+`viterbi` path (the most probable state sequence, with its log joint probability), `posterior_marginals`
+(p(z_t = j | x), [T, K], by the forward-backward algorithm), their average over the draws `mean_marginals`, and
+`sample_states`, a posterior path per draw by forward filtering and backward sampling. At fixed parameters,
+`keanu_distributions::HiddenMarkovChain` has `viterbi`, `posterior_marginals` and `sample_posterior_states`, taking
+each step's emission log probabilities under each state, which `DistributionKind::hidden_markov_chain` computes for a
+node's value and parameters. The [HMM example](examples.md) decodes its regimes this way.
 
 ## Scan: a loop in one node
 

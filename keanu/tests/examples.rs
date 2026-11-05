@@ -639,6 +639,17 @@ fn hmm_recovers_the_transition_probabilities() {
         check(r.means, &[i], hmm::TRUE_MEANS[i], &format!("mean {i}"));
     }
     check(r.sigma, &[], hmm::TRUE_SIGMA, "sigma");
+    // decoding: each step's more probable regime, from the posterior state marginals averaged over the draws,
+    // matches the simulated one at almost every step, and the probabilities are probabilities
+    let truth = hmm::simulate(hmm::STEPS, hmm::DATA_SEED).states;
+    let correct = r.decoded.iter().zip(&truth).filter(|(a, b)| a == b).count();
+    assert!(
+        correct as f64 >= 0.95 * hmm::STEPS as f64,
+        "{correct} correct"
+    );
+    for p in r.state_probabilities.as_slice().chunks(2) {
+        assert!((p[0] + p[1] - 1.0).abs() < 1e-9 && p[0] >= 0.0 && p[1] >= 0.0);
+    }
     // the ordering holds in every draw, so the chains never swap labels
     for chain in r.samples.chains() {
         let means = chain.f64(r.means).unwrap();

@@ -46,6 +46,6 @@ pub use multivariate::*;
 pub use param::{IntoParam, Param};
 pub use rng::KeanuRng;
 pub use timeseries::{
-    HiddenMarkovChain, HiddenMarkovChainGradient, KalmanFilter, LinearGaussianStateSpace,
-    LinearGaussianStateSpaceGradient,
+    FutureStep, HiddenMarkovChain, HiddenMarkovChainGradient, KalmanFilter, KalmanSmoother,
+    LinearGaussianStateSpace, LinearGaussianStateSpaceGradient, StateSpaceForecast, StateSpacePath,
 };

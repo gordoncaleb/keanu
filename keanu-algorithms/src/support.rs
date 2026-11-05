@@ -168,3 +168,26 @@ pub(crate) fn start_point(param: &Parameterisation<'_>, state: &State) -> Result
         other => other.into(),
     })
 }
+
+/// The latents (unobserved probabilistic nodes) among the ancestors of `targets`, up to the nearest probabilistic
+/// ones, in id order.
+pub(crate) fn latent_ancestors(graph: &Graph, state: &State, targets: &[NodeId]) -> Vec<NodeId> {
+    let mut seen = vec![false; graph.len()];
+    let mut stack = targets.to_vec();
+    let mut latents = Vec::new();
+    while let Some(id) = stack.pop() {
+        if std::mem::replace(&mut seen[id.index()], true) {
+            continue;
+        }
+        let node = &graph[id];
+        if node.is_probabilistic() {
+            if !state.is_observed(id) {
+                latents.push(id);
+            }
+        } else {
+            stack.extend(node.parents().iter().copied());
+        }
+    }
+    latents.sort();
+    latents
+}

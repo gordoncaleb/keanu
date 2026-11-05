@@ -20,10 +20,17 @@
 //! first mean is a latent and the second is the first plus a positive gap, stacked and cumulatively summed as in
 //! the Gaussian mixture example (Stan's ordered transform), so state 0 is always the regime with the lower mean.
 //!
+//! Decoding: the hidden states are summed out of the likelihood, not sampled, but each draw of the parameters gives
+//! them a posterior of their own, computed exactly by the forward-backward algorithm. Averaged over the draws
+//! (`HiddenMarkovPosterior::mean_marginals`), that is the posterior probability of each regime at each step with
+//! the parameters' uncertainty included; the example decodes each step to its more probable regime and compares
+//! with the simulated states.
+//!
 //! Run with `cargo run --release --example hmm`.
 
 use keanu::algorithms::ChainSamples;
 use keanu::algorithms::mcmc::chains::sample_chains;
+use keanu::algorithms::timeseries::HiddenMarkovPosterior;
 use keanu::graph::op::DistributionKind;
 use keanu::prelude::*;
 
@@ -81,6 +88,10 @@ pub struct Hmm {
     pub means: NodeId,
     /// The emission standard deviation.
     pub sigma: NodeId,
+    /// The posterior probability of each state at each step, [T, 2], averaged over the draws.
+    pub state_probabilities: DoubleTensor,
+    /// The more probable state at each step.
+    pub decoded: Vec<usize>,
 }
 
 /// Fits the model to `observations` with `CHAINS` NUTS chains of `draws` draws each (after as many adaptation
@@ -113,7 +124,11 @@ pub fn fit(observations: &[f64], seed: u64, draws: usize) -> keanu::Result<Hmm> 
     b.set_value(first, DoubleTensor::vector(vec![0.0]));
     b.set_value(gap, DoubleTensor::vector(vec![1.0]));
     b.set_value(sigma, DoubleTensor::scalar(1.0));
-    let (transition, means, sigma) = (transition.id(), means.id(), sigma.id());
+    let (transition, means, sigma, y) = (transition.id(), means.id(), sigma.id(), y.id());
+    // the latents, recorded too so that the states can be decoded at each draw
+    let latents = [rows[0].id(), rows[1].id(), first.id(), gap.id()];
+    let mut recorded = vec![transition, means, sigma];
+    recorded.extend(latents);
 
     let (graph, state) = b.build()?;
     let model = Model::new(graph, &state)?;
@@ -122,18 +137,27 @@ pub fn fit(observations: &[f64], seed: u64, draws: usize) -> keanu::Result<Hmm> 
         let (samples, _) = nuts.sample_with_statistics(
             &model,
             state,
-            &[transition, means, sigma],
+            &recorded,
             2 * draws,
             SamplingOptions::default().with_drop(draws),
             rng,
         )?;
         Ok(samples)
     })?;
+    let state_probabilities =
+        HiddenMarkovPosterior::from_chains(&model, &state, y, &samples)?.mean_marginals()?;
+    let decoded = state_probabilities
+        .as_slice()
+        .chunks(2)
+        .map(|p| usize::from(p[1] > p[0]))
+        .collect();
     Ok(Hmm {
         samples,
         transition,
         means,
         sigma,
+        state_probabilities,
+        decoded,
     })
 }
 
@@ -168,6 +192,12 @@ fn main() -> keanu::Result<()> {
     println!(
         "sigma    mean {:.3}  sd {:.3}  (true {TRUE_SIGMA:.2})  R-hat {:.3}",
         s.mean, s.sd, s.r_hat
+    );
+    let truth = simulate(STEPS, DATA_SEED).states;
+    let correct = r.decoded.iter().zip(&truth).filter(|(a, b)| a == b).count();
+    println!(
+        "decoded states: {correct} of {STEPS} steps in their simulated regime ({:.1}%)",
+        100.0 * correct as f64 / STEPS as f64
     );
     Ok(())
 }

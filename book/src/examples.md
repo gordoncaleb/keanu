@@ -161,7 +161,10 @@ Swapping the two states' labels leaves the likelihood unchanged, so the posterio
 chains can settle in different ones (label switching), which makes R-hat meaningless. The example removes the copy
 by ordering the emission means: the first mean plus a positive gap, as in the Gaussian mixture, so state 0 is always
 the regime with the lower mean. Its test checks every R-hat below 1.01, the transition probabilities, means and noise
-scale within their posterior uncertainty of the truth, and the ordering in every draw.
+scale within their posterior uncertainty of the truth, and the ordering in every draw. It then decodes the regimes
+with `HiddenMarkovPosterior` (see [smoothing, decoding and forecasting](sequences.md#smoothing-decoding-and-forecasting)):
+the posterior probability of each regime at each step, averaged over the draws, puts at least 95% of the steps in
+their simulated regime.
 
 ```rust,ignore
 {{#include ../../keanu/examples/hmm.rs}}

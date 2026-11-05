@@ -989,6 +989,52 @@ fn hidden_markov_models() -> keanu::Result<()> {
 }
 
 #[test]
+fn smoothing_and_forecasting() -> keanu::Result<()> {
+    // ANCHOR: smoothing
+    use keanu::algorithms::timeseries::StateSpacePosterior;
+
+    // the local level model, with the level noise scale sampled by NUTS
+    let b = GraphBuilder::new();
+    let matrix = |v: f64| DoubleTensor::new(&[1, 1], vec![v]);
+    let level_noise = b.half_gaussian(1.0);
+    let y = b.linear_gaussian_state_space(
+        6,
+        DoubleTensor::vector(vec![0.0]),
+        matrix(10.0)?,
+        matrix(1.0)?,
+        (level_noise * level_noise).reshape(&[1, 1]),
+        matrix(1.0)?,
+        matrix(0.25)?,
+    );
+    b.observe(
+        y,
+        DoubleTensor::new(&[6, 1], vec![0.3, 0.9, 1.4, 1.1, 2.0, 2.6])?,
+    );
+    b.set_value(level_noise, DoubleTensor::scalar(0.5));
+    let (level_noise, y) = (level_noise.id(), y.id());
+    let (graph, mut state) = b.build()?;
+    let model = Model::new(graph, &state)?;
+    let samples = Nuts::default().sample(
+        &model,
+        &mut state,
+        &[level_noise],
+        300,
+        &mut KeanuRng::seed_from_u64(1),
+    )?;
+
+    // the hidden levels and the next 4 observations, at each draw of the noise scale
+    let posterior = StateSpacePosterior::new(&model, &state, y, &samples)?;
+    let levels = posterior.mean_states()?; // E[level_t | y], [6, 1], averaged over the draws
+    let forecasts = posterior.forecast(4)?; // each draw's predictive means and covariances
+    let paths = posterior.sample_forecast(4, &mut KeanuRng::seed_from_u64(2))?; // one future path per draw
+    assert_eq!(levels.shape(), &[6, 1]);
+    assert_eq!(forecasts.len(), samples.len());
+    assert_eq!(paths[0].observations.shape(), &[4, 1]);
+    // ANCHOR_END: smoothing
+    Ok(())
+}
+
+#[test]
 fn kalman_filters() -> keanu::Result<()> {
     // ANCHOR: kalman
     // a local level model: a random walk level observed with noise, with an unknown level noise scale

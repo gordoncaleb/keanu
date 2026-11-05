@@ -323,6 +323,20 @@ Work from `docs/plans/2026-11-05-001-feat-applied-modelling-gaps-plan.md`.
   with `recover_marginals`, and each site's detection count as a zero-inflated binomial. Its test checks that each
   form covers the true ψ and p with its 90% interval and that the three agree on ψ, p and the posterior number of
   occupied sites; the guide's examples chapter describes it.
+- keanu-distributions and keanu-algorithms: **smoothing, decoding and forecasting** of the state-space models.
+  `LinearGaussianStateSpace` gained `smooth` (the Rauch–Tung–Striebel smoother after the same Joseph-form filter as
+  the log density, with covariances kept positive semidefinite and a pseudo-inverse for a singular predicted
+  covariance; `KalmanSmoother`), `sample_posterior_states` (forward filtering, backward sampling), `forecast` and
+  `forecast_with` (each future step's state and observation means and covariances, `StateSpaceForecast`, for a
+  time-invariant model or per-step `FutureStep` matrices), and `sample_forecast` and `sample_forecast_with` (one
+  joint future path, `StateSpacePath`). `HiddenMarkovChain` gained `viterbi` (the most probable path and its log
+  joint probability), `posterior_marginals` and `sample_posterior_states`. Observations of probability zero are an
+  error for all of them. The new `keanu_algorithms::timeseries` module runs them at each posterior draw of a node:
+  `StateSpacePosterior` (`smooth`, `mean_states`, `sample_states`, `forecast`, `forecast_with`, `sample_forecast`,
+  `sample_forecast_with`) and `HiddenMarkovPosterior` (`viterbi`, `posterior_marginals`, `mean_marginals`,
+  `sample_states`), from `NetworkSamples` or `ChainSamples`, with the node's parameters evaluated from each draw.
+  keanu-graph gained `DistributionKind::hidden_markov_chain`. The HMM example decodes its regimes, and the guide's
+  sequences chapter has a section on smoothing, decoding and forecasting.
 
 ### Code review fixes
 

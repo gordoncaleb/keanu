@@ -158,21 +158,9 @@ pub(crate) fn log_prob(
     let x = with_component_axis(value)?;
     let (densities, parts) = emission.univariate(Univariate::Density, &x, p.emission, gradient)?;
     let full = with_states(value.shape(), count);
-    if broadcast_shape(densities.shape(), &full)?.as_slice() != full.as_slice() {
-        return invalid_parameter(format!(
-            "the emission parameters don't broadcast to the observations' shape {:?} with {count} states",
-            value.shape()
-        ));
-    }
-    let densities = broadcast(&densities, &full)?;
-    // each step's log density under each state, summed over the step's elements
-    let inner = densities.len() / (steps * count);
-    let mut per_step = vec![0.0; steps * count];
-    for (i, d) in densities.iter().enumerate() {
-        let (row, j) = (i / count, i % count);
-        per_step[row / inner * count + j] += d;
-    }
-    let per_step = DoubleTensor::new(&[steps, count], per_step)?;
+    let per_step = per_step(&densities, &full, steps, count)?;
+    // the elements of each step's observation
+    let inner = full.iter().product::<usize>() / (steps * count);
     if !gradient {
         return Ok((p.chain.log_likelihood(&per_step)?, None));
     }
@@ -212,6 +200,72 @@ pub(crate) fn log_prob(
     gradients.push(Some(chain_gradient.initial));
     gradients.push(Some(chain_gradient.transition));
     Ok((log_prob, Some((dx, gradients))))
+}
+
+/// Each step's log density under each state, [T, K], from the emission's element-wise log densities (which must
+/// broadcast to `full`, the value's shape with the state axis), summed over the step's elements.
+fn per_step(
+    densities: &DoubleTensor,
+    full: &[usize],
+    steps: usize,
+    count: usize,
+) -> Result<DoubleTensor> {
+    if broadcast_shape(densities.shape(), full)?.as_slice() != full {
+        return invalid_parameter(format!(
+            "the emission parameters don't broadcast to the observations' shape {:?} with {count} states",
+            &full[..full.len() - 1]
+        ));
+    }
+    let densities = broadcast(densities, full)?;
+    let inner = densities.len() / (steps * count);
+    let mut per_step = vec![0.0; steps * count];
+    for (i, d) in densities.iter().enumerate() {
+        let (row, j) = (i / count, i % count);
+        per_step[row / inner * count + j] += d;
+    }
+    Ok(DoubleTensor::new(&[steps, count], per_step)?)
+}
+
+impl DistributionKind {
+    /// For a [hidden Markov model](DistributionKind::HiddenMarkovModel) at `value` with the parameters' values
+    /// (`parameters`, in the node's order): its chain, and the log probability of each step's observation under
+    /// each state, [T, K] (the emission's log density with that state's parameters, summed over the step's
+    /// elements). These are the inputs of [`HiddenMarkovChain`]'s decoding methods
+    /// ([`viterbi`](HiddenMarkovChain::viterbi), [`posterior_marginals`](HiddenMarkovChain::posterior_marginals)
+    /// and [`sample_posterior_states`](HiddenMarkovChain::sample_posterior_states)).
+    ///
+    /// # Errors
+    ///
+    /// [`GraphError::InvalidNode`](crate::GraphError::InvalidNode) for any other kind, and an error if the
+    /// chain's probabilities or the shapes are invalid.
+    pub fn hidden_markov_chain(
+        &self,
+        value: &Value,
+        parameters: &[&Value],
+    ) -> Result<(HiddenMarkovChain<'static>, DoubleTensor)> {
+        let DistributionKind::HiddenMarkovModel(emission) = self else {
+            return Err(crate::GraphError::InvalidNode {
+                op: self.name(),
+                message: "is not a hidden Markov model".into(),
+            });
+        };
+        let p = Parameters::new(parameters)?;
+        let Some(&steps) = value.shape().first().filter(|&&t| t > 0) else {
+            return invalid_parameter(format!(
+                "the observations must have a time axis with at least one step, not shape {:?}",
+                value.shape()
+            ));
+        };
+        let x = with_component_axis(value)?;
+        let (densities, _) = emission.univariate(Univariate::Density, &x, p.emission, false)?;
+        let full = with_states(value.shape(), p.count);
+        let emission = per_step(&densities, &full, steps, p.count)?;
+        let chain = HiddenMarkovChain::new(
+            p.chain.initial.clone().into_owned(),
+            p.chain.transition.clone().into_owned(),
+        );
+        Ok((chain, emission))
+    }
 }
 
 /// The support of a hidden Markov model: the emission kind's support with each bound reduced over the state axis
