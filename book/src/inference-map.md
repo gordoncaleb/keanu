@@ -54,7 +54,9 @@ the transforms, so an optimum inside the support is exactly the one you would ge
 
 When the optimum is on the boundary of a support, such as a scale whose most probable value is 0, it is at
 infinity in unconstrained space. The optimizer stops once a bounded latent's unconstrained coordinate passes ±30
-(also when it stalls on the way, with the coordinate past ±5 and the log probability no better than at ±31), and
+heading for the boundary, with the gradient pointing outwards and the log probability no worse further out (an
+interior optimum that far out, such as a scale of 10¹⁵, is not a boundary and the optimizer carries on); also when it
+stalls on the way, with the coordinate past ±5 and the log probability no better than further out. It then
 reports the latent in `OptimizedResult::boundary`, with `converged: false` and the latent's value left next to the
 boundary:
 
