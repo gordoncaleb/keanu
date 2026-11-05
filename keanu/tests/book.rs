@@ -355,7 +355,7 @@ fn map_in_unconstrained_space() -> keanu::Result<()> {
 
     // the opt-out: optimize the latents' own values
     let result = GradientOptimizer::new(&model)
-        .space(Space::Constrained)
+        .with_space(Space::Constrained)
         .max_a_posteriori(&mut state)?;
     assert!((result.get(sigma).unwrap().to_scalar().unwrap() - 0.5).abs() < 1e-3);
     // ANCHOR_END: map_transforms
@@ -390,7 +390,7 @@ fn laplace_approximation() -> keanu::Result<()> {
     let model = Model::new(graph, &state)?;
 
     let result = Laplace::new()
-        .lbfgs(Lbfgs::default().with_max_iterations(500))
+        .with_lbfgs(Lbfgs::default().with_max_iterations(500))
         .fit(&model, &mut state)?;
     // for a Gaussian posterior the approximation is exact
     let precision = 1.0 / 4.0 + 4.0 / 2.25;

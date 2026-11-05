@@ -313,7 +313,7 @@ fn conjugate_gradient_stops_at_an_impossible_start() {
     // in constrained space conjugate gradient starts there, and stops at once
     let result = GradientOptimizer::new(&model)
         .algorithm(ConjugateGradient::default())
-        .space(Space::Constrained)
+        .with_space(Space::Constrained)
         .check_initial_conditions(false)
         .max_a_posteriori(&mut state)
         .unwrap();
@@ -543,7 +543,7 @@ fn lbfgs_rejects_a_non_finite_start() {
     assert_eq!(
         GradientOptimizer::new(&model)
             .algorithm(Lbfgs::default())
-            .space(Space::Constrained)
+            .with_space(Space::Constrained)
             .check_initial_conditions(false)
             .max_a_posteriori(&mut state)
             .unwrap_err(),
@@ -565,7 +565,7 @@ fn lbfgs_shrinks_a_step_to_a_non_finite_point() {
     let model = Model::new(graph, &state).unwrap();
     let result = GradientOptimizer::new(&model)
         .algorithm(Lbfgs::default())
-        .space(Space::Constrained)
+        .with_space(Space::Constrained)
         .max_a_posteriori(&mut state)
         .unwrap();
     assert!(result.converged);
@@ -629,7 +629,7 @@ fn optimizers_compute_deterministic_nodes_of_constants_first() {
         let (model, mut state, mu, sigma) = constant_only_deterministic_scale();
         assert!(!state.has_value(sigma));
         let result = GradientOptimizer::new(&model)
-            .space(space)
+            .with_space(space)
             .max_a_posteriori(&mut state)
             .unwrap();
         let found = result.get(mu).unwrap().to_scalar().unwrap();

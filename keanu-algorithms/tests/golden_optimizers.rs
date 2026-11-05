@@ -95,7 +95,7 @@ fn optimizers_match_java() {
                     }
                 }
                 // Adam is an exact port of Java's update rule, in the latents' own values
-                optimizer = optimizer.space(Space::Constrained);
+                optimizer = optimizer.with_space(Space::Constrained);
                 (1e-6, 1e-9)
             }
             "ConjugateGradient" => {

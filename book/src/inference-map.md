@@ -64,7 +64,7 @@ boundary:
 {{#include ../../keanu/tests/book.rs:map_boundary}}
 ```
 
-`space(Space::Constrained)` opts out and optimizes the latents' own values, where a step can leave the support (the
+`with_space(Space::Constrained)` opts out and optimizes the latents' own values, where a step can leave the support (the
 log probability there is −∞) and Adam follows exactly Java Keanu's trajectory. In unconstrained space a starting
 value outside its support, or on its boundary, is an impossible start even with the initial-condition check off.
 
@@ -85,7 +85,7 @@ mode is that of the density of the transformed latents, so for a positive latent
 log x = log(kθ) rather than the Gamma's own mode (k − 1)θ, and every draw, mapped back through the transform, is
 inside the support. `mode()` and `covariance()` are in unconstrained space; `get` and `values()` give the
 latents' own values at the mode. After L-BFGS, up to five Newton steps on the exact Hessian polish the mode, so a
-Gaussian posterior is reproduced to rounding. `lbfgs(...)` configures the L-BFGS search.
+Gaussian posterior is reproduced to rounding. `with_lbfgs(...)` configures the L-BFGS search.
 
 The approximation fails with an error rather than returning something meaningless:
 

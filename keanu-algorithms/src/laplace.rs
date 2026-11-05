@@ -67,7 +67,7 @@ impl Laplace {
 
     /// Sets the L-BFGS configuration used to find the mode.
     #[must_use]
-    pub fn lbfgs(mut self, lbfgs: Lbfgs) -> Self {
+    pub fn with_lbfgs(mut self, lbfgs: Lbfgs) -> Self {
         self.lbfgs = lbfgs;
         self
     }

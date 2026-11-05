@@ -19,7 +19,7 @@
 //! out (at ±31, or twice its distance beyond ±30): if the fitness there is no worse, the result is the same boundary
 //! result.
 //!
-//! [`GradientOptimizer::space`]`(Space::Constrained)` optimizes the latents' own values instead, as Keanu did before
+//! [`GradientOptimizer::with_space`]`(Space::Constrained)` optimizes the latents' own values instead, as Keanu did before
 //! transforms existed. [`NonGradientOptimizer`] always works on the constrained values, bounded by the supports.
 
 mod adam;
@@ -166,7 +166,7 @@ impl<'m> GradientOptimizer<'m> {
     }
 
     /// Sets the space to optimize in (default [`Space::Unconstrained`]; see the [module documentation](self)).
-    pub fn space(mut self, space: Space) -> Self {
+    pub fn with_space(mut self, space: Space) -> Self {
         self.space = space;
         self
     }

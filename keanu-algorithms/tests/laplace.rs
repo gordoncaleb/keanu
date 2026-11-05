@@ -223,14 +223,14 @@ fn a_distribution_without_a_second_order_rule_is_an_error() {
 #[test]
 fn settings_and_bad_models_are_checked() {
     let (model, mut state, _) = conjugate_gaussian();
-    let invalid = Laplace::new().lbfgs(Lbfgs::default().with_history_size(0));
+    let invalid = Laplace::new().with_lbfgs(Lbfgs::default().with_history_size(0));
     assert!(matches!(
         invalid.fit(&model, &mut state),
         Err(AlgorithmError::InvalidSetting(_))
     ));
     // a tight L-BFGS configuration is used
     let result = Laplace::new()
-        .lbfgs(Lbfgs::default().with_max_iterations(1))
+        .with_lbfgs(Lbfgs::default().with_max_iterations(1))
         .fit(&model, &mut state);
     assert!(result.is_ok());
 
