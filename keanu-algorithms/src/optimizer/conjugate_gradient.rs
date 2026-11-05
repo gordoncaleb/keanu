@@ -1,5 +1,6 @@
 use super::Objective;
 use crate::error::{AlgorithmError, Result};
+use crate::support::{dot, norm};
 use keanu_graph::State;
 
 /// How the next search direction is combined with the previous one.
@@ -75,14 +76,6 @@ impl Default for ConjugateGradient {
             formula: UpdateFormula::PolakRibiere,
         }
     }
-}
-
-fn dot(a: &[f64], b: &[f64]) -> f64 {
-    a.iter().zip(b).map(|(x, y)| x * y).sum()
-}
-
-fn norm(a: &[f64]) -> f64 {
-    dot(a, a).sqrt()
 }
 
 /// x + α d.

@@ -536,6 +536,22 @@ impl Op {
     }
 }
 
+/// A tensor's elements broadcast to `shape`.
+pub(super) fn broadcast(t: &keanu_tensor::DoubleTensor, shape: &[usize]) -> Result<Vec<f64>> {
+    Ok(if t.shape() == shape {
+        t.as_slice().to_vec()
+    } else {
+        t.broadcast_to(shape)?.into_vec()
+    })
+}
+
+/// The error for a distribution parameter that is out of range, for the kinds built around another one.
+pub(super) fn invalid_parameter<T>(message: String) -> Result<T> {
+    Err(crate::error::GraphError::Distribution(
+        keanu_distributions::DistributionError::InvalidParameter(message),
+    ))
+}
+
 /// Internal: check a parent count when evaluating.
 pub(crate) fn expect_parents(op: &Op, inputs: &[&Value], count: usize) -> Result<()> {
     if inputs.len() == count {

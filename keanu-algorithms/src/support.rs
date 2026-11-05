@@ -6,6 +6,16 @@ use keanu_distributions::KeanuRng;
 use keanu_graph::{Graph, GraphError, Model, NodeId, Parameterisation, Space, State, Value};
 use keanu_tensor::DoubleTensor;
 
+/// The dot product of two vectors of the same length.
+pub(crate) fn dot(a: &[f64], b: &[f64]) -> f64 {
+    a.iter().zip(b).map(|(x, y)| x * y).sum()
+}
+
+/// The Euclidean norm of a vector.
+pub(crate) fn norm(a: &[f64]) -> f64 {
+    dot(a, a).sqrt()
+}
+
 /// A node's name as an [`AlgorithmError`] carries it (in [`AlgorithmError::DiscreteLatents`] and
 /// [`AlgorithmError::ModeOnBoundary`]): its label, unquoted, or `#` and its index. Messages name nodes with
 /// [`Graph::describe`] instead, which quotes the label.

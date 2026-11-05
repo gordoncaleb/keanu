@@ -2674,7 +2674,7 @@ fn unary_second_derivative(u: UnaryOp, x: f64, y: f64) -> f64 {
         UnaryOp::Sigmoid => y * (1.0 - y) * (1.0 - 2.0 * y),
         UnaryOp::LnGamma => special::trigamma(x),
         UnaryOp::Digamma => special::tetragamma(x),
-        UnaryOp::Trigamma => pentagamma(x),
+        UnaryOp::Trigamma => special::pentagamma(x),
         UnaryOp::Erf => -2.0 * x * FRAC_2_SQRT_PI * (-x * x).exp(),
         UnaryOp::Erfc => 2.0 * x * FRAC_2_SQRT_PI * (-x * x).exp(),
         // with d = f'(x): f'' = 2 y d² for erf⁻¹ and y d² for Φ⁻¹
@@ -2702,33 +2702,6 @@ fn unary_second_derivative(u: UnaryOp, x: f64, y: f64) -> f64 {
         }
         UnaryOp::Floor | UnaryOp::Ceil | UnaryOp::Round | UnaryOp::Sign => 0.0,
     }
-}
-
-/// The pentagamma function ψ₃(x) = d/dx ψ₂(x), for the second derivative of trigamma; NaN at the poles.
-fn pentagamma(x: f64) -> f64 {
-    use std::f64::consts::PI;
-    if x.is_nan() || (x <= 0.0 && x == x.floor()) {
-        return f64::NAN;
-    }
-    if x < 0.0 {
-        // reflection: ψ₃(1 - x) + ψ₃(x) = -π d³/dx³ cot(πx) = 2π⁴ csc²(πx) (csc²(πx) + 2 cot²(πx))
-        let sin = (PI * x).sin();
-        let cot = (PI * x).cos() / sin;
-        let csc2 = 1.0 / (sin * sin);
-        return 2.0 * PI.powi(4) * csc2 * (csc2 + 2.0 * cot * cot) - pentagamma(1.0 - x);
-    }
-    // the recurrence ψ₃(z) = ψ₃(z + 1) + 6 / z⁴ up to z >= 10, then the asymptotic series
-    // 2/z³ + 3/z⁴ + 2/z⁵ - 1/z⁷ + 4/(3z⁹) - 3/z¹¹ + 10/z¹³
-    let mut result = 0.0;
-    let mut z = x;
-    while z < 10.0 {
-        result += 6.0 / z.powi(4);
-        z += 1.0;
-    }
-    let (iz, iz2) = (1.0 / z, 1.0 / (z * z));
-    let series = 2.0
-        + iz * (3.0 + iz * (2.0 + iz2 * (-1.0 + iz2 * (4.0 / 3.0 + iz2 * (-3.0 + iz2 * 10.0)))));
-    result + iz2 * iz * series
 }
 
 /// The second partial derivatives `[f_ll, f_lr, f_rl, f_rr]` of an element-wise binary op at its operands, each
@@ -2846,25 +2819,4 @@ fn set_mask(parents: &[&Value]) -> Result<DoubleTensor> {
 /// 1.0 where a `replace_nan` node's input isn't NaN (so passes through), else 0.0.
 fn not_nan_mask(parents: &[&Value]) -> Result<DoubleTensor> {
     Ok(f64v(parents[0])?.map(|x| if x.is_nan() { 0.0 } else { 1.0 }))
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn pentagamma_is_the_derivative_of_tetragamma() {
-        for x in [-2.7f64, -0.4, 0.3, 1.0, 4.5, 9.9, 10.0, 25.0] {
-            let h = 1e-5 * x.abs().max(1.0);
-            let fd = (special::tetragamma(x + h) - special::tetragamma(x - h)) / (2.0 * h);
-            let exact = pentagamma(x);
-            assert!(
-                (exact - fd).abs() <= 1e-6 * fd.abs().max(1.0),
-                "pentagamma({x}) = {exact}, differences of tetragamma give {fd}"
-            );
-        }
-        assert!(pentagamma(0.0).is_nan());
-        assert!(pentagamma(-3.0).is_nan());
-        assert!(pentagamma(f64::NAN).is_nan());
-    }
 }

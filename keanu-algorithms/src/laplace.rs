@@ -47,7 +47,7 @@
 use crate::error::{AlgorithmError, Result};
 use crate::optimizer::{Fitness, Lbfgs, Objective};
 use crate::samples::NetworkSamples;
-use crate::support::{check_latents, compute_deterministic, node_name, sample_approximation};
+use crate::support::{check_latents, compute_deterministic, node_name, norm, sample_approximation};
 use keanu_distributions::KeanuRng;
 use keanu_graph::{Model, NodeId, Parameterisation, State, Support, node_support};
 use keanu_tensor::{DoubleTensor, TensorError};
@@ -180,10 +180,6 @@ const NEWTON_STEPS: usize = 5;
 
 /// A Newton step shorter than this, relative to 1 + |ẑ|, means the mode has converged.
 const NEWTON_TOLERANCE: f64 = 1e-12;
-
-fn norm(x: &[f64]) -> f64 {
-    x.iter().map(|v| v * v).sum::<f64>().sqrt()
-}
 
 /// (L Lᵀ)⁻¹ b, for a lower triangular L (n × n) with a positive diagonal.
 fn solve_with_factor(factor: &DoubleTensor, b: &[f64]) -> Vec<f64> {

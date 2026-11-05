@@ -19,14 +19,14 @@
 //! largest upper bound across the components. Where components with parameter-dependent bounds don't overlap, the
 //! density is 0 between them although the support includes them.
 
-use super::Support;
 use super::distribution::{DistributionKind, LogProbGradientParts, ParameterGradients, Univariate};
 use super::distribution_hvp::{LogProbHvpParts, elementwise, reduce, spread_tangent};
 use super::wrappers;
+use super::{Support, broadcast, invalid_parameter};
 use crate::autodiff::{batched_shape, reduce_to};
-use crate::error::{GraphError, Result};
+use crate::error::Result;
 use crate::value::{DType, Value};
-use keanu_distributions::{DistributionError, KeanuRng};
+use keanu_distributions::KeanuRng;
 use keanu_tensor::{DoubleTensor, Shape, broadcast_shape};
 use smallvec::SmallVec;
 
@@ -72,12 +72,6 @@ pub(crate) fn value_shape(
     Ok(shape)
 }
 
-fn invalid<T>(message: String) -> Result<T> {
-    Err(GraphError::Distribution(
-        DistributionError::InvalidParameter(message),
-    ))
-}
-
 /// A mixture's component parameters and weights, with the weights checked: non-negative and summing to 1 (within
 /// [`WEIGHT_TOLERANCE`]) along their last axis.
 struct Parameters<'p, 'v> {
@@ -91,16 +85,18 @@ impl<'p, 'v> Parameters<'p, 'v> {
         let (components, own) = wrappers::split(parameters, OWN_PARAMETERS)?;
         let weights = own[0].f64()?;
         let Some(&count) = weights.shape().last().filter(|&&c| c > 0) else {
-            return invalid("the mixture weights need a non-empty component axis".into());
+            return invalid_parameter("the mixture weights need a non-empty component axis".into());
         };
         for row in weights.as_slice().chunks(count) {
             // written so that NaN weights fail too
             if !row.iter().all(|&w| w >= 0.0) {
-                return invalid(format!("mixture weights must be non-negative, got {row:?}"));
+                return invalid_parameter(format!(
+                    "mixture weights must be non-negative, got {row:?}"
+                ));
             }
             let total: f64 = row.iter().sum();
             if (total - 1.0).abs() > WEIGHT_TOLERANCE {
-                return invalid(format!("mixture weights must sum to 1, got {row:?}"));
+                return invalid_parameter(format!("mixture weights must sum to 1, got {row:?}"));
             }
         }
         Ok(Self {
@@ -122,15 +118,6 @@ pub(crate) fn with_component_axis(value: &Value) -> Result<Value> {
     })
 }
 
-/// A tensor's elements broadcast to `shape`.
-pub(crate) fn broadcast(t: &DoubleTensor, shape: &[usize]) -> Result<Vec<f64>> {
-    Ok(if t.shape() == shape {
-        t.as_slice().to_vec()
-    } else {
-        t.broadcast_to(shape)?.into_vec()
-    })
-}
-
 /// The log probability of a mixture node at `value` (summed over its elements) and, with `gradient`, its gradient
 /// parts: with respect to the value (summed over the components), to each component parameter (shaped like the
 /// value with the component axis) and to the weights.
@@ -149,7 +136,7 @@ pub(crate) fn log_prob(
     full = broadcast_shape(&full, x.shape())?;
     let count = p.count;
     if full.last() != Some(&count) {
-        return invalid(format!(
+        return invalid_parameter(format!(
             "the component parameters don't broadcast to the {count} components of the weights"
         ));
     }
@@ -261,7 +248,7 @@ pub(crate) fn sample(
     full.push(count);
     let draws = component.sample(&full, p.components, rng)?;
     if draws.shape() != full.as_slice() {
-        return invalid(format!(
+        return invalid_parameter(format!(
             "the component parameters don't broadcast to the mixture's shape {shape:?} with {count} components"
         ));
     }
@@ -329,7 +316,7 @@ pub(crate) fn log_prob_hvp(
     }
     full = broadcast_shape(&full, p.weights.shape())?;
     if full.last() != Some(&count) {
-        return invalid(format!(
+        return invalid_parameter(format!(
             "the component parameters don't broadcast to the {count} components of the weights"
         ));
     }

@@ -19,13 +19,13 @@
 //! stores the base as a nested distribution type, recursively, so any nesting the graph accepts (a mixture of
 //! truncated distributions) saves and loads.
 
-use super::Support;
 use super::distribution::{DistributionKind, LogProbGradientParts, ParameterGradients, Univariate};
 use super::distribution_hvp::rules::{self, Hessian, MAX_INPUTS};
 use super::distribution_hvp::{self, Elementwise};
+use super::{Support, broadcast, invalid_parameter};
 use crate::error::{GraphError, Result};
 use crate::value::{DType, Value};
-use keanu_distributions::{DistributionError, KeanuRng};
+use keanu_distributions::KeanuRng;
 use keanu_tensor::special::log1mexp;
 use keanu_tensor::{DoubleTensor, Shape, broadcast_shape};
 use std::f64::consts::LN_2;
@@ -57,12 +57,6 @@ pub(crate) fn split<'p, 'v>(
     Ok(parameters.split_at(parameters.len() - own))
 }
 
-fn invalid_bounds<T>(message: String) -> Result<T> {
-    Err(GraphError::Distribution(
-        DistributionError::InvalidParameter(message),
-    ))
-}
-
 /// A wrapper's base parameters and bounds, checked: each lower bound must be less than its upper bound (neither
 /// NaN), and for a discrete base each finite bound must be a whole number.
 struct Bounds<'p, 'v> {
@@ -82,12 +76,12 @@ impl<'p, 'v> Bounds<'p, 'v> {
         for (&l, &u) in l.as_slice().iter().zip(u.as_slice()) {
             // NaN bounds fail too
             if l >= u || l.is_nan() || u.is_nan() {
-                return invalid_bounds(format!(
+                return invalid_parameter(format!(
                     "the lower bound must be less than the upper bound, got [{l}, {u}]"
                 ));
             }
             if discrete && [l, u].iter().any(|b| b.is_finite() && b.fract() != 0.0) {
-                return invalid_bounds(format!(
+                return invalid_parameter(format!(
                     "the bounds of a discrete distribution must be whole numbers or infinite, got [{l}, {u}]"
                 ));
             }
@@ -119,14 +113,6 @@ struct Evaluated {
     x: Option<Vec<f64>>,
     /// With respect to each base parameter (None where there is no derivative).
     parameters: Vec<Option<Vec<f64>>>,
-}
-
-fn broadcast(t: &DoubleTensor, shape: &[usize]) -> Result<Vec<f64>> {
-    Ok(if t.shape() == shape {
-        t.as_slice().to_vec()
-    } else {
-        t.broadcast_to(shape)?.into_vec()
-    })
 }
 
 /// `function` of the base at `at`, broadcast to `shape`. Where `infinite` (broadcast) holds, the value is
@@ -591,7 +577,7 @@ pub(crate) fn sample_truncated(
             return assemble(values, shape, bounds.discrete);
         }
     }
-    invalid_bounds(format!(
+    invalid_parameter(format!(
         "no draw from the base distribution fell within the truncation bounds in {REJECTION_ATTEMPTS} attempts; \
          the bounds hold too little of its probability to sample by rejection"
     ))
@@ -669,7 +655,7 @@ fn sample_by_inverse(
     let mut in_log_space = vec![false; len];
     for i in 0..len {
         if z.log_z[i] == f64::NEG_INFINITY {
-            return invalid_bounds(
+            return invalid_parameter(
                 "the truncation bounds hold none of the base distribution's probability".into(),
             );
         }
@@ -803,7 +789,7 @@ fn solve_in_log_space(
     }
     for i in (0..len).filter(|&i| todo[i]) {
         if active[i] || !(x[i] >= lower[i] && x[i] <= upper[i] && x[i].is_finite()) {
-            return invalid_bounds(format!(
+            return invalid_parameter(format!(
                 "could not draw from the truncation to [{}, {}]: its probability is too far in the base \
                  distribution's tail to invert",
                 lower[i], upper[i]

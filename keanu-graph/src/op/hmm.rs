@@ -20,15 +20,15 @@
 //! A draw simulates the chain forward (ancestral sampling) and draws each step's observation from its state's
 //! emission distribution. The support is the emission kind's, widened to hold every state's.
 
-use super::Support;
 use super::distribution::{DistributionKind, LogProbGradientParts, ParameterGradients, Univariate};
 use super::distribution_hvp::{LogProbHvpParts, elementwise, reduce, spread_tangent};
-use super::mixture::{broadcast, gather, reduce_components, with_component_axis};
+use super::mixture::{gather, reduce_components, with_component_axis};
 use super::wrappers;
+use super::{Support, broadcast, invalid_parameter};
 use crate::autodiff::{batched_shape, reduce_to};
-use crate::error::{GraphError, Result};
+use crate::error::Result;
 use crate::value::{DType, Value};
-use keanu_distributions::{DistributionError, HiddenMarkovChain, KeanuRng};
+use keanu_distributions::{HiddenMarkovChain, KeanuRng};
 use keanu_tensor::special::log_sum_exp;
 use keanu_tensor::{DoubleTensor, Shape, broadcast_shape};
 use smallvec::SmallVec;
@@ -87,12 +87,6 @@ pub(crate) fn value_shape(
     Ok(Shape::from_slice(requested))
 }
 
-fn invalid<T>(message: String) -> Result<T> {
-    Err(GraphError::Distribution(
-        DistributionError::InvalidParameter(message),
-    ))
-}
-
 /// A hidden Markov model's emission parameters and chain, with the chain's probabilities checked.
 struct Parameters<'p, 'v> {
     emission: &'p [&'v Value],
@@ -132,7 +126,7 @@ pub(crate) fn log_prob(
     let p = Parameters::new(parameters)?;
     let count = p.count;
     let Some(&steps) = value.shape().first().filter(|&&t| t > 0) else {
-        return invalid(format!(
+        return invalid_parameter(format!(
             "the observations must have a time axis with at least one step, not shape {:?}",
             value.shape()
         ));
@@ -141,7 +135,7 @@ pub(crate) fn log_prob(
     let (densities, parts) = emission.univariate(Univariate::Density, &x, p.emission, gradient)?;
     let full = with_states(value.shape(), count);
     if broadcast_shape(densities.shape(), &full)?.as_slice() != full.as_slice() {
-        return invalid(format!(
+        return invalid_parameter(format!(
             "the emission parameters don't broadcast to the observations' shape {:?} with {count} states",
             value.shape()
         ));
@@ -224,12 +218,12 @@ pub(crate) fn sample(
     let p = Parameters::new(parameters)?;
     let count = p.count;
     let Some(&steps) = shape.first() else {
-        return invalid("a hidden Markov model's observations need a time axis".into());
+        return invalid_parameter("a hidden Markov model's observations need a time axis".into());
     };
     let full = with_states(shape, count);
     let draws = emission.sample(&full, p.emission, rng)?;
     if draws.shape() != full.as_slice() {
-        return invalid(format!(
+        return invalid_parameter(format!(
             "the emission parameters don't broadcast to the observations' shape {shape:?} with {count} states"
         ));
     }
@@ -279,7 +273,7 @@ pub(crate) fn log_prob_hvp(
     let k = p.count;
     let m = p.emission.len();
     let Some(&steps) = value.shape().first().filter(|&&t| t > 0) else {
-        return invalid(format!(
+        return invalid_parameter(format!(
             "the observations must have a time axis with at least one step, not shape {:?}",
             value.shape()
         ));

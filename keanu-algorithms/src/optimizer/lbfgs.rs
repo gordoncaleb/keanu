@@ -1,6 +1,7 @@
 use super::Objective;
 use super::line_search::{LineSearch, Outcome};
 use crate::error::{AlgorithmError, Result};
+use crate::support::{dot, norm};
 use keanu_graph::State;
 use std::collections::VecDeque;
 
@@ -107,14 +108,6 @@ impl Lbfgs {
         self.tol_param = tol_param;
         self
     }
-}
-
-fn dot(a: &[f64], b: &[f64]) -> f64 {
-    a.iter().zip(b).map(|(x, y)| x * y).sum()
-}
-
-fn norm(a: &[f64]) -> f64 {
-    dot(a, a).sqrt()
 }
 
 fn negated(a: &[f64]) -> Vec<f64> {

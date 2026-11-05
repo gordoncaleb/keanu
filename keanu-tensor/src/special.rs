@@ -146,6 +146,35 @@ pub fn tetragamma(x: f64) -> f64 {
     result + series
 }
 
+/// The pentagamma function ψ₃(x) = d/dx ψ₂(x), NaN at the poles (0 and the negative integers).
+///
+/// Computed by reflection for x < 0, the recurrence ψ₃(x) = ψ₃(x + 1) + 6 / x⁴ up to x >= 10, then the asymptotic
+/// series, whose truncation leaves a relative error of at most about 2 × 10⁻¹¹.
+pub fn pentagamma(x: f64) -> f64 {
+    if x.is_nan() || (x <= 0.0 && x == x.floor()) {
+        return f64::NAN;
+    }
+    if x < 0.0 {
+        // reflection: ψ₃(1 - x) + ψ₃(x) = -π d³/dx³ cot(πx) = 2π⁴ csc²(πx) (csc²(πx) + 2 cot²(πx))
+        let sin = (PI * x).sin();
+        let cot = (PI * x).cos() / sin;
+        let csc2 = 1.0 / (sin * sin);
+        return 2.0 * PI.powi(4) * csc2 * (csc2 + 2.0 * cot * cot) - pentagamma(1.0 - x);
+    }
+    // the recurrence ψ₃(z) = ψ₃(z + 1) + 6 / z⁴ up to z >= 10, then the asymptotic series
+    // 2/z³ + 3/z⁴ + 2/z⁵ - 1/z⁷ + 4/(3z⁹) - 3/z¹¹ + 10/z¹³
+    let mut result = 0.0;
+    let mut z = x;
+    while z < 10.0 {
+        result += 6.0 / z.powi(4);
+        z += 1.0;
+    }
+    let (iz, iz2) = (1.0 / z, 1.0 / (z * z));
+    let series = 2.0
+        + iz * (3.0 + iz * (2.0 + iz2 * (-1.0 + iz2 * (4.0 / 3.0 + iz2 * (-3.0 + iz2 * 10.0)))));
+    result + iz2 * iz * series
+}
+
 // ---------------------------------------------------------------------------------------------------------------
 // Shared numerical machinery
 
