@@ -10,11 +10,14 @@
 //! `Gamma(theta = 0.5, k = 2)` is its mode, 0.5.
 //!
 //! A mode on the boundary of a support (a scale whose mode is 0) is at infinity in unconstrained space. Once a
-//! coordinate of a bounded latent passes ±30 (where `exp` of it is below 10⁻¹³ or above 10¹³) the optimizer stops
-//! and reports the latent in [`OptimizedResult::boundary`], with `converged` false and the values left where it
-//! stopped, close to the boundary. Optimizers can also stall in the flat tail on the way there, so when one stops
-//! with a bounded coordinate beyond ±5 whose gradient still points outwards, that coordinate is tried at ±31: if the
-//! fitness there is no worse, the result is the same boundary result.
+//! coordinate of a bounded latent passes ±30 (where `exp` of it is below 10⁻¹³ or above 10¹³) the boundary is
+//! checked for: if the gradient there points outwards and the fitness at twice that distance is no worse, the
+//! optimizer stops and reports the latent in [`OptimizedResult::boundary`], with `converged` false and the values
+//! left close to the boundary. Otherwise the optimum is in the interior, however far from 1 (a scale of 10¹⁵, say),
+//! and the optimizer carries on. Optimizers can also stall in the flat tail on the way to a boundary, so when one
+//! stops with a bounded coordinate beyond ±5 whose gradient still points outwards, that coordinate is tried further
+//! out (at ±31, or twice its distance beyond ±30): if the fitness there is no worse, the result is the same boundary
+//! result.
 //!
 //! [`GradientOptimizer::space`]`(Space::Constrained)` optimizes the latents' own values instead, as Keanu did before
 //! transforms existed. [`NonGradientOptimizer`] always works on the constrained values, bounded by the supports.
@@ -124,13 +127,16 @@ pub struct GradientOptimizer<'m> {
 /// Starting points whose largest absolute gradient element is at most this are considered flat.
 const FLAT_GRADIENT: f64 = 1e-16;
 
-/// An unconstrained coordinate of a bounded latent beyond ± this is taken to be heading for the boundary of its
-/// support.
+/// An unconstrained coordinate of a bounded latent beyond ± this is checked for heading to the boundary of its
+/// support (see [`Objective::boundary`]).
 const BOUNDARY: f64 = 30.0;
 
 /// A bounded coordinate the optimizer stopped beyond ± this is checked for a boundary optimum (see
 /// [`Objective::probe_boundary`]).
 const PROBE: f64 = 5.0;
+
+/// The most times the point a boundary probe tries is brought halfway back when its fitness is not finite.
+const PROBE_HALVINGS: usize = 10;
 
 impl<'m> GradientOptimizer<'m> {
     /// An optimizer for `model`, using L-BFGS in unconstrained space by default.
@@ -232,10 +238,7 @@ impl<'m> GradientOptimizer<'m> {
                 (x, fitness, converged)
             }
         };
-        let (point, fitness, boundary) = match objective.boundary(&point) {
-            Some(latent) => (point, fitness, Some(latent)),
-            None => objective.probe_boundary(state, point, fitness)?,
-        };
+        let (point, fitness, boundary) = objective.probe_boundary(state, point, fitness)?;
         Ok(OptimizedResult {
             values: objective.constrained_values(&point)?,
             fitness,
@@ -280,6 +283,17 @@ pub(crate) fn check_latents(model: &Model) -> Result<()> {
         return Err(AlgorithmError::DiscreteLatents(names));
     }
     Ok(())
+}
+
+/// Where a bounded coordinate at `z` is tried to confirm it is heading for a boundary: ±([`BOUNDARY`] + 1) inside
+/// the threshold, and twice as far out beyond it (so that an interior optimum just past the threshold, where the
+/// fitness falls steeply further out, is not mistaken for one).
+fn further_out(z: f64) -> f64 {
+    if z.abs() <= BOUNDARY {
+        (BOUNDARY + 1.0).copysign(z)
+    } else {
+        2.0 * z
+    }
 }
 
 /// The coordinates of the flat vector that go to ±∞ as their latent approaches the boundary of its support: every
@@ -382,31 +396,52 @@ impl<'m> Objective<'m> {
             .collect())
     }
 
-    /// The latent of the first coordinate of `x` that is past the boundary threshold, if any.
-    pub(crate) fn boundary(&self, x: &[f64]) -> Option<NodeId> {
-        self.boundary_coordinates
+    /// The latent of the first coordinate of `x` that is past the boundary threshold ±[`BOUNDARY`] and heading
+    /// for the boundary of its support, if any: its gradient points outwards and the fitness further out is no worse
+    /// (see [`probe_boundary`](Self::probe_boundary)). A coordinate past the threshold whose optimum is in the
+    /// interior (far from 1) is not a boundary. Leaves the state at `x`.
+    pub(crate) fn boundary(&self, state: &mut State, x: &[f64]) -> Result<Option<NodeId>> {
+        if !self
+            .boundary_coordinates
             .iter()
-            .find(|&&i| x[i].abs() > BOUNDARY)
-            .and_then(|&i| self.param.coordinate_latent(i))
+            .any(|&i| x[i].abs() > BOUNDARY)
+        {
+            return Ok(None);
+        }
+        let f = self.value_flat(state, x)?;
+        let (_, _, latent) = self.probe(state, x.to_vec(), f, BOUNDARY)?;
+        self.apply_flat(state, x)?;
+        Ok(latent)
     }
 
     /// Checks whether the point `x` (with fitness `f`) an algorithm stopped at is really heading for a boundary:
-    /// optimizers can stall in the flat tail on the way, where steps shrink or the fitness stops changing. Each
-    /// bounded coordinate already beyond ±[`PROBE`] whose gradient points further out is tried at
-    /// ±([`BOUNDARY`] + 1); if the fitness there is no worse, the optimum is on the boundary and the optimizer moves
-    /// there. Returns the final point, its fitness and the first latent found on a boundary, leaving the state at
-    /// the point.
+    /// optimizers can stall in the flat tail on the way, where steps shrink or the fitness stops changing, or stop
+    /// at the threshold ([`boundary`](Self::boundary)). Each bounded coordinate already beyond ±[`PROBE`] whose
+    /// gradient points further out is tried further out (see [`further_out`]); if the fitness there is no worse, the
+    /// optimum is on the boundary and the optimizer moves there. Returns the final point, its fitness and the first
+    /// latent found on a boundary, leaving the state at the point.
     fn probe_boundary(
+        &self,
+        state: &mut State,
+        x: Vec<f64>,
+        f: f64,
+    ) -> Result<(Vec<f64>, f64, Option<NodeId>)> {
+        self.probe(state, x, f, PROBE)
+    }
+
+    /// [`probe_boundary`](Self::probe_boundary) for the bounded coordinates beyond ±`threshold`.
+    fn probe(
         &self,
         state: &mut State,
         mut x: Vec<f64>,
         mut f: f64,
+        threshold: f64,
     ) -> Result<(Vec<f64>, f64, Option<NodeId>)> {
         let far: Vec<usize> = self
             .boundary_coordinates
             .iter()
             .copied()
-            .filter(|&i| x[i].abs() > PROBE)
+            .filter(|&i| x[i].abs() > threshold)
             .collect();
         if far.is_empty() {
             return Ok((x, f, None));
@@ -418,8 +453,17 @@ impl<'m> Objective<'m> {
                 continue;
             }
             let mut y = x.clone();
-            y[i] = (BOUNDARY + 1.0).copysign(x[i]);
-            let fy = self.value_flat(state, &y)?;
+            y[i] = further_out(x[i]);
+            let mut fy = self.value_flat(state, &y)?;
+            // far out the constrained value can underflow (or overflow) to an impossible point: come back towards
+            // x until the fitness is finite
+            for _ in 0..PROBE_HALVINGS {
+                if fy.is_finite() {
+                    break;
+                }
+                y[i] = 0.5 * (x[i] + y[i]);
+                fy = self.value_flat(state, &y)?;
+            }
             if fy >= f {
                 (x, f) = (y, fy);
                 boundary = boundary.or_else(|| self.param.coordinate_latent(i));
@@ -430,11 +474,15 @@ impl<'m> Objective<'m> {
     }
 
     /// As [`boundary`](Self::boundary), for a point given as one tensor per latent.
-    pub(crate) fn boundary_of(&self, point: &[DoubleTensor]) -> Option<NodeId> {
+    pub(crate) fn boundary_of(
+        &self,
+        state: &mut State,
+        point: &[DoubleTensor],
+    ) -> Result<Option<NodeId>> {
         if self.boundary_coordinates.is_empty() {
-            return None;
+            return Ok(None);
         }
-        self.boundary(&concat(point))
+        self.boundary(state, &concat(point))
     }
 
     /// Sets the latents to their values at the flat vector `x` and recomputes their deterministic descendants.

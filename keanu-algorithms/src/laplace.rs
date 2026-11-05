@@ -94,7 +94,7 @@ impl Laplace {
         let start = objective.flat_point(state)?;
         let (mut mode, mut log_density, mut converged) =
             self.lbfgs.maximize(&objective, state, start, None)?;
-        if let Some(latent) = objective.boundary(&mode) {
+        if let Some(latent) = objective.boundary(state, &mode)? {
             return Err(AlgorithmError::ModeOnBoundary(describe(
                 model.graph(),
                 latent,
@@ -128,7 +128,7 @@ impl Laplace {
             let (value, trial_gradient) = objective.value_and_gradient_flat(state, &trial)?;
             if !(value.is_finite() && value >= log_density)
                 || !trial_gradient.iter().all(|g| g.is_finite())
-                || objective.boundary(&trial).is_some()
+                || objective.boundary(state, &trial)?.is_some()
             {
                 break;
             }

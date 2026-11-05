@@ -672,3 +672,36 @@ fn lbfgs_converges_from_a_huge_gradient() {
     let value = result.get(x).unwrap().to_scalar().unwrap();
     assert!(value.abs() < 1e-8, "{value}");
 }
+
+/// An interior optimum far from 1 is at |z| > 30 in unconstrained space, but is not a boundary: MAP of
+/// Gamma(θ, k = 3), whose mode is 2θ, for θ = 5e14 and 5e-16 (modes 1e15 and 1e-15).
+#[test]
+fn an_interior_optimum_far_from_one_is_not_a_boundary() {
+    for theta in [5e14, 5e-16] {
+        for algorithm in both_algorithms() {
+            let b = GraphBuilder::new();
+            let x = b.gamma(theta, 3.0);
+            b.set_value(x, DoubleTensor::scalar(theta));
+            let x = x.id();
+            let (graph, mut state) = b.build().unwrap();
+            let model = Model::new(graph, &state).unwrap();
+            let result = GradientOptimizer::new(&model)
+                .algorithm(algorithm.clone())
+                .max_a_posteriori(&mut state)
+                .unwrap();
+            assert_eq!(result.boundary, None, "{theta} {algorithm:?}");
+            assert!(result.converged, "{theta} {algorithm:?}");
+            let mode = result.get(x).unwrap().to_scalar().unwrap();
+            // Adam's convergence test is on the relative change in z (about ±35), so it stops a little short
+            let tolerance = if matches!(algorithm, Algorithm::Adam(_)) {
+                1e-2
+            } else {
+                2e-3
+            };
+            assert!(
+                (mode / (2.0 * theta) - 1.0).abs() < tolerance,
+                "{theta} {algorithm:?}: {mode}"
+            );
+        }
+    }
+}

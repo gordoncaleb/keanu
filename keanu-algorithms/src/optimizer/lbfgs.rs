@@ -20,7 +20,7 @@ use std::collections::VecDeque;
 /// is below `tol_grad`, or gᵀ H g (with H the approximate inverse Hessian) relative to the fitness's magnitude is
 /// below `tol_rel_grad` × ε; or the point moves less than `tol_param`. It stops without converging after
 /// `max_iterations` iterations, and at the first point past the boundary threshold of a bounded latent in
-/// unconstrained space (see the [module documentation](super)).
+/// unconstrained space that is heading for the boundary (see the [module documentation](super)).
 ///
 /// A starting point whose fitness is not finite is an [`AlgorithmError::ImpossibleStart`], even without the
 /// initial-condition check. Each trial point costs one fitness and one gradient evaluation.
@@ -222,28 +222,31 @@ impl Lbfgs {
         }
         // Keanu maximizes the fitness: minimize its negation
         let (x, f, converged) = self.minimize(
+            state,
             start,
             -fitness,
             negated(&gradient),
-            |x| {
+            |state, x| {
                 let (value, gradient) = objective.value_and_gradient_flat(state, x)?;
                 Ok((-value, negated(&gradient)))
             },
-            |x| objective.boundary(x).is_some(),
+            |state, x| Ok(objective.boundary(state, x)?.is_some()),
         )?;
         Ok((x, -f, converged))
     }
 
     /// Minimizes f from `x` (where f is `f` and its gradient `g`, both finite in f's case). `evaluate` returns f
     /// and its gradient at a point; `stop` says whether to stop (without converging) at a point the line search
-    /// accepted. Returns the final point, f there, and whether it converged.
-    fn minimize(
+    /// accepted. Both are given `context` (such as the state they evaluate in). Returns the final point, f there,
+    /// and whether it converged.
+    fn minimize<C>(
         &self,
+        context: &mut C,
         mut x: Vec<f64>,
         mut f: f64,
         mut g: Vec<f64>,
-        mut evaluate: impl FnMut(&[f64]) -> Result<(f64, Vec<f64>)>,
-        mut stop: impl FnMut(&[f64]) -> bool,
+        mut evaluate: impl FnMut(&mut C, &[f64]) -> Result<(f64, Vec<f64>)>,
+        mut stop: impl FnMut(&mut C, &[f64]) -> Result<bool>,
     ) -> Result<(Vec<f64>, f64, bool)> {
         // there is nowhere to go along a NaN or infinite gradient
         if !g.iter().all(|gi| gi.is_finite()) {
@@ -276,7 +279,7 @@ impl Lbfgs {
                         .zip(&direction)
                         .map(|(xi, di)| xi + alpha * di)
                         .collect();
-                    let (value, gradient) = evaluate(&point)?;
+                    let (value, gradient) = evaluate(context, &point)?;
                     Ok((value, dot(&gradient, &direction), (point, gradient)))
                 })?;
                 match outcome {
@@ -291,7 +294,7 @@ impl Lbfgs {
             };
             let (next, g_next) = trial.data;
             let f_next = trial.value;
-            if stop(&next) {
+            if stop(context, &next)? {
                 return Ok((next, f_next, false));
             }
             let s: Vec<f64> = next.iter().zip(&x).map(|(a, b)| a - b).collect();
@@ -346,14 +349,15 @@ mod tests {
         let mut evaluations = 0;
         let (x, _, converged) = Lbfgs::default()
             .minimize(
+                &mut (),
                 start,
                 f,
                 g,
-                |x| {
+                |_, x| {
                     evaluations += 1;
                     Ok(rosenbrock(x))
                 },
-                |_| false,
+                |_, _| Ok(false),
             )
             .unwrap();
         (x, converged, evaluations)
