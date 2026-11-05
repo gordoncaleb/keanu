@@ -1199,9 +1199,15 @@ impl<'a> Weibull<'a> {
         let shape = sample_shape(shape, &[self.alpha.shape(), self.beta.shape()])?;
         let u = rng.uniform(&shape);
         map((&u, &*self.alpha, &*self.beta), |(u, a, b)| {
-            b * (-u.ln()).powf(1.0 / a)
+            weibull_from_uniform(u, a, b)
         })
     }
+}
+
+/// A Weibull(α, β) draw from a uniform draw u in [0, 1): the inverse CDF at u, β (-ln(1 - u))^(1/α). 1 - u is in
+/// (0, 1], so the draw is finite even at u = 0 (where inverting the survival function, at 1 - u, would give +∞).
+fn weibull_from_uniform(u: f64, a: f64, b: f64) -> f64 {
+    b * (-(-u).ln_1p()).powf(1.0 / a)
 }
 
 /// Von Mises distribution on the circle with mean direction `mu` and concentration `kappa`:
@@ -1311,6 +1317,26 @@ fn sample_von_mises(mu: f64, kappa: f64, rng: &mut KeanuRng) -> Result<f64> {
             let angle = w.clamp(-1.0, 1.0).acos();
             let angle = if rng.next_f64() < 0.5 { -angle } else { angle };
             return Ok(wrap_angle(mu + angle));
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::weibull_from_uniform;
+
+    #[test]
+    fn weibull_draws_are_finite_at_the_ends_of_the_uniform_draw() {
+        // KeanuRng::next_f64 is in [0, 1), so u = 0 is a possible draw (with probability 2^-53)
+        let largest_below_one = 1.0 - f64::EPSILON / 2.0;
+        for (a, b) in [(0.5, 1.0), (1.0, 2.0), (3.0, 0.5)] {
+            for u in [0.0, f64::MIN_POSITIVE, 0.5, largest_below_one] {
+                let x = weibull_from_uniform(u, a, b);
+                assert!(
+                    x.is_finite() && x >= 0.0,
+                    "u = {u}, alpha = {a}, beta = {b}: {x}"
+                );
+            }
         }
     }
 }
