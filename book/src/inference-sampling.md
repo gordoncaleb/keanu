@@ -45,15 +45,27 @@ latent to be continuous and the graph to be differentiable.
 
 Settings on `Nuts`:
 
-- **Adaptation:** `adapt_count` (the samples used to adapt), `adapt_step_size`, `initial_step_size` and
-  `target_acceptance_prob`.
-- **Mass matrix:** `potential` and `adapt_potential`.
+- **Adaptation:** `adapt_count` (the steps used to adapt, Stan's `num_warmup`; default 1000), `adapt_step_size`,
+  `initial_step_size` and `target_acceptance_prob` (default 0.8, as Stan's `delta`).
+- **Mass matrix:** `potential` (a `QuadraticPotential`: the initial variance and the adaptation schedule) and
+  `adapt_potential`.
 - **Trajectories:** `max_tree_height`, and `max_energy_change` (the threshold for marking a trajectory divergent).
 - **Diagnostics:** `save_statistics`, used with `sample_with_statistics` for per-step step sizes, acceptance rates,
   log probabilities and tree sizes. Divergences and energies are recorded either way (see below).
 - **Space:** `space` (see below).
 
 A `Nuts` value holds settings only, so it can be reused and shared between threads.
+
+NUTS adapts as Stan does, with Stan's defaults. The step size is tuned by dual averaging towards the target
+acceptance probability, starting from a reasonable step size found by doubling or halving `initial_step_size`. The
+diagonal mass matrix is estimated in windows over the adaptation steps: the first 75 steps tune only the step size
+while the chain finds the typical set; then come slow windows of 25, 50, 100, ... steps (the last stretched to fill
+the space left) in which the draws' variances are also estimated, and at the end of each window the mass matrix is
+set from them (regularised towards a small value), a new step size is found and dual averaging restarts; the last
+50 steps tune only the step size again. `QuadraticPotential`'s `initial_buffer`, `adaptation_window` and
+`terminal_buffer` set the three lengths. With fewer than 20 adaptation steps only the step size is adapted, and when
+the three stages don't fit they take 15%, 75% and 10% of the steps instead. After adaptation the step size and mass
+matrix stay fixed, so drop the adaptation steps (`SamplingOptions::with_drop(adapt_count)`) from the draws.
 
 ### Constrained latents
 

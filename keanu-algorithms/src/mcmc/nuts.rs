@@ -1,5 +1,9 @@
 //! The No-U-Turn sampler (NUTS): Hamiltonian Monte Carlo that chooses its own trajectory length, with dual
-//! averaging step size adaptation and an adaptive diagonal mass matrix (Java's `NUTS`).
+//! averaging step size adaptation and an adaptive diagonal mass matrix.
+//!
+//! It follows Stan's NUTS: multinomial sampling from the trajectory, the generalised no-U-turn criterion with the
+//! extra checks across subtree boundaries Stan added in 2.21, and Stan's windowed adaptation of the step size and
+//! mass matrix (see [`QuadraticPotential`]).
 //!
 //! By default NUTS moves in unconstrained space ([`Space::Unconstrained`]): each latent is mapped to ℝⁿ through the
 //! transform of its support (see [`Parameterisation`]), and the positions, the mass matrix and the leapfrog steps
@@ -22,28 +26,61 @@ use keanu_tensor::special::log_sum_exp;
 use std::cell::RefCell;
 use std::rc::Rc;
 
-/// The adaptive diagonal quadratic potential (mass matrix) settings (Java's `AdaptiveQuadraticPotential`).
+/// The adaptive diagonal quadratic potential (mass matrix) settings, and the schedule NUTS adapts on.
 ///
-/// During adaptation the potential's variance tracks the running variance of the samples, using two windows of
-/// `adaptation_window` samples: the variance in use comes from the previous window, so it isn't biased by the
-/// current position.
+/// NUTS adapts as Stan does (its windowed adaptation, with Stan's defaults), over the first
+/// [`Nuts::adapt_count`] steps:
+///
+/// 1. an initial fast interval of [`initial_buffer`](Self::initial_buffer) steps (75) in which only the step size
+///    is adapted, while the chain finds the typical set;
+/// 2. slow windows in which the draws are also collected to estimate each latent's (unconstrained) variance. The
+///    first is [`adaptation_window`](Self::adaptation_window) steps (25) long and each one after it twice as long as
+///    the one before, with the last stretched to fill the space left. At the end of each window the potential's
+///    variance (the inverse mass matrix) becomes the window's sample variance, regularised towards a small value as
+///    (n / (n + 5)) · var + 10⁻³ · 5 / (n + 5) for n draws; then a new reasonable step size is found for it and step
+///    size adaptation restarts;
+/// 3. a terminal fast interval of [`terminal_buffer`](Self::terminal_buffer) steps (50) in which only the step
+///    size is adapted, to the final potential.
+///
+/// With fewer than 20 adaptation steps only the step size is adapted. When the three stages don't fit in
+/// `adapt_count` steps, they take 15%, 75% and 10% of them instead (one slow window).
+///
+/// Until the first slow window ends every latent element has variance
+/// [`initial_variance`](Self::initial_variance).
 #[derive(Debug, Clone, Copy, PartialEq)]
 #[non_exhaustive]
 pub struct QuadraticPotential {
-    /// The starting estimate of each latent's mean.
+    /// Ignored. The potential is estimated from each slow window alone (Keanu's earlier adaptation tracked a running
+    /// mean that started here).
+    #[deprecated(
+        note = "ignored: the potential is estimated from each slow adaptation window alone"
+    )]
     pub initial_mean: f64,
-    /// The starting estimate of each latent's variance.
+    /// Each latent element's variance (the inverse mass matrix) until the first slow window ends. Default 1.
     pub initial_variance: f64,
-    /// How many pseudo-samples the initial mean and variance count as.
+    /// Ignored. The variance estimates are regularised as Stan regularises them (Keanu's earlier adaptation counted
+    /// the initial mean and variance as this many draws).
+    #[deprecated(note = "ignored: the variance estimates are regularised as Stan's are")]
     pub initial_weight: f64,
-    /// Samples per adaptation window.
+    /// The length of the first slow window, in steps; each later window is twice as long as the one before
+    /// (Stan's `window`). Default 25.
     pub adaptation_window: usize,
+    /// The steps at the start of adaptation in which only the step size is adapted (Stan's `init_buffer`).
+    /// Default 75.
+    pub initial_buffer: usize,
+    /// The steps at the end of adaptation in which only the step size is adapted (Stan's `term_buffer`).
+    /// Default 50.
+    pub terminal_buffer: usize,
 }
 
 /// Setters for each setting, for use as `QuadraticPotential::default().with_...(...)`.
 impl QuadraticPotential {
-    /// Sets [`initial_mean`](Self::initial_mean).
+    /// Sets [`initial_mean`](Self::initial_mean), which is ignored.
     #[must_use]
+    #[deprecated(
+        note = "ignored: the potential is estimated from each slow adaptation window alone"
+    )]
+    #[allow(deprecated)]
     pub fn with_initial_mean(mut self, initial_mean: f64) -> Self {
         self.initial_mean = initial_mean;
         self
@@ -56,8 +93,10 @@ impl QuadraticPotential {
         self
     }
 
-    /// Sets [`initial_weight`](Self::initial_weight).
+    /// Sets [`initial_weight`](Self::initial_weight), which is ignored.
     #[must_use]
+    #[deprecated(note = "ignored: the variance estimates are regularised as Stan's are")]
+    #[allow(deprecated)]
     pub fn with_initial_weight(mut self, initial_weight: f64) -> Self {
         self.initial_weight = initial_weight;
         self
@@ -69,35 +108,60 @@ impl QuadraticPotential {
         self.adaptation_window = adaptation_window;
         self
     }
+
+    /// Sets [`initial_buffer`](Self::initial_buffer).
+    #[must_use]
+    pub fn with_initial_buffer(mut self, initial_buffer: usize) -> Self {
+        self.initial_buffer = initial_buffer;
+        self
+    }
+
+    /// Sets [`terminal_buffer`](Self::terminal_buffer).
+    #[must_use]
+    pub fn with_terminal_buffer(mut self, terminal_buffer: usize) -> Self {
+        self.terminal_buffer = terminal_buffer;
+        self
+    }
 }
 
 impl Default for QuadraticPotential {
+    #[allow(deprecated)]
     fn default() -> Self {
         Self {
             initial_mean: 0.0,
             initial_variance: 1.0,
             initial_weight: 10.0,
-            adaptation_window: 100,
+            adaptation_window: 25,
+            initial_buffer: 75,
+            terminal_buffer: 50,
         }
     }
 }
 
-/// NUTS configuration. Defaults follow Java's `NUTS.builder()`. The configuration holds no state, so it can be
-/// reused for any number of runs and shared by parallel chains; each run adapts its own step size and potential.
+/// NUTS configuration. The defaults are Stan's where Stan has the setting (target acceptance probability 0.8, tree
+/// height 10, divergence at an energy change of 1000, and its adaptation schedule; see [`QuadraticPotential`]),
+/// with 1000 adaptation steps. The configuration holds no state, so it can be reused for any number of runs and
+/// shared by parallel chains; each run adapts its own step size and potential.
 #[derive(Debug, Clone, Copy, PartialEq)]
 #[non_exhaustive]
 pub struct Nuts {
-    /// Samples during which the step size and potential are adapted.
+    /// The steps during which the step size and potential are adapted (Stan's `num_warmup`), on the schedule
+    /// [`QuadraticPotential`] describes.
     pub adapt_count: usize,
-    /// Whether to adapt the step size during the first `adapt_count` samples.
+    /// Whether to adapt the step size during the first `adapt_count` steps, by dual averaging (Hoffman & Gelman
+    /// 2014, with Stan's constants γ = 0.05, t₀ = 10, κ = 0.75). Adaptation starts from a reasonable step size found
+    /// from [`initial_step_size`](Self::initial_step_size) by doubling or halving it until one leapfrog step's
+    /// acceptance probability crosses 0.8, as Stan does, and does so again after each update of the potential.
+    /// The step size after adaptation is the dual averaging's average since the last restart.
     pub adapt_step_size: bool,
-    /// The initial step size; by default 0.25 / n^(1/4) for n latent elements.
+    /// The initial step size; by default 0.25 / n^(1/4) for n latent elements. With step size adaptation it is
+    /// where the search for a reasonable step size starts.
     pub initial_step_size: Option<f64>,
-    /// The kinetic energy (mass matrix) settings.
+    /// The kinetic energy (mass matrix) settings and the adaptation schedule.
     pub potential: QuadraticPotential,
-    /// Whether to adapt the potential during the first `adapt_count` samples.
+    /// Whether to adapt the potential during the first `adapt_count` steps.
     pub adapt_potential: bool,
-    /// The acceptance probability step size adaptation aims for.
+    /// The mean acceptance probability step size adaptation aims for (Stan's `delta`). Default 0.8.
     pub target_acceptance_prob: f64,
     /// A trajectory whose energy changes by at least this much is divergent.
     pub max_energy_change: f64,
@@ -205,10 +269,10 @@ impl Default for Nuts {
 pub struct NutsStatistics {
     /// The step size used at each step (when saving statistics).
     pub step_size: Vec<f64>,
-    /// The mean Metropolis acceptance probability last used for step size adaptation, recorded at each step (as
-    /// Java does). It is recorded before the step's own tree is used for adaptation, so `mean_tree_accept[i]` is the
-    /// acceptance of step i - 1's tree (0 at step 0). Once adaptation ends (after `adapt_count` steps) it stays at
-    /// the last adapted tree's value, and without step size adaptation it is always 0.
+    /// The mean Metropolis acceptance probability last used for step size adaptation, recorded at each step. It is
+    /// recorded before the step's own tree is used for adaptation, so `mean_tree_accept[i]` is the acceptance of
+    /// step i - 1's tree (0 at step 0). Once adaptation ends (after `adapt_count` steps) it stays at the last
+    /// adapted tree's value, and without step size adaptation it is always 0.
     pub mean_tree_accept: Vec<f64>,
     /// The log probability of each step's sample (the model's, without the Jacobian of any transform).
     pub log_prob: Vec<f64>,
@@ -256,7 +320,7 @@ impl NutsStatistics {
 }
 
 impl Nuts {
-    /// The default settings, as Java's NUTS builder.
+    /// The default settings.
     pub fn new() -> Self {
         Self::default()
     }
@@ -275,14 +339,12 @@ impl Nuts {
         if self.max_tree_height == 0 {
             return invalid("the max tree height must be greater than 0");
         }
+        // a sample variance needs at least two draws
         if self.potential.adaptation_window <= 1 {
             return invalid("the potential's adaptation window must be greater than 1");
         }
-        // a zero weight or variance gives a zero mass matrix entry, so momentum / mass is NaN and the chain freezes
+        // a zero variance gives a zero mass matrix entry, so momentum / mass is NaN and the chain freezes
         let positive = |x: f64| x.is_finite() && x > 0.0;
-        if !positive(self.potential.initial_weight) {
-            return invalid("the potential's initial weight must be finite and greater than 0");
-        }
         if !positive(self.potential.initial_variance) {
             return invalid("the potential's initial variance must be finite and greater than 0");
         }
@@ -290,6 +352,9 @@ impl Nuts {
     }
 
     /// A chain starting from the current state, recording the values of `nodes`. Every latent must be continuous.
+    ///
+    /// With step size adaptation (and `adapt_count` above 0) this already takes a few single leapfrog steps from the
+    /// starting point, to find a reasonable initial step size.
     ///
     /// # Errors
     ///
@@ -327,16 +392,12 @@ impl Nuts {
             0.25 / (n as f64).powf(0.25)
         });
 
-        Ok(NutsSampler {
+        let mut sampler = NutsSampler {
             param,
             shapes,
             config: *self,
-            potential: PotentialState::new(&self.potential, &position),
-            step_size: AdaptiveStepSize::new(
-                step_size,
-                self.target_acceptance_prob,
-                self.adapt_count,
-            ),
+            potential: PotentialState::new(&self.potential, self.adapt_count, &position),
+            step_size: AdaptiveStepSize::new(step_size, self.target_acceptance_prob),
             nodes: nodes.to_vec(),
             proposal: Candidate {
                 position: Rc::new(position),
@@ -347,7 +408,11 @@ impl Nuts {
             sample_log_prob,
             step_count: 0,
             statistics: NutsStatistics::default(),
-        })
+        };
+        if self.adapt_step_size && self.adapt_count > 0 {
+            sampler.find_reasonable_step_size(state, rng)?;
+        }
+        Ok(sampler)
     }
 
     /// Runs a chain of `count` steps from the current state, recording every step's values of `nodes`.
@@ -453,30 +518,33 @@ fn axpy(x: &[DoubleTensor], dt: f64, v: &[DoubleTensor]) -> Result<Vec<DoubleTen
     x.iter().zip(v).map(|(x, v)| Ok((v * dt).add(x)?)).collect()
 }
 
-/// Running mean and variance (Welford), seeded with a prior mean and variance worth `weight` samples (Java's
-/// `VarianceCalculator`).
+/// Running mean and sample variance (Welford), restarted for each slow adaptation window.
 #[derive(Debug, Clone)]
-struct VarianceCalculator {
-    count: f64,
+struct VarianceEstimator {
+    count: usize,
     mean: Vec<DoubleTensor>,
     m2: Vec<DoubleTensor>,
 }
 
-impl VarianceCalculator {
-    fn new(mean: Vec<DoubleTensor>, variance: Vec<DoubleTensor>, weight: f64) -> Self {
-        let m2 = variance.iter().map(|v| v * weight).collect();
+impl VarianceEstimator {
+    fn new(like: &[DoubleTensor]) -> Self {
+        let zeros: Vec<DoubleTensor> = like
+            .iter()
+            .map(|t| DoubleTensor::zeros(t.shape()))
+            .collect();
         Self {
-            count: weight,
-            mean,
-            m2,
+            count: 0,
+            mean: zeros.clone(),
+            m2: zeros,
         }
     }
 
     fn add(&mut self, sample: &[DoubleTensor]) -> Result<()> {
-        self.count += 1.0;
+        self.count += 1;
+        let count = self.count as f64;
         for ((x, mean), m2) in sample.iter().zip(&mut self.mean).zip(&mut self.m2) {
             let delta = x.sub(mean)?;
-            let new_mean = mean.add(&(&delta / self.count))?;
+            let new_mean = mean.add(&(&delta / count))?;
             let delta2 = x.sub(&new_mean)?;
             *m2 = m2.add(&delta.mul(&delta2)?)?;
             *mean = new_mean;
@@ -484,62 +552,143 @@ impl VarianceCalculator {
         Ok(())
     }
 
-    fn variance(&self) -> Vec<DoubleTensor> {
-        self.m2.iter().map(|m2| m2 / self.count).collect()
+    /// The sample variance (with n − 1 in the denominator) regularised as Stan regularises it:
+    /// (n / (n + 5)) · var + 10⁻³ · 5 / (n + 5). `None` with fewer than two draws.
+    fn regularised_variance(&self) -> Option<Vec<DoubleTensor>> {
+        if self.count < 2 {
+            return None;
+        }
+        let n = self.count as f64;
+        let shrink = n / (n + 5.0);
+        let floor = 1e-3 * 5.0 / (n + 5.0);
+        Some(
+            self.m2
+                .iter()
+                .map(|m2| (m2 * (shrink / (n - 1.0))).map(|v| v + floor))
+                .collect(),
+        )
     }
 }
 
-/// One run's adaptive quadratic potential.
+/// Stan's adaptation windows (its `windowed_adaptation`): where the slow windows fall in the adaptation steps.
+#[derive(Debug, Clone)]
+struct AdaptationWindows {
+    /// The adaptation steps, or 0 when the potential isn't adapted (fewer than 20 steps).
+    num_warmup: usize,
+    init_buffer: usize,
+    term_buffer: usize,
+    /// The adaptation step about to be used (0-based).
+    counter: usize,
+    window_size: usize,
+    /// The last step of the current slow window.
+    next_window: usize,
+}
+
+impl AdaptationWindows {
+    fn new(settings: &QuadraticPotential, adapt_count: usize) -> Self {
+        let (num_warmup, init_buffer, term_buffer, base_window) = if adapt_count < 20 {
+            (0, 0, 0, 0)
+        } else if settings.initial_buffer + settings.adaptation_window + settings.terminal_buffer
+            > adapt_count
+        {
+            // the stages as fractions of the steps there are: 15%, 75% and 10%
+            let init_buffer = (0.15 * adapt_count as f64) as usize;
+            let term_buffer = (0.1 * adapt_count as f64) as usize;
+            (
+                adapt_count,
+                init_buffer,
+                term_buffer,
+                adapt_count - init_buffer - term_buffer,
+            )
+        } else {
+            (
+                adapt_count,
+                settings.initial_buffer,
+                settings.terminal_buffer,
+                settings.adaptation_window,
+            )
+        };
+        Self {
+            num_warmup,
+            init_buffer,
+            term_buffer,
+            counter: 0,
+            window_size: base_window,
+            next_window: (init_buffer + base_window).saturating_sub(1),
+        }
+    }
+
+    /// Whether the current step's draw goes into the variance estimate.
+    fn in_window(&self) -> bool {
+        self.counter >= self.init_buffer
+            && self.counter < self.num_warmup - self.term_buffer
+            && self.counter != self.num_warmup
+    }
+
+    /// Whether the current step ends a slow window.
+    fn ends_window(&self) -> bool {
+        self.counter == self.next_window && self.counter != self.num_warmup
+    }
+
+    /// Moves to the next slow window, twice as long, or stretched to the terminal buffer if the one after it wouldn't
+    /// fit.
+    fn compute_next_window(&mut self) {
+        let last = self.num_warmup - self.term_buffer - 1;
+        if self.next_window == last {
+            return;
+        }
+        self.window_size *= 2;
+        self.next_window = self.counter + self.window_size;
+        if self.next_window != last && self.next_window + 2 * self.window_size > last {
+            self.next_window = last;
+        }
+    }
+}
+
+/// One run's adaptive diagonal quadratic potential.
 #[derive(Debug, Clone)]
 struct PotentialState {
-    window: usize,
+    /// The inverse mass matrix.
     variance: Vec<DoubleTensor>,
     standard_deviation: Vec<DoubleTensor>,
-    forward: VarianceCalculator,
-    background: VarianceCalculator,
-    samples: usize,
+    estimator: VarianceEstimator,
+    windows: AdaptationWindows,
 }
 
 impl PotentialState {
-    fn new(settings: &QuadraticPotential, like: &[DoubleTensor]) -> Self {
-        let full = |v: f64| {
-            like.iter()
-                .map(|t| DoubleTensor::full(t.shape(), v))
-                .collect::<Vec<_>>()
-        };
-        let variance = full(settings.initial_variance);
+    fn new(settings: &QuadraticPotential, adapt_count: usize, like: &[DoubleTensor]) -> Self {
+        let variance: Vec<DoubleTensor> = like
+            .iter()
+            .map(|t| DoubleTensor::full(t.shape(), settings.initial_variance))
+            .collect();
         Self {
-            window: settings.adaptation_window,
             standard_deviation: variance.iter().map(DoubleTensor::sqrt).collect(),
-            forward: VarianceCalculator::new(
-                full(settings.initial_mean),
-                variance.clone(),
-                settings.initial_weight,
-            ),
-            background: VarianceCalculator::new(full(0.0), full(0.0), 0.0),
             variance,
-            samples: 0,
+            estimator: VarianceEstimator::new(like),
+            windows: AdaptationWindows::new(settings, adapt_count),
         }
     }
 
-    fn update(&mut self, position: &[DoubleTensor]) -> Result<()> {
-        if self.samples > 0 && self.samples % self.window == 0 {
-            let zeros: Vec<DoubleTensor> = self
-                .variance
-                .iter()
-                .map(|v| DoubleTensor::zeros(v.shape()))
-                .collect();
-            self.forward = std::mem::replace(
-                &mut self.background,
-                VarianceCalculator::new(zeros.clone(), zeros, 0.0),
-            );
+    /// Learns from an adaptation step's draw (Stan's `var_adaptation::learn_variance`). Returns whether the step
+    /// ended a slow window, so that the variance changed.
+    fn update(&mut self, position: &[DoubleTensor]) -> Result<bool> {
+        if self.windows.num_warmup == 0 {
+            return Ok(false);
         }
-        self.forward.add(position)?;
-        self.background.add(position)?;
-        self.variance = self.forward.variance();
-        self.standard_deviation = self.variance.iter().map(DoubleTensor::sqrt).collect();
-        self.samples += 1;
-        Ok(())
+        if self.windows.in_window() {
+            self.estimator.add(position)?;
+        }
+        let ends_window = self.windows.ends_window();
+        if ends_window {
+            self.windows.compute_next_window();
+            if let Some(variance) = self.estimator.regularised_variance() {
+                self.standard_deviation = variance.iter().map(DoubleTensor::sqrt).collect();
+                self.variance = variance;
+            }
+            self.estimator = VarianceEstimator::new(position);
+        }
+        self.windows.counter += 1;
+        Ok(ends_window)
     }
 
     fn random_momentum(&self, rng: &mut KeanuRng) -> Result<Vec<DoubleTensor>> {
@@ -558,18 +707,18 @@ impl PotentialState {
     }
 }
 
-/// Dual averaging step size adaptation (Hoffman & Gelman 2014; Java's `AdaptiveStepSize`).
+/// Dual averaging step size adaptation (Hoffman & Gelman 2014, as Stan's `stepsize_adaptation`).
 #[derive(Debug, Clone)]
 struct AdaptiveStepSize {
     target: f64,
-    adapt_count: usize,
     mu: f64,
     step_size: f64,
     h_bar: f64,
+    /// The acceptance statistic of the last tree adapted to.
     accept_rate: f64,
-    log_step_size: f64,
     log_step_size_bar: f64,
-    step: usize,
+    /// Trees adapted to since the last restart.
+    counter: usize,
 }
 
 impl AdaptiveStepSize {
@@ -577,45 +726,49 @@ impl AdaptiveStepSize {
     const GAMMA: f64 = 0.05;
     const KAPPA: f64 = 0.75;
 
-    fn new(step_size: f64, target: f64, adapt_count: usize) -> Self {
-        Self {
+    fn new(step_size: f64, target: f64) -> Self {
+        let mut adaptive = Self {
             target,
-            adapt_count,
-            mu: (10.0 * step_size).ln(),
+            mu: 0.0,
             step_size,
             h_bar: 0.0,
             accept_rate: 0.0,
-            log_step_size: step_size.ln(),
-            log_step_size_bar: step_size.ln(),
-            step: 1,
-        }
+            log_step_size_bar: 0.0,
+            counter: 0,
+        };
+        adaptive.restart();
+        adaptive
     }
 
-    /// Adapts after a step. On the final adaptation step it switches to the averaged step size, so the first
-    /// sample after adaptation already uses it.
-    fn adapt(&mut self, tree: &Tree) {
-        if self.step < self.adapt_count {
-            self.step_size = self.update(tree).exp();
-        } else if self.step == self.adapt_count {
-            self.update(tree);
+    /// Starts dual averaging again from the current step size, aiming its shrinkage at 10 times it.
+    fn restart(&mut self) {
+        self.mu = (10.0 * self.step_size).ln();
+        self.h_bar = 0.0;
+        self.log_step_size_bar = 0.0;
+        self.counter = 0;
+    }
+
+    /// Adapts to a step's tree.
+    fn learn(&mut self, tree: &Tree) {
+        self.counter += 1;
+        let count = self.counter as f64;
+        self.accept_rate = (tree.sum_metropolis_acceptance / tree.size as f64).min(1.0);
+        let w = 1.0 / (count + Self::T0);
+        self.h_bar = (1.0 - w) * self.h_bar + w * (self.target - self.accept_rate);
+        let log_step_size = self.mu - (count.sqrt() / Self::GAMMA) * self.h_bar;
+        let tend_to_zero = count.powf(-Self::KAPPA);
+        self.log_step_size_bar =
+            tend_to_zero * log_step_size + (1.0 - tend_to_zero) * self.log_step_size_bar;
+        self.step_size = log_step_size.exp();
+    }
+
+    /// Ends adaptation with the averaged step size.
+    fn complete(&mut self) {
+        if self.counter > 0 {
             self.step_size = self.log_step_size_bar.exp();
         }
-        self.step += 1;
-    }
-
-    fn update(&mut self, tree: &Tree) -> f64 {
-        let step = self.step as f64;
-        let w = 1.0 / (step + Self::T0);
-        self.accept_rate = tree.sum_metropolis_acceptance / tree.size as f64;
-        self.h_bar = (1.0 - w) * self.h_bar + w * (self.target - self.accept_rate);
-        self.log_step_size = self.mu - (step.sqrt() / Self::GAMMA) * self.h_bar;
-        let tend_to_zero = step.powf(-Self::KAPPA);
-        self.log_step_size_bar =
-            tend_to_zero * self.log_step_size + (1.0 - tend_to_zero) * self.log_step_size_bar;
-        self.log_step_size
     }
 }
-
 /// What a step of NUTS needs to build trajectories.
 struct Integrator<'a, 'm> {
     param: &'a Parameterisation<'m>,
@@ -904,6 +1057,64 @@ impl NutsSampler<'_> {
     pub fn step_size(&self) -> f64 {
         self.step_size.step_size
     }
+
+    /// Stan's heuristic for a reasonable step size (its `init_stepsize`, after Hoffman & Gelman 2014, Algorithm 4):
+    /// from the current step size, doubles it while one leapfrog step from the current sample (with fresh momentum
+    /// each time) has acceptance probability above 0.8, or halves it while it is below, then restarts dual averaging
+    /// from it. The search stops at the bounds Stan stops at (above 10⁷, or 0) without going past them. Leaves the
+    /// state at the current sample.
+    fn find_reasonable_step_size(&mut self, state: &mut State, rng: &mut KeanuRng) -> Result<()> {
+        let mut step_size = self.step_size.step_size;
+        if step_size.is_finite() && step_size > 0.0 && step_size <= 1e7 {
+            let integrator = Integrator {
+                param: &self.param,
+                shapes: &self.shapes,
+                potential: &self.potential,
+                start_energy: f64::NAN,
+                max_energy_change: self.config.max_energy_change,
+                in_state: RefCell::new(None),
+            };
+            let proposal = &self.proposal;
+            let mut log_acceptance = |step_size: f64, rng: &mut KeanuRng| -> Result<f64> {
+                let start = LeapfrogState::new(
+                    Rc::clone(&proposal.position),
+                    self.potential.random_momentum(rng)?,
+                    Rc::clone(&proposal.gradient),
+                    proposal.log_prob,
+                    &self.potential,
+                )?;
+                let after = integrator.leapfrog(state, &start, step_size)?;
+                let delta = start.energy - after.energy;
+                Ok(if delta.is_nan() {
+                    f64::NEG_INFINITY
+                } else {
+                    delta
+                })
+            };
+            let threshold = 0.8f64.ln();
+            let increase = log_acceptance(step_size, rng)? > threshold;
+            loop {
+                let delta = log_acceptance(step_size, rng)?;
+                // delta is never NaN
+                if (increase && delta <= threshold) || (!increase && delta >= threshold) {
+                    break;
+                }
+                let next = if increase {
+                    2.0 * step_size
+                } else {
+                    0.5 * step_size
+                };
+                if next > 1e7 || next == 0.0 {
+                    break;
+                }
+                step_size = next;
+            }
+            self.param.to_state(&concat(&proposal.position), state)?;
+        }
+        self.step_size.step_size = step_size;
+        self.step_size.restart();
+        Ok(())
+    }
 }
 
 impl SamplingAlgorithm for NutsSampler<'_> {
@@ -967,11 +1178,20 @@ impl SamplingAlgorithm for NutsSampler<'_> {
             self.statistics.log_prob.push(self.sample_log_prob);
             self.statistics.tree_size.push(tree.size);
         }
-        if self.config.adapt_step_size {
-            self.step_size.adapt(&tree);
-        }
-        if self.step_count < self.config.adapt_count && self.config.adapt_potential {
-            self.potential.update(&self.proposal.position)?;
+        if self.step_count < self.config.adapt_count {
+            // as Stan's adaptive samplers: learn the step size from the tree, then the potential from the draw, and
+            // when a slow window ends, find a step size for the new potential and restart dual averaging from it
+            if self.config.adapt_step_size {
+                self.step_size.learn(&tree);
+            }
+            let potential_changed =
+                self.config.adapt_potential && self.potential.update(&self.proposal.position)?;
+            if potential_changed && self.config.adapt_step_size {
+                self.find_reasonable_step_size(state, rng)?;
+            }
+            if self.step_count + 1 == self.config.adapt_count && self.config.adapt_step_size {
+                self.step_size.complete();
+            }
         }
         self.statistics.energy.push(self.proposal.energy);
         if self.step_count >= self.config.adapt_count && tree.diverged {
@@ -991,5 +1211,69 @@ impl SamplingAlgorithm for NutsSampler<'_> {
 
     fn sampled_nodes(&self) -> &[NodeId] {
         &self.nodes
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The (0-based) adaptation steps at which the potential is updated.
+    fn window_ends(settings: &QuadraticPotential, adapt_count: usize) -> Vec<usize> {
+        let like = [DoubleTensor::scalar(0.0)];
+        let mut potential = PotentialState::new(settings, adapt_count, &like);
+        (0..adapt_count)
+            .filter(|&i| potential.update(&[DoubleTensor::scalar(i as f64)]).unwrap())
+            .collect()
+    }
+
+    #[test]
+    fn slow_windows_follow_stans_schedule() {
+        let defaults = QuadraticPotential::default();
+        // Stan's windows for 1000 warmup iterations: [75, 100), [100, 150), [150, 250), [250, 450) and [450, 950),
+        // the last stretched to the terminal buffer of 50
+        assert_eq!(window_ends(&defaults, 1000), [99, 149, 249, 449, 949]);
+        assert_eq!(window_ends(&defaults, 500), [99, 149, 249, 449]);
+        // a third window would end at 249, leaving no room for a fourth before 400, so it is stretched to 399
+        assert_eq!(window_ends(&defaults, 450), [99, 149, 399]);
+        assert_eq!(window_ends(&defaults, 200), [99, 149]);
+        // 75 + 25 + 50 is exactly 150: one window
+        assert_eq!(window_ends(&defaults, 150), [99]);
+        // too short for the three stages: 15% (15), 75% (75) and 10% (10)
+        assert_eq!(window_ends(&defaults, 100), [89]);
+        assert_eq!(window_ends(&defaults, 20), [17]);
+        // fewer than 20 steps: no potential adaptation
+        assert!(window_ends(&defaults, 19).is_empty());
+        assert!(window_ends(&defaults, 0).is_empty());
+        let custom = defaults
+            .with_initial_buffer(10)
+            .with_adaptation_window(5)
+            .with_terminal_buffer(5);
+        assert_eq!(window_ends(&custom, 60), [14, 24, 54]);
+    }
+
+    #[test]
+    fn the_variance_is_the_regularised_sample_variance_of_the_window() {
+        let settings = QuadraticPotential::default();
+        let like = [DoubleTensor::scalar(0.0)];
+        // 150 steps: one slow window, steps 75 to 99
+        let mut potential = PotentialState::new(&settings, 150, &like);
+        let draws: Vec<f64> = (0..150).map(|i| ((i * 37) % 11) as f64).collect();
+        for (i, &x) in draws.iter().enumerate() {
+            let updated = potential.update(&[DoubleTensor::scalar(x)]).unwrap();
+            assert_eq!(updated, i == 99, "step {i}");
+            if i < 99 {
+                assert_eq!(potential.variance[0].to_scalar().unwrap(), 1.0);
+            }
+        }
+        let window = &draws[75..100];
+        let n = window.len() as f64;
+        let mean = window.iter().sum::<f64>() / n;
+        let var = window.iter().map(|x| (x - mean) * (x - mean)).sum::<f64>() / (n - 1.0);
+        let expected = n / (n + 5.0) * var + 1e-3 * 5.0 / (n + 5.0);
+        let actual = potential.variance[0].to_scalar().unwrap();
+        assert!((actual - expected).abs() < 1e-12, "{actual} vs {expected}");
+        let sd = potential.standard_deviation[0].to_scalar().unwrap();
+        assert!((sd - expected.sqrt()).abs() < 1e-12);
     }
 }

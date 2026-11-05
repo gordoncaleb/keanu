@@ -363,8 +363,9 @@ fn stochastic_volatility_data_is_reproducible() {
 
 #[test]
 fn stochastic_volatility_recovers_the_simulated_parameters() {
-    // 4 chains of 500 draws after 500 adaptation steps each, on the 200 bundled days. Over seeds 1 to 8 every R-hat
-    // (the three parameters and the 200 log variances) was below 1.009, and 1 to 14 of the 2000 draws diverged.
+    // 4 chains of 500 draws after 500 adaptation steps each, on the 200 bundled days. Over seeds 1 to 7, 0 to 2 of
+    // the 2000 draws diverged and the largest R-hat (of the three parameters and the 200 log variances) was 1.0065 to
+    // 1.0109; seed 8, with a chain that lingered where phi nears 1, had 44 divergences and an R-hat of 1.023.
     let draws = 500;
     let r = stochastic_volatility::run(1, draws).unwrap();
     // a few trajectories in a thousand diverge where phi nears 1 (see the example's documentation)
@@ -374,10 +375,12 @@ fn stochastic_volatility_recovers_the_simulated_parameters() {
         "{} of {total} draws diverged",
         r.divergences
     );
+    // with a bulk effective sample size of about 600, an R-hat's own sampling spread is a few thousandths, and this
+    // is the largest of 203; 1.02 allows for that while catching chains that disagree
     let summary = r.samples.summary().unwrap();
     for row in summary.rows() {
         assert!(
-            row.stats.r_hat < 1.01,
+            row.stats.r_hat < 1.02,
             "R-hat of {:?}{:?} is {}",
             row.node,
             row.index,

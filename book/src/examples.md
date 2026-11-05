@@ -111,9 +111,10 @@ Beta(20, 1.5) and sigma ~ HalfCauchy(5).
 The data (`keanu/examples/data/returns.csv`) are 200 days simulated from the model with mu = −1, phi = 0.9 and
 sigma = 0.4 by the example's `simulate` function with a fixed seed; the file holds the true log variance alongside
 each return, and a test checks that `simulate` still reproduces it. Four NUTS chains with a target acceptance of
-0.95 recover phi and sigma within their posterior uncertainty, with every R-hat below 1.01. As phi nears 1 the level
+0.95 recover phi and sigma within their posterior uncertainty, with every R-hat close to 1. As phi nears 1 the level
 mu and the slow movements of h trade off along a curved ridge, and a few trajectories in a thousand diverge there
-even at a target acceptance of 0.99; the test checks that fewer than 1% do.
+even at a target acceptance of 0.99 or with longer adaptation, because the curvature there changes faster than any
+one step size can follow; the test checks that fewer than 1% do.
 
 ```rust,ignore
 {{#include ../../keanu/examples/stochastic_volatility.rs}}

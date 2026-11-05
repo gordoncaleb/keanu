@@ -853,18 +853,36 @@ fn drop_and_down_sampling() {
     );
 }
 
-/// Regression: a zero initial weight or a non-positive initial variance gave a zero mass matrix entry, so
-/// momentum / mass was NaN and the chain never moved.
+/// The potential's initial mean and weight belonged to the earlier adaptation and are ignored.
+#[test]
+#[allow(deprecated)]
+fn nuts_ignores_the_deprecated_potential_settings() {
+    let (model, state, mu, ..) = gaussian_model();
+    let run = |potential| {
+        let samples = Nuts::default()
+            .with_adapt_count(100)
+            .with_potential(potential)
+            .sample(&model, &mut state.clone(), &[mu], 200, &mut rng(5))
+            .unwrap();
+        series(&samples, mu)
+    };
+    let ignored = QuadraticPotential::default()
+        .with_initial_weight(0.0)
+        .with_initial_mean(f64::NAN);
+    assert_eq!(run(ignored), run(QuadraticPotential::default()));
+}
+
+/// Regression: a non-positive initial variance gave a zero mass matrix entry, so momentum / mass was NaN and the
+/// chain never moved. (The initial weight could do the same, but is now ignored.)
 #[test]
 fn nuts_rejects_a_degenerate_initial_potential() {
     let (model, mut state, mu, ..) = gaussian_model();
     for potential in [
-        QuadraticPotential::default().with_initial_weight(0.0),
-        QuadraticPotential::default().with_initial_weight(f64::NAN),
-        QuadraticPotential::default().with_initial_weight(f64::INFINITY),
         QuadraticPotential::default().with_initial_variance(0.0),
         QuadraticPotential::default().with_initial_variance(-1.0),
         QuadraticPotential::default().with_initial_variance(f64::NAN),
+        QuadraticPotential::default().with_initial_variance(f64::INFINITY),
+        QuadraticPotential::default().with_adaptation_window(1),
     ] {
         let nuts = Nuts::default().with_potential(potential);
         assert!(

@@ -21,8 +21,11 @@
 //! Even non-centred, the posterior has an awkward corner: as phi approaches 1 the level mu and the slow movements
 //! of h trade off against each other along a curved ridge, which NUTS's diagonal mass matrix fits poorly. A target
 //! acceptance probability of 0.95 (smaller steps) keeps the chains mixing there, but a few trajectories in a
-//! thousand still diverge, and raising it to 0.99 doesn't remove them. The example reports the count; its test
-//! checks that it stays below 1% of the draws.
+//! thousand still diverge, and raising it to 0.99 doesn't remove them. They come from the posterior's shape, not from
+//! how NUTS tunes itself: near phi = 1 the slow movements of h are set by many innovations together, so the
+//! curvature along that direction grows like 1 / (1 − phi)² and no single step size suits it; longer adaptation
+//! doesn't remove them either. The same corner keeps NUTS's step size near 0.1, so most trajectories take 31 to 63
+//! leapfrog steps. The example reports the count; its test checks that it stays below 1% of the draws.
 //!
 //! Data: `data/returns.csv` holds T = 200 daily returns simulated from the model with mu = −1, phi = 0.9 and
 //! sigma = 0.4, by [`simulate`] with seed [`DATA_SEED`]. Its columns are the day, the true log variance h_t and the
