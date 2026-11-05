@@ -1,27 +1,26 @@
 # Known residuals: feature-gap work code review
 
-Review of `e8d5a30c1..main` (plan `docs/plans/2026-11-04-001-feat-ppl-feature-gaps-plan.md`): correctness (three slices), testing, maintainability and adversarial reviewers plus an independent cross-model (Codex) adversarial pass. All P1 findings and every P2 correctness finding were fixed (see CHANGELOG "Code review fixes"). These lower-priority items remain.
+Review of `e8d5a30c1..main` (plan `docs/plans/2026-11-04-001-feat-ppl-feature-gaps-plan.md`): correctness (three slices), testing, maintainability and adversarial reviewers plus an independent cross-model (Codex) adversarial pass. All P1 findings and every P2 correctness finding were fixed (see CHANGELOG "Code review fixes").
 
-## Robustness
-- keanu-graph: ops shape-checked by dummy evaluation (e.g. `exp` of a huge broadcast, gather) still allocate their inputs' full size at build time; shapes under the `isize::MAX / 8` cap but enormous (e.g. `[2^40, 3]`) can exhaust memory when loading an untrusted file. Fix: explicit shape rules instead of dummy evaluation.
-- keanu-graph: a scan of 2^40 steps over a scalar carry is within the cap, so a tiny file can make evaluation loop for a very long time.
-- keanu-graph `ScanBody::jvp` multiplies batch × length × carry size unchecked.
-- `add_proxy` / `add_distribution` with huge shapes from Rust code are not capped (only the loader caps them).
-- Weibull sampling can return +inf with probability 2^-53 per draw (u = 0); NegativeBinomial gradients are NaN at mu = 0; Weibull `d_log_cdf` is NaN when (x/beta)^alpha underflows.
-- OrderedLogistic, Mixture and HMM return `Err` (not −∞) when latent parameters leave their valid region, so Metropolis–Hastings aborts rather than rejects.
-- `eigh` fixes eigenvector signs by the largest component; equal-magnitude components can flip under rounding while derivative rules assume smoothness.
+Updated 2026-11-05. Every lower-priority item recorded here has since been addressed (the robustness items, the test and helper items and the maintainability items), except the two below, which stay open with their current status.
 
 ## Sampling quality
-- The stochastic volatility example still has a few divergences (< 1% of draws; the test tolerates that) and its test takes ~60 s without the `parallel` feature. NUTS trees nearly always hit 31 leapfrog steps there; Keanu's diagonal mass-matrix adaptation may be worth comparing with Stan's.
+- The stochastic volatility example (`keanu/examples/stochastic_volatility.rs`) still has a few divergences, under 1% of draws, and its test allows that. NUTS now adapts on Stan's windowed schedule and counts divergences as Stan does (only energy increases). Stan's User's Guide parameterisation was tried as well: no day-0 state, with h_1 = mu + sigma / sqrt(1 − phi²) · eps_1. It doesn't reach zero. Measured with 4 chains of 500 draws over seeds 1–8:
 
-## Tests
-- `keanu-algorithms/tests/laplace.rs`: the L-BFGS settings test only asserts `Ok`.
-- `keanu-algorithms/tests/mcmc.rs`: the constrained-space NUTS regression compares floats bit-exactly.
-- `keanu-graph/tests/hessian.rs`: the op and distribution coverage lists are hand-maintained (derive them from the enums).
-- U18's "L-BFGS at or below CG's evaluation count" is printed in `golden_optimizers.rs`, not asserted.
-- Test helpers (`assert_close`, `s`, `v`, …) are duplicated across ~25 test files with differing argument orders.
+  | Model | Target | Divergences per seed | Largest R-hat |
+  |---|---:|---|---:|
+  | This example | 0.95 | 2, 2, 2, 1, 1, 1, 0, 44 | 1.023 |
+  | Stan's form, this example's priors | 0.8 | 4, 215, 2, 32, 3, 6, 4, 3 | 1.31 |
+  | Stan's form, this example's priors | 0.95 | 5, 0, 2, 3, 9, 0, 3, 1 | 1.013 |
+  | Stan's form, Stan's priors (Uniform phi, Cauchy mu) | 0.8 | 1, 91, 5, 4, 6, 2, 62, 28 | 1.089 |
+  | Stan's form, Stan's priors (Uniform phi, Cauchy mu) | 0.95 | 2, 11, 9, 0, 0, 0, 1, 1 | 1.011 |
+
+  The example, its tolerance (fewer than 1% of draws divergent, R-hat below 1.02) and its run time (about 25–40 s per run with the `parallel` feature, longer without it) are unchanged.
 
 ## Maintainability
-- `keanu-distributions/src/timeseries.rs` has a private `Mat` (Cholesky, inverse) duplicating keanu-tensor linalg, and `keanu-algorithms/src/laplace.rs` hand-rolls triangular solves.
-- `keanu-graph/src/transform.rs` (~1550 lines) and `autodiff/mod.rs` (~1900 lines) are large; `vars.rs`, `continuous.rs`, `tests/mcmc.rs` and `tests/book.rs` passed 1000 lines.
-- ~69 doc comments still say "Java's X" although the Java code is gone.
+- Large files left as they are:
+  - `keanu-graph/src/autodiff/mod.rs` (about 1940 lines).
+  - `keanu-graph/src/vars.rs` (about 1010 lines). Most of it is one `impl DoubleVar` block plus macros that all three variable types share, so it can't be split by family as a mechanical move.
+  - `keanu/tests/book.rs` (about 1030 lines). The book includes its ANCHOR regions by path, 39 times.
+
+  `transform.rs`, `continuous.rs` and `tests/mcmc.rs` were split into modules by family.
