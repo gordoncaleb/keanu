@@ -6,6 +6,16 @@
 /// A constant series has zero variance, so its autocorrelation is NaN (as in Java). An empty series gives an
 /// empty result.
 pub fn autocorrelation(series: &[f64]) -> Vec<f64> {
+    let autocovariance = autocovariance(series);
+    let Some(&variance) = autocovariance.first() else {
+        return Vec::new();
+    };
+    autocovariance.iter().map(|x| x / variance).collect()
+}
+
+/// The autocovariance of a series at lags 0, 1, ..., n - 1 with a 1/n normalisation, computed with an FFT of the
+/// mean-centred, zero-padded series. An empty series gives an empty result.
+pub(crate) fn autocovariance(series: &[f64]) -> Vec<f64> {
     let n = series.len();
     if n == 0 {
         return Vec::new();
@@ -28,9 +38,7 @@ pub fn autocorrelation(series: &[f64]) -> Vec<f64> {
     }
     fft(&mut re, &mut im, true);
 
-    let autocovariance: Vec<f64> = re[..n].iter().map(|x| x / size as f64 / n as f64).collect();
-    let variance = autocovariance[0];
-    autocovariance.iter().map(|x| x / variance).collect()
+    re[..n].iter().map(|x| x / size as f64 / n as f64).collect()
 }
 
 /// In-place iterative radix-2 Cooley–Tukey FFT. `inverse` uses the conjugate twiddles and does not scale.

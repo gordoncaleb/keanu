@@ -1,5 +1,6 @@
 //! Samples of node values, as produced by samplers.
 
+use crate::diagnostics::{self, ElementSummary};
 use crate::error::{AlgorithmError, Result};
 use crate::statistics;
 use keanu_graph::{DType, Graph, GraphError, NodeId, State, Value};
@@ -432,5 +433,233 @@ impl Samples<'_, f64> {
             .flat_map(|v| v.as_slice().iter().copied())
             .collect();
         Ok(DoubleTensor::new(&shape, data)?)
+    }
+}
+
+/// Samples from several independent chains over the same nodes, each with the same number of draws, for
+/// convergence diagnostics across chains (see [`diagnostics`]).
+///
+/// ```
+/// use keanu_algorithms::mcmc::chains::sample_chains;
+/// use keanu_algorithms::mcmc::nuts::Nuts;
+/// use keanu_graph::{GraphBuilder, Model};
+/// use keanu_tensor::DoubleTensor;
+///
+/// let b = GraphBuilder::new();
+/// let mu = b.gaussian(0.0, 1.0);
+/// let x = b.gaussian(mu, 1.0);
+/// b.observe(x, DoubleTensor::scalar(1.0));
+/// let mu = mu.id();
+/// let (graph, state) = b.build()?;
+/// let model = Model::new(graph, &state)?;
+/// let nuts = Nuts::default().with_adapt_count(100);
+/// let chains = sample_chains(4, 7, &state, |state, rng| nuts.sample(&model, state, &[mu], 300, rng))?;
+/// assert_eq!((chains.num_chains(), chains.draws()), (4, 300));
+/// let r_hat = chains.rhat(mu, &[])?;
+/// assert!(r_hat < 1.05);
+/// println!("{}", chains.summary()?);
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
+#[derive(Debug, Clone, PartialEq)]
+pub struct ChainSamples {
+    chains: Vec<NetworkSamples>,
+}
+
+impl ChainSamples {
+    /// Stacks the samples of each chain. Fails with [`AlgorithmError::InvalidArgument`] if there are no chains, or
+    /// the chains did not sample the same nodes (in the same order, with the same types) or have different
+    /// numbers of samples.
+    pub fn new(chains: Vec<NetworkSamples>) -> Result<Self> {
+        let Some(first) = chains.first() else {
+            return Err(AlgorithmError::InvalidArgument(
+                "there must be at least one chain".into(),
+            ));
+        };
+        let same_columns = |c: &NetworkSamples| {
+            c.nodes == first.nodes
+                && c.columns
+                    .iter()
+                    .zip(&first.columns)
+                    .all(|(a, b)| std::mem::discriminant(a) == std::mem::discriminant(b))
+        };
+        if let Some(i) = chains.iter().position(|c| !same_columns(c)) {
+            return Err(AlgorithmError::InvalidArgument(format!(
+                "chain {i} sampled different nodes from chain 0"
+            )));
+        }
+        if let Some(i) = chains.iter().position(|c| c.len() != first.len()) {
+            return Err(AlgorithmError::InvalidArgument(format!(
+                "chain {i} has {} samples but chain 0 has {}",
+                chains[i].len(),
+                first.len()
+            )));
+        }
+        Ok(Self { chains })
+    }
+
+    /// The samples of each chain.
+    pub fn chains(&self) -> &[NetworkSamples] {
+        &self.chains
+    }
+
+    /// The samples of each chain, by value.
+    pub fn into_chains(self) -> Vec<NetworkSamples> {
+        self.chains
+    }
+
+    /// The number of chains.
+    pub fn num_chains(&self) -> usize {
+        self.chains.len()
+    }
+
+    /// The number of samples in each chain.
+    pub fn draws(&self) -> usize {
+        self.chains[0].len()
+    }
+
+    /// The nodes that were sampled.
+    pub fn nodes(&self) -> &[NodeId] {
+        self.chains[0].nodes()
+    }
+
+    /// One element of an f64 node in each chain: one series of draws per chain. A scalar node's element is `&[]`.
+    /// Fails if the node was not sampled, is not an f64 node, or the index is out of range.
+    pub fn element(&self, id: NodeId, index: &[usize]) -> Result<Vec<Vec<f64>>> {
+        self.chains
+            .iter()
+            .map(|chain| {
+                chain
+                    .f64(id)
+                    .ok_or_else(|| {
+                        AlgorithmError::InvalidArgument(format!(
+                            "node {id:?} is not a sampled f64 node"
+                        ))
+                    })?
+                    .element(index)
+            })
+            .collect()
+    }
+
+    /// The rank-normalised split R-hat of one element ([`diagnostics::rhat`]).
+    pub fn rhat(&self, id: NodeId, index: &[usize]) -> Result<f64> {
+        diagnostics::rhat(&self.element(id, index)?)
+    }
+
+    /// The bulk effective sample size of one element ([`diagnostics::ess_bulk`]).
+    pub fn ess_bulk(&self, id: NodeId, index: &[usize]) -> Result<f64> {
+        diagnostics::ess_bulk(&self.element(id, index)?)
+    }
+
+    /// The tail effective sample size of one element ([`diagnostics::ess_tail`]).
+    pub fn ess_tail(&self, id: NodeId, index: &[usize]) -> Result<f64> {
+        diagnostics::ess_tail(&self.element(id, index)?)
+    }
+
+    /// The Monte Carlo standard error of the mean of one element ([`diagnostics::mcse_mean`]).
+    pub fn mcse_mean(&self, id: NodeId, index: &[usize]) -> Result<f64> {
+        diagnostics::mcse_mean(&self.element(id, index)?)
+    }
+
+    /// The summary statistics and diagnostics of one element.
+    pub fn summarize(&self, id: NodeId, index: &[usize]) -> Result<ElementSummary> {
+        diagnostics::summarize(&self.element(id, index)?)
+    }
+
+    /// The summary statistics and diagnostics of every element of every sampled f64 node, in node order and
+    /// row-major element order. Int and bool nodes are skipped.
+    pub fn summary(&self) -> Result<ChainSummary> {
+        let first = &self.chains[0];
+        let mut rows = Vec::new();
+        for &node in first.nodes() {
+            let Some(samples) = first.f64(node) else {
+                continue;
+            };
+            for index in element_indices(samples.shape()) {
+                let stats = self.summarize(node, &index)?;
+                rows.push(SummaryRow { node, index, stats });
+            }
+        }
+        Ok(ChainSummary { rows })
+    }
+}
+
+/// Every index into a tensor of this shape, in row-major order (one empty index for a scalar).
+fn element_indices(shape: &[usize]) -> Vec<Vec<usize>> {
+    let mut indices = vec![Vec::new()];
+    for &size in shape {
+        indices = indices
+            .into_iter()
+            .flat_map(|prefix| {
+                (0..size).map(move |i| {
+                    let mut index = prefix.clone();
+                    index.push(i);
+                    index
+                })
+            })
+            .collect();
+    }
+    indices
+}
+
+/// One row of a [`ChainSummary`]: the diagnostics of one element of one node.
+#[derive(Debug, Clone, PartialEq)]
+#[non_exhaustive]
+pub struct SummaryRow {
+    /// The node.
+    pub node: NodeId,
+    /// The element's index in the node's value (empty for a scalar node).
+    pub index: Vec<usize>,
+    /// Its summary statistics and diagnostics.
+    pub stats: ElementSummary,
+}
+
+/// The summary statistics and diagnostics of every element of the f64 nodes of [`ChainSamples`]. Its `Display`
+/// is a table with a row per element.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ChainSummary {
+    rows: Vec<SummaryRow>,
+}
+
+impl ChainSummary {
+    /// A row per element.
+    pub fn rows(&self) -> &[SummaryRow] {
+        &self.rows
+    }
+
+    /// The statistics of one element, if it is in the summary.
+    pub fn get(&self, node: NodeId, index: &[usize]) -> Option<&ElementSummary> {
+        self.rows
+            .iter()
+            .find(|r| r.node == node && r.index == index)
+            .map(|r| &r.stats)
+    }
+
+    /// Whether every element is converged ([`ElementSummary::is_converged`]).
+    pub fn is_converged(&self) -> bool {
+        self.rows.iter().all(|r| r.stats.is_converged())
+    }
+}
+
+impl std::fmt::Display for ChainSummary {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "{:<12} {:>10} {:>10} {:>10} {:>10} {:>10} {:>10} {:>9} {:>9} {:>7}",
+            "node", "mean", "sd", "5%", "50%", "95%", "mcse_mean", "ess_bulk", "ess_tail", "r_hat"
+        )?;
+        for row in &self.rows {
+            let name = if row.index.is_empty() {
+                format!("{:?}", row.node)
+            } else {
+                format!("{:?}{:?}", row.node, row.index)
+            };
+            let s = &row.stats;
+            write!(
+                f,
+                "\n{name:<12} {:>10.4} {:>10.4} {:>10.4} {:>10.4} {:>10.4} {:>10.4} {:>9.0} {:>9.0} {:>7.3}",
+                s.mean, s.sd, s.q5, s.q50, s.q95, s.mcse_mean, s.ess_bulk, s.ess_tail, s.r_hat
+            )?;
+        }
+        Ok(())
     }
 }

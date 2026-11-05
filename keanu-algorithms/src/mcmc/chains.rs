@@ -1,8 +1,34 @@
 //! Running several independent chains over one model.
 
 use crate::error::Result;
+use crate::samples::{ChainSamples, NetworkSamples};
 use keanu_distributions::KeanuRng;
 use keanu_graph::State;
+
+/// Runs `chains` independent chains with [`run_chains`], each returning its samples, and stacks them for
+/// diagnostics across chains. Fails if a chain fails, or the chains' samples do not match ([`ChainSamples::new`]),
+/// which includes `chains` being 0.
+///
+/// ```
+/// use keanu_algorithms::mcmc::chains::sample_chains;
+/// use keanu_algorithms::mcmc::nuts::Nuts;
+/// use keanu_graph::{GraphBuilder, Model};
+///
+/// let b = GraphBuilder::new();
+/// let mu = b.gaussian(0.0, 1.0).id();
+/// let (graph, state) = b.build()?;
+/// let model = Model::new(graph, &state)?;
+/// let nuts = Nuts::default().with_adapt_count(100);
+/// let samples = sample_chains(4, 3, &state, |state, rng| nuts.sample(&model, state, &[mu], 200, rng))?;
+/// assert_eq!(samples.num_chains(), 4);
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
+pub fn sample_chains<F>(chains: usize, seed: u64, state: &State, chain: F) -> Result<ChainSamples>
+where
+    F: Fn(&mut State, &mut KeanuRng) -> Result<NetworkSamples> + Sync,
+{
+    ChainSamples::new(run_chains(chains, seed, state, chain)?)
+}
 
 /// Runs `chains` independent chains, each with its own copy of `state` and its own random number generator seeded
 /// from `seed` and the chain's index, and returns their results in chain order.

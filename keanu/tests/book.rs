@@ -291,6 +291,36 @@ fn predictive_sampling() -> keanu::Result<()> {
 }
 
 #[test]
+fn multi_chain_diagnostics() -> keanu::Result<()> {
+    let b = GraphBuilder::new();
+    let a = b.gaussian(20.0, 1.0);
+    let b_var = b.gaussian(20.0, 1.0);
+    let measurement = b.gaussian(a + b_var, 1.0);
+    b.observe(measurement, DoubleTensor::scalar(43.0));
+    let a = a.id();
+    let (graph, state) = b.build()?;
+    let model = Model::new(graph, &state)?;
+
+    // ANCHOR: multi_chain
+    use keanu::algorithms::diagnostics::{MIN_ESS, RHAT_THRESHOLD};
+    use keanu::algorithms::mcmc::chains::sample_chains;
+
+    // four chains, each with its own copy of the state and its own random number generator
+    let nuts = Nuts::default().with_adapt_count(500);
+    let chains = sample_chains(4, 42, &state, |state, rng| {
+        nuts.sample(&model, state, &[a], 1000, rng)
+    })?;
+    println!("{}", chains.summary()?); // a row per element: mean, sd, quantiles, MCSE, ESS, R-hat
+
+    let a_stats = chains.summarize(a, &[])?;
+    assert!(a_stats.r_hat < RHAT_THRESHOLD);
+    assert!(a_stats.ess_bulk > MIN_ESS && a_stats.ess_tail > MIN_ESS);
+    assert!((a_stats.mean - 21.0).abs() < 4.0 * a_stats.mcse_mean + 0.05);
+    // ANCHOR_END: multi_chain
+    Ok(())
+}
+
+#[test]
 fn sequences() -> keanu::Result<()> {
     // ANCHOR: sequence
     // a Gaussian random walk x[t] ~ N(x[t-1], 1), observed with noise as y[t] ~ N(x[t], 0.5)
