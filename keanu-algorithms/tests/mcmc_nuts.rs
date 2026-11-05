@@ -432,3 +432,154 @@ fn nuts_trees_stop_within_two_orbits_of_a_standard_gaussian() {
     let longest = statistics.tree_size.iter().max().unwrap();
     assert!(*longest <= 63, "a tree took {longest} leapfrog steps");
 }
+
+/// k ~ UniformInt[0, 3), s ~ HalfGaussian(1), mu ~ N(0, 2²), y_i ~ N(mu + k, s) observed, with k = 1 and s = 1.
+/// Given k and s, mu's conditional posterior is Gaussian. Returns the model, the state, mu, k, s and the data.
+fn block_model() -> (Model, State, NodeId, NodeId, NodeId, Vec<f64>) {
+    let data = vec![2.2, 1.7, 3.1, 2.5, 1.9];
+    let b = GraphBuilder::new();
+    let k = b.uniform_int(0, 3);
+    let s = b.half_gaussian(1.0);
+    let mu = b.gaussian(0.0, 2.0);
+    let y = b.gaussian_with_shape(&[data.len()], mu + k.to_double(), s);
+    b.observe(y, DoubleTensor::vector(data.clone()));
+    b.set_value(k, IntTensor::scalar(1));
+    b.set_value(s, DoubleTensor::scalar(1.0));
+    b.set_value(mu, DoubleTensor::scalar(0.0));
+    let (k, s, mu) = (k.id(), s.id(), mu.id());
+    let (graph, state) = b.build().unwrap();
+    let model = Model::new(graph, &state).unwrap();
+    (model, state, mu, k, s, data)
+}
+
+/// The conditional posterior of mu given k (s = 1): mean and variance.
+fn conditional(data: &[f64], k: f64) -> (f64, f64) {
+    let precision = 1.0 / 4.0 + data.len() as f64;
+    (
+        data.iter().map(|y| y - k).sum::<f64>() / precision,
+        1.0 / precision,
+    )
+}
+
+#[test]
+fn block_nuts_samples_the_conditional_posterior() {
+    let (model, mut state, mu, k, s, data) = block_model();
+    let nuts = Nuts::default().with_adapt_count(500);
+    let (samples, statistics) = {
+        let mut sampler = nuts
+            .block_sampler(&model, &mut state, &[mu], &[mu, k, s], &mut rng(21))
+            .unwrap();
+        assert!(sampler.is_block());
+        assert_eq!(sampler.latents(), [mu]);
+        let samples = keanu_algorithms::mcmc::generate(
+            &mut sampler,
+            &mut state,
+            5500,
+            SamplingOptions::default().with_drop(500),
+            &mut rng(22),
+        )
+        .unwrap();
+        (samples, sampler.into_statistics())
+    };
+    let (m, v) = conditional(&data, 1.0);
+    assert_moments(&series(&samples, mu), m, v, "block NUTS");
+    // the other latents are held fixed
+    assert!(series(&samples, s).iter().all(|&x| x == 1.0));
+    assert!(
+        samples
+            .i64(k)
+            .unwrap()
+            .as_slice()
+            .iter()
+            .all(|t| t.to_scalar() == Some(1))
+    );
+    // the recorded log probability is the joint one
+    for (sample, &log_prob) in samples.iter().zip(samples.log_probs()).take(20) {
+        let mut at = state.clone();
+        model
+            .set_and_cascade(
+                &mut at,
+                [(mu, keanu_graph::Value::F64(sample.f64(mu).unwrap().clone()))],
+            )
+            .unwrap();
+        let expected = model.log_prob(&at).unwrap();
+        assert!(
+            (log_prob - expected).abs() < 1e-9,
+            "{log_prob} vs {expected}"
+        );
+    }
+    assert_eq!(statistics.inverse_metric.len(), 1);
+}
+
+#[test]
+fn block_nuts_follows_changes_made_by_other_steps() {
+    let (model, mut state, mu, k, _, data) = block_model();
+    let nuts = Nuts::default().with_adapt_count(300);
+    let mut sampler = nuts
+        .block_sampler(&model, &mut state, &[mu], &[mu], &mut rng(23))
+        .unwrap();
+    let mut r = rng(24);
+    use keanu_algorithms::mcmc::SamplingAlgorithm;
+    for _ in 0..300 {
+        sampler.step(&mut state, &mut r).unwrap();
+    }
+    // another step moves k: the next step must sample the new conditional, from a consistent position
+    model
+        .set_and_cascade(&mut state, [(k, IntTensor::scalar(2).into())])
+        .unwrap();
+    let mut draws = Vec::new();
+    for _ in 0..4000 {
+        sampler.step(&mut state, &mut r).unwrap();
+        let log_prob = model.log_prob(&state).unwrap();
+        assert!(
+            (sampler.log_prob() - log_prob).abs() < 1e-9,
+            "{} vs {log_prob}",
+            sampler.log_prob()
+        );
+        draws.push(state.f64(mu).unwrap().to_scalar().unwrap());
+    }
+    let (m, v) = conditional(&data, 2.0);
+    assert_moments(&draws, m, v, "block NUTS after k changed");
+
+    // moving mu itself is noticed too, and refresh can be called directly
+    model
+        .set_and_cascade(&mut state, [(mu, DoubleTensor::scalar(-5.0).into())])
+        .unwrap();
+    sampler.refresh(&mut state).unwrap();
+    assert!((sampler.log_prob() - model.log_prob(&state).unwrap()).abs() < 1e-9);
+}
+
+#[test]
+fn block_nuts_rejects_invalid_blocks() {
+    let (model, mut state, mu, k, s, _) = block_model();
+    let nuts = Nuts::default();
+    // a discrete latent, a repeated latent, an empty block
+    for block in [vec![k], vec![mu, mu], vec![]] {
+        assert!(
+            nuts.block_sampler(&model, &mut state, &block, &[mu], &mut rng(1))
+                .is_err(),
+            "{block:?}"
+        );
+    }
+    nuts.block_sampler(&model, &mut state, &[mu, s], &[mu], &mut rng(1))
+        .unwrap();
+
+    // a bound that moves with a latent outside the block, here a discrete one
+    let b = GraphBuilder::new();
+    let k = b.uniform_int(1, 4);
+    let x = b.uniform(0.0, k.to_double());
+    let y = b.gaussian(x, 1.0);
+    b.observe(y, DoubleTensor::scalar(0.5));
+    b.set_value(k, IntTensor::scalar(2));
+    b.set_value(x, DoubleTensor::scalar(0.5));
+    let x = x.id();
+    let (graph, mut state) = b.build().unwrap();
+    let model = Model::new(graph, &state).unwrap();
+    let error = nuts
+        .block_sampler(&model, &mut state, &[x], &[x], &mut rng(1))
+        .unwrap_err();
+    assert!(
+        error.to_string().contains("depends on the latent"),
+        "{error}"
+    );
+}

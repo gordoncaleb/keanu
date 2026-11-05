@@ -170,6 +170,15 @@ Work from `docs/plans/2026-11-05-001-feat-applied-modelling-gaps-plan.md`.
   `PointwiseLogLik`. Other samplers' files have only `lp__`. `NutsStatistics` gained `accept_stat` and `tree_depth`
   (recorded with `save_statistics`) and `inverse_metric` (always), `NutsSampler` gained `inverse_metric()`, and
   `AlgorithmError` gained `Io`.
+- keanu-algorithms: **NUTS block mode** (`Nuts::block_sampler`): NUTS over a chosen block of the continuous
+  latents, with every other latent (continuous or discrete) held at its value in the state, so that NUTS can be one
+  step of a compound sampler. Before each step the chain checks whether the state still holds the values it left
+  there and, if another step changed them, refreshes its position, log probability and gradient from the state
+  (`NutsSampler::refresh` does this on demand); adaptation carries on across those changes. A block's supports may
+  not move with any latent. `NutsSampler` gained `log_prob`, `latents`, `is_block` and `into_statistics`.
+  keanu-graph gained `Parameterisation::for_latents`, `Model::log_prob_and_gradient_wrt` (the gradient with respect
+  to some continuous latents) and `Model::local_log_prob` (the log probability of some nodes only). Plain NUTS
+  takes exactly the same trajectories as before.
 
 ### Code review fixes
 

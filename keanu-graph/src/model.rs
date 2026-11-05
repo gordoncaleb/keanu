@@ -225,9 +225,17 @@ impl Model {
         self.graph.find(label)
     }
 
-    /// Log probability of the given latent / observed / factor nodes: the sum of the probabilistic nodes' log
-    /// probabilities and the factors' terms, or -∞ if any is impossible (-∞ or NaN, or a factor that is not finite)
-    /// or any observed deterministic node contradicts its observation.
+    /// The log probability of the given latent, observed and factor nodes only: the sum of the probabilistic nodes'
+    /// log probabilities and the factors' terms, or -∞ if any is impossible (-∞ or NaN, or a factor that is not
+    /// finite) or any observed deterministic node among them contradicts its observation. Other nodes are ignored.
+    ///
+    /// With the nodes [`affected_by`](Self::affected_by) some latents, this is the part of the joint log probability
+    /// that changes with them (their Markov blanket's terms), which is all a sampler updating those latents alone
+    /// needs to compare their values.
+    pub fn local_log_prob(&self, state: &State, nodes: &[NodeId]) -> Result<f64> {
+        self.log_prob_of(state, nodes)
+    }
+
     fn log_prob_of(&self, state: &State, nodes: &[NodeId]) -> Result<f64> {
         let mut sum = 0.0;
         for &id in nodes {
@@ -363,6 +371,39 @@ impl Model {
     /// latent: exactly [`Self::log_prob`] and [`Self::log_prob_gradient`], in one pass that evaluates each node's
     /// distribution once (for gradient based samplers, which need both at every step).
     pub fn log_prob_and_gradient(&self, state: &State) -> Result<(f64, Option<LogProbGradient>)> {
+        self.log_prob_and_gradient_of(state, &self.continuous)
+    }
+
+    /// The joint log probability and, unless it is impossible (-∞), its gradient with respect to the continuous
+    /// latents `wrt` only (a subset of [`Self::continuous_latents`]), the other latents held at their values in
+    /// `state`: for samplers that update some latents by gradients and others by other steps. The gradient's entries
+    /// for the latents in `wrt` are exact; any other entry is incomplete and should be ignored. With every
+    /// continuous latent it is exactly [`Self::log_prob_and_gradient`].
+    ///
+    /// # Errors
+    ///
+    /// [`GraphError::InvalidValue`] if an id in `wrt` is not a continuous latent of the model, and any error
+    /// evaluating the model.
+    pub fn log_prob_and_gradient_wrt(
+        &self,
+        state: &State,
+        wrt: &[NodeId],
+    ) -> Result<(f64, Option<LogProbGradient>)> {
+        if let Some(&id) = wrt.iter().find(|id| !self.continuous.contains(id)) {
+            return Err(GraphError::InvalidValue(format!(
+                "{} is not a continuous latent of the model",
+                self.graph.describe(id)
+            )));
+        }
+        self.log_prob_and_gradient_of(state, wrt)
+    }
+
+    /// [`Self::log_prob_and_gradient_wrt`] without checking `wrt`.
+    pub(crate) fn log_prob_and_gradient_of(
+        &self,
+        state: &State,
+        wrt: &[NodeId],
+    ) -> Result<(f64, Option<LogProbGradient>)> {
         for &id in &self.observed {
             if !self.graph[id].is_probabilistic()
                 && contradicts_observation(&self.graph, state, id)?
@@ -374,7 +415,7 @@ impl Model {
             &self.graph,
             state,
             &self.probabilistic_joint,
-            &self.continuous,
+            wrt,
         )?;
         Ok(match joint {
             Some((log_prob, gradient)) => (log_prob, Some(gradient)),

@@ -126,12 +126,12 @@ pub struct Parameterisation<'m> {
     dimension: usize,
 }
 
-/// For each node, a continuous latent its value depends on (itself, for a continuous latent), following
+/// For each node, one of `sources` (latents) its value depends on (itself, for a source), following
 /// deterministic, unobserved nodes. Ids are a topological order, so one forward pass suffices.
-fn latent_dependencies(model: &Model, state: &State) -> Vec<Option<NodeId>> {
+fn latent_dependencies(model: &Model, state: &State, sources: &[NodeId]) -> Vec<Option<NodeId>> {
     let graph = model.graph();
     let mut depends: Vec<Option<NodeId>> = vec![None; graph.len()];
-    for &id in &model.continuous_latents() {
+    for &id in sources {
         depends[id.index()] = Some(id);
     }
     for id in graph.ids() {
@@ -211,10 +211,64 @@ impl<'m> Parameterisation<'m> {
     ///
     /// As [`Parameterisation::new`], for [`Space::Unconstrained`].
     pub fn with_space(model: &'m Model, state: &State, space: Space) -> Result<Self> {
-        let graph = model.graph();
         let latents = model.continuous_latents();
+        Self::build(model, state, latents.clone(), space, &latents)
+    }
+
+    /// The parameterisation of some of `model`'s continuous latents, `latents`, in `space` (laid out in the order
+    /// given), with every other latent held at its value in the state: for samplers that update these latents by
+    /// gradients and the others by other steps (see `Nuts::block_sampler` in `keanu-algorithms`). The log
+    /// probability and its gradient are the joint ones, with respect to these latents only.
+    ///
+    /// The other latents can change between uses (other steps update them), so in [`Space::Unconstrained`] a
+    /// support bound that depends on any latent, continuous or discrete, inside the block or not, is rejected as
+    /// [`Parameterisation::new`] rejects one that depends on a continuous latent.
+    ///
+    /// # Errors
+    ///
+    /// [`GraphError::InvalidValue`] if `latents` is empty, repeats a latent, or holds a node that is not a
+    /// continuous latent of the model; otherwise as [`Parameterisation::with_space`].
+    pub fn for_latents(
+        model: &'m Model,
+        state: &State,
+        latents: &[NodeId],
+        space: Space,
+    ) -> Result<Self> {
+        if latents.is_empty() {
+            return Err(GraphError::InvalidValue(
+                "a parameterisation needs at least one latent".into(),
+            ));
+        }
+        let continuous = model.continuous_latents();
+        let graph = model.graph();
+        for (i, id) in latents.iter().enumerate() {
+            if !continuous.contains(id) {
+                return Err(GraphError::InvalidValue(format!(
+                    "{} is not a continuous latent of the model",
+                    graph.describe(*id)
+                )));
+            }
+            if latents[..i].contains(id) {
+                return Err(GraphError::InvalidValue(format!(
+                    "{} is given twice",
+                    graph.describe(*id)
+                )));
+            }
+        }
+        Self::build(model, state, latents.to_vec(), space, model.latents())
+    }
+
+    /// The parameterisation of `latents`, rejecting supports that move with any of `sources`.
+    fn build(
+        model: &'m Model,
+        state: &State,
+        latents: Vec<NodeId>,
+        space: Space,
+        sources: &[NodeId],
+    ) -> Result<Self> {
+        let graph = model.graph();
         let depends = match space {
-            Space::Unconstrained => latent_dependencies(model, state),
+            Space::Unconstrained => latent_dependencies(model, state, sources),
             Space::Constrained => Vec::new(),
         };
         let mut slots = Vec::with_capacity(latents.len());
@@ -258,7 +312,8 @@ impl<'m> Parameterisation<'m> {
         self.space
     }
 
-    /// The continuous latents, in layout order (the order of [`Model::continuous_latents`]).
+    /// The continuous latents, in layout order (the order of [`Model::continuous_latents`], or the order given to
+    /// [`for_latents`](Self::for_latents)).
     pub fn latents(&self) -> &[NodeId] {
         &self.latents
     }
@@ -393,7 +448,7 @@ impl<'m> Parameterisation<'m> {
         state: &mut State,
     ) -> Result<(f64, Option<Vec<f64>>)> {
         self.to_state(z, state)?;
-        let (log_prob, gradient) = self.model.log_prob_and_gradient(state)?;
+        let (log_prob, gradient) = self.model.log_prob_and_gradient_of(state, &self.latents)?;
         let Some(gradient) = gradient else {
             return Ok((log_prob, None));
         };

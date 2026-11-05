@@ -432,3 +432,51 @@ fn latent_mixture_weights_do_not_move_the_support() {
         4
     );
 }
+
+/// A block of the continuous latents: the layout holds only them, in the order given, the log probability is the
+/// joint one, and the gradient is the full gradient's entries for the block.
+#[test]
+fn a_block_of_latents_has_the_joint_log_prob_and_its_partial_gradient() {
+    let b = GraphBuilder::new();
+    let k = b.uniform_int(0, 3).label("k");
+    let mu = b.gaussian(0.0, 1.0).label("mu");
+    let sigma = b.half_gaussian(2.0).label("sigma");
+    let y = b.gaussian_with_shape(&[2], mu + k.to_double(), sigma);
+    b.observe(y, v(&[0.4, 1.3]));
+    let (graph, mut state) = b.build().unwrap();
+    evaluate(&graph, &mut state, 3);
+    let model = Model::new(graph, &state).unwrap();
+    let (mu, sigma) = (model.find("mu").unwrap(), model.find("sigma").unwrap());
+    let k = model.find("k").unwrap();
+
+    let block =
+        Parameterisation::for_latents(&model, &state, &[sigma, mu], Space::Unconstrained).unwrap();
+    assert_eq!(block.latents(), [sigma, mu]);
+    assert_eq!(block.dimension(), 2);
+    let z = [0.3, -0.2];
+    let (log_prob, gradient) = block.log_prob_and_gradient(&z, false, &mut state).unwrap();
+    assert_close_rel(log_prob, model.log_prob(&state).unwrap(), 1e-12, "log prob");
+    let full = model.log_prob_gradient(&state).unwrap();
+    let gradient = gradient.unwrap();
+    // sigma = exp(z₀), so ∂/∂z₀ = sigma ∂/∂sigma
+    let d_sigma = full.get(sigma).unwrap().to_scalar().unwrap() * 0.3f64.exp();
+    assert_close_rel(gradient[0], d_sigma, 1e-12, "sigma");
+    assert_close_rel(
+        gradient[1],
+        full.get(mu).unwrap().to_scalar().unwrap(),
+        1e-12,
+        "mu",
+    );
+    let (_, partial) = model.log_prob_and_gradient_wrt(&state, &[mu]).unwrap();
+    let mu_gradient = partial.unwrap().get(mu).unwrap().to_scalar().unwrap();
+    assert_close_rel(mu_gradient, gradient[1], 1e-12, "mu alone");
+
+    // not continuous latents, repeats and an empty block are rejected
+    for latents in [vec![k], vec![mu, mu], vec![]] {
+        assert!(matches!(
+            Parameterisation::for_latents(&model, &state, &latents, Space::Unconstrained),
+            Err(GraphError::InvalidValue(_))
+        ));
+    }
+    assert!(model.log_prob_and_gradient_wrt(&state, &[k]).is_err());
+}

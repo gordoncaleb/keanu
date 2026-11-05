@@ -12,6 +12,10 @@
 //! it. Draws are recorded, and the state left, at the constrained values, and the recorded log probabilities are the
 //! model's (without the Jacobian). [`Nuts::with_space`]`(Space::Constrained)` moves in the latents' own values
 //! instead, as NUTS did before transforms existed.
+//!
+//! [`Nuts::block_sampler`] runs NUTS over a block of the continuous latents only, holding the others (continuous or
+//! discrete) at their values in the state, so that it can be one step of a compound sampler. It notices when other
+//! steps change the state and picks up from there.
 
 use crate::error::{AlgorithmError, Result};
 use crate::mcmc::{SamplingAlgorithm, SamplingOptions, generate, is_impossible};
@@ -20,7 +24,7 @@ use crate::support::{
     block_shapes, check_latents, check_nodes, concat, evaluate_all, split, start_point,
 };
 use keanu_distributions::KeanuRng;
-use keanu_graph::{Graph, Model, NodeId, Parameterisation, Space, State};
+use keanu_graph::{Graph, Model, NodeId, Parameterisation, Space, State, Value};
 use keanu_tensor::DoubleTensor;
 use keanu_tensor::special::log_sum_exp;
 use std::cell::RefCell;
@@ -388,6 +392,62 @@ impl Nuts {
         evaluate_all(model.graph(), state, rng)?;
 
         let param = Parameterisation::with_space(model, state, self.space)?;
+        self.start(param, state, nodes, None, rng)
+    }
+
+    /// A chain over some of the model's continuous latents, `latents` (a block), starting from the current state
+    /// and recording the values of `nodes`; every other latent, continuous or discrete, is held at its value in the
+    /// state. This is NUTS as one step of a compound sampler, where other steps update the other latents between
+    /// its steps.
+    ///
+    /// Each step first checks whether the state still holds the values the chain left it at, for the block and for
+    /// every other latent. If something else changed them, the chain [refreshes](NutsSampler::refresh) its position,
+    /// log probability and gradient from the state before building its trajectory, so it always samples the block's
+    /// conditional distribution given the other latents' current values. Step size and mass matrix adaptation carry
+    /// on over the first [`adapt_count`](Nuts::adapt_count) steps of the block, whatever the other steps do between
+    /// them. The recorded log probabilities are the model's joint log probability.
+    ///
+    /// # Errors
+    ///
+    /// As [`sampler`](Self::sampler), except that the model may have discrete latents; and an error from
+    /// [`Parameterisation::for_latents`] if `latents` is empty, repeats a latent, holds something that is not a
+    /// continuous latent of the model, or a latent's support moves with any latent.
+    pub fn block_sampler<'m>(
+        &self,
+        model: &'m Model,
+        state: &mut State,
+        latents: &[NodeId],
+        nodes: &[NodeId],
+        rng: &mut KeanuRng,
+    ) -> Result<NutsSampler<'m>> {
+        self.validate()?;
+        if nodes.is_empty() {
+            return Err(AlgorithmError::InvalidArgument("no nodes to sample".into()));
+        }
+        check_nodes(model.graph(), nodes)?;
+        check_nodes(model.graph(), latents)?;
+        evaluate_all(model.graph(), state, rng)?;
+
+        let param = Parameterisation::for_latents(model, state, latents, self.space)?;
+        let others: Vec<NodeId> = model
+            .latents()
+            .iter()
+            .copied()
+            .filter(|id| !latents.contains(id))
+            .collect();
+        self.start(param, state, nodes, Some(others), rng)
+    }
+
+    /// A chain over `param`'s latents from the current state; `others` are the latents outside the block, in block
+    /// mode.
+    fn start<'m>(
+        &self,
+        param: Parameterisation<'m>,
+        state: &mut State,
+        nodes: &[NodeId],
+        others: Option<Vec<NodeId>>,
+        rng: &mut KeanuRng,
+    ) -> Result<NutsSampler<'m>> {
         let shapes = block_shapes(&param);
         let z = start_point(&param, state)?;
         let (log_prob, gradient) = log_prob_and_gradient_at(&param, &shapes, state, &z)?;
@@ -418,11 +478,16 @@ impl Nuts {
             sample_log_prob,
             step_count: 0,
             statistics: NutsStatistics::default(),
+            block: others.map(|others| Block {
+                others,
+                values: Vec::new(),
+            }),
         };
         sampler.statistics.inverse_metric = sampler.potential.diagonal();
         if self.adapt_step_size && self.adapt_count > 0 {
             sampler.find_reasonable_step_size(state, rng)?;
         }
+        sampler.remember_others(state);
         Ok(sampler)
     }
 
@@ -1050,6 +1115,13 @@ impl Integrator<'_, '_> {
     }
 }
 
+/// In block mode, the latents outside the block and their values when the chain last left the state.
+#[derive(Debug)]
+struct Block {
+    others: Vec<NodeId>,
+    values: Vec<Option<Value>>,
+}
+
 /// A running NUTS chain. It owns its adapted step size and potential.
 #[derive(Debug)]
 pub struct NutsSampler<'m> {
@@ -1065,12 +1137,98 @@ pub struct NutsSampler<'m> {
     sample_log_prob: f64,
     step_count: usize,
     statistics: NutsStatistics,
+    /// Set in block mode ([`Nuts::block_sampler`]).
+    block: Option<Block>,
 }
 
 impl NutsSampler<'_> {
     /// What has been recorded so far.
     pub fn statistics(&self) -> &NutsStatistics {
         &self.statistics
+    }
+
+    /// The statistics, taken out of the sampler.
+    pub fn into_statistics(self) -> NutsStatistics {
+        self.statistics
+    }
+
+    /// The model's joint log probability (without the Jacobian of any transform) at the chain's current position,
+    /// as it records it.
+    pub fn log_prob(&self) -> f64 {
+        self.sample_log_prob
+    }
+
+    /// The latents the chain moves, in the order of its position (every continuous latent, or the block of
+    /// [`Nuts::block_sampler`]).
+    pub fn latents(&self) -> &[NodeId] {
+        self.param.latents()
+    }
+
+    /// Whether the chain samples a block of the latents ([`Nuts::block_sampler`]).
+    pub fn is_block(&self) -> bool {
+        self.block.is_some()
+    }
+
+    /// Reads the chain's position from the state and recomputes the log probability and gradient there, for when
+    /// something other than the chain changed the state (another step of a compound sampler). In block mode
+    /// [`step`](SamplingAlgorithm::step) does this by itself whenever the state changed since the chain's last
+    /// step; adaptation is unaffected.
+    ///
+    /// # Errors
+    ///
+    /// [`AlgorithmError::ImpossibleStart`] if the state has zero probability, or a latent of the chain is outside
+    /// its support (or, in unconstrained space, on its boundary).
+    pub fn refresh(&mut self, state: &mut State) -> Result<()> {
+        let z = start_point(&self.param, state)?;
+        let (log_prob, gradient) = log_prob_and_gradient_at(&self.param, &self.shapes, state, &z)?;
+        if is_impossible(log_prob) {
+            return Err(AlgorithmError::ImpossibleStart);
+        }
+        self.sample_log_prob = log_prob - self.param.log_det_jacobian(&z)?;
+        self.proposal = Candidate {
+            position: Rc::new(split(&z, &self.shapes)),
+            gradient: Rc::new(gradient),
+            log_prob,
+            energy: f64::NAN,
+        };
+        self.remember_others(state);
+        Ok(())
+    }
+
+    /// In block mode, records the other latents' current values.
+    fn remember_others(&mut self, state: &State) {
+        if let Some(block) = &mut self.block {
+            block.values = block
+                .others
+                .iter()
+                .map(|&id| state.value(id).cloned())
+                .collect();
+        }
+    }
+
+    /// In block mode, whether the state differs from where the chain left it: another latent's value changed, or
+    /// the block's values aren't the chain's position.
+    fn state_changed(&self, state: &State) -> Result<bool> {
+        let Some(block) = &self.block else {
+            return Ok(false);
+        };
+        let others_changed = block
+            .others
+            .iter()
+            .zip(&block.values)
+            .any(|(&id, value)| state.value(id) != value.as_ref());
+        if others_changed {
+            return Ok(true);
+        }
+        let position = self
+            .param
+            .to_constrained(&concat(&self.proposal.position))?;
+        Ok(self
+            .param
+            .latents()
+            .iter()
+            .zip(&position)
+            .any(|(&id, value)| state.f64(id) != Some(value)))
     }
 
     /// The step size the next step will use.
@@ -1144,6 +1302,9 @@ impl NutsSampler<'_> {
 
 impl SamplingAlgorithm for NutsSampler<'_> {
     fn step(&mut self, state: &mut State, rng: &mut KeanuRng) -> Result<()> {
+        if self.state_changed(state)? {
+            self.refresh(state)?;
+        }
         let momentum = self.potential.random_momentum(rng)?;
         let start = Rc::new(LeapfrogState::new(
             Rc::clone(&self.proposal.position),
@@ -1230,6 +1391,7 @@ impl SamplingAlgorithm for NutsSampler<'_> {
             self.statistics.divergent_steps.push(self.step_count);
         }
         self.step_count += 1;
+        self.remember_others(state);
         Ok(())
     }
 
