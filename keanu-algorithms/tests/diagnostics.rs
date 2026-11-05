@@ -167,6 +167,25 @@ fn frozen_chains_are_not_converged() {
 }
 
 #[test]
+fn disagreeing_chains_of_tiny_values_have_a_large_rhat() {
+    let mut rng = KeanuRng::seed_from_u64(6);
+    let mut chains: Vec<Vec<f64>> = (0..4).map(|_| iid(1000, &mut rng)).collect();
+    chains[3].iter_mut().for_each(|x| *x += 3.0);
+    // the same chains at a scale of 1e-18, so every draw is within 1e-15 of every other: R-hat is scale
+    // invariant (scaling keeps the ranks), so it must still flag them
+    let tiny: Vec<Vec<f64>> = chains
+        .iter()
+        .map(|c| c.iter().map(|x| x * 1e-18).collect())
+        .collect();
+    let r = rhat(&tiny).unwrap();
+    assert!(r > RHAT_THRESHOLD, "{r}");
+    assert!((r - rhat(&chains).unwrap()).abs() < 1e-9, "{r}");
+    let s = diagnostics::summarize(&tiny).unwrap();
+    assert!(!s.is_converged(), "{s:?}");
+    assert!(s.ess_bulk < 4000.0, "{s:?}");
+}
+
+#[test]
 fn too_few_draws_or_chains_and_non_finite_draws_give_nan() {
     let short = vec![vec![1.0, 2.0, 3.0]; 4];
     let s = diagnostics::summarize(&short).unwrap();

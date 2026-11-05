@@ -33,7 +33,7 @@
 //!
 //! - R-hat needs at least two chains and every diagnostic needs at least four draws per chain; with fewer, or with
 //!   any NaN or infinite draw, they are NaN (as in ArviZ, which checks only NaN).
-//! - When every draw is the same (to within 10⁻¹⁵), R-hat, both ESS and the MCSE are NaN, so
+//! - When every draw is exactly the same, R-hat, both ESS and the MCSE are NaN, so
 //!   [`ElementSummary::is_converged`] is false: draws that never move are what a sampler stuck at its initial
 //!   value produces, and they carry no information about how well it mixes. Summarising a genuinely fixed quantity
 //!   therefore gives NaN diagnostics by design. (ArviZ also returns a NaN R-hat here, but an ESS of S and an MCSE
@@ -96,9 +96,6 @@ pub fn e_bfmi(energy: &[f64]) -> f64 {
 
 /// The probabilities of the quantiles whose indicators give the tail ESS.
 const TAIL_PROBABILITIES: (f64, f64) = (0.05, 0.95);
-
-/// Draws closer together than this count as constant (NumPy's `finfo(float).resolution`, as ArviZ uses).
-const CONSTANT_RESOLUTION: f64 = 1e-15;
 
 /// The fewest draws per chain for which the diagnostics are computed (as in ArviZ).
 const MIN_DRAWS: usize = 4;
@@ -236,14 +233,14 @@ impl Draws {
             && self.data.iter().all(|x| x.is_finite())
     }
 
+    /// Whether every draw is exactly the same. Exact, not to within a tolerance: the rank-normalised diagnostics
+    /// do not depend on the scale of the draws, so any two different values are a real difference (an absolute
+    /// tolerance would treat disagreeing chains of tiny values as constant). ArviZ's R-hat likewise has no
+    /// tolerance; its ESS uses an absolute 10⁻¹⁵, which only differs from this for draws spanning less than that.
     fn is_constant(&self) -> bool {
-        let (lo, hi) = self
-            .data
-            .iter()
-            .fold((f64::INFINITY, f64::NEG_INFINITY), |(lo, hi), &x| {
-                (lo.min(x), hi.max(x))
-            });
-        hi - lo < CONSTANT_RESOLUTION
+        self.data
+            .split_first()
+            .is_none_or(|(&first, rest)| rest.iter().all(|&x| x == first))
     }
 
     /// Each chain's first and last halves as separate chains: every first half, then every last half.
