@@ -627,6 +627,51 @@ fn pointwise_log_likelihood() -> keanu::Result<()> {
 }
 
 #[test]
+fn cmdstan_export() -> keanu::Result<()> {
+    let b = GraphBuilder::new();
+    let mu = b.gaussian(0.0, 5.0).label("mu");
+    let theta = b.gaussian_with_shape(&[3], mu, 1.0).label("theta");
+    let y = b.gaussian(theta, 1.0).label("y");
+    b.observe(y, DoubleTensor::vector(vec![1.2, 0.4, 2.2]));
+    let latents = [mu.id(), theta.id()];
+    let (graph, state) = b.build()?;
+    let model = Model::new(graph, &state)?;
+    let directory = std::env::temp_dir().join(format!("keanu-book-{}", std::process::id()));
+    std::fs::create_dir_all(&directory)
+        .map_err(|e| keanu::algorithms::AlgorithmError::Io(e.to_string()))?;
+
+    // ANCHOR: cmdstan_export
+    use keanu::algorithms::ChainSamples;
+    use keanu::algorithms::mcmc::chains::run_chains;
+
+    // keep NUTS's per-step statistics, and record the draws after 500 warm-up steps
+    let nuts = Nuts::default()
+        .with_adapt_count(500)
+        .with_save_statistics(true);
+    let options = SamplingOptions::default().with_drop(500);
+    let runs = run_chains(4, 1, &state, |state, rng| {
+        nuts.sample_with_statistics(&model, state, &latents, 1500, options, rng)
+    })?;
+    let (samples, statistics): (Vec<_>, Vec<_>) = runs.into_iter().unzip();
+    let chains = ChainSamples::new(samples)?;
+    let loglik = PointwiseLogLik::from_chains(&model, &state, &chains)?;
+
+    // output_1.csv to output_4.csv, with lp__, the NUTS columns, mu, theta.1 to theta.3 and log_lik.1 to log_lik.3
+    let paths = CmdStanCsv::new(model.graph())
+        .with_model_name("hierarchy")
+        .with_nuts(&nuts, &statistics, options)
+        .with_log_lik(&loglik)
+        .write_files(&chains, &directory, "output")?;
+    // ANCHOR_END: cmdstan_export
+    assert_eq!(paths.len(), 4);
+    let text = std::fs::read_to_string(&paths[0]).unwrap();
+    let header = text.lines().find(|l| !l.starts_with('#')).unwrap();
+    assert!(header.ends_with("mu,theta.1,theta.2,theta.3,log_lik.1,log_lik.2,log_lik.3"));
+    std::fs::remove_dir_all(&directory).unwrap();
+    Ok(())
+}
+
+#[test]
 fn predictive_sampling() -> keanu::Result<()> {
     // ANCHOR: predictive
     // the rate of a Poisson process, with a Gamma prior, and three observed counts

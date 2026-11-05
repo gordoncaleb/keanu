@@ -168,7 +168,8 @@ pub struct Nuts {
     pub max_energy_change: f64,
     /// The maximum tree height (at most 2^height leapfrog steps per sample).
     pub max_tree_height: usize,
-    /// Record step sizes, log probs, mean tree acceptance and tree sizes for every step.
+    /// Record step sizes, log probs, mean tree acceptance, tree sizes, acceptance statistics and tree depths for
+    /// every step.
     pub save_statistics: bool,
     /// The space the sampler moves in (default [`Space::Unconstrained`]; see the [module documentation](self)).
     pub space: Space,
@@ -295,6 +296,14 @@ pub struct NutsStatistics {
     /// of the transforms, so this is not `-log_prob`. Pass the energies after adaptation to
     /// [`diagnostics::e_bfmi`](crate::diagnostics::e_bfmi) to check how well the chain explores the energy levels.
     pub energy: Vec<f64>,
+    /// The mean Metropolis acceptance probability of each step's tree, over its leapfrog steps (Stan's
+    /// `accept_stat__`): the statistic step size adaptation learns from (when saving statistics).
+    pub accept_stat: Vec<f64>,
+    /// The height (depth) of each step's tree (Stan's `treedepth__`; when saving statistics).
+    pub tree_depth: Vec<usize>,
+    /// The diagonal of the inverse mass matrix (each latent element's variance in the coordinates NUTS moves in,
+    /// in the order of the latents sampled), as it was last adapted. Always recorded.
+    pub inverse_metric: Vec<f64>,
 }
 
 impl NutsStatistics {
@@ -410,6 +419,7 @@ impl Nuts {
             step_count: 0,
             statistics: NutsStatistics::default(),
         };
+        sampler.statistics.inverse_metric = sampler.potential.diagonal();
         if self.adapt_step_size && self.adapt_count > 0 {
             sampler.find_reasonable_step_size(state, rng)?;
         }
@@ -690,6 +700,14 @@ impl PotentialState {
         }
         self.windows.counter += 1;
         Ok(ends_window)
+    }
+
+    /// The inverse mass matrix's diagonal, as one vector.
+    fn diagonal(&self) -> Vec<f64> {
+        self.variance
+            .iter()
+            .flat_map(|v| v.as_slice().iter().copied())
+            .collect()
     }
 
     fn random_momentum(&self, rng: &mut KeanuRng) -> Result<Vec<DoubleTensor>> {
@@ -1060,6 +1078,11 @@ impl NutsSampler<'_> {
         self.step_size.step_size
     }
 
+    /// The diagonal of the current inverse mass matrix ([`NutsStatistics::inverse_metric`]).
+    pub fn inverse_metric(&self) -> &[f64] {
+        &self.statistics.inverse_metric
+    }
+
     /// Stan's heuristic for a reasonable step size (its `init_stepsize`, after Hoffman & Gelman 2014, Algorithm 4):
     /// from the current step size, doubles it while one leapfrog step from the current sample (with fresh momentum
     /// each time) has acceptance probability above 0.8, or halves it while it is below, then restarts dual averaging
@@ -1179,6 +1202,10 @@ impl SamplingAlgorithm for NutsSampler<'_> {
                 .push(self.step_size.accept_rate);
             self.statistics.log_prob.push(self.sample_log_prob);
             self.statistics.tree_size.push(tree.size);
+            self.statistics
+                .accept_stat
+                .push((tree.sum_metropolis_acceptance / tree.size.max(1) as f64).min(1.0));
+            self.statistics.tree_depth.push(tree.height);
         }
         if self.step_count < self.config.adapt_count {
             // as Stan's adaptive samplers: learn the step size from the tree, then the potential from the draw, and
@@ -1188,6 +1215,9 @@ impl SamplingAlgorithm for NutsSampler<'_> {
             }
             let potential_changed =
                 self.config.adapt_potential && self.potential.update(&self.proposal.position)?;
+            if potential_changed {
+                self.statistics.inverse_metric = self.potential.diagonal();
+            }
             if potential_changed && self.config.adapt_step_size {
                 self.find_reasonable_step_size(state, rng)?;
             }

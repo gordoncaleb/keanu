@@ -35,6 +35,8 @@ pub enum AlgorithmError {
     /// finite), so there is no Gaussian approximation there: the message names the latents along the offending
     /// direction and suggests remedies.
     IndefiniteHessian(String),
+    /// Reading or writing a file or stream failed: the message says what and why.
+    Io(String),
 }
 
 impl fmt::Display for AlgorithmError {
@@ -70,6 +72,7 @@ impl fmt::Display for AlgorithmError {
                  it away from the boundary)"
             ),
             Self::IndefiniteHessian(message) => f.write_str(message),
+            Self::Io(message) => write!(f, "input/output error: {message}"),
         }
     }
 }

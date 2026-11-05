@@ -164,6 +164,29 @@ or `y[1, 2]` for a matrix), as ArviZ labels them, and one per node for the other
 Markov model). Factors are not observations, so they have no points. With the `parallel` feature the draws are
 evaluated on rayon's thread pool.
 
+The pointwise log likelihood is what [model comparison](model-comparison.md) by PSIS-LOO and WAIC needs.
+
+## Exporting to ArviZ and Stan tools
+
+`CmdStanCsv` writes each chain in the CmdStan CSV format, which ArviZ's `from_cmdstan`, R's `posterior` (through
+`cmdstanr` or `rstan::read_stan_csv`) and other Stan tools read: comment lines with the run's settings, a header,
+the adaptation results (step size and the diagonal of the inverse mass matrix) and a line per draw.
+
+```rust,ignore
+{{#include ../../keanu/tests/book.rs:cmdstan_export}}
+```
+
+Columns follow Stan's conventions: a scalar is its node's label, and the elements of a tensor are the label with
+1-based indices joined by dots (`theta.1`, `L.2.1`), written in column-major order as Stan writes matrices. The
+sampler columns are `lp__` for every sampler and, for NUTS with saved statistics, `accept_stat__`, `stepsize__`,
+`treedepth__`, `n_leapfrog__`, `divergent__` and `energy__`. Pass the `SamplingOptions` the draws were recorded with
+so that each draw is matched with its step's statistics. Keanu's `lp__` is the model's log density at the
+constrained values, without the Jacobian Stan includes, and the inverse mass matrix is in NUTS's unconstrained
+coordinates.
+
+In Python, `arviz.from_cmdstan(["output_1.csv", ...], log_likelihood="log_lik")` reads the files into an
+`InferenceData` with posterior, sample statistics and log likelihood groups.
+
 ## Simulated annealing
 
 `SimulatedAnnealing` uses Metropolis–Hastings steps at a decreasing temperature to find the most probable state. It

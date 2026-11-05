@@ -162,6 +162,14 @@ Work from `docs/plans/2026-11-05-001-feat-applied-modelling-gaps-plan.md`.
   negative `elpd_diff` and its paired standard error, and stacking weights (Yao et al., 2018, by L-BFGS on the
   softmax parameterisation); pseudo-BMA+ weights use a 1000-draw Bayesian bootstrap. The eight schools example
   reports LOO (elpd about −30.8, as ArviZ), and the guide has a new chapter, "Model comparison (LOO and WAIC)".
+- keanu-algorithms: **CmdStan CSV export** (`export::CmdStanCsv`, also in the `keanu` prelude), one file per chain
+  (`write_chain` to any `io::Write`, or `write_files`) in the layout ArviZ's `from_cmdstan` and Stan tools read:
+  configuration comments, a header with Stan's dotted 1-based indices in column-major order, NUTS's adaptation
+  results, and a line per draw with `lp__`, NUTS's `accept_stat__`, `stepsize__`, `treedepth__`, `n_leapfrog__`,
+  `divergent__` and `energy__` when its statistics are given, the sampled nodes, and `log_lik.i` columns from a
+  `PointwiseLogLik`. Other samplers' files have only `lp__`. `NutsStatistics` gained `accept_stat` and `tree_depth`
+  (recorded with `save_statistics`) and `inverse_metric` (always), `NutsSampler` gained `inverse_metric()`, and
+  `AlgorithmError` gained `Io`.
 
 ### Code review fixes
 
