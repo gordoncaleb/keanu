@@ -12,6 +12,11 @@
 //! cannot represent skewed or multimodal posteriors there. Use it for quick estimates, large models, or initialising
 //! a sampler, and check important results with NUTS.
 //!
+//! [`Pathfinder`] (Zhang et al. 2022) is cheaper still: it follows an L-BFGS optimization path, fits a Gaussian
+//! with a low-rank-plus-diagonal covariance at each point of it from the optimizer's curvature estimates, and keeps
+//! the one with the best ELBO. Several paths from random starting points, with their pooled draws resampled by
+//! Pareto-smoothed importance weights, make it more robust. Its draws are good starting points for NUTS chains.
+//!
 //! ```
 //! use keanu_algorithms::vi::Advi;
 //! use keanu_distributions::KeanuRng;
@@ -37,5 +42,7 @@
 //! ```
 
 mod advi;
+mod pathfinder;
 
 pub use advi::{Advi, AdviResult, VariationalFamily};
+pub use pathfinder::{Pathfinder, PathfinderPath, PathfinderResult};

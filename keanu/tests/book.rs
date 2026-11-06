@@ -1449,6 +1449,35 @@ fn variational_inference() -> keanu::Result<()> {
         .fit(&model, &mut state, &mut rng)?;
     assert_eq!(full.covariance().shape(), &[2, 2]);
     // ANCHOR_END: advi_full_rank
+
+    // ANCHOR: pathfinder
+    // four paths from random starting points, their draws resampled by Pareto-smoothed importance weights
+    let pathfinder = Pathfinder::default().multi_path(&model, &mut state, &mut rng)?;
+    assert_eq!(pathfinder.draws().len(), 1000);
+    // the Pareto k̂ of the importance weights: below about 0.7 the approximation is trustworthy
+    println!("k̂ = {:.2}", pathfinder.pareto_k());
+    let samples = pathfinder.sample(&mut state, &[mu, sigma])?;
+    let mean_mu = samples.f64(mu).unwrap().mean()?.to_scalar().unwrap();
+    assert!((mean_mu - 4.9).abs() < 0.5);
+    // a single path from the latents' current values
+    let single = Pathfinder::default().single_path(&model, &mut state, &mut rng)?;
+    let path = &single.paths()[0];
+    assert!(path.elbo().is_finite() && path.best_iteration() <= path.iterations());
+    // ANCHOR_END: pathfinder
+
+    // ANCHOR: pathfinder_nuts
+    use keanu::algorithms::mcmc::chains::sample_chains_from;
+    // start four NUTS chains from four of the draws, near the posterior, with a short warm-up
+    let starts = pathfinder.initial_states(&state, 4, &mut rng)?;
+    let nuts = Nuts::default().with_adapt_count(200);
+    let chains = sample_chains_from(&starts, 7, |state, rng| {
+        let options = SamplingOptions::default().with_drop(200);
+        let (samples, _) =
+            nuts.sample_with_statistics(&model, state, &[mu, sigma], 1200, options, rng)?;
+        Ok(samples)
+    })?;
+    assert!(chains.summarize(mu, &[])?.r_hat < 1.05);
+    // ANCHOR_END: pathfinder_nuts
     Ok(())
 }
 

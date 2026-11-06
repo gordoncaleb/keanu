@@ -385,6 +385,22 @@ Work from `docs/plans/2026-11-05-001-feat-applied-modelling-gaps-plan.md`.
   (about 13 leapfrog steps per tree instead of about 100; 7 s instead of 18 s without the `parallel` feature), and
   allows for the HSGP's own deviation from the exact GP's posterior mean (up to 0.0051, measured with long runs of
   both metrics, which agree).
+- keanu-algorithms: **Pathfinder** (`vi::Pathfinder`, `PathfinderResult`, `PathfinderPath`; `Pathfinder` and
+  `PathfinderResult` also in the crate root and the `keanu` prelude), quasi-Newton variational inference following
+  Zhang, Carpenter, Gelman and Vehtari (2022) with the paper's defaults. `single_path` runs L-BFGS (history 6, at
+  most 1000 iterations) on the unconstrained log density from the state's values and, at each iterate, a Gaussian
+  whose covariance is the L-BFGS inverse Hessian (a diagonal updated by Gilbert and Lemaréchal's rule plus the
+  compact low-rank BFGS term from the pairs with positive curvature) and whose mean is the Newton step; draws use
+  a thin QR factorisation of the low-rank part, or the Cholesky factor when it is not smaller. The approximation
+  with the best 5-draw ELBO gives 1000 draws. `multi_path` runs 4 paths from uniform(−2, 2) starting points,
+  skips failed ones, and resamples 1000 of the pooled draws with replacement by their PSIS weights, reporting k̂
+  (`pareto_k`, `is_reliable`; −∞ when the importance ratios are equal to within 10⁻⁸, as for an exact
+  approximation, where a fit to their rounding errors would be meaningless). Results hold the unconstrained draws with their log densities and the
+  approximations' log densities, each path's mean, covariance, ELBO trace and chosen iteration, `sample` (the
+  draws as `NetworkSamples`) and `initial_states` (starting states for chains from distinct draws), which the new
+  `mcmc::chains::run_chains_from` and `sample_chains_from` run one chain from each. The radon example gained
+  `model`, `sample` and `run_from_pathfinder`, whose chains converge with a 150-step warm-up, and the guide's VI
+  chapter a Pathfinder section.
 
 ### Code review fixes
 

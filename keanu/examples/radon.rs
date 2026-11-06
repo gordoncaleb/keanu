@@ -21,10 +21,13 @@
 //! subset of the EPA's National Radon Survey distributed with Gelman & Hill's book (`srrs2.dat` and `cty.dat`).
 //! Log radon is ln(activity), with an activity of 0 taken as 0.1, as in the book.
 //!
+//! [`run_from_pathfinder`] starts the chains from multi-path Pathfinder draws instead of the default values, which
+//! converges with a 150-step warm-up.
+//!
 //! Run with `cargo run --release --example radon`.
 
 use keanu::algorithms::ChainSamples;
-use keanu::algorithms::mcmc::chains::run_chains;
+use keanu::algorithms::mcmc::chains::run_chains_from;
 use keanu::prelude::*;
 
 /// The number of counties.
@@ -81,8 +84,34 @@ pub struct Radon {
     pub a: NodeId,
 }
 
-/// Samples the model with `CHAINS` NUTS chains of `draws` draws each, after as many adaptation steps.
-pub fn run(seed: u64, draws: usize) -> keanu::Result<Radon> {
+/// The model with its data, and its parameters' nodes.
+#[derive(Debug)]
+pub struct RadonModel {
+    /// The model.
+    pub model: Model,
+    /// Its state, with the data observed and every latent at a default starting value.
+    pub state: State,
+    /// The mean county intercept.
+    pub mu_a: NodeId,
+    /// The spread of the county intercepts.
+    pub sigma_a: NodeId,
+    /// The ground floor effect.
+    pub b: NodeId,
+    /// The residual spread of log radon within a county.
+    pub sigma_y: NodeId,
+    /// The 85 county intercepts.
+    pub a: NodeId,
+}
+
+impl RadonModel {
+    /// The parameters' nodes.
+    pub fn parameters(&self) -> [NodeId; 5] {
+        [self.mu_a, self.sigma_a, self.b, self.sigma_y, self.a]
+    }
+}
+
+/// Builds the model on the bundled data, with every latent at a default starting value (0, or 1 for the scales).
+pub fn model() -> keanu::Result<RadonModel> {
     let houses = data();
     let n = houses.log_radon.len();
 
@@ -108,13 +137,33 @@ pub fn run(seed: u64, draws: usize) -> keanu::Result<Radon> {
 
     let (graph, state) = b.build()?;
     let model = Model::new(graph, &state)?;
-    let adapt = draws;
+    Ok(RadonModel {
+        model,
+        state,
+        mu_a,
+        sigma_a,
+        b: beta,
+        sigma_y,
+        a,
+    })
+}
+
+/// Samples the model with one NUTS chain from each of `starts`, each taking `adapt` adaptation steps and then
+/// `draws` draws.
+pub fn sample(
+    radon: &RadonModel,
+    starts: &[State],
+    seed: u64,
+    adapt: usize,
+    draws: usize,
+) -> keanu::Result<Radon> {
     let nuts = Nuts::default().with_adapt_count(adapt);
-    let chains = run_chains(CHAINS, seed, &state, |state, rng| {
+    let parameters = radon.parameters();
+    let chains = run_chains_from(starts, seed, |state, rng| {
         nuts.sample_with_statistics(
-            &model,
+            &radon.model,
             state,
-            &[mu_a, sigma_a, beta, sigma_y, a],
+            &parameters,
             adapt + draws,
             SamplingOptions::default().with_drop(adapt),
             rng,
@@ -125,12 +174,34 @@ pub fn run(seed: u64, draws: usize) -> keanu::Result<Radon> {
     Ok(Radon {
         samples,
         divergences,
-        mu_a,
-        sigma_a,
-        b: beta,
-        sigma_y,
-        a,
+        mu_a: radon.mu_a,
+        sigma_a: radon.sigma_a,
+        b: radon.b,
+        sigma_y: radon.sigma_y,
+        a: radon.a,
     })
+}
+
+/// Samples the model with `CHAINS` NUTS chains of `draws` draws each, after as many adaptation steps, every chain
+/// starting from the default values.
+pub fn run(seed: u64, draws: usize) -> keanu::Result<Radon> {
+    let radon = model()?;
+    let starts = vec![radon.state.clone(); CHAINS];
+    sample(&radon, &starts, seed, draws, draws)
+}
+
+/// Runs multi-path Pathfinder, then samples the model with `CHAINS` NUTS chains, each starting from its own
+/// Pathfinder draw, of `draws` draws after `adapt` adaptation steps. Also returns Pathfinder's Pareto k̂.
+pub fn run_from_pathfinder(seed: u64, adapt: usize, draws: usize) -> keanu::Result<(Radon, f64)> {
+    let radon = model()?;
+    let mut rng = KeanuRng::seed_from_u64(seed);
+    let mut state = radon.state.clone();
+    let pathfinder = Pathfinder::default().multi_path(&radon.model, &mut state, &mut rng)?;
+    let starts = pathfinder.initial_states(&radon.state, CHAINS, &mut rng)?;
+    Ok((
+        sample(&radon, &starts, seed, adapt, draws)?,
+        pathfinder.pareto_k(),
+    ))
 }
 
 /// The number of draws per chain (after as many adaptation steps).

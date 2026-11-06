@@ -965,3 +965,27 @@ fn occupancy_formulations_recover_psi_and_p_and_agree() {
         );
     }
 }
+
+/// Radon's NUTS chains started from multi-path Pathfinder draws converge with a 150-step warm-up (R-hat below 1.01
+/// for all 89 parameters; the largest was 1.0078 over seeds 1 to 8). Chains from the default starting values do as
+/// well on this model with the same warm-up (they are already near the posterior), so this shows that Pathfinder's
+/// starting points work, not that they shorten radon's warm-up. Pathfinder's own approximation is poor here (k̂ of
+/// 1.7 to 2.1: the centred model's unconstrained density grows without bound as sigma_a shrinks with the intercepts
+/// together, which the L-BFGS path heads for), which is why its draws start the chains rather than replace them.
+#[test]
+fn radon_from_pathfinder_converges_with_a_short_warm_up() {
+    let (r, pareto_k) = radon::run_from_pathfinder(2, 150, 1000).unwrap();
+    assert_eq!(r.divergences, 0, "radon diverged");
+    let summary = r.samples.summary().unwrap();
+    assert_eq!(summary.rows().len(), 4 + radon::COUNTIES);
+    for row in summary.rows() {
+        assert!(
+            row.stats.r_hat < 1.01,
+            "R-hat of {:?}{:?} is {}",
+            row.node,
+            row.index,
+            row.stats.r_hat
+        );
+    }
+    assert!(pareto_k > 0.7, "k̂ {pareto_k}");
+}

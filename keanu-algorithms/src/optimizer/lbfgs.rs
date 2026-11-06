@@ -110,6 +110,14 @@ impl Lbfgs {
     }
 }
 
+/// A point of an L-BFGS path: the point, the function there and its gradient.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct Iterate {
+    pub(crate) point: Vec<f64>,
+    pub(crate) value: f64,
+    pub(crate) gradient: Vec<f64>,
+}
+
 fn negated(a: &[f64]) -> Vec<f64> {
     a.iter().map(|x| -x).collect()
 }
@@ -224,6 +232,7 @@ impl Lbfgs {
                 Ok((-value, negated(&gradient)))
             },
             |state, x| Ok(objective.boundary(state, x)?.is_some()),
+            |_, _, _| {},
         )?;
         Ok((x, -f, converged))
     }
@@ -241,13 +250,58 @@ impl Lbfgs {
         if !f.is_finite() {
             return Err(AlgorithmError::ImpossibleStart);
         }
-        self.minimize(&mut (), start, f, g, |_, x| evaluate(x), |_, _| Ok(false))
+        self.minimize(
+            &mut (),
+            start,
+            f,
+            g,
+            |_, x| evaluate(x),
+            |_, _| Ok(false),
+            |_, _, _| {},
+        )
+    }
+
+    /// As [`minimize_function`](Self::minimize_function), and also returns the path: every iterate with f and its
+    /// gradient there, the start first and the final point last.
+    pub(crate) fn minimize_path(
+        &self,
+        start: Vec<f64>,
+        mut evaluate: impl FnMut(&[f64]) -> Result<(f64, Vec<f64>)>,
+    ) -> Result<(Vec<Iterate>, bool)> {
+        self.validate()?;
+        let (f, g) = evaluate(&start)?;
+        if !f.is_finite() {
+            return Err(AlgorithmError::ImpossibleStart);
+        }
+        let mut path = vec![Iterate {
+            point: start.clone(),
+            value: f,
+            gradient: g.clone(),
+        }];
+        let (_, _, converged) = self.minimize(
+            &mut (),
+            start,
+            f,
+            g,
+            |_, x| evaluate(x),
+            |_, _| Ok(false),
+            |x, f, g| {
+                path.push(Iterate {
+                    point: x.to_vec(),
+                    value: f,
+                    gradient: g.to_vec(),
+                })
+            },
+        )?;
+        Ok((path, converged))
     }
 
     /// Minimizes f from `x` (where f is `f` and its gradient `g`, both finite in f's case). `evaluate` returns f
     /// and its gradient at a point; `stop` says whether to stop (without converging) at a point the line search
-    /// accepted. Both are given `context` (such as the state they evaluate in). Returns the final point, f there,
-    /// and whether it converged.
+    /// accepted. Both are given `context` (such as the state they evaluate in). `observe` is given each point the
+    /// line search accepts, with f and its gradient there. Returns the final point, f there, and whether it
+    /// converged.
+    #[allow(clippy::too_many_arguments)]
     fn minimize<C>(
         &self,
         context: &mut C,
@@ -256,6 +310,7 @@ impl Lbfgs {
         mut g: Vec<f64>,
         mut evaluate: impl FnMut(&mut C, &[f64]) -> Result<(f64, Vec<f64>)>,
         mut stop: impl FnMut(&mut C, &[f64]) -> Result<bool>,
+        mut observe: impl FnMut(&[f64], f64, &[f64]),
     ) -> Result<(Vec<f64>, f64, bool)> {
         // there is nowhere to go along a NaN or infinite gradient
         if !g.iter().all(|gi| gi.is_finite()) {
@@ -303,6 +358,7 @@ impl Lbfgs {
             };
             let (next, g_next) = trial.data;
             let f_next = trial.value;
+            observe(&next, f_next, &g_next);
             if stop(context, &next)? {
                 return Ok((next, f_next, false));
             }
@@ -367,6 +423,7 @@ mod tests {
                     Ok(rosenbrock(x))
                 },
                 |_, _| Ok(false),
+                |_, _, _| {},
             )
             .unwrap();
         (x, converged, evaluations)

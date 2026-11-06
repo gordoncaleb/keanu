@@ -26,7 +26,7 @@ mod adam;
 pub mod bobyqa;
 mod conjugate_gradient;
 mod convergence;
-mod lbfgs;
+pub(crate) mod lbfgs;
 mod line_search;
 
 pub use adam::Adam;
