@@ -1,6 +1,6 @@
 //! Inference algorithms for [Keanu](https://github.com/gordoncaleb/keanu) models: gradient optimizers and a
 //! non-gradient optimizer (BOBYQA) for MAP and maximum likelihood, MCMC samplers (Metropolis–Hastings, NUTS, Gibbs and discrete random-walk steps) and simulated annealing, tempered sequential Monte Carlo with marginal likelihood estimates and approximate Bayesian computation (SMC-ABC) for simulator models, variational inference (ADVI and Pathfinder), the Laplace approximation, a particle filter,
-//! forward sampling from the prior, prior- and posterior-predictive sampling, sample containers, chain statistics,
+//! forward sampling from the prior, prior-, posterior- and interventional predictive sampling, sample containers, chain statistics,
 //! multi-chain convergence diagnostics, the pointwise log likelihood, Pareto-smoothed importance sampling, model comparison by PSIS-LOO and WAIC, export of draws to CmdStan CSV, recovery of marginalised discrete latents, and smoothing, decoding and forecasting of time-series nodes over posterior draws.
 //!
 //! ```

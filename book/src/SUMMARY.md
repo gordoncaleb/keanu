@@ -21,5 +21,6 @@
 - [Spatial models](spatial-models.md)
 - [Differential equations](differential-equations.md)
 - [Simulation-based inference (SMC and ABC)](simulation-based-inference.md)
+- [Interventions](causal-inference.md)
 - [Examples](examples.md)
 - [Coming from Java Keanu](from-java.md)

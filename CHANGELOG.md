@@ -693,6 +693,20 @@ Work from `docs/plans/2026-11-05-001-feat-applied-modelling-gaps-plan.md`.
   Newton reaches the same optimum as L-BFGS, more tightly, in 28 gradient evaluations against 130, but with 173
   Hessian-vector products, about 374 gradient evaluations' worth, so it is not cheaper overall there; the test
   asserts both facts.
+- keanu-graph, keanu-algorithms, keanu: **interventions (the do-operator)**. `intervene(&graph, &state,
+  &[(node, value)])` returns a new graph and state in which each node is a constant of the given value with its
+  label (a latent loses its density, an observed node's observation is replaced, a deterministic node no longer
+  computes from its parents), unobserved nodes whose every child is intervened or dropped are dropped, and everything
+  else is copied with its label, value and observation, the deterministic nodes downstream of an intervention
+  recomputed. The `Intervened` record maps each original node to its new one (`node`, `None` for dropped nodes) and
+  lists the intervened and dropped nodes; `carried` gives the node a posterior draw carries over to.
+  `NetworkSamples::map_nodes` carries samples over to a rewritten graph, and `PredictiveSampler::interventional`
+  draws targets on the intervened graph from posterior draws of the original model, p(y | do(x), data). The rewrites
+  now share their node-copying machinery. The `causal_effect` example fits a confounded study (Z → X, Z → Y,
+  X → Y) and contrasts conditioning on the treatment with intervening on it; its test checks that the posterior
+  predictive means under do(X = 0) and do(X = 1) are within 0.3 of the true interventional means, that the
+  treated's and untreated's predictive means are within 0.3 of the true confounded means, and that the average
+  treatment effect's 90% interval covers the true effect. The guide gained a chapter, "Interventions".
 
 ### Code review fixes
 

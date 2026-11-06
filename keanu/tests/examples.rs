@@ -21,6 +21,8 @@
 mod ab_testing;
 #[path = "../examples/abc_stochastic_sir.rs"]
 mod abc_stochastic_sir;
+#[path = "../examples/causal_effect.rs"]
+mod causal_effect;
 #[path = "../examples/challenger_disaster.rs"]
 mod challenger_disaster;
 #[path = "../examples/cheating_students.rs"]
@@ -1295,4 +1297,41 @@ fn cure_model_recovers_the_cure_fraction_and_the_relapse_times() {
             summary.q95
         );
     }
+}
+
+#[test]
+fn causal_effect_separates_conditioning_from_intervening() {
+    // a confounded study: the posterior predictive under do(X = x) has the true interventional mean, conditioning on
+    // X = x gives the true confounded mean instead, and the average treatment effect's 90% interval covers τ
+    use causal_effect::{TRUE_EFFECT, conditional_mean, interventional_mean};
+    let study = causal_effect::data(causal_effect::DATA_SEED);
+    let fit = causal_effect::run(&study, 4, 1000, 1).unwrap();
+    for &node in &fit.latents {
+        let r_hat = fit.chains.rhat(node, &[]).unwrap();
+        assert!(r_hat < 1.01, "R-hat {r_hat}");
+    }
+    assert_eq!(fit.dropped, ["alpha_0", "alpha_1", "treatment_logit"]);
+    for x in [false, true] {
+        let i = usize::from(x);
+        // the posterior's uncertainty and the sample's mean confounder (β_z σ_z / √400 = 0.15) allow 0.3
+        assert_close(
+            fit.interventional[i],
+            interventional_mean(x),
+            0.3,
+            "E[Y | do(X)]",
+        );
+        assert_close(fit.conditional[i], conditional_mean(x), 0.3, "E[Y | X]");
+    }
+    let mut effects = fit.average_effect.clone();
+    effects.sort_by(f64::total_cmp);
+    let quantile = |q: f64| effects[((effects.len() - 1) as f64 * q).round() as usize];
+    assert!(
+        quantile(0.05) < TRUE_EFFECT && TRUE_EFFECT < quantile(0.95),
+        "average treatment effect interval [{}, {}]",
+        quantile(0.05),
+        quantile(0.95)
+    );
+    // comparing the treated with the untreated overstates the effect almost threefold
+    let naive = fit.conditional[1] - fit.conditional[0];
+    assert!(naive > TRUE_EFFECT + 3.0, "naive difference {naive}");
 }

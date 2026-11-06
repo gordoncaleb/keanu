@@ -18,7 +18,8 @@
 use crate::error::{GraphError, Result};
 use crate::graph::{Graph, Node, NodeId, Parents};
 use crate::op::log_density::has_elementwise_density;
-use crate::op::{BinaryOp, DistributionKind, Op, ReduceOp, UnaryOp, eval, output_type};
+use crate::op::{BinaryOp, DistributionKind, Op, ReduceOp, UnaryOp};
+use crate::rewrite::{Writer, check_distinct, check_state, mapped};
 use crate::state::State;
 use crate::value::{DType, Value};
 use keanu_distributions::KeanuRng;
@@ -256,26 +257,13 @@ pub fn marginalize(
     latents: &[NodeId],
 ) -> Result<(Graph, State, Marginalized)> {
     graph.check_ids(latents)?;
-    if state.values.len() != graph.len() {
-        return Err(GraphError::InvalidValue(format!(
-            "the state holds {} nodes but the graph has {}",
-            state.values.len(),
-            graph.len()
-        )));
-    }
+    check_state(graph, state)?;
     if latents.is_empty() {
         return Err(GraphError::InvalidValue(
             "there are no latents to marginalise".into(),
         ));
     }
-    for (i, z) in latents.iter().enumerate() {
-        if latents[..i].contains(z) {
-            return Err(GraphError::InvalidValue(format!(
-                "{} is listed more than once",
-                graph.describe(*z)
-            )));
-        }
-    }
+    check_distinct(graph, latents)?;
     let mut mapping: Vec<Option<NodeId>> = graph.ids().map(Some).collect();
     // for each node of the current graph, its node in the original graph
     let mut inverse: Vec<Option<NodeId>> = graph.ids().map(Some).collect();
@@ -393,56 +381,6 @@ struct Step {
     values: RangeInclusive<i64>,
     log_weights: NodeId,
     factor: NodeId,
-}
-
-/// The nodes of a graph being written, with their initial values and observations.
-#[derive(Default)]
-struct Writer {
-    nodes: Vec<Node>,
-    values: Vec<Option<Value>>,
-    observed: Vec<bool>,
-}
-
-impl Writer {
-    fn push(&mut self, node: Node, value: Option<Value>, observed: bool) -> NodeId {
-        self.nodes.push(node);
-        self.values.push(value);
-        self.observed.push(observed);
-        NodeId(self.nodes.len() - 1)
-    }
-
-    /// A new deterministic node, its type and shape inferred.
-    fn add(&mut self, op: Op, parents: &[NodeId]) -> Result<NodeId> {
-        let (dtype, shape) = {
-            let types: Vec<(DType, &[usize])> = parents
-                .iter()
-                .map(|p| (self.nodes[p.0].dtype, self.nodes[p.0].shape.as_slice()))
-                .collect();
-            output_type(&op, &types)?
-        };
-        Ok(self.push(
-            Node {
-                op,
-                parents: Parents::from_slice(parents),
-                dtype,
-                shape,
-                label: None,
-            },
-            None,
-            false,
-        ))
-    }
-
-    fn constant(&mut self, value: Value, label: Option<String>) -> NodeId {
-        let node = Node {
-            dtype: value.dtype(),
-            shape: Shape::from_slice(value.shape()),
-            op: Op::Constant(value.clone()),
-            parents: Parents::new(),
-            label,
-        };
-        self.push(node, Some(value), false)
-    }
 }
 
 /// `axis` (negative counting from the end) as an index into `rank` axes.
@@ -609,13 +547,6 @@ impl Step {
         // copy everything outside the region, with the children as constants
         let mut out = Writer::default();
         let mut mapping: Vec<Option<NodeId>> = vec![None; n];
-        let mapped = |mapping: &[Option<NodeId>], p: NodeId| {
-            mapping[p.0].ok_or_else(|| {
-                GraphError::InvalidValue(format!(
-                    "internal error: node {p:?} was not copied before its child"
-                ))
-            })
-        };
         for id in 0..n {
             if region[id] {
                 continue;
@@ -631,11 +562,9 @@ impl Step {
                     .iter()
                     .map(|&p| mapped(&mapping, p))
                     .collect::<Result<Parents>>()?;
-                out.push(
-                    Node {
-                        parents,
-                        ..node.clone()
-                    },
+                out.copy(
+                    node,
+                    parents,
                     state.value(me).cloned(),
                     state.is_observed(me),
                 )
@@ -758,36 +687,10 @@ impl Step {
         )?;
         let factor = out.add(Op::Factor, &[marginal])?;
 
-        // values for the deterministic nodes whose parents have them, so that the new nodes are ready to use; a node
-        // that fails to evaluate is left without a value, for its next evaluation to report
-        for id in 0..out.nodes.len() {
-            let node = &out.nodes[id];
-            if out.values[id].is_some() || node.is_probabilistic() {
-                continue;
-            }
-            let parents: Option<Vec<&Value>> = node
-                .parents
-                .iter()
-                .map(|p| out.values[p.0].as_ref())
-                .collect();
-            if let Some(Ok(value)) = parents.map(|parents| eval(&node.op, &parents)) {
-                out.values[id] = Some(value);
-            }
-        }
-
-        let labels = out
-            .nodes
-            .iter()
-            .enumerate()
-            .filter_map(|(i, node)| node.label.clone().map(|l| (l, NodeId(i))))
-            .collect();
-        let graph = Graph::new(out.nodes, labels);
+        let (graph, state) = out.finish()?;
         Ok(Self {
             graph,
-            state: State {
-                values: out.values,
-                observed: out.observed,
-            },
+            state,
             mapping,
             values,
             log_weights,

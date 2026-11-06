@@ -38,12 +38,14 @@ mod distributions;
 mod error;
 pub mod gp;
 mod graph;
+mod intervene;
 mod logprob;
 mod marginalize;
 mod model;
 pub mod ode;
 pub mod op;
 pub mod parameterisation;
+mod rewrite;
 pub mod sequence;
 pub mod spatial;
 mod state;
@@ -58,6 +60,7 @@ pub use autodiff::{
 pub use builder::GraphBuilder;
 pub use error::{GraphError, Result};
 pub use graph::{Graph, Node, NodeId};
+pub use intervene::{Intervened, intervene};
 pub use logprob::{
     LogProbGradient, NodeLogProbGradient, joint_log_prob, joint_log_prob_gradient, log_likelihood,
     log_likelihood_gradient, log_prior, log_prob, log_prob_gradient, node_log_prob,

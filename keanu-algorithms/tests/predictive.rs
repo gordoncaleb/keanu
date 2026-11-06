@@ -478,3 +478,79 @@ fn the_input_state_is_unchanged() {
         assert_eq!(c.state.f64(y).unwrap().to_scalar().unwrap(), expected);
     }
 }
+
+#[test]
+fn interventional_predictive_uses_the_original_draws_with_the_intervened_values() {
+    // z ~ N(0, 1), x ~ N(z, 1) observed, y ~ N(x + 2z, 0.1) observed; under do(x = 3) each draw of y is near
+    // 3 + 2z for that draw's z, whatever the observed x was
+    let b = GraphBuilder::new();
+    let z = b.gaussian(0.0, 1.0).label("z");
+    let x = b.gaussian(z, 1.0).label("x");
+    let y = b.gaussian(x + z * 2.0, 0.1).label("y");
+    b.observe(x, DoubleTensor::scalar(-1.0));
+    b.observe(y, DoubleTensor::scalar(0.5));
+    b.set_value(z, DoubleTensor::scalar(0.0));
+    let (z, x, y) = (z.id(), x.id(), y.id());
+    let (graph, state) = b.build().unwrap();
+    let mut samples = NetworkSamples::new(&graph, &[z]).unwrap();
+    let mut work = state.clone();
+    for value in [-0.5, 0.0, 1.0, 2.0] {
+        work.set(&graph, z, DoubleTensor::scalar(value)).unwrap();
+        samples.record(&work, 0.0).unwrap();
+    }
+
+    let (graph_do, state_do, intervened) =
+        keanu_graph::intervene(&graph, &state, &[(x, DoubleTensor::scalar(3.0).into())]).unwrap();
+    let model_do = Model::new(graph_do, &state_do).unwrap();
+    let mut rng = KeanuRng::seed_from_u64(4);
+    let draws = PredictiveSampler::new()
+        .interventional(&model_do, &state_do, &intervened, &samples, &[y], &mut rng)
+        .unwrap();
+    let y_do = intervened.node(y).unwrap();
+    assert_eq!(draws.nodes(), &[y_do]);
+    for (draw, z) in f64_draws(&draws, y_do).iter().zip([-0.5, 0.0, 1.0, 2.0]) {
+        assert!((draw - (3.0 + 2.0 * z)).abs() < 0.5, "{draw} for z = {z}");
+    }
+
+    // the intervened node itself has no draws
+    let error = PredictiveSampler::new()
+        .interventional(&model_do, &state_do, &intervened, &samples, &[x], &mut rng)
+        .unwrap_err();
+    assert!(matches!(error, AlgorithmError::InvalidArgument(m) if m.contains("set")));
+}
+
+#[test]
+fn samples_map_onto_a_rewritten_graph() {
+    let b = GraphBuilder::new();
+    let a = b.gaussian(0.0, 1.0);
+    let k = b.poisson(2.0);
+    let (a, k) = (a.id(), k.id());
+    let (graph, state) = b.build().unwrap();
+    let mut state = state;
+    state
+        .lazy_eval(&graph, &[a, k], &mut KeanuRng::seed_from_u64(1))
+        .unwrap();
+    let mut samples = NetworkSamples::new(&graph, &[a, k]).unwrap();
+    samples.record(&state, -1.0).unwrap();
+    // keep only a, under k's id: the types differ
+    let error = samples
+        .map_nodes(&graph, |id| (id == a).then_some(k))
+        .unwrap_err();
+    assert!(matches!(error, AlgorithmError::InvalidArgument(_)));
+    let error = samples
+        .map_nodes(&graph, |_| Some(NodeId::from_index(99)))
+        .unwrap_err();
+    assert!(matches!(
+        error,
+        AlgorithmError::Graph(GraphError::UnknownNode(_))
+    ));
+    let kept = samples
+        .map_nodes(&graph, |id| (id == a).then_some(a))
+        .unwrap();
+    assert_eq!(kept.nodes(), &[a]);
+    assert_eq!(kept.log_probs(), &[-1.0]);
+    assert_eq!(
+        kept.f64(a).unwrap().as_slice(),
+        samples.f64(a).unwrap().as_slice()
+    );
+}

@@ -5,7 +5,7 @@ use crate::error::{AlgorithmError, Result};
 use crate::samples::NetworkSamples;
 use crate::support::{MAX_REDRAWS, check_nodes};
 use keanu_distributions::KeanuRng;
-use keanu_graph::{Graph, GraphError, Model, NodeId, State};
+use keanu_graph::{Graph, GraphError, Intervened, Model, NodeId, State};
 
 /// Draws prior- and posterior-predictive samples of observed nodes (the "targets").
 ///
@@ -110,6 +110,49 @@ impl PredictiveSampler {
             predictive.record(&work, 0.0)?;
         }
         Ok(predictive)
+    }
+
+    /// The posterior predictive under an intervention: one draw of `targets` for each posterior sample of the
+    /// original model (or for [`draws`](Self::draws) of them), on the graph that
+    /// [`intervene`](keanu_graph::intervene) made from it.
+    ///
+    /// `model` and `state` are the intervened graph's, and `intervened` the rewrite's record. `samples` are draws of
+    /// the original model's latents (from NUTS on it, say), and `targets` are nodes of the original graph; both are
+    /// carried over to the intervened graph ([`Intervened::carried`], [`NetworkSamples::map_nodes`]), and the draws
+    /// are made as [`posterior`](Self::posterior) makes them. So each draw keeps the posterior's values of the
+    /// parameters and other latents, sets the intervened nodes to their values and draws the targets given them: the
+    /// interventional distribution p(targets | do(x), data). The returned samples are of the targets' nodes in the
+    /// intervened graph (`intervened.node(target)`).
+    ///
+    /// Fails if a target was intervened on or dropped by the rewrite, and as [`posterior`](Self::posterior)
+    /// otherwise.
+    pub fn interventional(
+        &self,
+        model: &Model,
+        state: &State,
+        intervened: &Intervened,
+        samples: &NetworkSamples,
+        targets: &[NodeId],
+        rng: &mut KeanuRng,
+    ) -> Result<NetworkSamples> {
+        let targets = targets
+            .iter()
+            .map(|&id| {
+                intervened.carried(id).ok_or_else(|| {
+                    AlgorithmError::InvalidArgument(format!(
+                        "target #{} was {} by the intervention, so it has no draws",
+                        id.index(),
+                        if intervened.is_intervened(id) {
+                            "set"
+                        } else {
+                            "dropped"
+                        }
+                    ))
+                })
+            })
+            .collect::<Result<Vec<_>>>()?;
+        let samples = samples.map_nodes(model.graph(), |id| intervened.carried(id))?;
+        self.posterior(model, state, &samples, &targets, rng)
     }
 
     /// `count` draws of `targets` from the prior: each draw samples the latents the targets depend on from their

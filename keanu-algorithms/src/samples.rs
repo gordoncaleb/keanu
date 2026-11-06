@@ -25,6 +25,14 @@ impl Column {
         }
     }
 
+    fn dtype(&self) -> DType {
+        match self {
+            Self::F64(_) => DType::F64,
+            Self::I64(_) => DType::I64,
+            Self::Bool(_) => DType::Bool,
+        }
+    }
+
     fn accepts(&self, value: &Value) -> bool {
         matches!(
             (self, value),
@@ -197,6 +205,45 @@ impl NetworkSamples {
             ));
         }
         Ok(self.select(&(0..self.len()).step_by(interval).collect::<Vec<_>>()))
+    }
+
+    /// The samples carried over to another graph, such as one a graph rewrite made from this one
+    /// ([`intervene`](keanu_graph::intervene) or [`marginalize`](keanu_graph::marginalize)): each sampled node that
+    /// `map` sends to a node of `graph` keeps its samples under the new id, and the others are left out. The log
+    /// probabilities are kept as recorded (they are the original model's).
+    ///
+    /// # Errors
+    ///
+    /// [`GraphError::UnknownNode`] if `map` gives an id that isn't a node of `graph`, and
+    /// [`AlgorithmError::InvalidArgument`] if it gives one whose type differs from the sampled node's or gives the same
+    /// node for two sampled nodes.
+    pub fn map_nodes(&self, graph: &Graph, map: impl Fn(NodeId) -> Option<NodeId>) -> Result<Self> {
+        let mut nodes = Vec::new();
+        let mut columns = Vec::new();
+        for (&id, column) in self.nodes.iter().zip(&self.columns) {
+            let Some(new) = map(id) else { continue };
+            let node = graph.node(new).ok_or(GraphError::UnknownNode(new))?;
+            if node.dtype() != column.dtype() {
+                return Err(AlgorithmError::InvalidArgument(format!(
+                    "node #{} is mapped to {}, which holds values of another type",
+                    id.index(),
+                    graph.describe(new)
+                )));
+            }
+            if nodes.contains(&new) {
+                return Err(AlgorithmError::InvalidArgument(format!(
+                    "two sampled nodes are mapped to {}",
+                    graph.describe(new)
+                )));
+            }
+            nodes.push(new);
+            columns.push(column.clone());
+        }
+        Ok(Self {
+            nodes,
+            columns,
+            log_probs: self.log_probs.clone(),
+        })
     }
 
     /// One sample, as a view of each node's value.

@@ -4,7 +4,7 @@ These live in `keanu/examples`. Run one with `cargo run --release --example <nam
 integration test (`keanu/tests/examples.rs`): the examples ported from Java check the same results the Java
 examples' tests check, and the hierarchical ones check multi-chain R-hat, divergences and posterior means.
 The Gaussian process, stochastic volatility, hidden Markov model, CO₂ forecasting, pharmacokinetic, multi-state,
-extreme-value, cure-model and stochastic SIR examples check their results against the functions or parameters their synthetic data were generated
+extreme-value, cure-model, causal-effect and stochastic SIR examples check their results against the functions or parameters their synthetic data were generated
 from, and the SMC model comparison checks its evidence against the closed form.
 
 | Example | Question |
@@ -22,6 +22,7 @@ from, and the SMC model comparison checks its evidence against the closed form.
 | `disease_mapping` | Where is a disease more common than expected? A BYM2 spatial model of counts on a lattice |
 | `drift_diffusion` | How fast do people take in evidence, and does an easier task speed it up? A hierarchical drift-diffusion model of response times |
 | `extreme_values` | How high will the river rise once in a hundred years? A generalized extreme value model of annual maxima, with return levels |
+| `causal_effect` | Does a treatment work, when sicker people are more likely to take it? Conditioning against intervening, and the average treatment effect |
 | `cure_model` | What fraction of patients does a treatment cure, and how soon do the others relapse? A mixture cure model of censored survival times |
 | `gp_regression` | What smooth function produced noisy measurements? Gaussian process hyperparameters by NUTS, exactly and with an HSGP |
 | `stochastic_volatility` | How volatile are daily returns, and how persistent is the volatility? A scan over latent innovations |
@@ -169,6 +170,25 @@ divergences.
 
 ```rust,ignore
 {{#include ../../keanu/examples/cure_model.rs}}
+```
+
+## A causal effect
+
+Four hundred people have a severity score Z; sicker people are more likely to be treated (X, logistic in Z), and
+both the treatment and the severity raise the outcome Y, by τ = 2 and 3 per unit of Z. The model is this causal
+graph, fitted by NUTS. Conditioning on the treatment, the posterior predictive of Y among the treated and among the
+untreated, compares sicker people with healthier ones as well as treated with untreated, and overstates the effect
+almost threefold. [Intervening](causal-inference.md) on it, with `intervene` setting X for everyone and
+`PredictiveSampler::interventional` drawing Y from the original posterior, removes the confounding: the difference
+of the two interventions' means is the average treatment effect. The rewrite drops the treatment model (its
+coefficients and logits), which influenced Y only through X. The data are simulated from known values; the test
+checks that the predictive means under do(X = 0) and do(X = 1) are within 0.3 of the true interventional means
+β₀ + τx + β_z E[Z], that the treated's and untreated's predictive means are within 0.3 of the true confounded means
+(computed by quadrature), that the average treatment effect's 90% interval covers τ, and that R-hat is below 1.01
+over 4 chains of 1,000 draws.
+
+```rust,ignore
+{{#include ../../keanu/examples/causal_effect.rs}}
 ```
 
 ## Gaussian process regression

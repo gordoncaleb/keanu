@@ -2165,3 +2165,45 @@ fn bym2() -> keanu::Result<()> {
     assert!(risk.as_slice()[3] > risk.as_slice()[11], "{risk:?}");
     Ok(())
 }
+
+#[test]
+fn interventions() -> keanu::Result<()> {
+    // ANCHOR: intervene
+    // a confounder z raises both the chance of treatment x and the outcome y; x raises y by 1
+    let b = GraphBuilder::new();
+    let z = b.gaussian(0.0, 1.0).label("z");
+    let x = b.bernoulli_logit(z * 3.0).label("x");
+    let effect = b.gaussian(0.0, 5.0).label("effect");
+    let y = b
+        .gaussian(effect * x.to_double_mask() + z * 2.0, 0.5)
+        .label("y");
+    b.observe(x, BoolTensor::scalar(true));
+    b.observe(y, DoubleTensor::scalar(3.0));
+    b.set_value(effect, DoubleTensor::scalar(1.0));
+    b.set_value(z, DoubleTensor::scalar(0.5));
+    let (z, x, y, effect) = (z.id(), x.id(), y.id(), effect.id());
+    let (graph, state) = b.build()?;
+
+    // do(x = false): x is a constant, cut off from z; z keeps its own prior
+    let (graph_do, state_do, intervened) =
+        intervene(&graph, &state, &[(x, BoolTensor::scalar(false).into())])?;
+    let x_do = intervened.node(x).unwrap();
+    assert!(!graph_do[x_do].is_probabilistic());
+    assert_eq!(graph_do.find("x"), Some(x_do));
+
+    // y's predictive under do(x = false), for posterior draws of the original model (here, a single draw)
+    let model_do = Model::new(graph_do, &state_do)?;
+    let mut draws = NetworkSamples::new(&graph, &[effect, z])?;
+    draws.record(&state, 0.0)?;
+    let predictive = PredictiveSampler::new().interventional(
+        &model_do,
+        &state_do,
+        &intervened,
+        &draws,
+        &[y],
+        &mut KeanuRng::seed_from_u64(2),
+    )?;
+    assert_eq!(predictive.nodes(), &[intervened.node(y).unwrap()]);
+    // ANCHOR_END: intervene
+    Ok(())
+}

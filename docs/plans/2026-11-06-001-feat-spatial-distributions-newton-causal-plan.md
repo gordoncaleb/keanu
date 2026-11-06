@@ -474,6 +474,17 @@ Execution order: U1, U2, U3, U4, U5, U6, U7, U8, U9, U11, U10, U12, U13, then a 
   - labels and id mapping;
   - intervening on a node with descendants that are latents keeps their dependence;
   - error on unknown nodes or wrong shapes.
+- **Implementation notes:**
+  - "Dropped if they only fed it" is made precise as: an unobserved node all of whose children are intervened or
+    dropped. Observed nodes (data) and nodes without children are never dropped, so the intervened graph keeps every
+    observation that isn't itself intervened on.
+  - The posterior-predictive helper is `PredictiveSampler::interventional`, on top of a general
+    `NetworkSamples::map_nodes` and `Intervened::carried` (which leaves out intervened and dropped nodes). The
+    rewrites share a crate-private `rewrite` module (the node writer, value filling, id mapping) refactored out of
+    `marginalize`.
+  - The book home is a new chapter, `causal-inference.md` ("Interventions").
+  - AE7 is checked on the units of the study: the interventional means average over the observed confounder, so the
+    tolerance (0.3) covers the sample mean's deviation from E[Z] as well as the posterior's uncertainty.
 
 ### U13. Masked observations and imputation example
 - **Requirements:** R13.
