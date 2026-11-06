@@ -283,6 +283,8 @@ pub(crate) fn density_rule(kind: &DistributionKind) -> Option<DensityRule> {
             |x, p, h| derived(h, d::GeneralizedGamma::log_prob_derivatives(x, at(p)))
         }
         K::Skellam => |x, p, h| derived(h, d::Skellam::log_prob_derivatives(x, at(p))),
+        // the boundary (input 6) is an integer: its row stays zero
+        K::Wiener => |x, p, h| derived(h, d::Wiener::log_prob_derivatives(x, at(p), p[5] as i64)),
         _ => return None,
     };
     Some(rule)

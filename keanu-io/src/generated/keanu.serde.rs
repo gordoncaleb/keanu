@@ -1971,6 +1971,7 @@ impl serde::Serialize for DistributionKind {
             Self::InverseWishartCholesky => "DISTRIBUTION_KIND_INVERSE_WISHART_CHOLESKY",
             Self::MatrixNormal => "DISTRIBUTION_KIND_MATRIX_NORMAL",
             Self::VonMisesFisher => "DISTRIBUTION_KIND_VON_MISES_FISHER",
+            Self::Wiener => "DISTRIBUTION_KIND_WIENER",
         };
         serializer.serialize_str(variant)
     }
@@ -2058,6 +2059,7 @@ impl<'de> serde::Deserialize<'de> for DistributionKind {
             "DISTRIBUTION_KIND_INVERSE_WISHART_CHOLESKY",
             "DISTRIBUTION_KIND_MATRIX_NORMAL",
             "DISTRIBUTION_KIND_VON_MISES_FISHER",
+            "DISTRIBUTION_KIND_WIENER",
         ];
 
         struct GeneratedVisitor;
@@ -2174,6 +2176,7 @@ impl<'de> serde::Deserialize<'de> for DistributionKind {
                     "DISTRIBUTION_KIND_INVERSE_WISHART_CHOLESKY" => Ok(DistributionKind::InverseWishartCholesky),
                     "DISTRIBUTION_KIND_MATRIX_NORMAL" => Ok(DistributionKind::MatrixNormal),
                     "DISTRIBUTION_KIND_VON_MISES_FISHER" => Ok(DistributionKind::VonMisesFisher),
+                    "DISTRIBUTION_KIND_WIENER" => Ok(DistributionKind::Wiener),
                     _ => Err(serde::de::Error::unknown_variant(value, FIELDS)),
                 }
             }

@@ -226,6 +226,11 @@ fn every_built_in_reports_its_documented_support() {
             |b| b.generalized_gamma(1.0, 2.0, 1.5).id(),
             positive(),
         ),
+        (
+            "wiener",
+            |b| b.wiener(1.0, 0.3, 0.5, 0.0, 0.0, 1).id(),
+            Support::greater_than(0.3),
+        ),
     ];
     for (name, build, expected) in cases {
         assert_eq!(support_of(build), expected, "{name}");

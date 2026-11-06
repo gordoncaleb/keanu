@@ -613,6 +613,25 @@ Work from `docs/plans/2026-11-05-001-feat-applied-modelling-gaps-plan.md`.
   N(0, I) term on it, not a bijection, so the Laplace approximation refuses such latents as it does angles). The
   ordered probit and hypergeometric have finite supports for Gibbs steps and marginalisation; the Skellam and
   hypergeometric are element-wise (mixtures, `log_density`, pointwise log likelihoods).
+- keanu-distributions, keanu-graph, keanu-io: **the Wiener first-passage time distribution** (the drift-diffusion
+  model of two-choice response times). `Wiener` (a, t0, w, v, sv, boundary) is the density of the response time at
+  the boundary reached, with Stan's `wiener` parameterisation (boundary separation, non-decision time, relative
+  starting point, drift) plus `wiener_full`'s across-trial drift standard deviation sv (0 for the four-parameter
+  model); the boundary, 0 the lower and 1 the upper, is an integer parameter (observed data) rather than part of the
+  value, as Stan has a density per boundary. The standard density comes from Navarro and Fuss's small-time or
+  large-time series, whichever needs fewer terms, summed in logs relative to the leading term until Gondan, Blurton
+  and Kesselmeier's alternating-series bound (small time) or Navarro and Fuss's tail bound (large time) is below
+  1e-17 of the sum; sv enters through Blurton et al.'s closed form. The log density matches 1,792 50-digit mpmath
+  values (`tests/fixtures/wiener.py`; the sv cases by quadrature over the drift, not the closed form) to 2e-15
+  relative. The gradient in the time and every parameter is the chain rule through the closed-form factor with the
+  series differentiated on dual numbers, and `log_prob_derivatives` gives the exact Hessian from the whole formula
+  on second-order dual numbers, so the node has second-order rules. `sample_wiener` draws choices and response
+  times jointly and exactly: the trial's drift, the boundary with its closed-form probability, then the time by
+  rejection from the inverse Gaussian time to reach that boundary alone, whose ratio to the first-passage density
+  is the method-of-images sum (no random-walk discretisation); `Wiener::sample` draws the time given the boundary
+  (with sv > 0, the drift first from its distribution given the boundary, also by rejection).
+  `DistributionKind::Wiener` with `GraphBuilder::wiener` (and `_with_shape`) has support greater than t0, is
+  element-wise (mixtures, `log_density`, pointwise log likelihoods) and is saved as kind 76.
 
 ### Code review fixes
 

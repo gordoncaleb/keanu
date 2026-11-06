@@ -2233,6 +2233,18 @@ fn distribution_cases() -> Vec<DistributionCase> {
             let y = b.hyper_geometric_with_shape(&[3], 20, 7, 5);
             b.observe(y, ints(&[0, 2, 5]));
         }),
+        case("wiener", |b| {
+            // a latent response time and observed ones at both boundaries, from the small- to the large-time
+            // series, with every parameter latent
+            let (a, t0, sv) = (positive(b, 1.3), positive(b, 0.2), positive(b, 0.5));
+            let w = scalar_latent(b, (0.4_f64 / 0.6).ln()).sigmoid();
+            let drift = scalar_latent(b, 0.7);
+            let x = b.wiener(a, t0, w, drift, sv, 1);
+            b.set_value(x, DoubleTensor::scalar(0.9));
+            let y =
+                b.wiener_with_shape(&[3], a, t0, w, drift, sv, IntTensor::vector(vec![0, 1, 1]));
+            b.observe(y, v(&[0.35, 0.8, 4.5]));
+        }),
         case("skellam", |b| {
             let (mu1, mu2) = (positive(b, 1.4), positive(b, 0.6));
             let y = b.skellam_with_shape(&[4], mu1, mu2);

@@ -44,6 +44,7 @@ mod rng;
 pub mod spatial;
 pub mod timeseries;
 mod util;
+pub mod wiener;
 
 pub use cdf::BetaBinomialTail;
 pub use continuous::*;
@@ -66,3 +67,4 @@ pub use timeseries::{
     FutureStep, HiddenMarkovChain, HiddenMarkovChainGradient, KalmanFilter, KalmanSmoother,
     LinearGaussianStateSpace, LinearGaussianStateSpaceGradient, StateSpaceForecast, StateSpacePath,
 };
+pub use wiener::{Wiener, WienerGradient, sample_wiener};

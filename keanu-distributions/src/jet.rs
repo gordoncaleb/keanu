@@ -151,6 +151,17 @@ impl<const K: usize> Jet<K> {
         self.chain(e, e, e)
     }
 
+    /// e^self − 1, accurate near 0.
+    pub(crate) fn exp_m1(self) -> Self {
+        let e = self.v.exp();
+        self.chain(self.v.exp_m1(), e, e)
+    }
+
+    pub(crate) fn sin(self) -> Self {
+        let (s, c) = self.v.sin_cos();
+        self.chain(s, c, -s)
+    }
+
     pub(crate) fn sqrt(self) -> Self {
         let s = self.v.sqrt();
         self.chain(s, 0.5 / s, -0.25 / (s * self.v))

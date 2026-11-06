@@ -1197,6 +1197,8 @@ pub enum DistributionKind {
     MatrixNormal = 74,
     /// Parameters: `mu`, `kappa`.
     VonMisesFisher = 75,
+    /// Parameters: `a`, `t0`, `w`, `v`, `sv`, `boundary` (an integer, 0 or 1).
+    Wiener = 76,
 }
 impl DistributionKind {
     /// String value of the enum field names used in the ProtoBuf definition.
@@ -1287,6 +1289,7 @@ impl DistributionKind {
             Self::InverseWishartCholesky => "DISTRIBUTION_KIND_INVERSE_WISHART_CHOLESKY",
             Self::MatrixNormal => "DISTRIBUTION_KIND_MATRIX_NORMAL",
             Self::VonMisesFisher => "DISTRIBUTION_KIND_VON_MISES_FISHER",
+            Self::Wiener => "DISTRIBUTION_KIND_WIENER",
         }
     }
     /// Creates an enum from field names used in the ProtoBuf definition.
@@ -1378,6 +1381,7 @@ impl DistributionKind {
             }
             "DISTRIBUTION_KIND_MATRIX_NORMAL" => Some(Self::MatrixNormal),
             "DISTRIBUTION_KIND_VON_MISES_FISHER" => Some(Self::VonMisesFisher),
+            "DISTRIBUTION_KIND_WIENER" => Some(Self::Wiener),
             _ => None,
         }
     }

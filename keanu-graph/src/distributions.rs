@@ -1212,6 +1212,7 @@ macro_rules! builders {
                     "the event (or, for a distribution of one value per element, it is broadcast with the ",
                     "parameters' shapes) and its leading axes a batch that the parameters broadcast to."
                 )]
+                #[allow(clippy::too_many_arguments)]
                 pub fn $with_shape<'b>(&'b self, shape: &[usize], $($p: impl $into<'b>),+) -> $var<'b> {
                     let ids = [$($p.into_var(self).id()),+];
                     $var::new(self, self.distribution(DistributionKind::$kind, Some(shape), &ids))
@@ -1231,6 +1232,16 @@ builders! {
     /// [`keanu_distributions::HyperGeometric`].
     hyper_geometric, hyper_geometric_with_shape =>
         HyperGeometric(population: IntoIntVar, successes: IntoIntVar, draws: IntoIntVar) -> IntVar;
+    /// A Wiener first-passage time node, the drift-diffusion model of two-choice response times (Stan's `wiener`,
+    /// with `wiener_full`'s drift variability): the response time of a trial ending at `boundary` (0 the lower,
+    /// 1 the upper; usually observed data), with boundary separation `a`, non-decision time `t0`, relative starting
+    /// point `w`, drift `v` and across-trial drift standard deviation `sv` (0.0 for the four-parameter model). Its
+    /// support is greater than `t0`. Sampled given the boundary; draw choices and times together with
+    /// [`keanu_distributions::sample_wiener`]. See [`keanu_distributions::Wiener`].
+    wiener, wiener_with_shape => Wiener(
+        a: IntoDoubleVar, t0: IntoDoubleVar, w: IntoDoubleVar, v: IntoDoubleVar, sv: IntoDoubleVar,
+        boundary: IntoIntVar
+    ) -> DoubleVar;
     /// A Skellam node: the difference of independent Poisson(mu1) and Poisson(mu2) counts. See
     /// [`keanu_distributions::Skellam`].
     skellam, skellam_with_shape => Skellam(mu1: IntoDoubleVar, mu2: IntoDoubleVar) -> IntVar;

@@ -192,6 +192,13 @@ pub enum DistributionKind {
     /// Parameters: `mu` (the mean direction, a unit vector [..., p], p >= 2), `kappa` (the concentration); the value
     /// is a unit vector [..., p]. Support: unit vectors. See [`keanu_distributions::VonMisesFisher`].
     VonMisesFisher,
+    /// Parameters: `a` (boundary separation), `t0` (non-decision time), `w` (relative starting point), `v` (drift),
+    /// `sv` (the drift's standard deviation across trials, 0 for the four-parameter model), `boundary (i64)` (the
+    /// boundary reached, 0 the lower and 1 the upper, observed data); the value is the response time. The Wiener
+    /// first-passage time (drift-diffusion model) density at the given boundary, with Stan's parameterisation.
+    /// Support: greater than `t0`. See [`keanu_distributions::Wiener`] and
+    /// [`GraphBuilder::wiener`](crate::GraphBuilder::wiener).
+    Wiener,
     /// No parameters: a kernel density estimate from fixed samples. Support: real.
     Kde(Arc<d::Kde>),
     /// Parameters: `sigma` (a scalar); the value has one element per area of the neighbourhood, shape `[n]`: the
@@ -1134,6 +1141,10 @@ distributions! {
         d::GeneralizedGamma::new(theta, k, p),
         support = Support::greater_than(0.0),
         cdf = rejection;
+    Wiener "wiener" (a: F64, t0: F64, w: F64, v: F64, sv: F64, boundary: I64) -> F64 =>
+        d::Wiener::new(a, t0, w, v, sv, boundary),
+        support = Support::GreaterThan(t0.clone()),
+        cdf = none;
     MultivariateStudentT "multivariate_student_t" (nu: F64, mu: F64, scale: F64) -> F64 =>
         d::MultivariateStudentT::new(nu, mu, scale),
         support = Support::Real;

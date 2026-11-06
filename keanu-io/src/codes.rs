@@ -310,6 +310,7 @@ distribution_codes!(
     InverseWishartCholesky,
     MatrixNormal,
     VonMisesFisher,
+    Wiener,
 );
 
 #[cfg(test)]
@@ -327,7 +328,7 @@ mod tests {
     }
 
     /// The number of distribution kinds in the schema.
-    const DISTRIBUTION_KINDS: i32 = 75;
+    const DISTRIBUTION_KINDS: i32 = 76;
 
     #[test]
     fn every_schema_value_has_a_variant() {

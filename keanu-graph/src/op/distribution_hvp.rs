@@ -111,7 +111,8 @@ impl DistributionKind {
             | K::BinomialLogit
             | K::PoissonLog
             | K::HyperGeometric
-            | K::Skellam => elementwise_hvp(
+            | K::Skellam
+            | K::Wiener => elementwise_hvp(
                 self,
                 value,
                 parameters,

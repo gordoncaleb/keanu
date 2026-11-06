@@ -634,6 +634,8 @@ enum DistributionKind {
   DISTRIBUTION_KIND_MATRIX_NORMAL = 74;
   // Parameters: `mu`, `kappa`.
   DISTRIBUTION_KIND_VON_MISES_FISHER = 75;
+  // Parameters: `a`, `t0`, `w`, `v`, `sv`, `boundary` (an integer, 0 or 1).
+  DISTRIBUTION_KIND_WIENER = 76;
 }
 
 // The neighbourhood of a spatial distribution: the number of areas and the edges between them, as pairs of area
