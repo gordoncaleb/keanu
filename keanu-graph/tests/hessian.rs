@@ -1393,6 +1393,24 @@ fn distribution_cases() -> Vec<DistributionCase> {
             let y = b.categorical_logit(&[3], &logits);
             b.observe(y, ints(&[2, 0, 1]));
         }),
+        case("categorical_logit with vector logits", |b| {
+            let logits = [
+                latent_vector(b, &[0.2, -0.4, 1.1]),
+                latent_vector(b, &[-0.5, 0.3, 0.0]),
+                latent_vector(b, &[0.7, 0.1, -0.2]),
+            ];
+            let y = b.categorical_logit(&[3], &logits);
+            b.observe(y, ints(&[2, 0, 1]));
+        }),
+        case("categorical with vector probabilities", |b| {
+            let p = [
+                positive_vector(b, &[0.2, 0.6, 0.3]),
+                positive_vector(b, &[0.5, 0.1, 0.4]),
+                positive_vector(b, &[0.3, 0.2, 0.7]),
+            ];
+            let y = b.categorical(&[3], &p);
+            b.observe(y, ints(&[2, 0, 1]));
+        }),
         case("zero_inflated poisson", |b| {
             let rate = positive(b, 2.2);
             let psi = scalar_latent(b, -0.4).sigmoid();
@@ -1426,6 +1444,56 @@ fn distribution_cases() -> Vec<DistributionCase> {
             let psi = scalar_latent(b, 0.2).sigmoid();
             let y: IntVar<'_> = b.hurdle_with_shape(&[3], K::BetaBinomial, &params, psi);
             b.observe(y, ints(&[0, 2, 5]));
+        }),
+        case("zero_inflated truncated poisson", |b| {
+            // truncated below 0 (a structural or inner zero) and above 0 (a zero is only structural)
+            let rate = positive(b, 2.2);
+            let psi = scalar_latent(b, -0.4).sigmoid();
+            let (lower, upper) = (b.scalar(0.0).id(), b.scalar(6.0).id());
+            let kind = K::Truncated(Arc::new(K::Poisson));
+            let y: IntVar<'_> =
+                b.zero_inflated_with_shape(&[3], kind, &[rate.id(), lower, upper], psi);
+            b.observe(y, ints(&[0, 1, 4]));
+            let lower = b.scalar(1.0).id();
+            let upper = b.scalar(f64::INFINITY).id();
+            let kind = K::Truncated(Arc::new(K::Poisson));
+            let z: IntVar<'_> =
+                b.zero_inflated_with_shape(&[3], kind, &[rate.id(), lower, upper], psi);
+            b.observe(z, ints(&[0, 2, 5]));
+        }),
+        case("zero_inflated truncated beta_binomial", |b| {
+            // the most inputs a rule has: the value, three base parameters, two bounds and ψ
+            let params = [
+                b.int_scalar(6).id(),
+                positive(b, 1.4).id(),
+                positive(b, 2.1).id(),
+                b.scalar(0.0).id(),
+                b.scalar(5.0).id(),
+            ];
+            let psi = scalar_latent(b, 0.1).sigmoid();
+            let kind = K::Truncated(Arc::new(K::BetaBinomial));
+            let y: IntVar<'_> = b.zero_inflated_with_shape(&[3], kind, &params, psi);
+            b.observe(y, ints(&[0, 2, 5]));
+        }),
+        case("hurdle truncated negative_binomial", |b| {
+            let params = [
+                positive(b, 2.5).id(),
+                positive(b, 1.5).id(),
+                b.scalar(0.0).id(),
+                b.scalar(9.0).id(),
+            ];
+            let psi = scalar_latent(b, 0.3).sigmoid();
+            let kind = K::Truncated(Arc::new(K::NegativeBinomial));
+            let y: IntVar<'_> = b.hurdle_with_shape(&[3], kind, &params, psi);
+            b.observe(y, ints(&[0, 3, 9]));
+        }),
+        case("hurdle censored poisson", |b| {
+            let rate = positive(b, 1.7);
+            let psi = scalar_latent(b, -0.2).sigmoid();
+            let (lower, upper) = (b.scalar(0.0).id(), b.scalar(4.0).id());
+            let kind = K::Censored(Arc::new(K::Poisson));
+            let y: IntVar<'_> = b.hurdle_with_shape(&[3], kind, &[rate.id(), lower, upper], psi);
+            b.observe(y, ints(&[0, 2, 4]));
         }),
         case("hurdle gamma", |b| {
             let params = [positive(b, 0.9).id(), positive(b, 2.3).id()];

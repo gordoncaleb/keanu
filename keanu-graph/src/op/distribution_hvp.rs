@@ -747,7 +747,13 @@ pub(super) fn categorical_logit_gradient(
     let gradients = keanu_distributions::CategoricalLogit::new(logits)?.d_log_prob(x)?;
     let mut parts = SmallVec::new();
     for (gradient, p) in gradients.into_iter().zip(parameters) {
-        parts.push(Some(reduce_to(gradient, p.shape())?));
+        // each gradient has the broadcast shape; sum it to the logit's shape as a batch of one, then drop the batch
+        let shape = Shape::from_slice(gradient.shape());
+        let summed =
+            reduce(Some(gradient.into_vec()), 1, &shape, p.shape())?.expect("a gradient was given");
+        parts.push(Some(summed.reshape(
+            &p.shape().iter().map(|&d| d as isize).collect::<Vec<_>>(),
+        )?));
     }
     Ok((None, parts))
 }

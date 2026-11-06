@@ -468,6 +468,18 @@ Work from `docs/plans/2026-11-05-001-feat-applied-modelling-gaps-plan.md`.
   guide's new chapter "Simulation-based inference (SMC and ABC)" takes over the SMC section of the sampling
   chapter (which now links to it) and adds model comparison by evidence, simulator nodes, ABC and the stochastic
   epidemic; the examples page lists both examples.
+- Code review fixes for the above:
+  - keanu-graph: the gradient of a categorical with vector logits (`categorical_logit` with logits of shape [n])
+    summed each logit's gradient as if it were batched, which overflowed in debug builds and failed with
+    `InvalidReshape` in release builds; it is now summed to each logit's shape as the categorical's gradient is.
+    Its Hessian-vector products were already correct and are now checked against finite differences.
+  - keanu-graph: zero-inflated and hurdle distributions over a truncated or censored count have exact
+    Hessian-vector products, as documented, taking the inner kind's per-element Hessians from its own second-order
+    rule (they failed with `NoSecondOrderRule` before).
+  - keanu-graph: a hurdle's positive counts are drawn by inverting the inner kind's mass above zero where the inner
+    kind puts at least half its mass at zero, and by rejection elsewhere (or where the inversion takes more than
+    1000 steps), so hurdles over small rates (a Poisson with μ = 0.002, say) can be sampled; they failed after
+    1000 rejected draws before. Sampling fails only where the inner kind has no mass above zero and ψ < 1.
 
 ### Code review fixes
 

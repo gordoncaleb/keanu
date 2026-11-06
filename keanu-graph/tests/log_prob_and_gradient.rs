@@ -99,3 +99,43 @@ fn a_contradicted_observation_is_impossible() {
     assert_eq!(log_prob, f64::NEG_INFINITY);
     assert!(gradient.is_none());
 }
+
+/// The gradient of a categorical with vector logits, by central differences of the log probability.
+#[test]
+fn categorical_logit_gradients_with_vector_logits_match_finite_differences() {
+    let b = GraphBuilder::new();
+    let a = b.gaussian_with_shape(&[3], 0.0, 1.0);
+    b.set_value(a, DoubleTensor::vector(vec![0.2, -0.4, 1.1]));
+    let c = b.gaussian_with_shape(&[3], 0.0, 1.0);
+    b.set_value(c, DoubleTensor::vector(vec![-0.5, 0.3, 0.0]));
+    let d = b.gaussian_with_shape(&[3], 0.0, 1.0);
+    b.set_value(d, DoubleTensor::vector(vec![0.7, 0.1, -0.2]));
+    let y = b.categorical_logit(&[3], &[a, c, d]);
+    b.observe(y, IntTensor::vector(vec![2, 0, 1]));
+    let (graph, mut state) = b.build().unwrap();
+    let all: Vec<_> = graph.ids().collect();
+    state
+        .lazy_eval(&graph, &all, &mut KeanuRng::seed_from_u64(1))
+        .unwrap();
+    let model = Model::new(Arc::new(graph), &state).unwrap();
+    let param = keanu_graph::Parameterisation::new(&model, &state).unwrap();
+    let z = param.from_state(&state).unwrap();
+    let (_, gradient) = param.log_prob_and_gradient(&z, true, &mut state).unwrap();
+    let gradient = gradient.expect("a possible point has a gradient");
+    assert_eq!(gradient.len(), 9);
+    for j in 0..z.len() {
+        let h = 1e-6;
+        let mut plus = z.clone();
+        plus[j] += h;
+        let mut minus = z.clone();
+        minus[j] -= h;
+        let expected = (param.log_prob(&plus, true, &mut state).unwrap()
+            - param.log_prob(&minus, true, &mut state).unwrap())
+            / (2.0 * h);
+        assert!(
+            (gradient[j] - expected).abs() < 1e-6,
+            "∂/∂z[{j}] = {}, finite differences give {expected}",
+            gradient[j]
+        );
+    }
+}

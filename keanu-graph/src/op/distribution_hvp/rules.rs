@@ -18,9 +18,9 @@ use keanu_tensor::special::{
     log_inc_beta_dadb, log_inc_beta_db2, trigamma,
 };
 
-/// The most inputs (value and parameters, or a truncated distribution's value, base parameters and bounds) any
-/// element-wise rule has.
-pub(crate) const MAX_INPUTS: usize = 6;
+/// The most inputs (value and parameters, a truncated distribution's value, base parameters and bounds, or a
+/// zero-inflated or hurdle truncated count's, with ψ) any element-wise rule has.
+pub(crate) const MAX_INPUTS: usize = 7;
 
 /// A symmetric Hessian of one element's log density with respect to up to [`MAX_INPUTS`] inputs.
 #[derive(Debug, Clone)]

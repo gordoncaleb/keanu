@@ -622,8 +622,9 @@ impl GraphBuilder {
     /// days; such a node is meant to be observed. Negative values are impossible. The handle type must match the
     /// inner kind's value type ([`IntVar`] or [`DoubleVar`]).
     ///
-    /// Positive counts are drawn by rejection from the inner kind, which fails with an error if it puts too little
-    /// probability above zero.
+    /// Positive counts are drawn by inverting the inner kind's mass above zero where it puts at least half its mass
+    /// at zero (so a small rate samples quickly and exactly), and by rejection of its non-positive draws elsewhere.
+    /// Sampling is an error only if the inner kind puts no probability above zero while ψ < 1.
     pub fn hurdle<'b, V: Var<'b>>(
         &'b self,
         inner: DistributionKind,

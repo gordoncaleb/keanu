@@ -100,7 +100,7 @@ fn valid(psi: f64) -> bool {
 }
 
 /// Draws a value: for a zero-inflated kind a draw of the inner kind, for a hurdle a draw of the inner kind
-/// restricted to positive values (by rejection for a count, see the wrappers module), each replaced by 0 with
+/// restricted to positive values (for a count see [`sample_positive_counts`]), each replaced by 0 with
 /// probability ψ.
 pub(crate) fn sample(
     inflation: Inflation,
@@ -115,15 +115,7 @@ pub(crate) fn sample(
         return invalid_parameter(format!("psi must be in [0, 1], got {bad}"));
     }
     let draw = match (inflation, inner.value_type()) {
-        (Inflation::Hurdle, DType::I64) => {
-            let (one, infinity) = (
-                Value::F64(DoubleTensor::scalar(1.0)),
-                Value::F64(DoubleTensor::scalar(f64::INFINITY)),
-            );
-            let mut truncated: Vec<&Value> = base.to_vec();
-            truncated.extend([&one, &infinity]);
-            wrappers::sample_truncated(inner, shape, &truncated, rng)?
-        }
+        (Inflation::Hurdle, DType::I64) => sample_positive_counts(inner, shape, base, &psi, rng)?,
         _ => inner.sample(shape, base, rng)?,
     };
     let u = rng.uniform(shape);
@@ -152,6 +144,97 @@ pub(crate) fn sample(
             ));
         }
     })
+}
+
+/// The most counts k = 1, 2, … that [`sample_positive_counts`] steps through by inversion before drawing the
+/// elements it hasn't placed by rejection.
+const INVERSION_STEPS: i64 = 1000;
+
+/// How many times [`sample_positive_counts`] draws from the inner kind for the elements it samples by rejection
+/// before giving up.
+const REJECTION_ATTEMPTS: usize = 1000;
+
+/// Draws counts of `shape` from the count kind `inner` restricted to positive values, P(k | k > 0) =
+/// p(k) / (1 − p(0)).
+///
+/// Where the inner kind puts at least half its mass at 0 (a small rate, say), so that most draws from it would be
+/// rejected, the count is found by inversion: with u uniform on [0, 1), the least k ≥ 1 whose conditional
+/// cumulative mass Σⱼ₌₁ᵏ p(j) / (1 − p(0)) reaches u, the masses read from the inner log density in log space so
+/// that a tiny 1 − p(0) loses no precision. Elsewhere draws from the inner kind are rejected until positive, which
+/// accepts at least half of them; an element the inversion hasn't placed within [`INVERSION_STEPS`] counts (a
+/// heavy tail, or rounding that leaves the cumulative mass just below u) falls back to rejection too. An error
+/// where the inner kind has no mass above 0 and ψ < 1 (no positive value to draw, though one is needed), or
+/// where rejection finds no positive draw.
+fn sample_positive_counts(
+    inner: &DistributionKind,
+    shape: &[usize],
+    base: &[&Value],
+    psi: &[f64],
+    rng: &mut KeanuRng,
+) -> Result<Value> {
+    let len: usize = shape.iter().product();
+    let log_density = |at: Value| -> Result<Vec<f64>> {
+        Ok(wrappers::evaluate(inner, Univariate::Density, &at, base, false, shape, None)?.values)
+    };
+    let at_zero = log_density(Value::I64(IntTensor::scalar(0)))?;
+    let mut values = vec![1i64; len];
+    let mut by_inversion = Vec::new();
+    let mut by_rejection = Vec::new();
+    for (i, &a) in at_zero.iter().enumerate() {
+        if psi[i] == 1.0 {
+            // always a structural zero: the positive part is never used
+        } else if a.is_nan() || a >= 0.0 {
+            return invalid_parameter(format!(
+                "the {} distribution of a hurdle puts no probability above 0, so it has no positive values to draw",
+                inner.name()
+            ));
+        } else if a >= -std::f64::consts::LN_2 {
+            by_inversion.push(i);
+        } else {
+            by_rejection.push(i);
+        }
+    }
+    if !by_inversion.is_empty() {
+        let u = rng.uniform(shape);
+        let u = u.as_slice();
+        let log_positive: Vec<f64> = at_zero.iter().map(|&a| log1mexp(a)).collect();
+        let mut cumulative = vec![0.0; len];
+        let mut k = 0;
+        while !by_inversion.is_empty() && k < INVERSION_STEPS {
+            k += 1;
+            let at_k = log_density(Value::I64(IntTensor::full(shape, k)))?;
+            by_inversion.retain(|&i| {
+                cumulative[i] += (at_k[i] - log_positive[i]).exp();
+                let placed = cumulative[i] >= u[i];
+                if placed {
+                    values[i] = k;
+                }
+                !placed
+            });
+        }
+        by_rejection.append(&mut by_inversion);
+    }
+    for _ in 0..REJECTION_ATTEMPTS {
+        if by_rejection.is_empty() {
+            break;
+        }
+        let draw = inner.sample(shape, base, rng)?;
+        let draw = broadcast_int(draw.i64()?, shape)?;
+        by_rejection.retain(|&i| {
+            let accepted = draw[i] > 0;
+            if accepted {
+                values[i] = draw[i];
+            }
+            !accepted
+        });
+    }
+    if !by_rejection.is_empty() {
+        return invalid_parameter(format!(
+            "no positive draw from the {} distribution of a hurdle in {REJECTION_ATTEMPTS} attempts",
+            inner.name()
+        ));
+    }
+    Ok(Value::I64(IntTensor::new(shape, values)?))
 }
 
 fn broadcast_int(t: &IntTensor, shape: &[usize]) -> Result<Vec<i64>> {
@@ -379,6 +462,9 @@ pub(crate) fn elementwise(
 /// - otherwise ln(1 − ψ) + ln p(x) − ln(1 − eᵃ): the inner Hessian at x, −1/(1 − ψ)² for ψ, and for a hurdle on
 ///   counts s H_a + s(1 + s)∇a∇aᵀ with s = eᵃ/(1 − eᵃ).
 ///
+/// The inner kind's Hessians come from its element-wise rule, or for an inner kind built around another one (a
+/// truncated or censored count) from that kind's own second-order parts ([`inner_hessians`]).
+///
 /// # Errors
 ///
 /// [`GraphError::NoSecondOrderRule`] naming the inner kind if it has no element-wise second-order rule.
@@ -391,11 +477,23 @@ pub(crate) fn second_order(
     b: usize,
     shape: &[usize],
 ) -> Result<Elementwise> {
-    let Some(rule) = rules::density_rule(inner) else {
-        return Err(GraphError::NoSecondOrderRule(format!(
-            "the {} distribution",
-            inner.name()
-        )));
+    let (base, _) = wrappers::split(parameters, OWN_PARAMETERS)?;
+    let rule = match rules::density_rule(inner) {
+        Some(rule) => InnerRule::Rule(rule),
+        None if inner.nested().is_some() => {
+            let zero = Value::I64(IntTensor::scalar(0));
+            InnerRule::Hessians {
+                n: base.len() + 1,
+                at_value: inner_hessians(inner, value, base, shape)?,
+                at_zero: inner_hessians(inner, &zero, base, shape)?,
+            }
+        }
+        None => {
+            return Err(GraphError::NoSecondOrderRule(format!(
+                "the {} distribution",
+                inner.name()
+            )));
+        }
     };
     let (values, parts) = elementwise(inflation, inner, value, parameters, true)?;
     let values = distribution_hvp::spread(&values, shape)?;
@@ -406,7 +504,6 @@ pub(crate) fn second_order(
         .map(|g| g.map(|g| distribution_hvp::spread(&g, shape)).transpose())
         .collect::<Result<_>>()?;
     let p = pieces(inflation, inner, value, parameters, true)?;
-    let (base, _) = wrappers::split(parameters, OWN_PARAMETERS)?;
     let m = base.len();
     let psi_index = m + 1;
     let inputs: Vec<Vec<f64>> = base
@@ -436,7 +533,7 @@ pub(crate) fn second_order(
         // adds `scale` times the inner Hessian at 0 (its parameter block), and `outer` times ∇a∇aᵀ
         let mut add_zero = |h: &mut Hessian, scale: f64, outer: f64| {
             at_zero.clear();
-            rule(0.0, &point, &mut at_zero);
+            rule.add(false, i, 0.0, &point, &mut at_zero);
             let g = zero_gradient(i);
             for u in 0..m {
                 for v in u..m {
@@ -463,7 +560,7 @@ pub(crate) fn second_order(
             }
             Case::HurdleZero => h.add(psi_index, psi_index, -1.0 / (psi * psi)),
             Case::Inner { s } => {
-                rule(p.x[i], &point, h);
+                rule.add(true, i, p.x[i], &point, h);
                 h.add(psi_index, psi_index, -1.0 / ((1.0 - psi) * (1.0 - psi)));
                 if s != 0.0 {
                     add_zero(h, s, s * (1.0 + s));
@@ -477,4 +574,83 @@ pub(crate) fn second_order(
         gradients,
         hvps,
     })
+}
+
+/// Where the inner kind's per-element Hessians (over the value and its parameters) come from.
+enum InnerRule {
+    /// Its element-wise density rule.
+    Rule(rules::DensityRule),
+    /// Precomputed for each element at the value and at 0 ([`inner_hessians`]), each `n` × `n`.
+    Hessians {
+        n: usize,
+        at_value: Vec<f64>,
+        at_zero: Vec<f64>,
+    },
+}
+
+impl InnerRule {
+    /// Adds element `i`'s inner Hessian at the value (`at_value`, the value being `x`) or at 0 to `h`, whose inputs
+    /// start with the inner kind's (the value, then its parameters, set to `point`).
+    fn add(&self, at_value: bool, i: usize, x: f64, point: &[f64], h: &mut Hessian) {
+        match self {
+            InnerRule::Rule(rule) => rule(x, point, h),
+            InnerRule::Hessians {
+                n,
+                at_value: value,
+                at_zero: zero,
+            } => {
+                let n = *n;
+                let hessians = if at_value { value } else { zero };
+                let element = &hessians[i * n * n..(i + 1) * n * n];
+                for u in 0..n {
+                    for v in u..n {
+                        h.add(u, v, element[u * n + v]);
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// Each element's Hessian of the inner log density at `value` broadcast to `shape`, over the value and the inner
+/// kind's `parameters` (n = 1 + their number, row-major n × n per element), from the inner kind's own element-wise
+/// second-order parts along the n unit tangents (one batch row each). This is how a kind built around another one,
+/// such as a truncated count, which has no density rule of its own, supplies its second derivatives. An entry
+/// whose row input has no derivative is read from its column's products instead, so each Hessian is symmetric (and
+/// zero where neither input has a derivative).
+fn inner_hessians(
+    inner: &DistributionKind,
+    value: &Value,
+    parameters: &[&Value],
+    shape: &[usize],
+) -> Result<Vec<f64>> {
+    let n = parameters.len() + 1;
+    let len: usize = shape.iter().product();
+    let tangents: Vec<Option<Vec<f64>>> = (0..n)
+        .map(|v| {
+            let mut t = vec![0.0; n * len];
+            t[v * len..(v + 1) * len].fill(1.0);
+            Some(t)
+        })
+        .collect();
+    let parts = distribution_hvp::elementwise(inner, value, parameters, &tangents, n, shape)?;
+    let entry = |u: usize, v: usize, i: usize| -> f64 {
+        match (&parts.hvps[u], &parts.hvps[v]) {
+            (Some(row), _) => row[v * len + i],
+            (None, Some(column)) => column[u * len + i],
+            (None, None) => 0.0,
+        }
+    };
+    let mut hessians = vec![0.0; len * n * n];
+    for i in 0..len {
+        let element = &mut hessians[i * n * n..(i + 1) * n * n];
+        for u in 0..n {
+            for v in u..n {
+                let e = entry(u, v, i);
+                element[u * n + v] = e;
+                element[v * n + u] = e;
+            }
+        }
+    }
+    Ok(hessians)
 }

@@ -347,6 +347,53 @@ fn draws_have_the_right_zeros_and_means() {
     assert!(state.lazy_eval(&graph, &[y], &mut rng).is_err());
 }
 
+/// A hurdle over a count that is almost always 0 still draws its positive values (by inversion of the inner
+/// kind's mass above 0, not rejection): with a Poisson rate μ the positive part is 1 with probability
+/// μ / (e^μ − 1) ≈ 1 − μ/2.
+#[test]
+fn hurdle_counts_with_little_mass_above_zero_can_be_sampled() {
+    let draws = 20_000;
+    let (mu, psi) = (0.002, 0.5);
+    let sample = |inner: K, parameters: Vec<Value>, size: usize| -> Vec<i64> {
+        let b = GraphBuilder::new();
+        let params: Vec<NodeId> = parameters
+            .into_iter()
+            .map(|p| b.add_node(Op::Constant(p), &[]).unwrap())
+            .collect();
+        let node = b
+            .add_distribution(hurdle(inner), Some(&[size]), &params)
+            .unwrap();
+        let (graph, mut state) = b.build().unwrap();
+        state
+            .lazy_eval(&graph, &[node], &mut KeanuRng::seed_from_u64(3))
+            .unwrap_or_else(|e| panic!("sampling failed: {e}"));
+        state.i64(node).unwrap().as_slice().to_vec()
+    };
+    // the reviewer's case
+    assert_eq!(sample(K::Poisson, vec![f(mu), f(psi)], 20).len(), 20);
+    let x = sample(K::Poisson, vec![f(mu), f(psi)], draws);
+    let zeros = x.iter().filter(|&&k| k == 0).count() as f64 / draws as f64;
+    assert_close(zeros, psi, 0.015, "hurdle zeros");
+    let positive: Vec<i64> = x.iter().copied().filter(|&k| k > 0).collect();
+    let ones = positive.iter().filter(|&&k| k == 1).count() as f64 / positive.len() as f64;
+    assert_close(ones, mu / mu.exp_m1(), 0.003, "positive draws that are 1");
+    // a tiny rate, for which a draw from the Poisson is almost never positive, and its log form
+    let x = sample(K::Poisson, vec![f(1e-12), f(0.0)], 50);
+    assert!(x.iter().all(|&k| k == 1), "{x:?}");
+    let x = sample(K::PoissonLog, vec![f(-30.0), f(0.0)], 50);
+    assert!(x.iter().all(|&k| k == 1), "{x:?}");
+    // a binomial with a small probability: the positive part's mean is np / (1 − (1 − p)ⁿ)
+    let (n, p) = (4, 1e-3);
+    let x = sample(K::Binomial, vec![f(p), int(n), f(0.4)], draws);
+    let positive: Vec<f64> = x.iter().filter(|&&k| k > 0).map(|&k| k as f64).collect();
+    let expected = n as f64 * p / (1.0 - (1.0 - p).powi(n as i32));
+    assert_close(mean(&positive), expected, 0.01, "binomial positive mean");
+    // large rates still draw (by rejection, which accepts almost every draw)
+    let x = sample(K::Poisson, vec![f(400.0), f(0.2)], draws);
+    let positive: Vec<f64> = x.iter().filter(|&&k| k > 0).map(|&k| k as f64).collect();
+    assert_close(mean(&positive), 400.0, 1.0, "large-rate positive mean");
+}
+
 #[test]
 fn inner_kinds_must_be_counts_or_positive_and_continuous() {
     let build = |kind: K, parameters: &[f64]| {
