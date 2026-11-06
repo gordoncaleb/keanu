@@ -38,7 +38,10 @@
 //!
 //! The created latents start at their prior medians (coefficients and weights at 0) and are labelled
 //! `"<component name>.<parameter>"` and `"observation_noise_scale"`. The initial state is fixed (not a latent):
-//! the level starts at N(y₀, s²) and every other state at N(0, s²), independently.
+//! the level of the first local level or local linear trend component starts at N(y₀, s²) and every other state
+//! (the level of any later such component included, so that the levels sum to y₀) at N(0, s²), independently.
+//! With a regression the level still starts at y₀: that is the first residual y₀ − x₀ β at the default weights'
+//! prior mean β = 0 (given weights are not read when the model is built).
 //!
 //! The model is time-invariant (as is the state-space node), so a seasonal component's season is one step:
 //! TFP's `num_steps_per_season` > 1 is the trigonometric form with period `seasons × steps per season`.
@@ -584,6 +587,9 @@ impl<'b> StructuralModel<'b> {
         self.check()?;
         let b = self.builder;
         let (y0, s) = self.data_scale();
+        // the first level-type component (local level or linear trend) starts at y₀, the series' level; any other
+        // at 0, so that the levels' sum starts at y₀ too
+        let mut level_mean = Some(y0);
         let steps = self.observed.len();
         let mut blocks = Vec::new();
         let mut layouts = Vec::new();
@@ -601,7 +607,7 @@ impl<'b> StructuralModel<'b> {
                         dimension: 1,
                         transition: vec![1.0],
                         observation: vec![1.0],
-                        initial_mean: vec![y0],
+                        initial_mean: vec![level_mean.take().unwrap_or(0.0)],
                         noise: vec![(scale * scale, vec![1.0])],
                         coefficients: None,
                     })
@@ -615,7 +621,7 @@ impl<'b> StructuralModel<'b> {
                         dimension: 2,
                         transition: vec![1.0, 1.0, 0.0, 1.0],
                         observation: vec![1.0, 0.0],
-                        initial_mean: vec![y0, 0.0],
+                        initial_mean: vec![level_mean.take().unwrap_or(0.0), 0.0],
                         noise: vec![
                             (level * level, vec![1.0, 0.0]),
                             (slope * slope, vec![0.0, 1.0]),

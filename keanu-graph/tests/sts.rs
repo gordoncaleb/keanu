@@ -9,7 +9,7 @@ use keanu_graph::{GraphBuilder, GraphError, Model, NodeId, State};
 use keanu_tensor::DoubleTensor;
 
 mod common;
-use common::{assert_close, t};
+use common::{assert_close, t, v};
 
 const Y: [f64; 10] = [1.0, 2.1, 0.4, 1.7, 2.6, 3.2, 1.5, 2.9, 3.8, 4.1];
 
@@ -461,5 +461,44 @@ fn the_builder_rejects_invalid_models() {
         }
         // nothing but the options' own constants was added
         assert!(b.node_count() <= before + 1, "{name}: nodes were added");
+    }
+}
+
+/// Only the first level-type component starts at the series' first value: with a local level and a local linear
+/// trend (in either order) the levels' initial means sum to y₀ rather than 2 y₀, and the seasonal states start at 0.
+#[test]
+fn only_the_first_level_component_starts_at_the_first_value() {
+    for level_first in [true, false] {
+        let (_, state, sts) = built(|b| {
+            let level = Component::local_level().with_scale(b.scalar(0.5));
+            let trend = Component::local_linear_trend()
+                .with_scale(b.scalar(0.5))
+                .with_slope_scale(b.scalar(0.2));
+            let model = StructuralModel::new(b, &Y);
+            let model = if level_first {
+                model.with(level).with(trend)
+            } else {
+                model.with(trend).with(level)
+            };
+            model
+                .with(Component::seasonal(3).with_scale(b.scalar(0.1)))
+                .with_observation_noise_scale(b.scalar(0.3))
+                .build()
+                .unwrap()
+        });
+        let m0 = &matrices(&state, &sts)[0];
+        // the first component's level is state 0 either way
+        assert_tensor(m0, &v(&[Y[0], 0.0, 0.0, 0.0, 0.0]), "m0");
+        let observed_mean: f64 = sts
+            .components()
+            .iter()
+            .map(|c| {
+                c.states()
+                    .zip(c.observation())
+                    .map(|(i, h)| h * m0.as_slice()[i])
+                    .sum::<f64>()
+            })
+            .sum();
+        assert_close(observed_mean, Y[0], 1e-15, "the initial observation mean");
     }
 }

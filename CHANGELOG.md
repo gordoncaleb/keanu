@@ -515,6 +515,10 @@ Work from `docs/plans/2026-11-05-001-feat-applied-modelling-gaps-plan.md`.
     history (a history of 12 or more gave variance errors of 0.03–0.15 log units on a 5-dimensional Gaussian with
     correlation 0.8, where the default 6 was off by up to a factor of 1.7), and the plan's U23 note records the
     review's diagnosis.
+  - keanu-graph: a structural time series gives the initial level mean y₀ to its first local level or local
+    linear trend component only (0 to any later one), so a model with two such components starts at y₀ rather
+    than 2 y₀; with a regression the level starts at y₀, documented as the first residual at the default weights'
+    prior mean of 0.
 
 ### Code review fixes
 

@@ -131,8 +131,10 @@ The components (`Component::...`), each named for the decomposition:
   for each component scale, LogNormal(ln(0.1 s), 2) for the observation noise, N(0, 1) for AR coefficients and
   N(0, 10 s / max |x_j|) for regression weights. The created latents are labelled `"<component>.<parameter>"`;
   `StructuralTimeSeries::parameters` lists every parameter's node, which is what to record when sampling.
-- **The initial state** is fixed: the level starts near the first observation, N(y₀, s²), and every other state at
-  N(0, s²).
+- **The initial state** is fixed: the level of the first local level or local linear trend component starts near
+  the first observation, N(y₀, s²), and every other state at N(0, s²), a second level included, so that the levels
+  sum to y₀. With a regression the level still starts at y₀, the first residual at the default weights' prior
+  mean of 0.
 - **Seasons are one step long**, because the state-space node is time-invariant. TFP's `num_steps_per_season`
   is the trigonometric form with the period in steps (52.18 for weekly data with a yearly cycle, or 7 × 24 for
   hourly data with a weekly one).
