@@ -70,6 +70,14 @@ pub enum GraphError {
         /// Why, completing a sentence whose subject is the node.
         reason: String,
     },
+    /// A node can't be observed with missing elements (see [`observe_masked`](crate::observe_masked)), for the
+    /// `reason` given.
+    CannotImpute {
+        /// The node, as [`Graph::describe`](crate::Graph::describe) names it.
+        node: String,
+        /// Why, completing a sentence whose subject is the node.
+        reason: String,
+    },
     /// An ODE solve (see [`Op::Ode`](crate::op::Op::Ode)) could not be completed at these values: the step limit
     /// was reached, the step size underflowed or the state became non-finite. The model has no usable value there,
     /// so models and inference algorithms treat it as an impossible point (see [`Self::is_impossible_point`]).
@@ -133,6 +141,12 @@ impl fmt::Display for GraphError {
                 node,
                 reason,
             } => write!(f, "cannot marginalise {latent}: {node} {reason}"),
+            Self::CannotImpute { node, reason } => {
+                write!(
+                    f,
+                    "cannot impute the missing elements of {node}: it {reason}"
+                )
+            }
             Self::SolverFailed(failed) => write!(f, "{failed}"),
             Self::Simulator(m) => write!(f, "simulator failed: {m}"),
             Self::NoLikelihood(node) => write!(

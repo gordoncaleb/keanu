@@ -707,6 +707,20 @@ Work from `docs/plans/2026-11-05-001-feat-applied-modelling-gaps-plan.md`.
   predictive means under do(X = 0) and do(X = 1) are within 0.3 of the true interventional means, that the
   treated's and untreated's predictive means are within 0.3 of the true confounded means, and that the average
   treatment effect's 90% interval covers the true effect. The guide gained a chapter, "Interventions".
+- keanu-graph, keanu: **masked observations and imputation**. `observe_masked(&graph, &state, &[...])` observes
+  probabilistic nodes with some elements missing (`MaskedObservation::new` with a mask, or `with_nan_missing` with
+  NaN in the gaps). A node with gaps is rewritten into an observed part `<label>_observed` and a latent
+  `<label>_missing`, the same distribution with each parameter broadcast to the node's shape and gathered at the
+  observed or missing elements, and a deterministic node `<label>` of the original shape that puts the elements back
+  in place and that the node's children read; a node with nothing missing is simply observed, and one with
+  everything missing has no observed part. The joint density is unchanged, the missing parts start at a draw from
+  their distribution, the default sampler handles them (NUTS for continuous, Gibbs for discrete), and the pointwise
+  log likelihood has points for the observed elements only. Only element-wise distributions with parameters that
+  broadcast element by element can be split; others are rejected with the new `GraphError::CannotImpute`. The
+  `Imputed` record maps the nodes and gives each masked node's parts and missing positions. The `missing_data`
+  example fits a regression with 20% of the outcomes and 10% of a covariate missing; its test checks that the
+  coefficients' 90% intervals cover the truth and that the imputed outcomes' posterior means correlate with the
+  held-out values above 0.9. The guide's "Building models" chapter gained a section on missing observations.
 
 ### Code review fixes
 

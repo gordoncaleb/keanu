@@ -296,6 +296,36 @@ A Gaussian mixture written with an explicit `categorical` assignment per point a
 same log probability, gradients and posterior as the same model written with `mixture`; the
 [Gaussian mixture example](examples.md#a-gaussian-mixture) fits both.
 
+## Missing observations
+
+Data often have gaps. Rather than dropping every row with one, the missing values can be treated as unknowns and
+imputed with everything else, as PyMC does with masked observations. `observe_masked(&graph, &state, &[...])`
+observes each node given as a `MaskedObservation` (its values and a mask of missing elements, or
+`MaskedObservation::with_nan_missing(node, values)` with NaN marking them) and rewrites a node with gaps into three:
+
+- `<label>_observed`, the same distribution with each parameter gathered at the observed elements, observed;
+- `<label>_missing`, the same distribution gathered at the missing elements, a latent;
+- `<label>`, a deterministic node of the original shape that puts every element back in its place, which every node
+  that used the original reads.
+
+The joint density is the original model's with the known elements observed. The missing parts are ordinary latents,
+so `Sampler::for_model` samples continuous ones with NUTS and discrete ones with Gibbs steps, and recording
+`<label>` while sampling gives draws with the imputed values in their original positions. The returned `Imputed`
+record gives each node's parts (`get(id)`, with `missing_indices` for where the missing elements were) and maps
+every other node (`node(id)`). The pointwise log likelihood has points for the observed elements only.
+
+```rust,ignore
+{{#include ../../keanu/tests/book.rs:observe_masked}}
+```
+
+The outcome of a regression already has a distribution. A covariate with gaps needs one too, as `x` has above, so
+that its missing elements have a prior to be imputed from. The distribution must be element-wise (one value per
+element with its own density: the continuous and count families, truncated, censored, zero-inflated, hurdle and
+transformed ones, the Bernoulli and the categorical) with parameters that broadcast to the node's shape; others,
+such as a multivariate Gaussian with a missing component, are rejected with `GraphError::CannotImpute`. A node with
+no element missing is simply observed, and one with every element missing becomes `<label>_missing` alone. The
+[missing data example](examples.md#missing-data) fits a regression with gaps in the outcome and a covariate.
+
 ## Deterministic nodes
 
 Handles (`DoubleVar`, `IntVar`, `BoolVar`) support:

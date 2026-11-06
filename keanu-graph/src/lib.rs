@@ -38,6 +38,7 @@ mod distributions;
 mod error;
 pub mod gp;
 mod graph;
+mod impute;
 mod intervene;
 mod logprob;
 mod marginalize;
@@ -60,6 +61,7 @@ pub use autodiff::{
 pub use builder::GraphBuilder;
 pub use error::{GraphError, Result};
 pub use graph::{Graph, Node, NodeId};
+pub use impute::{Imputed, ImputedNode, MaskedObservation, observe_masked};
 pub use intervene::{Intervened, intervene};
 pub use logprob::{
     LogProbGradient, NodeLogProbGradient, joint_log_prob, joint_log_prob_gradient, log_likelihood,

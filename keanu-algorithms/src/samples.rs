@@ -208,9 +208,10 @@ impl NetworkSamples {
     }
 
     /// The samples carried over to another graph, such as one a graph rewrite made from this one
-    /// ([`intervene`](keanu_graph::intervene) or [`marginalize`](keanu_graph::marginalize)): each sampled node that
-    /// `map` sends to a node of `graph` keeps its samples under the new id, and the others are left out. The log
-    /// probabilities are kept as recorded (they are the original model's).
+    /// ([`intervene`](keanu_graph::intervene), [`observe_masked`](keanu_graph::observe_masked) or
+    /// [`marginalize`](keanu_graph::marginalize)): each sampled node that `map` sends to a node of `graph` keeps its
+    /// samples under the new id, and the others are left out. The log probabilities are kept as recorded (they are the
+    /// original model's).
     ///
     /// # Errors
     ///

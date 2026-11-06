@@ -4,7 +4,7 @@ These live in `keanu/examples`. Run one with `cargo run --release --example <nam
 integration test (`keanu/tests/examples.rs`): the examples ported from Java check the same results the Java
 examples' tests check, and the hierarchical ones check multi-chain R-hat, divergences and posterior means.
 The Gaussian process, stochastic volatility, hidden Markov model, CO₂ forecasting, pharmacokinetic, multi-state,
-extreme-value, cure-model, causal-effect and stochastic SIR examples check their results against the functions or parameters their synthetic data were generated
+extreme-value, cure-model, causal-effect, missing-data and stochastic SIR examples check their results against the functions or parameters their synthetic data were generated
 from, and the SMC model comparison checks its evidence against the closed form.
 
 | Example | Question |
@@ -23,6 +23,7 @@ from, and the SMC model comparison checks its evidence against the closed form.
 | `drift_diffusion` | How fast do people take in evidence, and does an easier task speed it up? A hierarchical drift-diffusion model of response times |
 | `extreme_values` | How high will the river rise once in a hundred years? A generalized extreme value model of annual maxima, with return levels |
 | `causal_effect` | Does a treatment work, when sicker people are more likely to take it? Conditioning against intervening, and the average treatment effect |
+| `missing_data` | What do the data say when a fifth of the outcomes and a tenth of a covariate are missing? A regression with the gaps imputed |
 | `cure_model` | What fraction of patients does a treatment cure, and how soon do the others relapse? A mixture cure model of censored survival times |
 | `gp_regression` | What smooth function produced noisy measurements? Gaussian process hyperparameters by NUTS, exactly and with an HSGP |
 | `stochastic_volatility` | How volatile are daily returns, and how persistent is the volatility? A scan over latent innovations |
@@ -189,6 +190,21 @@ over 4 chains of 1,000 draws.
 
 ```rust,ignore
 {{#include ../../keanu/examples/causal_effect.rs}}
+```
+
+## Missing data
+
+A Gaussian regression of an outcome on two covariates, on 200 simulated rows, with a fifth of the outcomes and a
+tenth of the first covariate missing completely at random. The first covariate is given a normal distribution with
+unknown mean and scale, so that its gaps have a prior, and both it and the outcome are observed with
+[`observe_masked`](building-models.md#missing-observations) from values with NaN in the gaps. The default sampler is
+then NUTS over the coefficients, the scales and both sets of missing values. The test checks that the 90% intervals
+of the three coefficients and σ cover the true values with R-hat below 1.01 over 4 chains of 1,000 draws, that the
+imputed outcomes' posterior means correlate with the held-out values above 0.9 (the imputed covariate's above 0.8),
+and that the observed outcomes stay in place.
+
+```rust,ignore
+{{#include ../../keanu/examples/missing_data.rs}}
 ```
 
 ## Gaussian process regression

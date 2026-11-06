@@ -109,8 +109,9 @@ pub mod prelude {
     pub use crate::distributions::{Adjacency, KeanuRng};
     pub use crate::graph::{
         BoolVar, Bym2, CustomDistribution, CustomGradient, DType, DoubleVar, Graph, GraphBuilder,
-        HessianMethod, IntVar, Intervened, Marginalized, Model, NodeId, Parameterisation, Space,
-        State, Support, Value, Var, intervene, marginalize,
+        HessianMethod, Imputed, IntVar, Intervened, Marginalized, MaskedObservation, Model, NodeId,
+        Parameterisation, Space, State, Support, Value, Var, intervene, marginalize,
+        observe_masked,
     };
     pub use crate::tensor::{BoolTensor, DoubleTensor, IntTensor, SparseMatrix, Tensor};
     pub use crate::{Error, Result};

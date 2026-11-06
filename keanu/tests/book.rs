@@ -2207,3 +2207,48 @@ fn interventions() -> keanu::Result<()> {
     // ANCHOR_END: intervene
     Ok(())
 }
+
+#[test]
+fn missing_observations() -> keanu::Result<()> {
+    // ANCHOR: observe_masked
+    // a regression of y on a covariate x, where some of each are missing (NaN)
+    let x_recorded = vec![0.2, f64::NAN, 1.1, 0.7, -0.4, 1.6];
+    let y_recorded = vec![0.9, 0.1, f64::NAN, 1.8, f64::NAN, 3.5];
+    let b = GraphBuilder::new();
+    // x is given a distribution, so its missing elements have one to be imputed from
+    let x = b.gaussian_with_shape(&[6], 0.5, 1.0).label("x");
+    let slope = b.gaussian(0.0, 2.0).label("slope");
+    let y = b.gaussian_with_shape(&[6], slope * x, 0.5).label("y");
+    b.set_value(slope, DoubleTensor::scalar(1.0));
+    let (x, y) = (x.id(), y.id());
+    let (graph, state) = b.build()?;
+
+    let (graph, state, imputed) = observe_masked(
+        &graph,
+        &state,
+        &[
+            MaskedObservation::with_nan_missing(x, DoubleTensor::vector(x_recorded)),
+            MaskedObservation::with_nan_missing(y, DoubleTensor::vector(y_recorded)),
+        ],
+    )?;
+    let y = imputed.get(y).unwrap();
+    assert_eq!(y.missing_indices(), &[2, 4]);
+    let model = Model::new(graph, &state)?;
+    // the latents are the slope, x_missing and y_missing, all continuous: NUTS samples them
+    assert_eq!(model.latents().len(), 3);
+    let mut work = state.clone();
+    let samples = Sampler::for_model(&model, &state).sample(
+        &model,
+        &mut work,
+        &[y.node()],
+        200,
+        SamplingOptions::default().with_drop(100),
+        &mut KeanuRng::seed_from_u64(1),
+    )?;
+    // each draw of `y` holds the observed outcomes and the imputed ones in their places
+    let draw = &samples.f64(y.node()).unwrap().as_slice()[0];
+    assert_eq!(draw.as_slice()[0], 0.9);
+    assert!(draw.as_slice()[2].is_finite());
+    // ANCHOR_END: observe_masked
+    Ok(())
+}

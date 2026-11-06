@@ -1,6 +1,6 @@
-//! Machinery shared by the graph rewrites ([`marginalize`](crate::marginalize) and [`intervene`](crate::intervene)): a
-//! writer that builds the new graph's nodes with their initial values and observations, and the old-to-new id mapping
-//! helpers.
+//! Machinery shared by the graph rewrites ([`marginalize`](crate::marginalize), [`intervene`](crate::intervene) and
+//! [`observe_masked`](crate::observe_masked)): a writer that builds the new graph's nodes with their initial values
+//! and observations, and the old-to-new id mapping helpers.
 
 use crate::error::{GraphError, Result};
 use crate::graph::{Graph, Node, NodeId, Parents};

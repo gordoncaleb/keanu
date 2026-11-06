@@ -49,6 +49,8 @@ mod gaussian_mixture;
 mod gp_regression;
 #[path = "../examples/hmm.rs"]
 mod hmm;
+#[path = "../examples/missing_data.rs"]
+mod missing_data;
 #[path = "../examples/multi_state.rs"]
 mod multi_state;
 #[path = "../examples/occupancy.rs"]
@@ -1334,4 +1336,45 @@ fn causal_effect_separates_conditioning_from_intervening() {
     // comparing the treated with the untreated overstates the effect almost threefold
     let naive = fit.conditional[1] - fit.conditional[0];
     assert!(naive > TRUE_EFFECT + 3.0, "naive difference {naive}");
+}
+
+#[test]
+fn missing_data_recovers_the_coefficients_and_the_held_out_outcomes() {
+    // a fifth of the outcomes and a tenth of a covariate missing at random: the coefficients' 90% intervals cover
+    // the truth, every quantity converges, and the imputed outcomes' posterior means track the held-out values
+    use missing_data::{TRUE_BETA, TRUE_SIGMA, correlation, posterior_mean};
+    let data = missing_data::data(missing_data::DATA_SEED);
+    let fit = missing_data::run(&data, 4, 1000, 1).unwrap();
+    let mut checks: Vec<(keanu::graph::NodeId, Vec<usize>, f64)> = TRUE_BETA
+        .iter()
+        .enumerate()
+        .map(|(i, &truth)| (fit.beta, vec![i], truth))
+        .collect();
+    checks.push((fit.sigma, vec![], TRUE_SIGMA));
+    for (node, index, truth) in checks {
+        let s = fit.chains.summarize(node, &index).unwrap();
+        assert!(
+            s.q5 < truth && truth < s.q95,
+            "{index:?}: 90% interval [{}, {}] misses {truth}",
+            s.q5,
+            s.q95
+        );
+        assert!(s.r_hat < 1.01, "{index:?}: R-hat {}", s.r_hat);
+    }
+    let pick = |values: &[f64], rows: &[usize]| rows.iter().map(|&i| values[i]).collect::<Vec<_>>();
+    let y = posterior_mean(&fit.chains, fit.y);
+    let r = correlation(&pick(&y, &data.y_missing), &pick(&data.y, &data.y_missing));
+    assert!(r > 0.9, "imputed outcomes correlate {r} with the truth");
+    // the observed elements are kept in place (their mean over the draws is exact up to rounding)
+    for (i, (&imputed, &truth)) in y.iter().zip(&data.y).enumerate() {
+        if !data.y_missing.contains(&i) {
+            assert_close(imputed, truth, 1e-9, "an observed outcome");
+        }
+    }
+    let x1 = posterior_mean(&fit.chains, fit.x1);
+    let r = correlation(
+        &pick(&x1, &data.x1_missing),
+        &pick(&data.x1, &data.x1_missing),
+    );
+    assert!(r > 0.8, "imputed covariate correlates {r} with the truth");
 }

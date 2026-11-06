@@ -499,6 +499,18 @@ Execution order: U1, U2, U3, U4, U5, U6, U7, U8, U9, U11, U10, U12, U13, then a 
   - discrete missing values via Gibbs;
   - a non-element-wise kind is rejected;
   - pointwise log-likelihood covers only observed elements.
+- **Implementation notes:**
+  - The API is a graph rewrite only, `observe_masked(&graph, &state, &[MaskedObservation])`, like `marginalize` and
+    `intervene`; there is no builder form (the builder can't return the record from `build`).
+  - The recombination is a `Gather` of `Concat(missing, observed)` by each element's slot rather than
+    `ScatterAdd`/`Where`: it works for f64, i64 and bool values alike and is differentiable in the missing part.
+  - A node with no element missing is simply observed (same node, same log probability); one with every element
+    missing has only the `<label>_missing` latent (flattened) and the recombining reshape.
+  - Accepted kinds: the element-wise kinds (including truncated, censored, zero-inflated, hurdle and transformed),
+    the Bernoulli and the categorical with their logit forms, with every parameter broadcasting to the node's shape;
+    `MixtureOf` (component axis on its weights) and multivariate kinds are rejected with `GraphError::CannotImpute`.
+  - The observed part is labelled `<label>_observed`, so pointwise log-likelihood points are named
+    `<label>_observed[j]`, with `ImputedNode::observed_indices` giving each one's original position.
 
 ---
 
