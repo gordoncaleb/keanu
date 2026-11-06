@@ -137,6 +137,37 @@ impl DistributionKind {
     }
 }
 
+impl DistributionKind {
+    /// Of a node of this kind with `count` parameters, which parameters [`finite_support`](Self::finite_support)
+    /// reads the values of: the count of a binomial (or its logit form) and a beta-binomial, the bounds of a
+    /// discrete uniform and of a truncation, and for a truncated, zero-inflated or hurdle kind the inner kind's own
+    /// (so nested kinds are followed: in a zero-inflated truncated Poisson, whose parameters are the rate, the
+    /// bounds and ψ, the bounds). The values set by the other parameters, or by the number of parameters (a
+    /// categorical's categories, an ordered logistic's cutpoints' shape), can't change. Everything false for a kind
+    /// without finitely many values.
+    pub(crate) fn support_parameters(&self, count: usize) -> Vec<bool> {
+        let mut reads = vec![false; count];
+        match self {
+            DistributionKind::Binomial | DistributionKind::BinomialLogit if count == 2 => {
+                reads[1] = true;
+            }
+            DistributionKind::BetaBinomial if count == 3 => reads[0] = true,
+            DistributionKind::UniformInt => reads.fill(true),
+            DistributionKind::Truncated(base) if count >= 2 => {
+                reads[..count - 2].copy_from_slice(&base.support_parameters(count - 2));
+                reads[count - 2..].fill(true);
+            }
+            DistributionKind::ZeroInflated(inner) | DistributionKind::Hurdle(inner)
+                if count >= 1 =>
+            {
+                reads[..count - 1].copy_from_slice(&inner.support_parameters(count - 1));
+            }
+            _ => {}
+        }
+        reads
+    }
+}
+
 /// A real bound as an integer, saturating (NaN as the largest, so a NaN bound gives no finite support).
 fn clamp_bound(x: f64) -> i64 {
     if x.is_nan() {

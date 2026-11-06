@@ -530,3 +530,72 @@ fn several_latents_are_marginalised_one_after_another() {
     // repeating a latent is an error
     assert!(marginalize(&graph, &state, &[coins[0], coins[0]]).is_err());
 }
+
+/// A latent bound of a truncated count inside a zero-inflated or hurdle kind (whose parameters are the truncated
+/// kind's, then ψ) moves the support, so marginalising is rejected naming the latent, as for a top-level
+/// truncation; it used to freeze the support at its value when marginalised.
+#[test]
+fn a_latent_bound_of_a_nested_truncation_is_rejected() {
+    for inflation in ["zero_inflated", "hurdle"] {
+        let b = GraphBuilder::new();
+        let ui = b.uniform_int(2, 9).label("ui");
+        b.set_value(ui, IntTensor::scalar(3));
+        let upper = ui.to_double();
+        let kind = DistributionKind::Truncated(std::sync::Arc::new(DistributionKind::Poisson));
+        let parameters = [b.scalar(3.0).id(), b.scalar(0.0).id(), upper.id()];
+        let z: keanu_graph::IntVar = match inflation {
+            "zero_inflated" => b.zero_inflated(kind, &parameters, 0.2),
+            _ => b.hurdle(kind, &parameters, 0.2),
+        };
+        let z = z.label("z");
+        b.set_value(z, IntTensor::scalar(1));
+        let y = b.gaussian(z.to_double(), 1.0);
+        b.observe(y, s(5.5));
+        let z = z.id();
+        let (graph, mut state) = b.build().unwrap();
+        evaluate(&graph, &mut state);
+        let error = marginalize(&graph, &state, &[z]).unwrap_err();
+        let GraphError::CannotMarginalize { node, .. } = &error else {
+            panic!("{inflation}: {error}");
+        };
+        assert!(node.contains("\"ui\""), "{inflation}: {error}");
+    }
+}
+
+/// The support of a binomial set by an observed count is fixed, even though the count's own rate is a latent:
+/// the walk for latents the support depends on stops at observed nodes. Marginalised, the log probability is the
+/// enumerated sum.
+#[test]
+fn a_support_set_by_an_observed_count_with_a_latent_rate_marginalises() {
+    let b = GraphBuilder::new();
+    let rate = b.gamma(2.0, 2.0).label("rate");
+    b.set_value(rate, s(3.5));
+    let n = b.poisson(rate).label("n");
+    b.observe(n, IntTensor::scalar(4));
+    let p = b.beta(2.0, 2.0).label("p");
+    b.set_value(p, s(0.3));
+    let z = b.binomial(p, n).label("z");
+    b.set_value(z, IntTensor::scalar(1));
+    let y = b.gaussian(z.to_double(), 1.0);
+    b.observe(y, s(2.5));
+    let z = z.id();
+    let (graph, mut state) = b.build().unwrap();
+    evaluate(&graph, &mut state);
+    let original = Model::new(graph.clone(), &state).unwrap();
+    let terms: Vec<f64> = (0..=4)
+        .map(|k| {
+            state
+                .set_and_cascade(&graph, z, IntTensor::scalar(k))
+                .unwrap();
+            original.log_prob(&state).unwrap()
+        })
+        .collect();
+    let (new_graph, new_state, _) = marginalize(&graph, &state, &[z]).unwrap();
+    let model = Model::new(new_graph, &new_state).unwrap();
+    assert_close_rel(
+        model.log_prob(&new_state).unwrap(),
+        log_sum_exp(&terms),
+        1e-12,
+        "log prob",
+    );
+}

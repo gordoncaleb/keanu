@@ -480,6 +480,11 @@ Work from `docs/plans/2026-11-05-001-feat-applied-modelling-gaps-plan.md`.
     kind puts at least half its mass at zero, and by rejection elsewhere (or where the inversion takes more than
     1000 steps), so hurdles over small rates (a Poisson with μ = 0.002, say) can be sampled; they failed after
     1000 rejected draws before. Sampling fails only where the inner kind has no mass above zero and ψ < 1.
+  - keanu-graph: `marginalize` finds the parameters that set a latent's values through nested kinds, so a
+    zero-inflated or hurdle truncated count whose bounds depend on a latent is rejected with `CannotMarginalize`
+    naming that latent (its values were fixed at those of the latent's value when marginalised, giving a wrong log
+    probability once the latent moved); and the search for latents those parameters depend on stops at observed
+    nodes, so a binomial whose count is an observed node with a latent rate is no longer rejected.
 
 ### Code review fixes
 

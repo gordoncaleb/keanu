@@ -199,8 +199,10 @@ impl MarginalizedLatent {
 /// A latent `z` of shape S can be marginalised when:
 ///
 /// - it is unobserved, with a Bernoulli, categorical (or one of their logit forms) or element-wise discrete
-///   distribution (a discrete uniform, binomial, beta-binomial, truncated count or zero-inflated binomial) whose elements all take the same finitely many values (at most
-///   [`MAX_MARGINALIZED_VALUES`]), fixed rather than depending on a latent;
+///   distribution (a discrete uniform, binomial, beta-binomial, truncated count or zero-inflated binomial) whose
+///   elements all take the same finitely many values (at most [`MAX_MARGINALIZED_VALUES`]), fixed rather than
+///   depending on a latent: no parameter that sets the values (a count, a discrete uniform's or truncation's
+///   bounds, also inside a zero-inflated or hurdle kind) may depend on a latent, except through an observed node;
 /// - every probabilistic node that depends on it through deterministic nodes (a "child") is observed and has an
 ///   element-wise log density (see [`GraphBuilder::log_density`](crate::GraphBuilder::log_density)), and no factor
 ///   or observed deterministic node depends on it;
@@ -811,13 +813,9 @@ fn support(
         }
         _ => {}
     }
-    // the parameters that set the support: the integer ones, and a truncation's bounds
-    let count = node.parents.len();
-    for (i, &p) in node.parents.iter().enumerate() {
-        let bound = matches!(kind, DistributionKind::Truncated(_)) && i + 2 >= count;
-        if graph[p].dtype != DType::I64 && !bound {
-            continue;
-        }
+    // the parameters whose values set the support, through nested kinds (a zero-inflated truncated count's bounds)
+    let reads = kind.support_parameters(node.parents.len());
+    for (&p, _) in node.parents.iter().zip(&reads).filter(|(_, read)| **read) {
         if let Some(l) = latent_ancestor(graph, state, p) {
             return Err(reject(
                 l,
@@ -853,7 +851,8 @@ fn support(
     Ok(first)
 }
 
-/// The first latent (unobserved probabilistic node) among `id` and its ancestors, if any.
+/// The first latent (unobserved probabilistic node) among `id` and its ancestors, if any. The walk stops at
+/// observed nodes, whose values are fixed whatever their parents' are.
 fn latent_ancestor(graph: &Graph, state: &State, id: NodeId) -> Option<NodeId> {
     let mut seen = vec![false; id.0 + 1];
     let mut stack = vec![id];
@@ -861,7 +860,10 @@ fn latent_ancestor(graph: &Graph, state: &State, id: NodeId) -> Option<NodeId> {
         if std::mem::replace(&mut seen[n.0], true) {
             continue;
         }
-        if graph[n].is_probabilistic() && !state.is_observed(n) {
+        if state.is_observed(n) {
+            continue;
+        }
+        if graph[n].is_probabilistic() {
             return Some(n);
         }
         stack.extend(graph[n].parents.iter().copied());
