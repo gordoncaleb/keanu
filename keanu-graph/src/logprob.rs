@@ -41,6 +41,9 @@ fn is_factor(graph: &Graph, id: NodeId) -> bool {
 
 fn kind(graph: &Graph, id: NodeId) -> Result<&DistributionKind> {
     match graph.node(id).ok_or(GraphError::UnknownNode(id))?.op() {
+        Op::Distribution(op) if op.kind.is_simulator() => {
+            Err(GraphError::NoLikelihood(graph.describe(id)))
+        }
         Op::Distribution(op) => Ok(&op.kind),
         _ => Err(GraphError::InvalidValue(format!(
             "node #{} is not probabilistic, so it has no log probability",

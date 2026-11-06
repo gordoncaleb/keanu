@@ -280,6 +280,7 @@ impl MetropolisHastings {
         rng: &mut KeanuRng,
     ) -> Result<MetropolisHastingsSampler<'m>> {
         check_nodes(model.graph(), nodes)?;
+        crate::support::check_likelihood(model)?;
         if model.latents().is_empty() {
             return Err(AlgorithmError::NoLatents);
         }

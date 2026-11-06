@@ -12,6 +12,7 @@ mod nested;
 mod ode;
 mod scan;
 mod shape;
+mod simulator;
 mod wrappers;
 
 pub(crate) use distribution::LogProbGradientParts;
@@ -23,6 +24,7 @@ pub use nested::Nested;
 pub use ode::OdeBody;
 pub use scan::ScanBody;
 pub(crate) use shape::{check_element_count, output_type};
+pub use simulator::{Simulator, SimulatorFn};
 
 use crate::error::Result;
 use crate::value::{DType, Value};
@@ -588,6 +590,18 @@ impl Op {
     /// True for factor nodes, whose value is a term of the joint log probability (see [`Op::Factor`]).
     pub fn is_factor(&self) -> bool {
         matches!(self, Op::Factor)
+    }
+
+    /// True for simulator nodes: probabilistic nodes without a likelihood (see
+    /// [`DistributionKind::Simulator`]).
+    pub fn is_simulator(&self) -> bool {
+        matches!(
+            self,
+            Op::Distribution(DistributionOp {
+                kind: DistributionKind::Simulator(_),
+                ..
+            })
+        )
     }
 }
 

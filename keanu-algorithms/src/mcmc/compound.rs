@@ -241,6 +241,7 @@ impl Compound {
     /// Checks that the steps' latents are latents of the model, don't overlap and cover every latent.
     fn check_blocks(&self, model: &Model) -> Result<()> {
         let graph = model.graph();
+        crate::support::check_likelihood(model)?;
         if self.steps.is_empty() {
             return Err(AlgorithmError::InvalidArgument(
                 "a compound sampler needs at least one step".into(),

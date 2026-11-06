@@ -33,6 +33,7 @@ fn distribution_name(kind: &DistributionKind) -> String {
     match kind {
         DistributionKind::Kde(_) => "Kde".into(),
         DistributionKind::Custom(_) => "Custom".into(),
+        DistributionKind::Simulator(_) => "Simulator".into(),
         // the other kinds are unit variants, which format as their name
         kind => format!("{kind:?}"),
     }

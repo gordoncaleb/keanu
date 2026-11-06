@@ -8,7 +8,7 @@
 //! Loading checks the model against [`LoadOptions`], whose defaults protect against untrusted files describing
 //! enormous nodes or practically endless scans; [`load_protobuf_with`] and [`load_json_with`] take other limits.
 //!
-//! Every operation and distribution can be saved except lambda nodes and custom distributions, which return
+//! Every operation and distribution can be saved except lambda nodes, custom distributions and simulators, which return
 //! [`IoError::NotSaveable`]. Files written by a newer version of the format return
 //! [`IoError::UnsupportedVersion`].
 

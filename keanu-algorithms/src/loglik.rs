@@ -177,6 +177,7 @@ struct Layout {
 impl Layout {
     /// The layout for samples like `first`, whose first draw gives the shape of each node's terms.
     fn new(model: &Model, state: &State, first: &NetworkSamples) -> Result<Self> {
+        crate::support::check_likelihood(model)?;
         let graph = model.graph();
         let sampled = first.nodes();
         let observed: Vec<NodeId> = model

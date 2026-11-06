@@ -132,6 +132,7 @@ impl SimulatedAnnealing {
         rng: &mut KeanuRng,
     ) -> Result<MapEstimate> {
         schedule.validate()?;
+        crate::support::check_likelihood(model)?;
         let latents = model.latents();
         if latents.is_empty() {
             return Err(AlgorithmError::NoLatents);

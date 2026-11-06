@@ -78,6 +78,11 @@ impl Node {
     pub fn is_factor(&self) -> bool {
         self.op.is_factor()
     }
+    /// Whether the node is a simulator, a probabilistic node without a likelihood (see
+    /// [`Simulator`](crate::op::Simulator)).
+    pub fn is_simulator(&self) -> bool {
+        self.op.is_simulator()
+    }
 }
 
 /// A computation graph. Immutable once built, and `Send + Sync`, so one graph can be shared by many [`State`]s

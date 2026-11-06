@@ -166,8 +166,13 @@ fn save_op(graph: &Graph, id: NodeId) -> Result<P> {
             message: message.clone(),
         }),
         Op::Distribution(distribution) => {
-            let saved = distribution_type(&distribution.kind)
-                .ok_or_else(|| unsupported("a custom distribution"))?;
+            let saved = distribution_type(&distribution.kind).ok_or_else(|| {
+                unsupported(if distribution.kind.is_simulator() {
+                    "a simulator"
+                } else {
+                    "a custom distribution"
+                })
+            })?;
             P::Distribution(proto::Distribution {
                 kind: saved.kind,
                 shape: dims(&distribution.shape),

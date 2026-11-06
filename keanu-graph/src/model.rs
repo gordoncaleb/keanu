@@ -133,6 +133,8 @@ pub struct Model {
     probabilistic_observed: Vec<NodeId>,
     /// The latents holding f64 values.
     continuous: Vec<NodeId>,
+    /// The simulator nodes, latent or observed.
+    simulators: Vec<NodeId>,
 }
 
 impl Model {
@@ -175,6 +177,10 @@ impl Model {
             .copied()
             .filter(|&id| graph[id].dtype() == DType::F64)
             .collect();
+        let simulators = graph
+            .probabilistic()
+            .filter(|&id| graph[id].is_simulator())
+            .collect();
         Ok(Self {
             graph,
             latents,
@@ -186,6 +192,7 @@ impl Model {
             probabilistic_joint,
             probabilistic_observed,
             continuous,
+            simulators,
         })
     }
 
@@ -221,6 +228,22 @@ impl Model {
     /// The factor nodes (see [`Op::Factor`](crate::op::Op::Factor)), in topological order.
     pub fn factors(&self) -> &[NodeId] {
         &self.factors
+    }
+
+    /// The simulator nodes (see [`Simulator`](crate::op::Simulator)), latent or observed, in topological order.
+    /// They have no likelihood, so the model's log probability can't be evaluated if there are any; only
+    /// approximate Bayesian computation can infer their parameters.
+    pub fn simulators(&self) -> &[NodeId] {
+        &self.simulators
+    }
+
+    /// [`GraphError::NoLikelihood`], naming the first simulator node, if the model has any: for algorithms that
+    /// need the model's log probability.
+    pub fn check_likelihood(&self) -> Result<()> {
+        match self.simulators.first() {
+            Some(&id) => Err(GraphError::NoLikelihood(self.graph.describe(id))),
+            None => Ok(()),
+        }
     }
 
     /// The node with this label.

@@ -74,6 +74,12 @@ pub enum GraphError {
     /// was reached, the step size underflowed or the state became non-finite. The model has no usable value there,
     /// so models and inference algorithms treat it as an impossible point (see [`Self::is_impossible_point`]).
     SolverFailed(SolverFailed),
+    /// A simulator node's function failed, or returned a value of the wrong type or shape (see
+    /// [`Simulator`](crate::op::Simulator)).
+    Simulator(String),
+    /// A log probability was needed of a simulator node, which has none: the message names the node. Infer a
+    /// simulator's parameters by approximate Bayesian computation instead (`keanu_algorithms::abc`).
+    NoLikelihood(String),
 }
 
 impl GraphError {
@@ -128,6 +134,12 @@ impl fmt::Display for GraphError {
                 reason,
             } => write!(f, "cannot marginalise {latent}: {node} {reason}"),
             Self::SolverFailed(failed) => write!(f, "{failed}"),
+            Self::Simulator(m) => write!(f, "simulator failed: {m}"),
+            Self::NoLikelihood(node) => write!(
+                f,
+                "{node} is a simulator node, which has no likelihood; infer its parameters by approximate \
+                 Bayesian computation (Smc::sample_abc with an Abc likelihood)"
+            ),
         }
     }
 }

@@ -463,6 +463,7 @@ impl Nuts {
         }
         check_nodes(model.graph(), nodes)?;
         check_nodes(model.graph(), latents)?;
+        crate::support::check_likelihood(model)?;
         evaluate_all(model.graph(), state, rng)?;
 
         let param = Parameterisation::for_latents(model, state, latents, self.space)?;

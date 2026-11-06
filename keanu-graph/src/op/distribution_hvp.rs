@@ -210,6 +210,7 @@ impl DistributionKind {
                 "the {} distribution",
                 self.name()
             ))),
+            K::Simulator(_) => Err(GraphError::NoLikelihood("the node".into())),
         }
     }
 }

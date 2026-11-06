@@ -2,10 +2,10 @@
 
 use crate::builder::GraphBuilder;
 use crate::graph::NodeId;
-use crate::op::{CustomDistribution, DistributionKind};
+use crate::op::{CustomDistribution, DistributionKind, Simulator};
 use crate::vars::{BoolVar, DoubleVar, IntVar, IntoDoubleVar, IntoIntVar, Var};
 use crate::{GraphError, Value};
-use keanu_distributions::Kde;
+use keanu_distributions::{Kde, KeanuRng};
 use keanu_tensor::DoubleTensor;
 use std::sync::Arc;
 
@@ -203,6 +203,49 @@ impl GraphBuilder {
                 ),
             });
         }
+        V::wrap(self, self.distribution(kind, Some(shape), parameters))
+    }
+
+    /// A simulator node (see [`Simulator`]): a probabilistic node whose value, of the given shape, is drawn by
+    /// `function` from its parameters' values (the given nodes, in order) and a random number generator, like PyMC's
+    /// `pm.Simulator`. The handle type sets the value type (`DoubleVar`, `IntVar` or `BoolVar`).
+    ///
+    /// The node has no likelihood. It can be sampled from its prior (forward sampling, prior and posterior
+    /// predictive draws) and observed; inferring its parameters from an observation needs approximate Bayesian
+    /// computation (`keanu_algorithms::abc`), and every other inference algorithm rejects a model with a simulator
+    /// node. The function must be thread safe, as parallel chains call it at once, and return a value of the
+    /// node's type and shape (anything else is [`GraphError::Simulator`] when it is sampled). A graph with a
+    /// simulator node can't be saved.
+    ///
+    /// ```
+    /// use keanu_distributions::KeanuRng;
+    /// use keanu_graph::{DoubleVar, GraphBuilder, Value};
+    /// use keanu_tensor::DoubleTensor;
+    ///
+    /// // 10 draws from N(mu, 1), simulated by hand
+    /// let b = GraphBuilder::new();
+    /// let mu = b.gaussian(0.0, 5.0);
+    /// let data: DoubleVar = b.simulator(&[mu.id()], &[10], |parameters: &[&Value], rng: &mut KeanuRng| {
+    ///     let mu = parameters[0].as_f64().ok_or("mu is f64")?.as_slice()[0];
+    ///     let draws = (0..10).map(|_| mu + rng.next_gaussian()).collect();
+    ///     Ok(Value::F64(DoubleTensor::vector(draws)))
+    /// });
+    /// let data = data.id();
+    /// let (graph, mut state) = b.build()?;
+    /// state.lazy_eval(&graph, &[data], &mut KeanuRng::seed_from_u64(1))?;
+    /// assert_eq!(state.f64(data).unwrap().shape(), &[10]);
+    /// # Ok::<(), keanu_graph::GraphError>(())
+    /// ```
+    pub fn simulator<'b, V: Var<'b>>(
+        &'b self,
+        parameters: &[NodeId],
+        shape: &[usize],
+        function: impl Fn(&[&Value], &mut KeanuRng) -> std::result::Result<Value, String>
+        + Send
+        + Sync
+        + 'static,
+    ) -> V {
+        let kind = DistributionKind::Simulator(Arc::new(Simulator::new(V::DTYPE, function)));
         V::wrap(self, self.distribution(kind, Some(shape), parameters))
     }
 

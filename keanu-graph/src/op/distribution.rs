@@ -156,6 +156,12 @@ pub enum DistributionKind {
     /// A user-defined distribution; its parameters are whatever nodes it was given. Support: whatever
     /// [`CustomDistribution::support`] returns.
     Custom(Arc<dyn CustomDistribution>),
+    /// A simulator: its value is drawn by a user function of its parameters (whatever nodes it was given) and has
+    /// no likelihood, so its log probability is [`GraphError::NoLikelihood`]. It can be sampled and observed, and
+    /// its parameters inferred by approximate Bayesian computation. Support: real for f64 values, discrete
+    /// otherwise. See [`Simulator`](super::Simulator) and
+    /// [`GraphBuilder::simulator`](crate::GraphBuilder::simulator).
+    Simulator(Arc<super::Simulator>),
     /// The base distribution restricted to `[lower, upper]` and renormalised by the probability it gives that
     /// range. Parameters: the base's parameters, then `lower`, `upper` (f64, either may be infinite). Support: the
     /// base's support intersected with the bounds (discrete for a discrete base). See
@@ -267,6 +273,12 @@ pub trait CustomDistribution: Send + Sync + std::fmt::Debug {
     }
 }
 
+/// The error for the log probability of a simulator, which has none. The node is named where it is known
+/// ([`node_log_prob`](crate::node_log_prob) and the model's log probabilities).
+fn no_likelihood() -> GraphError {
+    GraphError::NoLikelihood("the node".into())
+}
+
 /// The gradient of a [`CustomDistribution`]'s log probability.
 #[derive(Debug, Clone, Default)]
 pub struct CustomGradient {
@@ -345,7 +357,8 @@ macro_rules! distributions {
                     DistributionKind::Kde(_) => Some(Cow::Borrowed(&[])),
                     DistributionKind::Categorical
                     | DistributionKind::CategoricalLogit
-                    | DistributionKind::Custom(_) => None,
+                    | DistributionKind::Custom(_)
+                    | DistributionKind::Simulator(_) => None,
                     nested_kinds!() => {
                         let (nested, inner) = self.nested_parts();
                         nested.parameter_types(inner)
@@ -354,7 +367,7 @@ macro_rules! distributions {
             }
 
             /// The parameter names, in parent order (e.g. `["mu", "sigma"]` for a Gaussian), or None for a variable
-            /// number of parameters (Categorical, CategoricalLogit, Custom). A kind built around another one has its
+            /// number of parameters (Categorical, CategoricalLogit, Custom, Simulator). A kind built around another one has its
             /// base's names followed by its own (`lower` and `upper` for a truncated or censored kind, `weights` for
             /// a mixture, `initial` and `transition` for a hidden Markov model, `psi` for a zero-inflated or hurdle
             /// kind).
@@ -364,7 +377,8 @@ macro_rules! distributions {
                     DistributionKind::Kde(_) => Some(Cow::Borrowed(&[])),
                     DistributionKind::Categorical
                     | DistributionKind::CategoricalLogit
-                    | DistributionKind::Custom(_) => None,
+                    | DistributionKind::Custom(_)
+                    | DistributionKind::Simulator(_) => None,
                     nested_kinds!() => {
                         let (nested, inner) = self.nested_parts();
                         nested.parameter_names(inner)
@@ -440,6 +454,7 @@ macro_rules! distributions {
                     DistributionKind::Kde(_) => DType::F64,
                     DistributionKind::Categorical | DistributionKind::CategoricalLogit => DType::I64,
                     DistributionKind::Custom(c) => c.value_type(),
+                    DistributionKind::Simulator(s) => s.value_type(),
                     nested_kinds!() => self.nested_parts().1.value_type(),
                 }
             }
@@ -451,6 +466,7 @@ macro_rules! distributions {
                 "categorical",
                 "categorical_logit",
                 "custom",
+                "simulator",
                 "truncated",
                 "censored",
                 "mixture",
@@ -496,6 +512,7 @@ macro_rules! distributions {
                     DistributionKind::Categorical => "categorical",
                     DistributionKind::CategoricalLogit => "categorical_logit",
                     DistributionKind::Custom(_) => "custom",
+                    DistributionKind::Simulator(_) => "simulator",
                     nested_kinds!() => self.nested_parts().0.name(),
                 }
             }
@@ -513,6 +530,10 @@ macro_rules! distributions {
                     DistributionKind::Kde(_) => Support::Real,
                     DistributionKind::Categorical | DistributionKind::CategoricalLogit => Support::Discrete,
                     DistributionKind::Custom(c) => c.support(parameters).map_err(GraphError::Custom)?,
+                    DistributionKind::Simulator(s) => match s.value_type() {
+                        DType::F64 => Support::Real,
+                        DType::I64 | DType::Bool => Support::Discrete,
+                    },
                     nested_kinds!() => {
                         let (nested, inner) = self.nested_parts();
                         nested.support(inner, parameters)?
@@ -560,6 +581,7 @@ macro_rules! distributions {
                         }
                         value
                     }
+                    DistributionKind::Simulator(s) => s.simulate(shape, parameters, rng)?,
                     nested_kinds!() => {
                         let (nested, inner) = self.nested_parts();
                         nested.sample(inner, shape, parameters, rng)?
@@ -583,6 +605,7 @@ macro_rules! distributions {
                         d::CategoricalLogit::new(f64_tensors(parameters)?)?.log_prob(value.i64()?)?.sum()
                     }
                     DistributionKind::Custom(c) => c.log_prob(value, parameters).map_err(GraphError::Custom)?,
+                    DistributionKind::Simulator(_) => return Err(no_likelihood()),
                     nested_kinds!() => {
                         let (nested, inner) = self.nested_parts();
                         nested.log_prob(inner, value, parameters, false)?.0
@@ -611,6 +634,7 @@ macro_rules! distributions {
                     DistributionKind::Custom(c) => {
                         DoubleTensor::scalar(c.log_prob(value, parameters).map_err(GraphError::Custom)?)
                     }
+                    DistributionKind::Simulator(_) => return Err(no_likelihood()),
                     nested_kinds!() => {
                         let (nested, inner) = self.nested_parts();
                         nested.log_prob_terms(inner, value, parameters)?
@@ -649,6 +673,7 @@ macro_rules! distributions {
                             None => no_gradient(parameters.len()),
                         }
                     }
+                    DistributionKind::Simulator(_) => return Err(no_likelihood()),
                     // the gradient even where the log probability is impossible
                     nested_kinds!() => {
                         let (nested, inner) = self.nested_parts();
@@ -693,7 +718,8 @@ macro_rules! distributions {
                     DistributionKind::Kde(_)
                     | DistributionKind::Categorical
                     | DistributionKind::CategoricalLogit
-                    | DistributionKind::Custom(_) => {
+                    | DistributionKind::Custom(_)
+                    | DistributionKind::Simulator(_) => {
                         let log_prob = self.log_prob(value, parameters)?;
                         if is_impossible(log_prob) {
                             return Ok((log_prob, None));
@@ -965,6 +991,11 @@ distributions! {
 }
 
 impl DistributionKind {
+    /// True for a [simulator](Self::Simulator), which has no likelihood.
+    pub fn is_simulator(&self) -> bool {
+        matches!(self, Self::Simulator(_))
+    }
+
     /// The error for a distribution without a CDF used where one is needed.
     fn no_cdf(&self) -> GraphError {
         GraphError::InvalidNode {
@@ -1089,7 +1120,7 @@ impl DistributionOp {
             op: kind.name(),
             message,
         };
-        if let DistributionKind::Custom(_) = kind {
+        if let DistributionKind::Custom(_) | DistributionKind::Simulator(_) = kind {
             return Ok(Shape::from_slice(requested.unwrap_or(&[])));
         }
         if let Some((nested, inner)) = kind.nested() {

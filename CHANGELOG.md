@@ -436,6 +436,28 @@ Work from `docs/plans/2026-11-05-001-feat-applied-modelling-gaps-plan.md`.
   (observed nodes and factors). Tests check the log evidence of a conjugate Gaussian to within 0.1, a Bayes factor,
   a symmetric bimodal posterior's modes in proportion, and mixed discrete models against exact posteriors, and the
   guide's sampling chapter has a section on SMC.
+- keanu-graph, keanu-io, keanu-algorithms: **simulator nodes and SMC-ABC**. `GraphBuilder::simulator` makes a
+  probabilistic node (`DistributionKind::Simulator`, `op::Simulator`, `op::SimulatorFn`) whose value of a given
+  shape is drawn by a thread-safe user function of its parameters' values and a `KeanuRng`, like PyMC's
+  `pm.Simulator`; it can be sampled from its prior (forward sampling, prior and posterior predictive draws) and
+  observed, but has no likelihood: its log probability is the new `GraphError::NoLikelihood` naming the node, and a
+  function that fails or returns the wrong type or shape is the new `GraphError::Simulator`. `Model::simulators`
+  lists a model's simulator nodes and `Model::check_likelihood` fails if there are any; every inference algorithm
+  but ABC (NUTS, block NUTS, Metropolis–Hastings, Gibbs, `DiscreteMetropolis`, compound and automatic samplers,
+  simulated annealing, the gradient and BOBYQA optimizers, Laplace, ADVI, Pathfinder, the particle filter, SMC on
+  the model's likelihood, and the pointwise log likelihood) rejects such a model with that error before it starts,
+  and saving one fails with `IoError::NotSaveable` ("a simulator"). The new `abc` module (`Abc`, `AbcKernel`,
+  `SummaryStatistics`, `SummaryFn`; the first three also in the crate root and the `keanu` prelude) is a
+  `TemperedLikelihood` that simulates each observed simulator node at a particle and scores its summary statistics
+  (the data, sorted data, mean, median, variance, or a user function) against the observation's with a Gaussian
+  (−½‖Δ/ε‖², the default) or Laplace (−‖Δ/ε‖₁) kernel, with one ε or one per statistic, plus the exact log
+  likelihood of the other observed nodes and factors; `Smc::sample_abc` runs it. As in PyMC, ε is fixed and SMC's
+  tempering raises β to 1, each particle keeps the kernel value it was accepted with (a pseudo-marginal mutation),
+  and the reported evidence is of the unnormalised kernel. `TemperedLikelihood` gained `check`, which by default
+  rejects models with simulator nodes. ABC needs continuous latents only (discrete latents are mutated over their
+  Markov blankets, where a simulator has no terms). On a Gaussian simulator with the mean as statistic, the ABC
+  posterior's mean and variance and the ABC evidence match their closed forms for ε of 1, 0.3 and 0.05, and the
+  posterior approaches the exact one as ε shrinks.
 
 ### Code review fixes
 

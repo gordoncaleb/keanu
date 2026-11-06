@@ -265,6 +265,7 @@ impl ParticleFilter {
         rng: &mut KeanuRng,
     ) -> Result<Vec<Particle>> {
         self.validate()?;
+        crate::support::check_likelihood(model)?;
         let graph = model.graph();
         // every node needs a value so particles can sample given their parents
         evaluate_all(graph, state, rng)?;

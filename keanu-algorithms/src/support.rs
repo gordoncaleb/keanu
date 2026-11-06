@@ -26,8 +26,16 @@ pub(crate) fn node_name(graph: &Graph, id: NodeId) -> String {
     }
 }
 
-/// Gradient based algorithms need at least one latent, and only continuous ones.
+/// [`GraphError::NoLikelihood`] if the model has a simulator node: every algorithm but approximate Bayesian
+/// computation needs the model's likelihood.
+pub(crate) fn check_likelihood(model: &Model) -> Result<()> {
+    Ok(model.check_likelihood()?)
+}
+
+/// Gradient based algorithms need a likelihood ([`check_likelihood`]), at least one latent, and only continuous
+/// ones.
 pub(crate) fn check_latents(model: &Model) -> Result<()> {
+    check_likelihood(model)?;
     if model.latents().is_empty() {
         return Err(AlgorithmError::NoLatents);
     }

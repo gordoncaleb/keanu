@@ -200,6 +200,7 @@ fn check_discrete_latents(
     step: &str,
 ) -> Result<Vec<Target>> {
     let graph = model.graph();
+    crate::support::check_likelihood(model)?;
     if nodes.is_empty() {
         return Err(AlgorithmError::InvalidArgument("no nodes to sample".into()));
     }

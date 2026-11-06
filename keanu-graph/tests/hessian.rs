@@ -1927,11 +1927,12 @@ fn every_distribution_kind_matches_finite_differences_of_the_gradient() {
         kinds_of(&model, &mut kinds);
     }
     // every kind but the custom one, which has no second-order rule of its own (see
-    // a_distribution_needs_a_rule_only_where_it_depends_on_the_latents)
+    // a_distribution_needs_a_rule_only_where_it_depends_on_the_latents), and the simulator, which has no
+    // likelihood
     let missing: Vec<&str> = DistributionKind::NAMES
         .iter()
         .copied()
-        .filter(|&k| k != "custom" && !kinds.contains(k))
+        .filter(|&k| k != "custom" && k != "simulator" && !kinds.contains(k))
         .collect();
     assert!(
         missing.is_empty(),

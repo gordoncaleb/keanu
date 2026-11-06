@@ -23,7 +23,7 @@ pub enum IoError {
         /// What is wrong.
         message: String,
     },
-    /// A node that can't be saved (a lambda or a custom distribution), or a value that doesn't fit the format.
+    /// A node that can't be saved (a lambda, a custom distribution or a simulator), or a value that doesn't fit the format.
     NotSaveable(String),
     /// The loaded graph is invalid.
     Graph(GraphError),

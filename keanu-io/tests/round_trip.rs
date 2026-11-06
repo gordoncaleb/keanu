@@ -952,6 +952,29 @@ fn nodes_without_a_saved_form_are_reported() {
             "{error}"
         );
     }
+
+    // a simulator, observed
+    let b = GraphBuilder::new();
+    let mu = b.gaussian(0.0, 1.0);
+    let data: keanu_graph::DoubleVar =
+        b.simulator(&[mu.id()], &[2], |p: &[&Value], rng: &mut KeanuRng| {
+            let mu = p[0].as_f64().ok_or("f64")?.as_slice()[0];
+            Ok(Value::F64(DoubleTensor::vector(vec![
+                mu + rng.next_gaussian(),
+                mu + rng.next_gaussian(),
+            ])))
+        });
+    b.observe(data, DoubleTensor::vector(vec![0.5, 1.5]));
+    let (graph, state) = b.build().unwrap();
+    for error in [
+        save_protobuf(&graph, &state, &Metadata::new()).unwrap_err(),
+        save_json(&graph, &state, &Metadata::new()).unwrap_err(),
+    ] {
+        assert!(
+            matches!(&error, IoError::NotSaveable(m) if m.contains("a simulator (node 3)")),
+            "{error}"
+        );
+    }
 }
 
 // ----- the golden models -----

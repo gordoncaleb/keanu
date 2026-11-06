@@ -74,6 +74,7 @@ pub use error::{Error, Result};
 
 /// The types most programs need.
 pub mod prelude {
+    pub use crate::algorithms::abc::{Abc, AbcKernel, SummaryStatistics};
     pub use crate::algorithms::export::CmdStanCsv;
     pub use crate::algorithms::forward::ForwardSampler;
     pub use crate::algorithms::laplace::{Laplace, LaplaceResult};

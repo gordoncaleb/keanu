@@ -86,6 +86,17 @@ pub trait TemperedLikelihood: Sync {
         let _ = model;
         None
     }
+
+    /// Checks that this likelihood can be used with the model, before a run starts. By default, that the model has
+    /// no [simulator](keanu_graph::op::Simulator) nodes, whose likelihood can't be evaluated
+    /// ([`GraphError::NoLikelihood`]); an approximate likelihood for them ([`Abc`](crate::abc::Abc)) overrides it.
+    ///
+    /// # Errors
+    ///
+    /// An [`AlgorithmError`] saying why the likelihood can't be used.
+    fn check(&self, model: &Model) -> Result<()> {
+        crate::support::check_likelihood(model)
+    }
 }
 
 /// The model's log likelihood ([`Model::log_likelihood`]): the observed nodes' log probability terms and the
@@ -333,7 +344,9 @@ impl Smc {
     ///   model has discrete latents and `likelihood` has no [`model_terms`](TemperedLikelihood::model_terms), no
     ///   particle drawn from the prior where the model can be evaluated could be found in 1000 attempts, every
     ///   particle has zero likelihood, or β did not reach 1 in [`max_stages`](Self::max_stages) stages;
-    /// - [`AlgorithmError::Graph`] if a node is not in the graph or the model can't be evaluated.
+    /// - [`AlgorithmError::Graph`] if a node is not in the graph or the model can't be evaluated
+    ///   ([`GraphError::NoLikelihood`] if it has a simulator node and `likelihood` is not [`Abc`](crate::abc::Abc));
+    /// - any error from the likelihood's [`check`](TemperedLikelihood::check).
     pub fn run<L: TemperedLikelihood + ?Sized>(
         &self,
         model: &Model,
@@ -343,6 +356,7 @@ impl Smc {
         rng: &mut KeanuRng,
     ) -> Result<SmcRun> {
         self.check_settings()?;
+        likelihood.check(model)?;
         if model.latents().is_empty() {
             return Err(AlgorithmError::NoLatents);
         }
