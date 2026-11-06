@@ -361,13 +361,13 @@ impl Compound {
 }
 
 /// Which kind of step suits a discrete latent.
-enum DiscreteChoice {
+pub(crate) enum DiscreteChoice {
     Gibbs,
     Walk,
     MetropolisHastings,
 }
 
-fn discrete_step_for(graph: &Graph, state: &State, id: NodeId) -> DiscreteChoice {
+pub(crate) fn discrete_step_for(graph: &Graph, state: &State, id: NodeId) -> DiscreteChoice {
     let integer = graph[id].dtype() == DType::I64;
     let Op::Distribution(op) = graph[id].op() else {
         return DiscreteChoice::MetropolisHastings;

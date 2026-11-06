@@ -99,6 +99,7 @@ pub mod prelude {
         Fitter, LinearRegression, LogisticRegression, PredictiveModel, Prior, RegressionModel,
         Regularization, SamplingFitting, accuracy, coefficient_of_determination,
     };
+    pub use crate::algorithms::smc::{Smc, SmcKernel, SmcResult};
     pub use crate::algorithms::vi::{
         Advi, AdviResult, Minibatch, MinibatchGroup, Pathfinder, PathfinderResult,
         VariationalFamily,

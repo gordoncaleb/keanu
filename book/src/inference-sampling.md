@@ -203,6 +203,39 @@ Because the graph is shared and each chain has its own state, `algorithms::mcmc:
 independent, seeded chains (`sample_chains` collects their draws into `ChainSamples`), with any of the samplers. With the `parallel` feature they run on rayon's thread pool, with the same results as
 running them one after another.
 
+## Sequential Monte Carlo and the marginal likelihood
+
+`Smc` (tempered sequential Monte Carlo, as PyMC's `sample_smc`) moves a population of particles from the prior to
+the posterior through the targets prior × likelihood^β, raising β from 0 to 1 in stages. Each stage chooses the
+next β by bisection so that the particles' normalised effective sample size falls to `ess_threshold` (0.5),
+resamples them by their weights (systematic resampling), and mutates them with Markov chain steps at that β:
+
+- the continuous latents, in unconstrained space, by independent Metropolis–Hastings with a multivariate normal
+  proposal fitted to the weighted particles (`SmcKernel::IndependentMetropolis`, the default), or by a random walk
+  with the particles' covariance and per-particle scales tuned by the acceptance rate
+  (`SmcKernel::RandomWalkMetropolis`). A stage takes steps until the mean correlation between the particles'
+  coordinates before and after is at most `correlation_threshold` (0.01), up to `max_steps` (25);
+- the discrete latents by `Gibbs` or `DiscreteMetropolis` steps at the stage's β, after each continuous step.
+
+Because the particles start from the prior, SMC also estimates the **log marginal likelihood** (the evidence),
+log p(y), as the sum over stages of the log mean incremental weight, and differences of log evidence are log Bayes
+factors. `sample` runs `chains` (4) independent runs of `particles` (2000) each, in parallel with the `parallel`
+feature; `SmcResult` holds their final particles as `ChainSamples` (so R-hat works across runs), each run's
+`log_marginal_likelihood`, its temperatures `betas`, its `acceptance_rates` and `steps` per stage, and
+`combined_log_marginal_likelihood` pools the runs' estimates.
+
+```rust,ignore
+{{#include ../../keanu/tests/book.rs:smc}}
+```
+
+The independent proposal suits posteriors that are roughly Gaussian in unconstrained space, and jumps between
+well separated modes, which MCMC chains rarely cross: a symmetric bimodal posterior gets its modes in proportion.
+Where latents move together strongly (here the switch and the two rates), mutation mixes slowly and every stage
+uses its `max_steps`. Particles where the model is impossible (−∞, or a failed ODE solve) get zero weight and moves
+to them are rejected. A model whose support bounds move with a latent is mutated in constrained space, where moves
+out of the support are rejected. The tempered likelihood is pluggable (`smc::TemperedLikelihood`, used with
+`sample_with`); the default, `ModelLikelihood`, is the observed nodes' and factors' terms.
+
 ## Predictive sampling
 
 `PredictiveSampler` draws observed nodes as the model would generate them. `prior` samples the latents from their

@@ -418,6 +418,25 @@ Work from `docs/plans/2026-11-05-001-feat-applied-modelling-gaps-plan.md`.
   exact posterior's coefficients to within 0.05 and their standard deviations to within a factor of 2, in about
   0.2 s. The guide's VI chapter has a Minibatches section.
 
+- keanu-algorithms: **tempered sequential Monte Carlo** (`smc::Smc`, `SmcKernel`, `SmcResult`, `SmcRun`,
+  `TemperedLikelihood` and `ModelLikelihood`; `Smc`, `SmcKernel` and `SmcResult` also in the crate root and the
+  `keanu` prelude), following PyMC's `sample_smc`. Particles (2000 by default) are drawn from the prior and tempered
+  from β = 0 to 1 by stages whose β is chosen by bisection so the normalised effective sample size of the
+  incremental weights is 0.5, then resampled systematically and mutated at that β: the continuous latents in
+  unconstrained space by independent Metropolis–Hastings with a multivariate normal proposal fitted to the weighted
+  particles (the default) or by a random walk with their covariance and acceptance-tuned per-particle scales,
+  taking steps until the mean correlation of the particles' coordinates before and after is at most 0.01 (at most
+  25 steps); and the discrete latents by `Gibbs` or `DiscreteMetropolis` sweeps of the tempered conditionals. Each
+  run estimates the log marginal likelihood as the sum of the stages' log mean incremental weights. `sample` runs 4
+  independent runs (in parallel with the `parallel` feature) whose particles form `ChainSamples`, with each run's
+  log marginal likelihood, temperatures, acceptance rates and steps per stage. Impossible particles (−∞, or a
+  failed evaluation such as an ODE solve) have zero weight and moves to them are rejected; prior draws where the
+  model can't be evaluated are redrawn. Models whose support bounds move with a latent are mutated in constrained
+  space. The tempered likelihood is a trait, `TemperedLikelihood`, whose default is the model's own log likelihood
+  (observed nodes and factors). Tests check the log evidence of a conjugate Gaussian to within 0.1, a Bayes factor,
+  a symmetric bimodal posterior's modes in proportion, and mixed discrete models against exact posteriors, and the
+  guide's sampling chapter has a section on SMC.
+
 ### Code review fixes
 
 Fixes from the 2026-11-04 whole-codebase review. Where a fix changes a result recorded from Java, the golden

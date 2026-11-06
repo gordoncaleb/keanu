@@ -114,6 +114,7 @@ impl Gibbs {
             max_support_size: self.max_support_size,
             nodes: nodes.to_vec(),
             log_prob: model.log_prob(state)?,
+            beta: 1.0,
         })
     }
 
@@ -149,6 +150,46 @@ impl Gibbs {
 struct Target {
     id: NodeId,
     affected: Vec<NodeId>,
+    /// When the step is tempered: the affected latents (prior terms) and the affected likelihood terms.
+    tempered: Option<(Vec<NodeId>, Vec<NodeId>)>,
+}
+
+impl Target {
+    /// Splits the affected nodes into prior terms (latents) and likelihood terms (`likelihood`), for tempering.
+    fn temper(&mut self, model: &Model, likelihood: &[NodeId]) {
+        let prior = self
+            .affected
+            .iter()
+            .copied()
+            .filter(|id| model.latents().contains(id))
+            .collect();
+        let terms = self
+            .affected
+            .iter()
+            .copied()
+            .filter(|id| likelihood.contains(id))
+            .collect();
+        self.tempered = Some((prior, terms));
+    }
+
+    /// The local log probability: the affected nodes' terms or, tempered at `beta`, the prior terms plus `beta`
+    /// times the likelihood terms (−∞ if either is impossible).
+    fn local(&self, model: &Model, state: &State, beta: f64) -> Result<f64> {
+        match &self.tempered {
+            None => Ok(model.local_log_prob(state, &self.affected)?),
+            Some((prior, likelihood)) => {
+                let prior = model.local_log_prob(state, prior)?;
+                if is_impossible(prior) {
+                    return Ok(f64::NEG_INFINITY);
+                }
+                let likelihood = model.local_log_prob(state, likelihood)?;
+                if is_impossible(likelihood) {
+                    return Ok(f64::NEG_INFINITY);
+                }
+                Ok(prior + beta * likelihood)
+            }
+        }
+    }
 }
 
 /// Checks the latents of a discrete step and the nodes it records, and finds each latent's Markov blanket.
@@ -193,6 +234,7 @@ fn check_discrete_latents(
         targets.push(Target {
             id,
             affected: model.affected_by(&[id])?,
+            tempered: None,
         });
     }
     Ok(targets)
@@ -342,12 +384,12 @@ fn set(model: &Model, state: &mut State, id: NodeId, value: Value) -> Result<boo
 fn local_after(
     model: &Model,
     state: &mut State,
-    id: NodeId,
+    target: &Target,
     value: Value,
-    affected: &[NodeId],
+    beta: f64,
 ) -> Result<f64> {
-    Ok(if set(model, state, id, value)? {
-        model.local_log_prob(state, affected)?
+    Ok(if set(model, state, target.id, value)? {
+        target.local(model, state, beta)?
     } else {
         f64::NEG_INFINITY
     })
@@ -371,12 +413,32 @@ pub struct GibbsSampler<'m> {
     max_support_size: usize,
     nodes: Vec<NodeId>,
     log_prob: f64,
+    /// The temperature of the likelihood terms, when tempered (SMC); 1 otherwise.
+    beta: f64,
 }
 
 impl GibbsSampler<'_> {
     /// The joint log probability of the chain's current position.
     pub fn log_prob(&self) -> f64 {
         self.log_prob
+    }
+
+    /// Tempers the step's target for sequential Monte Carlo: each latent's conditional becomes its prior terms plus
+    /// [`set_beta`](Self::set_beta)'s β times the terms of the nodes in `likelihood`. The log probability a tempered
+    /// sweep returns is meaningless (NaN once anything changed).
+    pub(crate) fn temper(&mut self, likelihood: &[NodeId]) {
+        for target in &mut self.latents {
+            target.temper(self.model, likelihood);
+        }
+    }
+
+    /// Sets the temperature of a tempered step.
+    pub(crate) fn set_beta(&mut self, beta: f64) {
+        self.beta = beta;
+    }
+
+    fn is_tempered(&self) -> bool {
+        self.latents.iter().any(|t| t.tempered.is_some())
     }
 
     /// One sweep from a state whose joint log probability is `log_prob`; returns the new joint log probability.
@@ -394,7 +456,7 @@ impl GibbsSampler<'_> {
             let mut elements = Elements::of(state, target.id)?;
             for (i, range) in support.iter().enumerate().take(elements.len()) {
                 let current = elements.get(i);
-                let local = self.model.local_log_prob(state, &target.affected)?;
+                let local = target.local(self.model, state, self.beta)?;
                 weights.clear();
                 let mut in_state = current;
                 for x in range.clone() {
@@ -402,13 +464,7 @@ impl GibbsSampler<'_> {
                         local
                     } else {
                         in_state = x;
-                        local_after(
-                            self.model,
-                            state,
-                            target.id,
-                            elements.with(i, x)?,
-                            &target.affected,
-                        )?
+                        local_after(self.model, state, target, elements.with(i, x)?, self.beta)?
                     };
                     weights.push(lp);
                 }
@@ -427,7 +483,7 @@ impl GibbsSampler<'_> {
                 }
             }
         }
-        if log_prob.is_nan() {
+        if log_prob.is_nan() && !self.is_tempered() {
             log_prob = self.model.log_prob(state)?;
         }
         Ok(log_prob)
@@ -563,6 +619,7 @@ impl DiscreteMetropolis {
             log_prob: model.log_prob(state)?,
             proposed: 0,
             accepted: 0,
+            beta: 1.0,
         })
     }
 
@@ -603,6 +660,8 @@ pub struct DiscreteMetropolisSampler<'m> {
     log_prob: f64,
     proposed: usize,
     accepted: usize,
+    /// The temperature of the likelihood terms, when tempered (SMC); 1 otherwise.
+    beta: f64,
 }
 
 impl DiscreteMetropolisSampler<'_> {
@@ -618,6 +677,22 @@ impl DiscreteMetropolisSampler<'_> {
         } else {
             self.accepted as f64 / self.proposed as f64
         }
+    }
+
+    /// Tempers the step's target, as [`GibbsSampler::temper`].
+    pub(crate) fn temper(&mut self, likelihood: &[NodeId]) {
+        for target in &mut self.latents {
+            target.temper(self.model, likelihood);
+        }
+    }
+
+    /// Sets the temperature of a tempered step.
+    pub(crate) fn set_beta(&mut self, beta: f64) {
+        self.beta = beta;
+    }
+
+    fn is_tempered(&self) -> bool {
+        self.latents.iter().any(|t| t.tempered.is_some())
     }
 
     /// A step drawn uniformly from ±1, …, ±max_step.
@@ -639,7 +714,8 @@ impl DiscreteMetropolisSampler<'_> {
     ) -> Result<f64> {
         let mut log_prob = log_prob;
         for t in 0..self.latents.len() {
-            let (id, affected) = (self.latents[t].id, &self.latents[t].affected);
+            let target = &self.latents[t];
+            let id = target.id;
             let mut elements = Elements::of(state, id)?;
             for i in 0..elements.len() {
                 let current = elements.get(i);
@@ -648,9 +724,14 @@ impl DiscreteMetropolisSampler<'_> {
                 let Some(proposed) = current.checked_add(step) else {
                     continue;
                 };
-                let before = self.model.local_log_prob(state, affected)?;
-                let after =
-                    local_after(self.model, state, id, elements.with(i, proposed)?, affected)?;
+                let before = target.local(self.model, state, self.beta)?;
+                let after = local_after(
+                    self.model,
+                    state,
+                    target,
+                    elements.with(i, proposed)?,
+                    self.beta,
+                )?;
                 let accept = !is_impossible(after)
                     && (is_impossible(before) || rng.next_f64().ln() < after - before);
                 if accept {
@@ -662,7 +743,7 @@ impl DiscreteMetropolisSampler<'_> {
                 }
             }
         }
-        if log_prob.is_nan() {
+        if log_prob.is_nan() && !self.is_tempered() {
             log_prob = self.model.log_prob(state)?;
         }
         Ok(log_prob)

@@ -1917,3 +1917,55 @@ fn ode_solvers_on_slices() -> Result<(), Box<dyn std::error::Error>> {
     // ANCHOR_END: ode_integrate
     Ok(())
 }
+
+#[test]
+fn sequential_monte_carlo() -> keanu::Result<()> {
+    // ANCHOR: smc
+    // counts with one rate throughout, or with a change point
+    let counts = vec![4, 5, 4, 6, 3, 1, 0, 2, 1, 0, 1, 2];
+    let constant = {
+        let b = GraphBuilder::new();
+        let rate = b.exponential(1.0).label("rate");
+        let y = b.poisson_with_shape(&[12], rate);
+        b.observe(y, IntTensor::vector(counts.clone()));
+        let rate = rate.id();
+        let (graph, state) = b.build()?;
+        (Model::new(graph, &state)?, state, rate)
+    };
+    let change_point = {
+        let b = GraphBuilder::new();
+        let switch = b.uniform_int(0, 13).label("switch");
+        let early = b.exponential(1.0).label("early");
+        let late = b.exponential(1.0).label("late");
+        let time = b.int_constant(IntTensor::vector((0..12).collect()));
+        let y = b.poisson(b.where_(switch.gt(time), early, late));
+        b.observe(y, IntTensor::vector(counts));
+        let switch = switch.id();
+        let (graph, state) = b.build()?;
+        (Model::new(graph, &state)?, state, switch)
+    };
+
+    // 4 independent runs of 500 particles each, at most 10 mutation steps per stage; the switch is mutated by
+    // Gibbs steps at each temperature
+    let smc = Smc::default().with_particles(500).with_max_steps(10);
+    let one_rate = smc.sample(&constant.0, &constant.1, &[constant.2], 1)?;
+    let switching = smc.sample(&change_point.0, &change_point.1, &[change_point.2], 2)?;
+    assert!(switching.samples.rhat(change_point.2, &[])? < 1.01);
+
+    // the log Bayes factor: the data strongly favour a change in rate
+    let log_bayes_factor =
+        switching.combined_log_marginal_likelihood() - one_rate.combined_log_marginal_likelihood();
+    assert!(log_bayes_factor > 2.0, "{log_bayes_factor}"); // about 2.8
+    // ANCHOR_END: smc
+    // the one-rate model's evidence in closed form: a Gamma(1, 1) prior and Poisson counts
+    let (n, sum) = (12.0, 29.0);
+    let log_factorials: f64 = [4, 5, 4, 6, 3, 1, 0, 2, 1, 0, 1, 2]
+        .iter()
+        .map(|&k: &i32| (1..=k).map(|i| f64::from(i).ln()).sum::<f64>())
+        .sum();
+    let exact = keanu::tensor::special::ln_gamma(sum + 1.0)
+        - (sum + 1.0) * (n + 1.0f64).ln()
+        - log_factorials;
+    assert!((one_rate.combined_log_marginal_likelihood() - exact).abs() < 0.1);
+    Ok(())
+}
