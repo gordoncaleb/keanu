@@ -12,11 +12,15 @@
 //! independently computed posteriors, with multi-chain R-hat and divergence counts; each passed over seeds 1 to 8.
 //! The GP regression example is checked against the function its data were generated from, and the stochastic
 //! volatility and hidden Markov model examples against the parameters their synthetic data were simulated with.
+//! The SMC model comparison is checked against the closed-form evidence of its two regressions, and the stochastic
+//! SIR fitted by ABC against the rates its outbreak was simulated with.
 
 #![allow(dead_code)]
 
 #[path = "../examples/ab_testing.rs"]
 mod ab_testing;
+#[path = "../examples/abc_stochastic_sir.rs"]
+mod abc_stochastic_sir;
 #[path = "../examples/challenger_disaster.rs"]
 mod challenger_disaster;
 #[path = "../examples/cheating_students.rs"]
@@ -45,6 +49,8 @@ mod pharmacokinetics;
 mod radon;
 #[path = "../examples/sir.rs"]
 mod sir;
+#[path = "../examples/smc_model_comparison.rs"]
+mod smc_model_comparison;
 #[path = "../examples/stochastic_volatility.rs"]
 mod stochastic_volatility;
 #[path = "../examples/text_messaging.rs"]
@@ -988,4 +994,53 @@ fn radon_from_pathfinder_converges_with_a_short_warm_up() {
         );
     }
     assert!(pareto_k > 0.7, "k̂ {pareto_k}");
+}
+
+#[test]
+fn smc_model_comparison_matches_the_closed_form_evidence() {
+    // 4 runs of 1000 particles per model. Every estimate was within 0.03 of its closed form with 2000 particles,
+    // and the log Bayes factor of the quadratic over the linear model is about 8.
+    let [linear, quadratic] = smc_model_comparison::run(1000, 1).unwrap();
+    for fit in [linear, quadratic] {
+        assert_close(
+            fit.log_evidence,
+            fit.exact_log_evidence,
+            0.15,
+            &format!("log evidence of degree {}", fit.degree),
+        );
+    }
+    let log_bayes_factor = quadratic.log_evidence - linear.log_evidence;
+    let exact = quadratic.exact_log_evidence - linear.exact_log_evidence;
+    assert_close(log_bayes_factor, exact, 0.2, "log Bayes factor");
+    assert!(exact > 5.0, "{exact}");
+    // PSIS-LOO on the particles agrees that the quadratic model predicts better
+    assert!(
+        quadratic.elpd_loo > linear.elpd_loo,
+        "{} vs {}",
+        quadratic.elpd_loo,
+        linear.elpd_loo
+    );
+}
+
+#[test]
+fn abc_recovers_the_stochastic_sir_rates() {
+    // 4 runs of 1000 particles on an outbreak simulated with beta = 1 and gamma = 0.3. Over data seeds 1 to 8 both
+    // 90% intervals covered the true rates and every R-hat was below 1.002.
+    let (beta, gamma) = abc_stochastic_sir::TRUTH;
+    let counts = abc_stochastic_sir::observed(2);
+    let fit = abc_stochastic_sir::fit(&counts, 1000, 2).unwrap();
+    // the intervals must also be informative: a third of the prior's width or less (2.8 for beta, 0.95 for gamma)
+    for (node, truth, width, what) in [
+        (fit.nodes.beta, beta, 0.9, "beta"),
+        (fit.nodes.gamma, gamma, 0.3, "gamma"),
+    ] {
+        let s = fit.samples.summarize(node, &[]).unwrap();
+        assert!(
+            s.q5 <= truth && truth <= s.q95 && s.q95 - s.q5 < width,
+            "{what}: {truth}, 90% interval [{}, {}]",
+            s.q5,
+            s.q95
+        );
+        assert!(s.r_hat < 1.01, "{what}: R-hat {}", s.r_hat);
+    }
 }

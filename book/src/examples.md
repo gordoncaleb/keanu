@@ -3,8 +3,9 @@
 These live in `keanu/examples`. Run one with `cargo run --release --example <name>`. Each is also an
 integration test (`keanu/tests/examples.rs`): the examples ported from Java check the same results the Java
 examples' tests check, and the hierarchical ones check multi-chain R-hat, divergences and posterior means.
-The Gaussian process, stochastic volatility, hidden Markov model, CO₂ forecasting, pharmacokinetic and multi-state examples check
-their results against the functions or parameters their synthetic data were generated from.
+The Gaussian process, stochastic volatility, hidden Markov model, CO₂ forecasting, pharmacokinetic, multi-state and
+stochastic SIR examples check their results against the functions or parameters their synthetic data were generated
+from, and the SMC model comparison checks its evidence against the closed form.
 
 | Example | Question |
 |---|---|
@@ -25,6 +26,8 @@ their results against the functions or parameters their synthetic data were gene
 | `sir` | How fast did influenza spread through a boarding school, and how long were the boys ill? An SIR ODE |
 | `pharmacokinetics` | How quickly is an oral dose absorbed and cleared? A one-compartment ODE, checked against its closed form |
 | `multi_state` | How fast do people fall ill and die, seen only at clinic visits? An illness–death model with the matrix exponential |
+| `smc_model_comparison` | Is a trend a straight line or a curve? Model comparison by the evidence that SMC estimates, checked against its closed form |
+| `abc_stochastic_sir` | How fast does an epidemic spread when chance matters? A stochastic SIR simulator fitted by SMC-ABC |
 
 The first five come from *Bayesian Methods for Hackers* by Cameron Davidson-Pilon; `eight_schools` and `radon` are
 classic hierarchical models from Gelman et al. `gaussian_mixture` is checked against the mixture its synthetic data
@@ -235,4 +238,29 @@ intensity lies in its 90% posterior interval and that the five-year probability 
 
 ```rust,ignore
 {{#include ../../keanu/examples/multi_state.rs}}
+```
+
+## Model comparison by SMC evidence
+
+A linear and a quadratic regression with standard normal priors and known noise, fitted by tempered SMC to 30
+points simulated from 0.5 + x + 0.6 x². SMC estimates each model's log evidence, whose difference is the log Bayes
+factor; both are linear-Gaussian, so the test checks the estimates against the closed form y ~ N(0, σ² I + X Xᵀ)
+to 0.15 and the Bayes factor to 0.2, and that PSIS-LOO on the particles also prefers the quadratic model. See
+[Simulation-based inference](simulation-based-inference.md#comparing-models-by-their-evidence).
+
+```rust,ignore
+{{#include ../../keanu/examples/smc_model_comparison.rs}}
+```
+
+## A stochastic SIR epidemic by ABC
+
+The SIR epidemic in 200 people as a continuous-time Markov chain, simulated exactly by Gillespie's algorithm, whose
+likelihood is intractable. The daily susceptible and infected counts are a simulator node of β and γ, and SMC-ABC
+compares four summary statistics of simulated and observed outbreaks (final size, peak prevalence, peak day and
+person-days of infection) with a Gaussian kernel. Its test fits an outbreak simulated with β = 1 and γ = 0.3 and
+checks that both lie in their 90% posterior intervals, which are informative (over data seeds 1 to 8 they always
+covered the truth). See [Simulation-based inference](simulation-based-inference.md#example-a-stochastic-epidemic).
+
+```rust,ignore
+{{#include ../../keanu/examples/abc_stochastic_sir.rs}}
 ```

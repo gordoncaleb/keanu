@@ -19,5 +19,6 @@
 - [Regression models](regression.md)
 - [Gaussian processes](gaussian-processes.md)
 - [Differential equations](differential-equations.md)
+- [Simulation-based inference (SMC and ABC)](simulation-based-inference.md)
 - [Examples](examples.md)
 - [Coming from Java Keanu](from-java.md)

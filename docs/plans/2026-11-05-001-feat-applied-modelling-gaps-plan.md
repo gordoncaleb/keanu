@@ -436,6 +436,7 @@ Phases run in letter order. U18's occupancy example needs U10 and U17. U23 needs
 
 - **Requirements:** R24, R25. **Files:** `keanu/examples/smc_model_comparison.rs`, `keanu/examples/abc_stochastic_sir.rs` (Gillespie stochastic SIR simulator), `keanu/tests/examples.rs`, `book/src/simulation-based-inference.md`, `book/src/SUMMARY.md`, `keanu/tests/book.rs`.
 - **Test scenarios:** examples run as tests; ABC example recovers simulated β, γ within wide intervals.
+- **Implementation note:** the model comparison is linear against quadratic regression with known noise, whose evidence is closed form (y ~ N(0, σ² I + X Xᵀ)), plus PSIS-LOO on the SMC particles for direction. The stochastic SIR (N = 200, 3 initially infected, 40 days, β = 1, γ = 0.3, uniform priors) observes daily S and I counts as an `IntVar` simulator `[2, 40]` and compares four custom statistics (final size, peak prevalence, peak day, person-days per person) with per-statistic ε (0.03, 0.03, 1.5, 0.3); with 4 × 1000 particles the 90% intervals covered both rates for data seeds 1 to 8, at about 4 s per fit without `parallel`. The SMC section moved from the sampling chapter to the new `simulation-based-inference.md`, which the sampling chapter links to.
 
 ---
 

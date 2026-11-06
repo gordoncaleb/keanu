@@ -1969,3 +1969,54 @@ fn sequential_monte_carlo() -> keanu::Result<()> {
     assert!((one_rate.combined_log_marginal_likelihood() - exact).abs() < 0.1);
     Ok(())
 }
+
+#[test]
+fn simulation_based_inference() -> keanu::Result<()> {
+    // ANCHOR: simulator
+    // mu ~ N(0, 1), and 20 points simulated from N(mu, 1) by a function of mu and a generator
+    let b = GraphBuilder::new();
+    let mu = b.gaussian(0.0, 1.0).label("mu");
+    let data: DoubleVar = b.simulator(
+        &[mu.id()],
+        &[20],
+        |parameters: &[&Value], rng: &mut KeanuRng| {
+            let mu = parameters[0].as_f64().ok_or("mu is f64")?.as_slice()[0];
+            let draws = (0..20).map(|_| mu + rng.next_gaussian()).collect();
+            Ok(Value::F64(DoubleTensor::vector(draws)))
+        },
+    );
+    let observed: Vec<f64> = (0..20)
+        .map(|i| if i % 2 == 0 { 1.4 } else { 0.4 })
+        .collect();
+    b.observe(data.label("data"), DoubleTensor::vector(observed));
+    let (mu, data) = (mu.id(), data.id());
+    let (graph, state) = b.build()?;
+    let model = Model::new(graph, &state)?;
+
+    // it can be sampled: here, the prior predictive
+    let mut rng = KeanuRng::seed_from_u64(1);
+    let prior_predictive =
+        PredictiveSampler::new().prior(&model, &state, &[data], 100, &mut rng)?;
+    assert_eq!(prior_predictive.len(), 100);
+
+    // but it has no likelihood, so samplers other than ABC refuse the model
+    let mut s = state.clone();
+    let error = Nuts::default()
+        .sample(&model, &mut s, &[mu], 100, &mut rng)
+        .unwrap_err();
+    assert!(error.to_string().contains("\"data\" is a simulator node"));
+    // ANCHOR_END: simulator
+
+    // ANCHOR: abc
+    // compare the simulated and observed means with a Gaussian kernel of scale 0.05
+    let abc = Abc::new(0.05).with_statistics(SummaryStatistics::Mean);
+    let result = Smc::default()
+        .with_particles(1000)
+        .sample_abc(&model, &state, &[mu], &abc, 2)?;
+    let posterior = result.samples.summarize(mu, &[])?;
+    // the exact posterior given the mean, 0.9, is N(0.857, 0.218²)
+    assert!((posterior.mean - 0.857).abs() < 0.05);
+    assert!((posterior.sd - 0.218).abs() < 0.03);
+    // ANCHOR_END: abc
+    Ok(())
+}

@@ -458,6 +458,16 @@ Work from `docs/plans/2026-11-05-001-feat-applied-modelling-gaps-plan.md`.
   Markov blankets, where a simulator has no terms). On a Gaussian simulator with the mean as statistic, the ABC
   posterior's mean and variance and the ABC evidence match their closed forms for ε of 1, 0.3 and 0.05, and the
   posterior approaches the exact one as ε shrinks.
+- keanu: **SMC and ABC examples and a simulation-based inference chapter**. `smc_model_comparison` compares a linear
+  and a quadratic regression by their SMC log evidence, which its test checks against the closed form (to 0.15, and
+  the log Bayes factor of about 8 to 0.2) and against PSIS-LOO on the particles, which also prefers the quadratic
+  model. `abc_stochastic_sir` fits a stochastic SIR epidemic in 200 people, simulated by Gillespie's algorithm as a
+  simulator node, by SMC-ABC on four summary statistics (final size, peak prevalence, peak day, person-days of
+  infection) with one ε each; its test checks that the 90% intervals of β and γ cover the rates the outbreak was
+  simulated with and are informative (both tests take about 6 s together without the `parallel` feature). The
+  guide's new chapter "Simulation-based inference (SMC and ABC)" takes over the SMC section of the sampling
+  chapter (which now links to it) and adds model comparison by evidence, simulator nodes, ABC and the stochastic
+  epidemic; the examples page lists both examples.
 
 ### Code review fixes
 
