@@ -2,7 +2,9 @@
 
 use super::hmm;
 use super::mixture;
+use super::mixture_of;
 use super::nested::nested_kinds;
+use super::transformed::{self, ElementBijector};
 use crate::error::{GraphError, Result};
 use crate::value::{DType, Value};
 use keanu_distributions as d;
@@ -288,6 +290,18 @@ pub enum DistributionKind {
     /// or censored one); the value type is the component's. Support: the component's support widened to hold
     /// every component's. See [`GraphBuilder::mixture`](crate::GraphBuilder::mixture).
     Mixture(Arc<DistributionKind>),
+    /// A mixture of components of different kinds: density Σ_c w_c p_c(x), the c-th component of the c-th kind.
+    /// Parameters: `weights` (non-negative and summing to 1 along their last axis, of length C, the number of
+    /// components), then each component's parameters in its own order, component after component (with no
+    /// component axis). The components are element-wise kinds (as for [`Mixture`](Self::Mixture), truncated,
+    /// censored and transformed ones included) with the same value type, which is the mixture's. Support: the
+    /// hull of the components' supports. See [`GraphBuilder::mixture_of`](crate::GraphBuilder::mixture_of).
+    MixtureOf(Arc<[DistributionKind]>),
+    /// The base distribution pushed through an element-wise bijector: the value is f(y) for a draw y of the base,
+    /// with density p(f⁻¹(x)) |(f⁻¹)′(x)|. Parameters: the base's. The base is a continuous element-wise kind with
+    /// a density (not censored or a hurdle). Support: the image of the base's support. See [`ElementBijector`]
+    /// and [`GraphBuilder::transformed`](crate::GraphBuilder::transformed).
+    Transformed(Arc<DistributionKind>, ElementBijector),
     /// The inner count distribution with extra zeros: a structural zero with probability ψ, else a draw from the
     /// inner kind, so P(0) = ψ + (1 − ψ) p(0) and P(k) = (1 − ψ) p(k) for k ≠ 0. Parameters: the inner kind's
     /// parameters, then `psi` (in [0, 1]). The inner kind is an element-wise discrete kind with integer values
@@ -474,6 +488,10 @@ macro_rules! distributions {
                         let (nested, inner) = self.nested_parts();
                         nested.parameter_types(inner)
                     }
+                    DistributionKind::MixtureOf(components) => {
+                        mixture_of::parameter_types(components).map(Cow::Owned)
+                    }
+                    DistributionKind::Transformed(base, _) => base.parameter_types(),
                 }
             }
 
@@ -496,6 +514,10 @@ macro_rules! distributions {
                         let (nested, inner) = self.nested_parts();
                         nested.parameter_names(inner)
                     }
+                    DistributionKind::MixtureOf(components) => {
+                        mixture_of::parameter_names(components).map(Cow::Owned)
+                    }
+                    DistributionKind::Transformed(base, _) => base.parameter_names(),
                 }
             }
 
@@ -513,6 +535,7 @@ macro_rules! distributions {
                 match self {
                     $(DistributionKind::$kind => is_elementwise!([$($cdf)?]),)+
                     nested_kinds!() => self.nested_parts().0.is_elementwise(),
+                    DistributionKind::Transformed(..) => true,
                     _ => false,
                 }
             }
@@ -539,6 +562,9 @@ macro_rules! distributions {
                             Some(result) => result?,
                             None => return Err(self.no_cdf()),
                         }
+                    }
+                    DistributionKind::Transformed(base, bijector) if function == Univariate::Density => {
+                        transformed::elementwise(base, *bijector, x, parameters, gradient)?
                     }
                     _ => return Err(self.no_cdf()),
                 })
@@ -569,6 +595,8 @@ macro_rules! distributions {
                     DistributionKind::Custom(c) => c.value_type(),
                     DistributionKind::Simulator(s) => s.value_type(),
                     nested_kinds!() => self.nested_parts().1.value_type(),
+                    DistributionKind::MixtureOf(components) => mixture_of::value_type(components),
+                    DistributionKind::Transformed(..) => DType::F64,
                 }
             }
 
@@ -588,6 +616,8 @@ macro_rules! distributions {
                 "hidden_markov_model",
                 "zero_inflated",
                 "hurdle",
+                "mixture_of",
+                "transformed",
             ];
 
             /// The [names](Self::name) of the kinds with a CDF, which can be truncated or censored.
@@ -631,6 +661,8 @@ macro_rules! distributions {
                     DistributionKind::Custom(_) => "custom",
                     DistributionKind::Simulator(_) => "simulator",
                     nested_kinds!() => self.nested_parts().0.name(),
+                    DistributionKind::MixtureOf(_) => "mixture_of",
+                    DistributionKind::Transformed(..) => "transformed",
                 }
             }
 
@@ -657,6 +689,10 @@ macro_rules! distributions {
                     nested_kinds!() => {
                         let (nested, inner) = self.nested_parts();
                         nested.support(inner, parameters)?
+                    }
+                    DistributionKind::MixtureOf(components) => mixture_of::support(components, parameters)?,
+                    DistributionKind::Transformed(base, bijector) => {
+                        transformed::support(base, *bijector, parameters)?
                     }
                 })
             }
@@ -714,6 +750,12 @@ macro_rules! distributions {
                         let (nested, inner) = self.nested_parts();
                         nested.sample(inner, shape, parameters, rng)?
                     }
+                    DistributionKind::MixtureOf(components) => {
+                        mixture_of::sample(components, shape, parameters, rng)?
+                    }
+                    DistributionKind::Transformed(base, bijector) => {
+                        transformed::sample(base, *bijector, shape, parameters, rng)?
+                    }
                 })
             }
 
@@ -738,6 +780,12 @@ macro_rules! distributions {
                     nested_kinds!() => {
                         let (nested, inner) = self.nested_parts();
                         nested.log_prob(inner, value, parameters, false)?.0
+                    }
+                    DistributionKind::MixtureOf(components) => {
+                        mixture_of::log_prob(components, value, parameters, false)?.0
+                    }
+                    DistributionKind::Transformed(base, bijector) => {
+                        transformed::elementwise(base, *bijector, value, parameters, false)?.0.sum()
                     }
                 })
             }
@@ -770,6 +818,12 @@ macro_rules! distributions {
                     nested_kinds!() => {
                         let (nested, inner) = self.nested_parts();
                         nested.log_prob_terms(inner, value, parameters)?
+                    }
+                    DistributionKind::MixtureOf(components) => {
+                        mixture_of::log_prob_terms(components, value, parameters)?
+                    }
+                    DistributionKind::Transformed(base, bijector) => {
+                        transformed::elementwise(base, *bijector, value, parameters, false)?.0
                     }
                 })
             }
@@ -820,6 +874,14 @@ macro_rules! distributions {
                     nested_kinds!() => {
                         let (nested, inner) = self.nested_parts();
                         let (_, gradient) = nested.log_prob(inner, value, parameters, true)?;
+                        gradient.unwrap_or_else(|| no_gradient(parameters.len()))
+                    }
+                    DistributionKind::MixtureOf(components) => {
+                        let (_, gradient) = mixture_of::log_prob(components, value, parameters, true)?;
+                        gradient.unwrap_or_else(|| no_gradient(parameters.len()))
+                    }
+                    DistributionKind::Transformed(base, bijector) => {
+                        let (_, gradient) = transformed::elementwise(base, *bijector, value, parameters, true)?;
                         gradient.unwrap_or_else(|| no_gradient(parameters.len()))
                     }
                 })
@@ -873,6 +935,15 @@ macro_rules! distributions {
                     nested_kinds!() => {
                         let (nested, inner) = self.nested_parts();
                         let (log_prob, gradient) = nested.log_prob(inner, value, parameters, true)?;
+                        (log_prob, gradient.filter(|_| !is_impossible(log_prob)))
+                    }
+                    DistributionKind::MixtureOf(components) => {
+                        let (log_prob, gradient) = mixture_of::log_prob(components, value, parameters, true)?;
+                        (log_prob, gradient.filter(|_| !is_impossible(log_prob)))
+                    }
+                    DistributionKind::Transformed(base, bijector) => {
+                        let (terms, gradient) = transformed::elementwise(base, *bijector, value, parameters, true)?;
+                        let log_prob = terms.sum();
                         (log_prob, gradient.filter(|_| !is_impossible(log_prob)))
                     }
                 })
@@ -1515,6 +1586,15 @@ impl DistributionOp {
         if let Some((nested, inner)) = kind.nested() {
             nested.check_inner(inner).map_err(invalid)?;
         }
+        match kind {
+            DistributionKind::MixtureOf(components) => {
+                mixture_of::check(components).map_err(invalid)?;
+            }
+            DistributionKind::Transformed(base, bijector) => {
+                transformed::check(base, *bijector).map_err(invalid)?;
+            }
+            _ => {}
+        }
         match kind.parameter_types() {
             Some(types) => {
                 if parameters.len() != types.len()
@@ -1661,6 +1741,9 @@ impl DistributionOp {
             }
             DistributionKind::Mixture(_) => {
                 mixture::value_shape(requested, parameters).map_err(invalid)
+            }
+            DistributionKind::MixtureOf(components) => {
+                mixture_of::value_shape(components, requested, parameters).map_err(invalid)
             }
             DistributionKind::HiddenMarkovModel(_) => {
                 hmm::value_shape(requested, parameters).map_err(invalid)

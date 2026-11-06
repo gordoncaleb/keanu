@@ -13,6 +13,7 @@
 
 use super::distribution::{DistributionKind, DistributionOp, LogProbGradientParts, Univariate};
 use super::distribution_hvp::{elementwise, spread, spread_tangent};
+use super::mixture_of;
 use crate::autodiff::{batched_shape, fit, lift, reduce_to};
 use crate::error::{GraphError, Result};
 use crate::value::{DType, Value};
@@ -26,12 +27,15 @@ fn invalid(message: String) -> GraphError {
 }
 
 /// Whether `kind` has an element-wise log density, so that a log density node of it can be built: the
-/// [element-wise](DistributionKind::is_elementwise) kinds, the Bernoulli and its logit form.
+/// [element-wise](DistributionKind::is_elementwise) kinds, the Bernoulli and its logit form, and a heterogeneous
+/// mixture (element-wise over its batch shape, the weights' component axis summed over).
 pub(crate) fn has_elementwise_density(kind: &DistributionKind) -> bool {
     kind.is_elementwise()
         || matches!(
             kind,
-            DistributionKind::Bernoulli | DistributionKind::BernoulliLogit
+            DistributionKind::Bernoulli
+                | DistributionKind::BernoulliLogit
+                | DistributionKind::MixtureOf(_)
         )
 }
 
@@ -121,6 +125,14 @@ pub(crate) fn output_type(
         }
         return Ok((DType::F64, Shape::new()));
     }
+    if let DistributionKind::MixtureOf(_) = kind {
+        // the batch shape, checked as for a node: the value's, the weights' without their component axis and the
+        // component parameters', broadcast
+        return Ok((
+            DType::F64,
+            DistributionOp::value_shape(kind, Some(value_shape), parameters)?,
+        ));
+    }
     let mut shape = Shape::from_slice(value_shape);
     for (_, p) in parameters {
         shape = broadcast_shape(&shape, p)?;
@@ -139,6 +151,9 @@ fn shape_of(inputs: &[&Value]) -> Result<Shape> {
 
 /// The log density of each element of the value (`inputs[0]`) given the parameters (`inputs[1..]`).
 pub(crate) fn eval(kind: &DistributionKind, inputs: &[&Value]) -> Result<Value> {
+    if let DistributionKind::MixtureOf(components) = kind {
+        return mixture_of::density_eval(components, inputs);
+    }
     let (value, parameters) = split(kind, inputs)?;
     if has_joint_density(kind) {
         return Ok(Value::F64(DoubleTensor::scalar(
@@ -201,6 +216,9 @@ pub(crate) fn jvp(
     if has_joint_density(kind) {
         return joint_jvp(kind, inputs, t, b);
     }
+    if let DistributionKind::MixtureOf(components) = kind {
+        return mixture_of::density_jvp(components, inputs, t, b, out_shape);
+    }
     let mut total: Option<DoubleTensor> = None;
     for (d, t) in derivatives(kind, inputs, out_shape)?.into_iter().zip(t) {
         let (Some(d), Some(t)) = (d, t) else { continue };
@@ -224,6 +242,9 @@ pub(crate) fn vjp(
     if has_joint_density(kind) {
         return joint_vjp(kind, inputs, g);
     }
+    if let DistributionKind::MixtureOf(components) = kind {
+        return mixture_of::density_vjp(components, inputs, g);
+    }
     derivatives(kind, inputs, out_shape)?
         .into_iter()
         .zip(inputs)
@@ -245,6 +266,9 @@ pub(crate) fn vjp_tangent(
     let (value, parameters) = split(kind, inputs)?;
     if has_joint_density(kind) {
         return joint_vjp_tangent(kind, value, parameters, g, t, b);
+    }
+    if let DistributionKind::MixtureOf(components) = kind {
+        return mixture_of::density_vjp_tangent(components, inputs, g, t, b);
     }
     let tangents: Vec<Option<Vec<f64>>> = t
         .iter()

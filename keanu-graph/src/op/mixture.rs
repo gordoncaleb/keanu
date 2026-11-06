@@ -106,16 +106,22 @@ impl<'p, 'v> Parameters<'p, 'v> {
 
     /// Why the weights are outside their valid region (the simplex), if they are.
     fn invalid_weights(&self) -> Option<String> {
-        self.weights.as_slice().chunks(self.count).find_map(|row| {
-            // written so that NaN weights fail too
-            if !row.iter().all(|&w| w >= 0.0) {
-                return Some(format!("mixture weights must be non-negative, got {row:?}"));
-            }
-            let total: f64 = row.iter().sum();
-            ((total - 1.0).abs() > WEIGHT_TOLERANCE)
-                .then(|| format!("mixture weights must sum to 1, got {row:?}"))
-        })
+        invalid_weights(self.weights, self.count)
     }
+}
+
+/// Why mixture weights with `count` components along their last axis are outside their valid region (the
+/// simplex: non-negative and summing to 1 within [`WEIGHT_TOLERANCE`]), if they are.
+pub(crate) fn invalid_weights(weights: &DoubleTensor, count: usize) -> Option<String> {
+    weights.as_slice().chunks(count.max(1)).find_map(|row| {
+        // written so that NaN weights fail too
+        if !row.iter().all(|&w| w >= 0.0) {
+            return Some(format!("mixture weights must be non-negative, got {row:?}"));
+        }
+        let total: f64 = row.iter().sum();
+        ((total - 1.0).abs() > WEIGHT_TOLERANCE)
+            .then(|| format!("mixture weights must sum to 1, got {row:?}"))
+    })
 }
 
 /// A value with a trailing axis of length 1 added, so that it broadcasts against the component axis.

@@ -261,6 +261,22 @@ impl DistributionKind {
                 parameter_tangents,
                 b,
             ),
+            K::MixtureOf(components) => super::mixture_of::log_prob_hvp(
+                components,
+                value,
+                parameters,
+                value_tangent,
+                parameter_tangents,
+                b,
+            ),
+            K::Transformed(..) => elementwise_hvp(
+                self,
+                value,
+                parameters,
+                value_tangent,
+                parameter_tangents,
+                b,
+            ),
             K::GaussianRandomWalk | K::Autoregressive | K::Garch11 => process_hvp(
                 self,
                 value.f64()?,
@@ -308,6 +324,11 @@ pub(crate) fn elementwise(
     b: usize,
     shape: &[usize],
 ) -> Result<Elementwise> {
+    if let DistributionKind::Transformed(base, bijector) = kind {
+        return super::transformed::second_order(
+            base, *bijector, x, parameters, tangents, b, shape,
+        );
+    }
     if let Some((nested, inner)) = kind.nested() {
         if let Some(wrapper) = nested.wrapper() {
             return wrappers::second_order(wrapper, inner, x, parameters, tangents, b, shape);

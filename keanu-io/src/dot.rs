@@ -37,6 +37,8 @@ fn distribution_name(kind: &DistributionKind) -> String {
         DistributionKind::Car(_) => "Car".into(),
         DistributionKind::Custom(_) => "Custom".into(),
         DistributionKind::Simulator(_) => "Simulator".into(),
+        DistributionKind::MixtureOf(_) => "MixtureOf".into(),
+        DistributionKind::Transformed(..) => "Transformed".into(),
         // the other kinds are unit variants, which format as their name
         kind => format!("{kind:?}"),
     }

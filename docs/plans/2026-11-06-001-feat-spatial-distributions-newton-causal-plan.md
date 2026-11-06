@@ -385,6 +385,23 @@ Execution order: U1, U2, U3, U4, U5, U6, U7, U8, U9, U11, U10, U12, U13, then a 
   - a mixture of a Gamma and a LogNormal against hand-written logsumexp, with gradients and HVPs;
   - `Transformed(Gaussian, LowerBound(0))` equals a LogNormal shifted appropriately;
   - save/load.
+- **Implementation note:** `keanu-graph/src/op/{mixture_of,transformed}.rs`. `DistributionKind::MixtureOf` holds
+  `Arc<[DistributionKind]>` (not a `Vec`, for cheap clones like the other nested kinds), and neither new kind is a
+  `Nested` variant (that tag wraps exactly one inner kind with trailing own parameters); both are matched explicitly
+  in the distribution table, the second-order rules, the log-density op, keanu-io and the DOT export. Components are
+  element-wise kinds (truncated, censored, zero-inflated, hurdle and transformed ones included) with one value type;
+  a heterogeneous mixture is not itself element-wise (its weights carry a component axis), so it can't be a
+  component, truncated or censored, but the log-density op supports it over the batch shape, and it has no finite
+  support for Gibbs (as the same-family mixture). Bijectors: a new `op::ElementBijector` with constant scalar
+  parameters, `LowerBound`, `UpperBound`, `Interval` (the transform module's bounded maps) and an added `Affine`;
+  the vector bijectors (simplex, ordered, ...) are out, since the transformed kind is element-wise. The transformed
+  kind's base must be a continuous element-wise kind with a density (not censored or a hurdle, whose point masses
+  have no Jacobian, and with a support that is a range of reals); it has no CDF (a monotone map would allow one,
+  but the CDF's second-order rules would need the base's, so it is left out and documented). Tests:
+  `keanu-graph/tests/mixture_of.rs` (the gamma and log-normal mixture against a hand-written logsumexp, its
+  gradient against central differences and its Hessian against second differences of the hand-written joint
+  density; the shifted log-normal; draws, supports, counts, the log-density op, the cure-model likelihood and
+  invalid nodes), new cases in `keanu-graph/tests/hessian.rs` and keanu-io's round trip.
 
 ### U9. Extreme values and cure-model examples
 - **Requirements:** R5, R8.

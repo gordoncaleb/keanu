@@ -483,15 +483,22 @@ pub struct Distribution {
     #[prost(message, optional, tag = "3")]
     pub kde: ::core::option::Option<Kde>,
     /// The distribution a nested kind is built around (`DISTRIBUTION_KIND_TRUNCATED`, `DISTRIBUTION_KIND_CENSORED`,
-    /// `DISTRIBUTION_KIND_MIXTURE`, `DISTRIBUTION_KIND_HIDDEN_MARKOV_MODEL`, `DISTRIBUTION_KIND_ZERO_INFLATED` and
-    /// `DISTRIBUTION_KIND_HURDLE` only, for which it is required). The node's parents are the base's parameters
-    /// followed by the nested kind's own.
+    /// `DISTRIBUTION_KIND_MIXTURE`, `DISTRIBUTION_KIND_HIDDEN_MARKOV_MODEL`, `DISTRIBUTION_KIND_ZERO_INFLATED`,
+    /// `DISTRIBUTION_KIND_HURDLE` and `DISTRIBUTION_KIND_TRANSFORMED` only, for which it is required). The node's
+    /// parents are the base's parameters followed by the nested kind's own.
     #[prost(message, optional, tag = "4")]
     pub base: ::core::option::Option<DistributionType>,
     /// The neighbourhood of a spatial distribution (`DISTRIBUTION_KIND_ICAR` and `DISTRIBUTION_KIND_CAR` only, for
     /// which it is required).
     #[prost(message, optional, tag = "5")]
     pub adjacency: ::core::option::Option<Adjacency>,
+    /// The components of a heterogeneous mixture (`DISTRIBUTION_KIND_MIXTURE_OF` only, for which at least one is
+    /// required), in order. The node's parents are the weights, then each component's parameters in turn.
+    #[prost(message, repeated, tag = "6")]
+    pub components: ::prost::alloc::vec::Vec<DistributionType>,
+    /// The bijector of a transformed distribution (`DISTRIBUTION_KIND_TRANSFORMED` only, for which it is required).
+    #[prost(message, optional, tag = "7")]
+    pub bijector: ::core::option::Option<ElementBijector>,
 }
 /// The element-wise log density of the node's first parent under a distribution whose parameters are its other
 /// parents.
@@ -515,6 +522,25 @@ pub struct DistributionType {
     /// As `Distribution.adjacency`.
     #[prost(message, optional, tag = "4")]
     pub adjacency: ::core::option::Option<Adjacency>,
+    /// As `Distribution.components`.
+    #[prost(message, repeated, tag = "5")]
+    pub components: ::prost::alloc::vec::Vec<DistributionType>,
+    /// As `Distribution.bijector`.
+    #[prost(message, optional, tag = "6")]
+    pub bijector: ::core::option::Option<ElementBijector>,
+}
+/// The element-wise bijector of a transformed distribution, with constant bounds or location and scale.
+#[derive(Clone, Copy, PartialEq, ::prost::Message)]
+pub struct ElementBijector {
+    #[prost(enumeration = "ElementBijectorKind", tag = "1")]
+    pub kind: i32,
+    /// The bound of `ELEMENT_BIJECTOR_KIND_LOWER_BOUND` or `ELEMENT_BIJECTOR_KIND_UPPER_BOUND`, the lower end of
+    /// `ELEMENT_BIJECTOR_KIND_INTERVAL`, or the location of `ELEMENT_BIJECTOR_KIND_AFFINE`.
+    #[prost(double, tag = "2")]
+    pub a: f64,
+    /// The upper end of `ELEMENT_BIJECTOR_KIND_INTERVAL`, or the scale of `ELEMENT_BIJECTOR_KIND_AFFINE`.
+    #[prost(double, tag = "3")]
+    pub b: f64,
 }
 /// The neighbourhood of a spatial distribution: the number of areas and the edges between them, as pairs of area
 /// indices (`edges\[2k\]` and `edges\[2k + 1\]` are neighbours).
@@ -1078,6 +1104,45 @@ impl OdeSolver {
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
 #[repr(i32)]
+pub enum ElementBijectorKind {
+    Unspecified = 0,
+    /// x = a + exp(y).
+    LowerBound = 1,
+    /// x = a − exp(y).
+    UpperBound = 2,
+    /// x = a + (b − a) logistic(y).
+    Interval = 3,
+    /// x = a + b y.
+    Affine = 4,
+}
+impl ElementBijectorKind {
+    /// String value of the enum field names used in the ProtoBuf definition.
+    ///
+    /// The values are not transformed in any way and thus are considered stable
+    /// (if the ProtoBuf definition does not change) and safe for programmatic use.
+    pub fn as_str_name(&self) -> &'static str {
+        match self {
+            Self::Unspecified => "ELEMENT_BIJECTOR_KIND_UNSPECIFIED",
+            Self::LowerBound => "ELEMENT_BIJECTOR_KIND_LOWER_BOUND",
+            Self::UpperBound => "ELEMENT_BIJECTOR_KIND_UPPER_BOUND",
+            Self::Interval => "ELEMENT_BIJECTOR_KIND_INTERVAL",
+            Self::Affine => "ELEMENT_BIJECTOR_KIND_AFFINE",
+        }
+    }
+    /// Creates an enum from field names used in the ProtoBuf definition.
+    pub fn from_str_name(value: &str) -> ::core::option::Option<Self> {
+        match value {
+            "ELEMENT_BIJECTOR_KIND_UNSPECIFIED" => Some(Self::Unspecified),
+            "ELEMENT_BIJECTOR_KIND_LOWER_BOUND" => Some(Self::LowerBound),
+            "ELEMENT_BIJECTOR_KIND_UPPER_BOUND" => Some(Self::UpperBound),
+            "ELEMENT_BIJECTOR_KIND_INTERVAL" => Some(Self::Interval),
+            "ELEMENT_BIJECTOR_KIND_AFFINE" => Some(Self::Affine),
+            _ => None,
+        }
+    }
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
+#[repr(i32)]
 pub enum DistributionKind {
     Unspecified = 0,
     Gaussian = 1,
@@ -1199,6 +1264,10 @@ pub enum DistributionKind {
     VonMisesFisher = 75,
     /// Parameters: `a`, `t0`, `w`, `v`, `sv`, `boundary` (an integer, 0 or 1).
     Wiener = 76,
+    /// Parameters: `weights`, then each component's (see `Distribution.components`).
+    MixtureOf = 77,
+    /// Parameters: the base's (see `Distribution.bijector`).
+    Transformed = 78,
 }
 impl DistributionKind {
     /// String value of the enum field names used in the ProtoBuf definition.
@@ -1290,6 +1359,8 @@ impl DistributionKind {
             Self::MatrixNormal => "DISTRIBUTION_KIND_MATRIX_NORMAL",
             Self::VonMisesFisher => "DISTRIBUTION_KIND_VON_MISES_FISHER",
             Self::Wiener => "DISTRIBUTION_KIND_WIENER",
+            Self::MixtureOf => "DISTRIBUTION_KIND_MIXTURE_OF",
+            Self::Transformed => "DISTRIBUTION_KIND_TRANSFORMED",
         }
     }
     /// Creates an enum from field names used in the ProtoBuf definition.
@@ -1382,6 +1453,8 @@ impl DistributionKind {
             "DISTRIBUTION_KIND_MATRIX_NORMAL" => Some(Self::MatrixNormal),
             "DISTRIBUTION_KIND_VON_MISES_FISHER" => Some(Self::VonMisesFisher),
             "DISTRIBUTION_KIND_WIENER" => Some(Self::Wiener),
+            "DISTRIBUTION_KIND_MIXTURE_OF" => Some(Self::MixtureOf),
+            "DISTRIBUTION_KIND_TRANSFORMED" => Some(Self::Transformed),
             _ => None,
         }
     }

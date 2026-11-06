@@ -2,7 +2,7 @@
 
 use crate::builder::GraphBuilder;
 use crate::graph::NodeId;
-use crate::op::{CustomDistribution, DistributionKind, Simulator};
+use crate::op::{CustomDistribution, DistributionKind, ElementBijector, Simulator};
 use crate::vars::{BoolVar, DoubleVar, IntVar, IntoDoubleVar, IntoIntVar, Var};
 use crate::{GraphError, Value};
 use keanu_distributions::{Kde, KeanuRng};
@@ -888,6 +888,143 @@ impl GraphBuilder {
         let mut ids = parameters.to_vec();
         ids.push(weights.id());
         V::wrap(self, self.distribution(kind, shape, &ids))
+    }
+}
+
+impl GraphBuilder {
+    /// A mixture of components of different kinds: density Σ_c w_c p_c(x), with `components` the C pairs of a
+    /// component kind and its parameter nodes (in its order, with no component axis) and `weights` non-negative,
+    /// summing to 1 along their last axis, of length C. The node's parents are the weights, then each component's
+    /// parameters in turn ([`DistributionKind::MixtureOf`]).
+    ///
+    /// Each component is an element-wise kind, as for [`Self::mixture`] (truncated, censored, zero-inflated,
+    /// hurdle and [transformed](Self::transformed) ones included), and all have the same value type, which the
+    /// handle type must match ([`DoubleVar`] or [`IntVar`]). The value has the batch shape: the weights' shape
+    /// without the component axis and every component parameter's shape, broadcast; use
+    /// [`Self::mixture_of_with_shape`] for a larger one. The log density is logsumexp_c(log w_c + log p_c(x)), with
+    /// an exact gradient and exact Hessian-vector products in the value, the weights and every component parameter.
+    /// Weights off the simplex make the log probability −∞ (and sampling an error), as for [`Self::mixture`].
+    ///
+    /// The support is the hull of the components' supports (the smallest lower bound and the largest upper bound;
+    /// each component's must be a range of real numbers), or discrete for integer components. Where the components'
+    /// supports don't overlap the density is 0 between them although the support includes them. A heterogeneous
+    /// mixture has an element-wise [`log_density`](Self::log_density) and pointwise log likelihood, but
+    /// no CDF (it can't be truncated or censored; censor its components instead) and no finite support for Gibbs
+    /// steps.
+    ///
+    /// ```
+    /// use keanu_graph::{DoubleVar, GraphBuilder, op::DistributionKind};
+    /// use keanu_tensor::DoubleTensor;
+    ///
+    /// let b = GraphBuilder::new();
+    /// let (theta, k) = (b.scalar(2.0), b.scalar(3.0));
+    /// let (mu, sigma) = (b.scalar(0.5), b.scalar(0.4));
+    /// let weights = b.constant(DoubleTensor::vector(vec![0.3, 0.7]));
+    /// // 50 observations from a mixture of a gamma and a log-normal
+    /// let y: DoubleVar = b.mixture_of_with_shape(
+    ///     &[50],
+    ///     &[
+    ///         (DistributionKind::Gamma, &[theta.id(), k.id()]),
+    ///         (DistributionKind::LogNormal, &[mu.id(), sigma.id()]),
+    ///     ],
+    ///     weights,
+    /// );
+    /// # let _ = y;
+    /// b.build()?;
+    /// # Ok::<(), keanu_graph::GraphError>(())
+    /// ```
+    pub fn mixture_of<'b, V: Var<'b>>(
+        &'b self,
+        components: &[(DistributionKind, &[NodeId])],
+        weights: impl IntoDoubleVar<'b>,
+    ) -> V {
+        self.mixture_of_node(None, components, weights.into_var(self))
+    }
+
+    /// Like [`Self::mixture_of`], with a value of the given shape (broadcast with the batch shape).
+    pub fn mixture_of_with_shape<'b, V: Var<'b>>(
+        &'b self,
+        shape: &[usize],
+        components: &[(DistributionKind, &[NodeId])],
+        weights: impl IntoDoubleVar<'b>,
+    ) -> V {
+        self.mixture_of_node(Some(shape), components, weights.into_var(self))
+    }
+
+    fn mixture_of_node<'b, V: Var<'b>>(
+        &'b self,
+        shape: Option<&[usize]>,
+        components: &[(DistributionKind, &[NodeId])],
+        weights: DoubleVar<'b>,
+    ) -> V {
+        let kinds: Arc<[DistributionKind]> = components.iter().map(|(k, _)| k.clone()).collect();
+        let kind = DistributionKind::MixtureOf(kinds);
+        if !components.is_empty() && kind.value_type() != V::DTYPE {
+            self.record(GraphError::InvalidNode {
+                op: "mixture_of",
+                message: format!(
+                    "the components' values are {:?} but a {:?} node was requested",
+                    kind.value_type(),
+                    V::DTYPE
+                ),
+            });
+        }
+        let mut ids = vec![weights.id()];
+        for (_, parameters) in components {
+            ids.extend_from_slice(parameters);
+        }
+        V::wrap(self, self.distribution(kind, shape, &ids))
+    }
+
+    /// A transformed distribution: the value is f(y) for a draw y of `base` with `parameters` (its parameter nodes,
+    /// in its order), f the forward map of `bijector`, so its density is p(f⁻¹(x)) |(f⁻¹)′(x)|
+    /// ([`DistributionKind::Transformed`]). The base is a continuous element-wise kind with a density: one of the
+    /// continuous distributions with one value per element, or a truncated or transformed one (not a censored or
+    /// hurdle kind, whose point masses have no Jacobian). The bijector's bounds or location and scale are constants
+    /// (see [`ElementBijector`](crate::op::ElementBijector)).
+    ///
+    /// The value's shape is the broadcast of the parameters' shapes; use [`Self::transformed_with_shape`] for a
+    /// larger one. The node has an exact gradient and exact Hessian-vector products, from the base's element-wise
+    /// rules and the chain rule through the inverse map, and is element-wise itself (a mixture component, a
+    /// [`log_density`](Self::log_density), pointwise log likelihoods). Its support is the image of the
+    /// base's support (which must be a range of real numbers), so gradient based samplers keep a latent
+    /// transformed node inside it. It has no CDF, so it can't be truncated or censored.
+    ///
+    /// ```
+    /// use keanu_graph::{DoubleVar, GraphBuilder, op::{DistributionKind, ElementBijector}};
+    ///
+    /// let b = GraphBuilder::new();
+    /// let (mu, sigma) = (b.scalar(0.0), b.scalar(1.0));
+    /// // exp of a Gaussian, 2 + exp(y): a log-normal shifted to start at 2
+    /// let x: DoubleVar = b.transformed(
+    ///     DistributionKind::Gaussian,
+    ///     &[mu.id(), sigma.id()],
+    ///     ElementBijector::LowerBound(2.0),
+    /// );
+    /// # let _ = x;
+    /// b.build()?;
+    /// # Ok::<(), keanu_graph::GraphError>(())
+    /// ```
+    pub fn transformed<'b>(
+        &'b self,
+        base: DistributionKind,
+        parameters: &[NodeId],
+        bijector: ElementBijector,
+    ) -> DoubleVar<'b> {
+        let kind = DistributionKind::Transformed(Arc::new(base), bijector);
+        DoubleVar::new(self, self.distribution(kind, None, parameters))
+    }
+
+    /// Like [`Self::transformed`], with a value of the given shape (broadcast with the parameters' shapes).
+    pub fn transformed_with_shape<'b>(
+        &'b self,
+        shape: &[usize],
+        base: DistributionKind,
+        parameters: &[NodeId],
+        bijector: ElementBijector,
+    ) -> DoubleVar<'b> {
+        let kind = DistributionKind::Transformed(Arc::new(base), bijector);
+        DoubleVar::new(self, self.distribution(kind, Some(shape), parameters))
     }
 }
 

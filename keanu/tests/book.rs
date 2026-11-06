@@ -318,6 +318,47 @@ fn mixtures() -> keanu::Result<()> {
 }
 
 #[test]
+fn heterogeneous_mixtures_and_transformed_distributions() -> keanu::Result<()> {
+    // ANCHOR: mixture_of
+    use keanu::graph::op::{DistributionKind, ElementBijector};
+
+    let b = GraphBuilder::new();
+    // durations from a mixture of a gamma and a log-normal: the weights, then each component's parameters
+    let (theta, k) = (b.half_gaussian(2.0), b.half_gaussian(5.0));
+    let (mu, sigma) = (b.gaussian(1.0, 1.0), b.half_gaussian(1.0));
+    let weights = b.dirichlet(DoubleTensor::vector(vec![1.0, 1.0]));
+    let durations: DoubleVar = b.mixture_of_with_shape(
+        &[5],
+        &[
+            (DistributionKind::Gamma, &[theta.id(), k.id()]),
+            (DistributionKind::LogNormal, &[mu.id(), sigma.id()]),
+        ],
+        weights,
+    );
+    b.observe(
+        durations,
+        DoubleTensor::vector(vec![0.4, 1.1, 2.5, 3.0, 9.2]),
+    );
+
+    // a Gaussian pushed through x = 10 + exp(y): a log-normal starting at 10
+    let shifted = b.transformed_with_shape(
+        &[3],
+        DistributionKind::Gaussian,
+        &[mu.id(), sigma.id()],
+        ElementBijector::LowerBound(10.0),
+    );
+    b.observe(shifted, DoubleTensor::vector(vec![11.2, 13.5, 10.4]));
+
+    let (graph, mut state) = b.build()?;
+    let nodes: Vec<NodeId> = graph.ids().collect();
+    state.lazy_eval(&graph, &nodes, &mut KeanuRng::seed_from_u64(1))?;
+    let model = Model::new(graph, &state)?;
+    assert!(model.log_prob(&state)?.is_finite());
+    // ANCHOR_END: mixture_of
+    Ok(())
+}
+
+#[test]
 fn factors() -> keanu::Result<()> {
     // ANCHOR: factor
     let b = GraphBuilder::new();

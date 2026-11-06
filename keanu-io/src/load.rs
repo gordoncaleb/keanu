@@ -431,6 +431,8 @@ fn add_node(
                 kde: p.kde.clone(),
                 base: p.base.clone().map(Box::new),
                 adjacency: p.adjacency.clone(),
+                components: p.components.clone(),
+                bijector: p.bijector,
             })?;
             return Ok(builder.add_distribution(kind, Some(&shape_of(&p.shape)?), parents)?);
         }

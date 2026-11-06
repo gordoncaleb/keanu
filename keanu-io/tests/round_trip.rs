@@ -7,8 +7,8 @@
 
 use keanu_distributions::{Kde, KeanuRng};
 use keanu_graph::op::{
-    ArgOp, BesselOp, BinaryOp, CompareOp, CumulativeOp, DistributionKind, LogicOp, Op, Predicate,
-    ReduceOp, UnaryOp,
+    ArgOp, BesselOp, BinaryOp, CompareOp, CumulativeOp, DistributionKind, ElementBijector, LogicOp,
+    Op, Predicate, ReduceOp, UnaryOp,
 };
 use keanu_graph::{CustomDistribution, DType, Graph, GraphBuilder, Model, NodeId, State, Value};
 use keanu_io::{IoError, Loaded, Metadata, load_json, load_protobuf, save_json, save_protobuf};
@@ -531,6 +531,15 @@ fn distribution_parameters(kind: &DistributionKind) -> Vec<Value> {
             parameters.push(f64s(&[2, 2], &[0.9, 0.1, 0.2, 0.8]));
             parameters
         }
+        // the weights, then each component's parameters
+        MixtureOf(components) => {
+            let mut parameters = vec![f64s(&[components.len()], &[0.3, 0.7])];
+            for component in components.iter() {
+                parameters.extend(distribution_parameters(component));
+            }
+            parameters
+        }
+        Transformed(base, _) => distribution_parameters(base),
         HyperGeometric => vec![int(10), int(4), int(3)],
         DirichletMultinomial => vec![int(5), f64s(&[3], &[1.0, 2.0, 3.0])],
         PlackettLuce => vec![f64s(&[3], &[1.0, 2.0, 3.0])],
@@ -683,6 +692,9 @@ const DISTRIBUTIONS: &[&str] = &[
     "MatrixNormal",
     "VonMisesFisher",
     "Wiener",
+    "MixtureOf([Gamma, Censored(Weibull)])",
+    "Transformed(Gaussian, Interval(-1.0, 2.0))",
+    "Transformed(Gamma, Affine { loc: 1.0, scale: -2.0 })",
 ];
 
 fn distribution_kinds() -> Vec<DistributionKind> {
@@ -779,6 +791,15 @@ fn distribution_kinds() -> Vec<DistributionKind> {
         MatrixNormal,
         VonMisesFisher,
         Wiener,
+        MixtureOf(Arc::from(vec![Gamma, Censored(Arc::new(Weibull))])),
+        Transformed(Arc::new(Gaussian), ElementBijector::Interval(-1.0, 2.0)),
+        Transformed(
+            Arc::new(Gamma),
+            ElementBijector::Affine {
+                loc: 1.0,
+                scale: -2.0,
+            },
+        ),
     ]
 }
 
@@ -939,6 +960,28 @@ fn factors_and_log_densities_keep_their_log_probability() {
         &[mu.id(), b.scalar(0.8).id()],
     );
     b.factor(log_p).label("likelihood");
+    // a heterogeneous mixture's log density, whose kind nests a transformed component
+    let weights = b.constant(DoubleTensor::vector(vec![0.4, 0.6]));
+    let mixture = DistributionKind::MixtureOf(Arc::from(vec![
+        DistributionKind::Gamma,
+        DistributionKind::Transformed(
+            Arc::new(DistributionKind::Gaussian),
+            ElementBijector::LowerBound(0.0),
+        ),
+    ]));
+    let positive = b.constant(DoubleTensor::vector(vec![0.5, 1.2, 3.0]));
+    let log_p = b.log_density(
+        mixture,
+        positive,
+        &[
+            weights.id(),
+            b.scalar(1.5).id(),
+            b.scalar(2.0).id(),
+            mu.id(),
+            b.scalar(0.7).id(),
+        ],
+    );
+    b.factor(log_p);
     let (graph, mut state) = b.build().unwrap();
     let all: Vec<NodeId> = graph.ids().collect();
     state
@@ -957,7 +1000,7 @@ fn factors_and_log_densities_keep_their_log_probability() {
         .lazy_eval(&loaded.graph, &all, &mut KeanuRng::seed_from_u64(1))
         .unwrap();
     let model = Model::new(loaded.graph, &loaded.state).unwrap();
-    assert_eq!(model.factors().len(), 1);
+    assert_eq!(model.factors().len(), 2);
     assert_eq!(model.log_prob(&loaded.state).unwrap(), expected);
 }
 

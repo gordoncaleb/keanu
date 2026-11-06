@@ -8,8 +8,8 @@ use keanu_distributions::{Adjacency, Kde};
 use keanu_graph::DType;
 use keanu_graph::ode::OdeSolver;
 use keanu_graph::op::{
-    ArgOp, BesselOp, BinaryOp, CompareOp, CumulativeOp, DistributionKind, LogicOp, Nested,
-    Predicate, ReduceOp, UnaryOp,
+    ArgOp, BesselOp, BinaryOp, CompareOp, CumulativeOp, DistributionKind, ElementBijector, LogicOp,
+    Nested, Predicate, ReduceOp, UnaryOp,
 };
 use std::sync::Arc;
 
@@ -132,6 +132,21 @@ macro_rules! distribution_codes {
                 ),
                 DistributionKind::Icar(a) => (proto::DistributionKind::Icar, None, None, Some(adjacency(a))),
                 DistributionKind::Car(a) => (proto::DistributionKind::Car, None, None, Some(adjacency(a))),
+                DistributionKind::MixtureOf(components) => {
+                    return Some(proto::DistributionType {
+                        kind: proto::DistributionKind::MixtureOf as i32,
+                        components: components.iter().map(distribution_type).collect::<Option<_>>()?,
+                        ..Default::default()
+                    });
+                }
+                DistributionKind::Transformed(base, bijector) => {
+                    return Some(proto::DistributionType {
+                        kind: proto::DistributionKind::Transformed as i32,
+                        base: Some(Box::new(distribution_type(base)?)),
+                        bijector: Some(element_bijector(*bijector)?),
+                        ..Default::default()
+                    });
+                }
                 _ => {
                     let (nested, base) = kind.nested()?;
                     (nested_code(nested)?, None, Some(base), None)
@@ -146,6 +161,7 @@ macro_rules! distribution_codes {
                 kde,
                 base,
                 adjacency,
+                ..Default::default()
             })
         }
 
@@ -170,7 +186,23 @@ macro_rules! distribution_codes {
                 )));
             }
             let nested = nested_of_code(kind);
-            let base = match (&saved.base, nested.is_some()) {
+            let transformed = kind == proto::DistributionKind::Transformed;
+            let mixture_of = kind == proto::DistributionKind::MixtureOf;
+            if saved.components.is_empty() == mixture_of {
+                return Err(IoError::Decode(format!(
+                    "a {} distribution {} components",
+                    kind.as_str_name(),
+                    if mixture_of { "needs" } else { "has" }
+                )));
+            }
+            if saved.bijector.is_some() != transformed {
+                return Err(IoError::Decode(format!(
+                    "a {} distribution {} a bijector",
+                    kind.as_str_name(),
+                    if transformed { "needs" } else { "has" }
+                )));
+            }
+            let base = match (&saved.base, nested.is_some() || transformed) {
                 (Some(base), true) => Some(Arc::new(distribution_of_type(base)?)),
                 (None, false) => None,
                 (None, true) => {
@@ -200,6 +232,13 @@ macro_rules! distribution_codes {
                 (proto::DistributionKind::Car, _) => {
                     DistributionKind::Car(Arc::new(adjacency_of(saved.adjacency.as_ref())?))
                 }
+                (proto::DistributionKind::MixtureOf, _) => DistributionKind::MixtureOf(
+                    saved.components.iter().map(distribution_of_type).collect::<Result<_>>()?,
+                ),
+                (proto::DistributionKind::Transformed, Some(base)) => DistributionKind::Transformed(
+                    base,
+                    element_bijector_of(saved.bijector.as_ref().expect("checked above"))?,
+                ),
                 (_, base) => match (nested, base) {
                     (Some(nested), Some(base)) => nested.wrap(base),
                     _ => return Err(unknown()),
@@ -207,6 +246,41 @@ macro_rules! distribution_codes {
             })
         }
     };
+}
+
+/// The saved form of a transformed distribution's bijector, None for a variant without one.
+fn element_bijector(bijector: ElementBijector) -> Option<proto::ElementBijector> {
+    use proto::ElementBijectorKind as P;
+    let (kind, a, b) = match bijector {
+        ElementBijector::LowerBound(a) => (P::LowerBound, a, 0.0),
+        ElementBijector::UpperBound(a) => (P::UpperBound, a, 0.0),
+        ElementBijector::Interval(a, b) => (P::Interval, a, b),
+        ElementBijector::Affine { loc, scale } => (P::Affine, loc, scale),
+        _ => return None,
+    };
+    Some(proto::ElementBijector {
+        kind: kind as i32,
+        a,
+        b,
+    })
+}
+
+/// A transformed distribution's bijector from its saved form (checked when the node is built).
+fn element_bijector_of(saved: &proto::ElementBijector) -> Result<ElementBijector> {
+    use proto::ElementBijectorKind as P;
+    let (a, b) = (saved.a, saved.b);
+    Ok(match P::try_from(saved.kind) {
+        Ok(P::LowerBound) => ElementBijector::LowerBound(a),
+        Ok(P::UpperBound) => ElementBijector::UpperBound(a),
+        Ok(P::Interval) => ElementBijector::Interval(a, b),
+        Ok(P::Affine) => ElementBijector::Affine { loc: a, scale: b },
+        _ => {
+            return Err(IoError::Decode(format!(
+                "unknown element bijector {}",
+                saved.kind
+            )));
+        }
+    })
 }
 
 /// The saved form of a neighbourhood.
@@ -328,7 +402,7 @@ mod tests {
     }
 
     /// The number of distribution kinds in the schema.
-    const DISTRIBUTION_KINDS: i32 = 76;
+    const DISTRIBUTION_KINDS: i32 = 78;
 
     #[test]
     fn every_schema_value_has_a_variant() {
@@ -347,7 +421,7 @@ mod tests {
                 kind,
                 kde,
                 base: base.map(Box::new),
-                adjacency: None,
+                ..Default::default()
             }
         };
         let gaussian = || saved(proto::DistributionKind::Gaussian as i32, None, None);
@@ -357,8 +431,22 @@ mod tests {
                 samples: vec![1.0],
                 bandwidth: 1.0,
             });
-            let base = nested.contains(&code).then(gaussian);
+            let transformed = code == proto::DistributionKind::Transformed as i32;
+            let base = (nested.contains(&code) || transformed).then(gaussian);
             let mut original = saved(code, kde, base);
+            if transformed {
+                original.bijector = Some(proto::ElementBijector {
+                    kind: proto::ElementBijectorKind::Interval as i32,
+                    a: -1.0,
+                    b: 2.0,
+                });
+            }
+            if code == proto::DistributionKind::MixtureOf as i32 {
+                original.components = vec![
+                    gaussian(),
+                    saved(proto::DistributionKind::Gamma as i32, None, None),
+                ];
+            }
             if code == proto::DistributionKind::Icar as i32
                 || code == proto::DistributionKind::Car as i32
             {

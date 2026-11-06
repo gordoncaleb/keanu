@@ -1747,6 +1747,12 @@ impl serde::Serialize for Distribution {
         if self.adjacency.is_some() {
             len += 1;
         }
+        if !self.components.is_empty() {
+            len += 1;
+        }
+        if self.bijector.is_some() {
+            len += 1;
+        }
         let mut struct_ser = serializer.serialize_struct("keanu.Distribution", len)?;
         if self.kind != 0 {
             let v = DistributionKind::try_from(self.kind)
@@ -1765,6 +1771,12 @@ impl serde::Serialize for Distribution {
         if let Some(v) = self.adjacency.as_ref() {
             struct_ser.serialize_field("adjacency", v)?;
         }
+        if !self.components.is_empty() {
+            struct_ser.serialize_field("components", &self.components)?;
+        }
+        if let Some(v) = self.bijector.as_ref() {
+            struct_ser.serialize_field("bijector", v)?;
+        }
         struct_ser.end()
     }
 }
@@ -1780,6 +1792,8 @@ impl<'de> serde::Deserialize<'de> for Distribution {
             "kde",
             "base",
             "adjacency",
+            "components",
+            "bijector",
         ];
 
         #[allow(clippy::enum_variant_names)]
@@ -1789,6 +1803,8 @@ impl<'de> serde::Deserialize<'de> for Distribution {
             Kde,
             Base,
             Adjacency,
+            Components,
+            Bijector,
         }
         impl<'de> serde::Deserialize<'de> for GeneratedField {
             fn deserialize<D>(deserializer: D) -> std::result::Result<GeneratedField, D::Error>
@@ -1815,6 +1831,8 @@ impl<'de> serde::Deserialize<'de> for Distribution {
                             "kde" => Ok(GeneratedField::Kde),
                             "base" => Ok(GeneratedField::Base),
                             "adjacency" => Ok(GeneratedField::Adjacency),
+                            "components" => Ok(GeneratedField::Components),
+                            "bijector" => Ok(GeneratedField::Bijector),
                             _ => Err(serde::de::Error::unknown_field(value, FIELDS)),
                         }
                     }
@@ -1839,6 +1857,8 @@ impl<'de> serde::Deserialize<'de> for Distribution {
                 let mut kde__ = None;
                 let mut base__ = None;
                 let mut adjacency__ = None;
+                let mut components__ = None;
+                let mut bijector__ = None;
                 while let Some(k) = map_.next_key()? {
                     match k {
                         GeneratedField::Kind => {
@@ -1874,6 +1894,18 @@ impl<'de> serde::Deserialize<'de> for Distribution {
                             }
                             adjacency__ = map_.next_value()?;
                         }
+                        GeneratedField::Components => {
+                            if components__.is_some() {
+                                return Err(serde::de::Error::duplicate_field("components"));
+                            }
+                            components__ = Some(map_.next_value()?);
+                        }
+                        GeneratedField::Bijector => {
+                            if bijector__.is_some() {
+                                return Err(serde::de::Error::duplicate_field("bijector"));
+                            }
+                            bijector__ = map_.next_value()?;
+                        }
                     }
                 }
                 Ok(Distribution {
@@ -1882,6 +1914,8 @@ impl<'de> serde::Deserialize<'de> for Distribution {
                     kde: kde__,
                     base: base__,
                     adjacency: adjacency__,
+                    components: components__.unwrap_or_default(),
+                    bijector: bijector__,
                 })
             }
         }
@@ -1972,6 +2006,8 @@ impl serde::Serialize for DistributionKind {
             Self::MatrixNormal => "DISTRIBUTION_KIND_MATRIX_NORMAL",
             Self::VonMisesFisher => "DISTRIBUTION_KIND_VON_MISES_FISHER",
             Self::Wiener => "DISTRIBUTION_KIND_WIENER",
+            Self::MixtureOf => "DISTRIBUTION_KIND_MIXTURE_OF",
+            Self::Transformed => "DISTRIBUTION_KIND_TRANSFORMED",
         };
         serializer.serialize_str(variant)
     }
@@ -2060,6 +2096,8 @@ impl<'de> serde::Deserialize<'de> for DistributionKind {
             "DISTRIBUTION_KIND_MATRIX_NORMAL",
             "DISTRIBUTION_KIND_VON_MISES_FISHER",
             "DISTRIBUTION_KIND_WIENER",
+            "DISTRIBUTION_KIND_MIXTURE_OF",
+            "DISTRIBUTION_KIND_TRANSFORMED",
         ];
 
         struct GeneratedVisitor;
@@ -2177,6 +2215,8 @@ impl<'de> serde::Deserialize<'de> for DistributionKind {
                     "DISTRIBUTION_KIND_MATRIX_NORMAL" => Ok(DistributionKind::MatrixNormal),
                     "DISTRIBUTION_KIND_VON_MISES_FISHER" => Ok(DistributionKind::VonMisesFisher),
                     "DISTRIBUTION_KIND_WIENER" => Ok(DistributionKind::Wiener),
+                    "DISTRIBUTION_KIND_MIXTURE_OF" => Ok(DistributionKind::MixtureOf),
+                    "DISTRIBUTION_KIND_TRANSFORMED" => Ok(DistributionKind::Transformed),
                     _ => Err(serde::de::Error::unknown_variant(value, FIELDS)),
                 }
             }
@@ -2204,6 +2244,12 @@ impl serde::Serialize for DistributionType {
         if self.adjacency.is_some() {
             len += 1;
         }
+        if !self.components.is_empty() {
+            len += 1;
+        }
+        if self.bijector.is_some() {
+            len += 1;
+        }
         let mut struct_ser = serializer.serialize_struct("keanu.DistributionType", len)?;
         if self.kind != 0 {
             let v = DistributionKind::try_from(self.kind)
@@ -2219,6 +2265,12 @@ impl serde::Serialize for DistributionType {
         if let Some(v) = self.adjacency.as_ref() {
             struct_ser.serialize_field("adjacency", v)?;
         }
+        if !self.components.is_empty() {
+            struct_ser.serialize_field("components", &self.components)?;
+        }
+        if let Some(v) = self.bijector.as_ref() {
+            struct_ser.serialize_field("bijector", v)?;
+        }
         struct_ser.end()
     }
 }
@@ -2233,6 +2285,8 @@ impl<'de> serde::Deserialize<'de> for DistributionType {
             "kde",
             "base",
             "adjacency",
+            "components",
+            "bijector",
         ];
 
         #[allow(clippy::enum_variant_names)]
@@ -2241,6 +2295,8 @@ impl<'de> serde::Deserialize<'de> for DistributionType {
             Kde,
             Base,
             Adjacency,
+            Components,
+            Bijector,
         }
         impl<'de> serde::Deserialize<'de> for GeneratedField {
             fn deserialize<D>(deserializer: D) -> std::result::Result<GeneratedField, D::Error>
@@ -2266,6 +2322,8 @@ impl<'de> serde::Deserialize<'de> for DistributionType {
                             "kde" => Ok(GeneratedField::Kde),
                             "base" => Ok(GeneratedField::Base),
                             "adjacency" => Ok(GeneratedField::Adjacency),
+                            "components" => Ok(GeneratedField::Components),
+                            "bijector" => Ok(GeneratedField::Bijector),
                             _ => Err(serde::de::Error::unknown_field(value, FIELDS)),
                         }
                     }
@@ -2289,6 +2347,8 @@ impl<'de> serde::Deserialize<'de> for DistributionType {
                 let mut kde__ = None;
                 let mut base__ = None;
                 let mut adjacency__ = None;
+                let mut components__ = None;
+                let mut bijector__ = None;
                 while let Some(k) = map_.next_key()? {
                     match k {
                         GeneratedField::Kind => {
@@ -2315,6 +2375,18 @@ impl<'de> serde::Deserialize<'de> for DistributionType {
                             }
                             adjacency__ = map_.next_value()?;
                         }
+                        GeneratedField::Components => {
+                            if components__.is_some() {
+                                return Err(serde::de::Error::duplicate_field("components"));
+                            }
+                            components__ = Some(map_.next_value()?);
+                        }
+                        GeneratedField::Bijector => {
+                            if bijector__.is_some() {
+                                return Err(serde::de::Error::duplicate_field("bijector"));
+                            }
+                            bijector__ = map_.next_value()?;
+                        }
                     }
                 }
                 Ok(DistributionType {
@@ -2322,6 +2394,8 @@ impl<'de> serde::Deserialize<'de> for DistributionType {
                     kde: kde__,
                     base: base__,
                     adjacency: adjacency__,
+                    components: components__.unwrap_or_default(),
+                    bijector: bijector__,
                 })
             }
         }
@@ -2420,6 +2494,217 @@ impl<'de> serde::Deserialize<'de> for DoubleValues {
             }
         }
         deserializer.deserialize_struct("keanu.DoubleValues", FIELDS, GeneratedVisitor)
+    }
+}
+impl serde::Serialize for ElementBijector {
+    #[allow(deprecated)]
+    fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        use serde::ser::SerializeStruct;
+        let mut len = 0;
+        if self.kind != 0 {
+            len += 1;
+        }
+        if self.a != 0. {
+            len += 1;
+        }
+        if self.b != 0. {
+            len += 1;
+        }
+        let mut struct_ser = serializer.serialize_struct("keanu.ElementBijector", len)?;
+        if self.kind != 0 {
+            let v = ElementBijectorKind::try_from(self.kind)
+                .map_err(|_| serde::ser::Error::custom(format!("Invalid variant {}", self.kind)))?;
+            struct_ser.serialize_field("kind", &v)?;
+        }
+        if self.a != 0. {
+            struct_ser.serialize_field("a", &self.a)?;
+        }
+        if self.b != 0. {
+            struct_ser.serialize_field("b", &self.b)?;
+        }
+        struct_ser.end()
+    }
+}
+impl<'de> serde::Deserialize<'de> for ElementBijector {
+    #[allow(deprecated)]
+    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        const FIELDS: &[&str] = &[
+            "kind",
+            "a",
+            "b",
+        ];
+
+        #[allow(clippy::enum_variant_names)]
+        enum GeneratedField {
+            Kind,
+            A,
+            B,
+        }
+        impl<'de> serde::Deserialize<'de> for GeneratedField {
+            fn deserialize<D>(deserializer: D) -> std::result::Result<GeneratedField, D::Error>
+            where
+                D: serde::Deserializer<'de>,
+            {
+                struct GeneratedVisitor;
+
+                impl serde::de::Visitor<'_> for GeneratedVisitor {
+                    type Value = GeneratedField;
+
+                    fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                        write!(formatter, "expected one of: {:?}", &FIELDS)
+                    }
+
+                    #[allow(unused_variables)]
+                    fn visit_str<E>(self, value: &str) -> std::result::Result<GeneratedField, E>
+                    where
+                        E: serde::de::Error,
+                    {
+                        match value {
+                            "kind" => Ok(GeneratedField::Kind),
+                            "a" => Ok(GeneratedField::A),
+                            "b" => Ok(GeneratedField::B),
+                            _ => Err(serde::de::Error::unknown_field(value, FIELDS)),
+                        }
+                    }
+                }
+                deserializer.deserialize_identifier(GeneratedVisitor)
+            }
+        }
+        struct GeneratedVisitor;
+        impl<'de> serde::de::Visitor<'de> for GeneratedVisitor {
+            type Value = ElementBijector;
+
+            fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                formatter.write_str("struct keanu.ElementBijector")
+            }
+
+            fn visit_map<V>(self, mut map_: V) -> std::result::Result<ElementBijector, V::Error>
+                where
+                    V: serde::de::MapAccess<'de>,
+            {
+                let mut kind__ = None;
+                let mut a__ = None;
+                let mut b__ = None;
+                while let Some(k) = map_.next_key()? {
+                    match k {
+                        GeneratedField::Kind => {
+                            if kind__.is_some() {
+                                return Err(serde::de::Error::duplicate_field("kind"));
+                            }
+                            kind__ = Some(map_.next_value::<ElementBijectorKind>()? as i32);
+                        }
+                        GeneratedField::A => {
+                            if a__.is_some() {
+                                return Err(serde::de::Error::duplicate_field("a"));
+                            }
+                            a__ = 
+                                Some(map_.next_value::<::pbjson::private::NumberDeserialize<_>>()?.0)
+                            ;
+                        }
+                        GeneratedField::B => {
+                            if b__.is_some() {
+                                return Err(serde::de::Error::duplicate_field("b"));
+                            }
+                            b__ = 
+                                Some(map_.next_value::<::pbjson::private::NumberDeserialize<_>>()?.0)
+                            ;
+                        }
+                    }
+                }
+                Ok(ElementBijector {
+                    kind: kind__.unwrap_or_default(),
+                    a: a__.unwrap_or_default(),
+                    b: b__.unwrap_or_default(),
+                })
+            }
+        }
+        deserializer.deserialize_struct("keanu.ElementBijector", FIELDS, GeneratedVisitor)
+    }
+}
+impl serde::Serialize for ElementBijectorKind {
+    #[allow(deprecated)]
+    fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        let variant = match self {
+            Self::Unspecified => "ELEMENT_BIJECTOR_KIND_UNSPECIFIED",
+            Self::LowerBound => "ELEMENT_BIJECTOR_KIND_LOWER_BOUND",
+            Self::UpperBound => "ELEMENT_BIJECTOR_KIND_UPPER_BOUND",
+            Self::Interval => "ELEMENT_BIJECTOR_KIND_INTERVAL",
+            Self::Affine => "ELEMENT_BIJECTOR_KIND_AFFINE",
+        };
+        serializer.serialize_str(variant)
+    }
+}
+impl<'de> serde::Deserialize<'de> for ElementBijectorKind {
+    #[allow(deprecated)]
+    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        const FIELDS: &[&str] = &[
+            "ELEMENT_BIJECTOR_KIND_UNSPECIFIED",
+            "ELEMENT_BIJECTOR_KIND_LOWER_BOUND",
+            "ELEMENT_BIJECTOR_KIND_UPPER_BOUND",
+            "ELEMENT_BIJECTOR_KIND_INTERVAL",
+            "ELEMENT_BIJECTOR_KIND_AFFINE",
+        ];
+
+        struct GeneratedVisitor;
+
+        impl serde::de::Visitor<'_> for GeneratedVisitor {
+            type Value = ElementBijectorKind;
+
+            fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                write!(formatter, "expected one of: {:?}", &FIELDS)
+            }
+
+            fn visit_i64<E>(self, v: i64) -> std::result::Result<Self::Value, E>
+            where
+                E: serde::de::Error,
+            {
+                i32::try_from(v)
+                    .ok()
+                    .and_then(|x| x.try_into().ok())
+                    .ok_or_else(|| {
+                        serde::de::Error::invalid_value(serde::de::Unexpected::Signed(v), &self)
+                    })
+            }
+
+            fn visit_u64<E>(self, v: u64) -> std::result::Result<Self::Value, E>
+            where
+                E: serde::de::Error,
+            {
+                i32::try_from(v)
+                    .ok()
+                    .and_then(|x| x.try_into().ok())
+                    .ok_or_else(|| {
+                        serde::de::Error::invalid_value(serde::de::Unexpected::Unsigned(v), &self)
+                    })
+            }
+
+            fn visit_str<E>(self, value: &str) -> std::result::Result<Self::Value, E>
+            where
+                E: serde::de::Error,
+            {
+                match value {
+                    "ELEMENT_BIJECTOR_KIND_UNSPECIFIED" => Ok(ElementBijectorKind::Unspecified),
+                    "ELEMENT_BIJECTOR_KIND_LOWER_BOUND" => Ok(ElementBijectorKind::LowerBound),
+                    "ELEMENT_BIJECTOR_KIND_UPPER_BOUND" => Ok(ElementBijectorKind::UpperBound),
+                    "ELEMENT_BIJECTOR_KIND_INTERVAL" => Ok(ElementBijectorKind::Interval),
+                    "ELEMENT_BIJECTOR_KIND_AFFINE" => Ok(ElementBijectorKind::Affine),
+                    _ => Err(serde::de::Error::unknown_variant(value, FIELDS)),
+                }
+            }
+        }
+        deserializer.deserialize_any(GeneratedVisitor)
     }
 }
 impl serde::Serialize for Empty {

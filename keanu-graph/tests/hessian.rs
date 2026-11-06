@@ -10,7 +10,7 @@
 //! that the cases cover every kind (and every base of a truncated or censored distribution).
 
 use keanu_distributions::KeanuRng;
-use keanu_graph::op::{DistributionKind, Op};
+use keanu_graph::op::{DistributionKind, ElementBijector, Op};
 use keanu_graph::sts::{Component, StructuralModel};
 use keanu_graph::transform::{
     Bijector, Circular, CorrelationCholesky, CovarianceCholesky, CovarianceMatrix, Identity,
@@ -1896,6 +1896,99 @@ fn distribution_cases() -> Vec<DistributionCase> {
             let kind = K::Truncated(Arc::new(K::Gamma));
             let y: DoubleVar<'_> = b.mixture(kind, &params, weights);
             b.observe(y, DoubleTensor::scalar(1.2));
+        }),
+        // heterogeneous mixtures
+        case("a mixture of a gamma and a log-normal", |b| {
+            let gamma = [positive(b, 0.9).id(), positive(b, 2.5).id()];
+            let log_normal = [scalar_latent(b, 0.3).id(), positive(b, 0.6).id()];
+            let weights = latent_vector(b, &[0.3, -0.2]).softmax(0);
+            let components = [(K::Gamma, &gamma[..]), (K::LogNormal, &log_normal[..])];
+            let x: DoubleVar<'_> = b.mixture_of(&components, weights);
+            b.set_value(x, DoubleTensor::scalar(1.4));
+            let y: DoubleVar<'_> = b.mixture_of_with_shape(&[3], &components, weights);
+            b.observe(y, v(&[0.4, 1.3, 3.5]));
+        }),
+        case(
+            "a mixture of a censored Weibull and a censored uniform",
+            |b| {
+                // a cure model's likelihood: an event before the censoring time, and two censored times
+                let c = b.constant(v(&[2.0, 1.5, 3.0]));
+                let weibull = [
+                    positive(b, 1.4).id(),
+                    positive(b, 1.2).id(),
+                    b.scalar(f64::NEG_INFINITY).id(),
+                    c.id(),
+                ];
+                let cured = [
+                    c.id(),
+                    (c + 1.0).id(),
+                    b.scalar(f64::NEG_INFINITY).id(),
+                    c.id(),
+                ];
+                let pi = probabilities(b, &[0.3]).reshape(&[]);
+                let weights = b.stack(-1, &[-pi + 1.0, pi]);
+                let components = [
+                    (K::Censored(Arc::new(K::Weibull)), &weibull[..]),
+                    (K::Censored(Arc::new(K::Uniform)), &cured[..]),
+                ];
+                let y: DoubleVar<'_> = b.mixture_of(&components, weights);
+                b.observe(y, v(&[0.8, 1.5, 3.0]));
+            },
+        ),
+        case("a mixture of a Poisson and a negative binomial", |b| {
+            let poisson = [positive(b, 1.5).id()];
+            let negative_binomial = [positive(b, 4.0).id(), positive(b, 0.7).id()];
+            let weights = latent_vector(b, &[0.3, -0.2]).softmax(0);
+            let components = [
+                (K::Poisson, &poisson[..]),
+                (K::NegativeBinomial, &negative_binomial[..]),
+            ];
+            let y: IntVar<'_> = b.mixture_of_with_shape(&[4], &components, weights);
+            b.observe(y, ints(&[0, 2, 5, 9]));
+        }),
+        case("a log density of a heterogeneous mixture", |b| {
+            let x = latent_vector(b, &[0.5, 1.5, 2.5]);
+            let gamma = [positive(b, 0.9).id(), positive(b, 2.5).id()];
+            let gaussian = [scalar_latent(b, 1.0).id(), positive(b, 0.6).id()];
+            let weights = latent_vector(b, &[0.3, -0.2]).softmax(0);
+            let mut parameters = vec![weights.id()];
+            parameters.extend(gamma);
+            parameters.extend(gaussian);
+            let kind = K::MixtureOf(Arc::from(vec![K::Gamma, K::Gaussian]));
+            observe(b, b.log_density(kind, x, &parameters));
+        }),
+        // transformed distributions, one for each bijector
+        case("a transformed Gaussian", |b| {
+            let params = [scalar_latent(b, 0.3).id(), positive(b, 0.8).id()];
+            for (bijector, value, data) in [
+                (ElementBijector::LowerBound(1.0), 1.7, 2.9),
+                (ElementBijector::UpperBound(-0.5), -1.2, -0.7),
+                (ElementBijector::Interval(-1.0, 2.0), 0.6, -0.4),
+                (
+                    ElementBijector::Affine {
+                        loc: 0.5,
+                        scale: -2.0,
+                    },
+                    0.2,
+                    1.4,
+                ),
+            ] {
+                let x = b.transformed(K::Gaussian, &params, bijector);
+                b.set_value(x, DoubleTensor::scalar(value));
+                let y = b.transformed_with_shape(&[2], K::Gaussian, &params, bijector);
+                b.observe(y, v(&[value, data]));
+            }
+        }),
+        case("a mixture of transformed gammas", |b| {
+            let params = [positive(b, 0.9).id(), positive_vector(b, &[1.5, 4.0]).id()];
+            let weights = latent_vector(b, &[0.3, -0.2]).softmax(0);
+            let bijector = ElementBijector::Affine {
+                loc: 0.5,
+                scale: 2.0,
+            };
+            let kind = K::Transformed(Arc::new(K::Gamma), bijector);
+            let y: DoubleVar<'_> = b.mixture_with_shape(&[2], kind, &params, weights);
+            b.observe(y, v(&[1.3, 2.8]));
         }),
         // truncated distributions, one for each base with a CDF
         case("truncated gaussian", |b| {

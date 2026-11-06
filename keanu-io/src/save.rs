@@ -184,6 +184,8 @@ fn save_op(graph: &Graph, id: NodeId) -> Result<P> {
                 kde: saved.kde,
                 base: saved.base.map(|base| *base),
                 adjacency: saved.adjacency,
+                components: saved.components,
+                bijector: saved.bijector,
             })
         }
         Op::Scan(body) => P::Scan(proto::Scan {

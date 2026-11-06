@@ -9,11 +9,13 @@ mod hmm;
 mod inflated;
 pub(crate) mod log_density;
 mod mixture;
+mod mixture_of;
 mod nested;
 mod ode;
 mod scan;
 mod shape;
 mod simulator;
+mod transformed;
 mod wrappers;
 
 pub(crate) use distribution::LogProbGradientParts;
@@ -26,6 +28,7 @@ pub use ode::OdeBody;
 pub use scan::ScanBody;
 pub(crate) use shape::{check_element_count, output_type};
 pub use simulator::{Simulator, SimulatorFn};
+pub use transformed::ElementBijector;
 
 use crate::error::Result;
 use crate::value::{DType, Value};

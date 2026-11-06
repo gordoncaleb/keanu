@@ -205,6 +205,29 @@ A mixture's likelihood doesn't change when components swap labels, so a posterio
 parameters has a copy of each mode per labelling. Order the components to remove the copies, as the
 [Gaussian mixture example](examples.md#a-gaussian-mixture) orders the means.
 
+### Mixtures of different families and transformed distributions
+
+`mixture_of(components, weights)` mixes components of different kinds, such as a gamma and a log-normal: each
+component is a pair of a kind and its parameter nodes, which have no component axis, and the weights' last axis has
+one entry per component. The node's parents are the weights, then each component's parameters in turn. The
+components can be any of the kinds `mixture` accepts (truncated, censored, zero-inflated, hurdle and transformed ones
+included) as long as their values have one type. The log density, its exact gradient and Hessian-vector products,
+sampling, pointwise log likelihoods and `log_density` work as for `mixture`. The support is the hull of the
+components' supports: the smallest lower bound and the largest upper bound.
+
+`transformed(base, parameters, bijector)` pushes a continuous element-wise distribution through an element-wise
+bijector: the value is f(y) for a draw y of the base, and its log density is log p(f⁻¹(x)) + log |(f⁻¹)′(x)|. The
+bijectors (`ElementBijector`) are `LowerBound(a)` (x = a + exp(y)), `UpperBound(b)` (x = b − exp(y)),
+`Interval(a, b)` (x = a + (b − a)·logistic(y)) and `Affine { loc, scale }` (x = loc + scale·y), with constant
+bounds, location and scale. So a Gaussian through `LowerBound(0.0)` is a log-normal, and through
+`Interval(0.0, 1.0)` a logit-normal. The support is the image of the base's support. A transformed distribution is
+element-wise, so it can be a mixture component or a `log_density` kind, but it has no CDF, so it can't be truncated
+or censored. Its base can't be censored or a hurdle either, since their point masses have no Jacobian.
+
+```rust,ignore
+{{#include ../../keanu/tests/book.rs:mixture_of}}
+```
+
 ## Factors
 
 `factor(expr)` adds an arbitrary term to the joint log probability, like PyMC's `Potential` or Stan's
@@ -220,8 +243,10 @@ likelihoods that no distribution provides. A factor that isn't finite (NaN or ±
 deterministic node: its sum is the log probability a node of that distribution with that value would have, so a
 factor of it gives a likelihood to a value that isn't itself a probabilistic node (such as a transformed
 observation). It works for every distribution with one value per element (the continuous and count distributions,
-`bernoulli` and `bernoulli_logit`, and truncated, censored, zero-inflated and hurdle ones; not `dirichlet`, `multivariate_gaussian`, `lkj_cholesky`,
-`zero_sum_normal`, `kde`, `categorical`, `multinomial`, `ordered_logistic` or mixtures), its value has the distribution's type (f64, i64 for
+`bernoulli` and `bernoulli_logit`, truncated, censored, zero-inflated, hurdle and transformed ones, and mixtures of
+different families, whose parameters are the weights and then each component's; not `dirichlet`,
+`multivariate_gaussian`, `lkj_cholesky`, `zero_sum_normal`, `kde`, `categorical`, `multinomial`, `ordered_logistic`
+or same-family mixtures), its value has the distribution's type (f64, i64 for
 counts, or bool for `bernoulli` and `bernoulli_logit`), and it differentiates, to second order, as the distribution does.
 
 ```rust,ignore

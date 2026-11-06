@@ -639,6 +639,23 @@ Work from `docs/plans/2026-11-05-001-feat-applied-modelling-gaps-plan.md`.
   population drifts, the starting point and every subject's boundary separation and non-decision time cover the true
   values, that R-hat is below 1.01 with no divergences, and that the easy condition's drift is clearly the larger.
   `Wiener::log_prob_and_d_log_prob` gives the log density and gradient in one pass, which the graph uses.
+- keanu-graph, keanu-io: **mixtures of different families and transformed distributions**.
+  `DistributionKind::MixtureOf` (`GraphBuilder::mixture_of` and `_with_shape`) mixes components of different
+  element-wise kinds with one value type, such as a gamma and a log-normal or a censored Weibull and a censored
+  uniform: its parents are the weights (the component axis last), then each component's parameters in turn, with no
+  component axis. The log density is logsumexp_c(log w_c + log p_c(x)) with an exact gradient and exact
+  Hessian-vector products (each component's own element-wise rules inside a logsumexp's), draws pick a component
+  by its weight, and the support is the hull of the components' supports. It has pointwise log likelihoods and a
+  `log_density` (over the batch shape, the weights' component axis summed over in its derivatives), but no CDF and
+  no finite support for Gibbs steps. `DistributionKind::Transformed` (`GraphBuilder::transformed` and
+  `_with_shape`) pushes a continuous element-wise base with a density through an `op::ElementBijector`:
+  `LowerBound(a)`, `UpperBound(b)`, `Interval(a, b)` (the transform module's bounded maps with constant bounds) or
+  `Affine { loc, scale }`. Its log density is log p(g(x)) + log |g′(x)| with g the inverse map, with gradients and
+  Hessian-vector products by the chain rule through g′, g″ and g‴ from the base's element-wise rules; its support
+  is the image of the base's; it is element-wise (a mixture component, a `log_density` kind), but it has no CDF and
+  its base can't be censored or a hurdle. A Gaussian through `LowerBound(a)` is a log-normal shifted by a. The save
+  schema gained the `MIXTURE_OF` (77) and `TRANSFORMED` (78) kinds, a repeated `components` field and an
+  `ElementBijector` message on `Distribution` and `DistributionType`.
 
 ### Code review fixes
 
