@@ -13,6 +13,7 @@
 //! with `λ' = −f / S`. The first derivative `λ'` is recovered from the first-order gradient, so the two agree.
 
 use super::super::distribution::DistributionKind;
+use keanu_distributions as d;
 use keanu_tensor::special::{
     digamma, log_bessel_i0, log_bessel_i1, log_gamma_p_da2, log_gamma_q_da2, log_inc_beta_da2,
     log_inc_beta_dadb, log_inc_beta_db2, trigamma,
@@ -254,9 +255,51 @@ pub(crate) fn density_rule(kind: &DistributionKind) -> Option<DensityRule> {
                 h.add(1, 1, -p[0].exp());
             }
         },
+        // the families written as one scalar formula, differentiated to second order in forward mode
+        K::SkewNormal => |x, p, h| derived(h, d::SkewNormal::log_prob_derivatives(x, at(p))),
+        K::ExGaussian => |x, p, h| derived(h, d::ExGaussian::log_prob_derivatives(x, at(p))),
+        K::Gumbel => |x, p, h| derived(h, d::Gumbel::log_prob_derivatives(x, at(p))),
+        K::GeneralizedExtremeValue => |x, p, h| {
+            derived(
+                h,
+                d::GeneralizedExtremeValue::log_prob_derivatives(x, at(p)),
+            )
+        },
+        K::GeneralizedPareto => {
+            |x, p, h| derived(h, d::GeneralizedPareto::log_prob_derivatives(x, at(p)))
+        }
+        K::InverseGaussian => {
+            |x, p, h| derived(h, d::InverseGaussian::log_prob_derivatives(x, at(p)))
+        }
+        K::Kumaraswamy => |x, p, h| derived(h, d::Kumaraswamy::log_prob_derivatives(x, at(p))),
+        K::LogitNormal => |x, p, h| derived(h, d::LogitNormal::log_prob_derivatives(x, at(p))),
+        K::HalfStudentT => |x, p, h| derived(h, d::HalfStudentT::log_prob_derivatives(x, at(p))),
+        K::AsymmetricLaplace => {
+            |x, p, h| derived(h, d::AsymmetricLaplace::log_prob_derivatives(x, at(p)))
+        }
+        K::LogLogistic => |x, p, h| derived(h, d::LogLogistic::log_prob_derivatives(x, at(p))),
+        K::Rice => |x, p, h| derived(h, d::Rice::log_prob_derivatives(x, at(p))),
+        K::GeneralizedGamma => {
+            |x, p, h| derived(h, d::GeneralizedGamma::log_prob_derivatives(x, at(p)))
+        }
         _ => return None,
     };
     Some(rule)
+}
+
+/// The first `P` parameters as an array.
+fn at<const P: usize>(p: &[f64]) -> [f64; P] {
+    std::array::from_fn(|i| p[i])
+}
+
+/// Adds the Hessian of a family written as one scalar formula, from its forward-mode derivatives (see
+/// [`keanu_distributions::ElementDerivatives`]).
+fn derived<const N: usize>(h: &mut Hessian, d: keanu_distributions::ElementDerivatives<N>) {
+    for i in 0..N {
+        for j in i..N {
+            h.add(i, j, d.hessian[i][j]);
+        }
+    }
 }
 
 /// ln C(n, k) + ln B(k + α, n − k + β) − ln B(α, β) (inputs k, n, α, β), with t = ψ₁(α + β) − ψ₁(n + α + β):
@@ -468,6 +511,43 @@ pub(crate) fn cdf_rule(kind: &DistributionKind) -> Option<CdfRule> {
         K::Binomial => binomial_cdf,
         K::NegativeBinomial => negative_binomial_cdf,
         // the tail is a finite sum, whose Hessian in the shapes is summed with it (inputs k, n, α, β)
+        K::SkewNormal => {
+            |x, p, u, _, h| derived(h, d::SkewNormal::log_cdf_derivatives(x, at(p), u))
+        }
+        K::ExGaussian => {
+            |x, p, u, _, h| derived(h, d::ExGaussian::log_cdf_derivatives(x, at(p), u))
+        }
+        K::Gumbel => |x, p, u, _, h| derived(h, d::Gumbel::log_cdf_derivatives(x, at(p), u)),
+        K::GeneralizedExtremeValue => |x, p, u, _, h| {
+            derived(
+                h,
+                d::GeneralizedExtremeValue::log_cdf_derivatives(x, at(p), u),
+            )
+        },
+        K::GeneralizedPareto => {
+            |x, p, u, _, h| derived(h, d::GeneralizedPareto::log_cdf_derivatives(x, at(p), u))
+        }
+        K::InverseGaussian => {
+            |x, p, u, _, h| derived(h, d::InverseGaussian::log_cdf_derivatives(x, at(p), u))
+        }
+        K::Kumaraswamy => {
+            |x, p, u, _, h| derived(h, d::Kumaraswamy::log_cdf_derivatives(x, at(p), u))
+        }
+        K::LogitNormal => {
+            |x, p, u, _, h| derived(h, d::LogitNormal::log_cdf_derivatives(x, at(p), u))
+        }
+        K::HalfStudentT => {
+            |x, p, u, _, h| derived(h, d::HalfStudentT::log_cdf_derivatives(x, at(p), u))
+        }
+        K::AsymmetricLaplace => {
+            |x, p, u, _, h| derived(h, d::AsymmetricLaplace::log_cdf_derivatives(x, at(p), u))
+        }
+        K::LogLogistic => {
+            |x, p, u, _, h| derived(h, d::LogLogistic::log_cdf_derivatives(x, at(p), u))
+        }
+        K::GeneralizedGamma => {
+            |x, p, u, _, h| derived(h, d::GeneralizedGamma::log_cdf_derivatives(x, at(p), u))
+        }
         K::BetaBinomial => |k, p, upper, _, h| {
             let tail = keanu_distributions::BetaBinomial::log_tail(
                 k as i64,

@@ -576,6 +576,23 @@ Work from `docs/plans/2026-11-05-001-feat-applied-modelling-gaps-plan.md`.
   ν > 0, equal to `matern12`, `matern32` and `matern52` at ν = ½, 3/2 and 5/2 and supported by `Hsgp` through
   its spectral density. The save schema gained the `bessel` operation (68) with its `Bessel` message and `BesselOp`
   enum, and the unary (40, 41) and binary (14) codes.
+- keanu-distributions, keanu-graph, keanu-io: **thirteen continuous families**. `SkewNormal` (ξ, ω, α),
+  `ExGaussian` (μ, σ, λ), `AsymmetricLaplace` (μ, σ, τ, Stan's `skew_double_exponential`), `Gumbel` (μ, β),
+  `GeneralizedExtremeValue` (μ, σ, ξ), `GeneralizedPareto` (μ, σ, ξ), `InverseGaussian` (μ, λ), `Kumaraswamy`
+  (a, b), `LogitNormal` (μ, σ), `HalfStudentT` (ν, σ, with real ν), `LogLogistic` (α, β), `Rice` (ν, σ) and
+  `GeneralizedGamma` (θ, k, p; Stacy's family with d = kp, the gamma at p = 1), following Stan's parameterisation
+  where Stan has the family and PyMC's otherwise. Each element's log density, and for all but the Rice its log CDF
+  and log survival function, is one generic formula over second-order forward-mode dual numbers, so
+  `log_prob_derivatives` and `log_cdf_derivatives` give the exact gradient and Hessian in the value and every
+  parameter (`ElementDerivatives`), from which `d_log_prob`, `d_log_cdf` and the graph's second-order rules come.
+  The CDFs use Owen's T (skew normal), the regularised incomplete beta function with its shape derivatives (half
+  Student-t) and the incomplete gamma function (generalized gamma); the Gumbel, GEV, generalized Pareto,
+  Kumaraswamy, logit-normal, asymmetric Laplace and log-logistic also have closed-form inverse CDFs. The GEV and
+  generalized Pareto are written in ln(1 + ξz)/ξ with a series near ξz = 0, so values and derivatives are
+  continuous as ξ passes through 0 (the GEV matches the Gumbel to 1e-8 there), and their supports depend on the
+  parameters (`Support::GreaterThan`, `LessThan` or `Interval` element-wise). Each is a `DistributionKind` with a
+  builder method (and `_with_shape`), can be a mixture component, and, with a CDF, truncated or censored; the
+  save schema gained their kinds (50 to 62).
 
 ### Code review fixes
 

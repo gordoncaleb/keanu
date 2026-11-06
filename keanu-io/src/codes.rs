@@ -284,6 +284,19 @@ distribution_codes!(
     GaussianRandomWalk,
     Autoregressive,
     Garch11,
+    SkewNormal,
+    ExGaussian,
+    Gumbel,
+    GeneralizedExtremeValue,
+    GeneralizedPareto,
+    InverseGaussian,
+    Kumaraswamy,
+    LogitNormal,
+    HalfStudentT,
+    AsymmetricLaplace,
+    LogLogistic,
+    Rice,
+    GeneralizedGamma,
 );
 
 #[cfg(test)]
@@ -301,7 +314,7 @@ mod tests {
     }
 
     /// The number of distribution kinds in the schema.
-    const DISTRIBUTION_KINDS: i32 = 49;
+    const DISTRIBUTION_KINDS: i32 = 62;
 
     #[test]
     fn every_schema_value_has_a_variant() {

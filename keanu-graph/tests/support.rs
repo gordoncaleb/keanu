@@ -143,6 +143,89 @@ fn every_built_in_reports_its_documented_support() {
             |b| b.uniform_int(0, 5).id(),
             Support::Discrete,
         ),
+        (
+            "skew_normal",
+            |b| b.skew_normal(0.0, 1.0, 2.0).id(),
+            Support::Real,
+        ),
+        (
+            "ex_gaussian",
+            |b| b.ex_gaussian(0.0, 1.0, 2.0).id(),
+            Support::Real,
+        ),
+        ("gumbel", |b| b.gumbel(0.0, 1.0).id(), Support::Real),
+        (
+            "generalized_extreme_value (ξ > 0)",
+            |b| b.generalized_extreme_value(1.0, 2.0, 0.5).id(),
+            Support::greater_than(-3.0),
+        ),
+        (
+            "generalized_extreme_value (ξ < 0)",
+            |b| b.generalized_extreme_value(1.0, 2.0, -0.5).id(),
+            Support::less_than(5.0),
+        ),
+        (
+            "generalized_extreme_value (ξ = 0)",
+            |b| b.generalized_extreme_value(1.0, 2.0, 0.0).id(),
+            Support::Real,
+        ),
+        (
+            "generalized_extreme_value (mixed shapes)",
+            |b| {
+                b.generalized_extreme_value(1.0, 2.0, v(&[0.5, -0.5, 0.0]))
+                    .id()
+            },
+            Support::Interval(
+                v(&[-3.0, f64::NEG_INFINITY, f64::NEG_INFINITY]),
+                v(&[f64::INFINITY, 5.0, f64::INFINITY]),
+            ),
+        ),
+        (
+            "generalized_pareto (ξ >= 0)",
+            |b| b.generalized_pareto(1.0, 2.0, 0.5).id(),
+            Support::greater_than(1.0),
+        ),
+        (
+            "generalized_pareto (ξ < 0)",
+            |b| b.generalized_pareto(1.0, 2.0, -0.5).id(),
+            Support::interval(1.0, 5.0),
+        ),
+        (
+            "inverse_gaussian",
+            |b| b.inverse_gaussian(1.0, 2.0).id(),
+            positive(),
+        ),
+        (
+            "kumaraswamy",
+            |b| b.kumaraswamy(2.0, 3.0).id(),
+            Support::interval(0.0, 1.0),
+        ),
+        (
+            "logit_normal",
+            |b| b.logit_normal(0.0, 1.0).id(),
+            Support::interval(0.0, 1.0),
+        ),
+        (
+            "half_student_t",
+            |b| b.half_student_t(3.5, 1.0).id(),
+            positive(),
+        ),
+        (
+            "asymmetric_laplace",
+            |b| b.asymmetric_laplace(0.0, 1.0, 0.3).id(),
+            Support::Real,
+        ),
+        (
+            "log_logistic",
+            |b| b.log_logistic(1.0, 3.0).id(),
+            positive(),
+        ),
+        ("rice", |b| b.rice(1.0, 0.5).id(), positive()),
+        (
+            "generalized_gamma",
+            |b| b.generalized_gamma(1.0, 2.0, 1.5).id(),
+            positive(),
+        ),
     ];
     for (name, build, expected) in cases {
         assert_eq!(support_of(build), expected, "{name}");

@@ -1206,6 +1206,65 @@ fn censored_positive(b: &GraphBuilder, base: DistributionKind) {
     b.set_value(x, DoubleTensor::scalar(1.2));
 }
 
+/// A scalar parameter that depends on a latent: real, positive (exp of a latent) or in (0, 1) (the sigmoid of
+/// one).
+#[derive(Clone, Copy)]
+enum FamilyParam {
+    R(f64),
+    P(f64),
+    U(f64),
+}
+use FamilyParam::{P, R, U};
+
+fn family_params(b: &GraphBuilder, params: &[FamilyParam]) -> Vec<NodeId> {
+    params
+        .iter()
+        .map(|&p| match p {
+            R(value) => scalar_latent(b, value).id(),
+            P(value) => positive(b, value).id(),
+            U(value) => scalar_latent(b, (value / (1.0 - value)).ln())
+                .sigmoid()
+                .id(),
+        })
+        .collect()
+}
+
+/// A truncated base with parameters and bounds (`lower`, `lower + width`) that depend on latents: a latent value
+/// `inside` the bounds, and an observation `beyond` the lower bound with an infinite upper bound.
+fn truncated_family(
+    b: &GraphBuilder,
+    base: DistributionKind,
+    params: &[FamilyParam],
+    (lower, width): (f64, f64),
+    inside: f64,
+    beyond: f64,
+) {
+    let params = family_params(b, params);
+    let (l, u) = bounds(b, lower, width);
+    let x: DoubleVar<'_> = b.truncated(base.clone(), &params, l, u);
+    b.set_value(x, DoubleTensor::scalar(inside));
+    let z: DoubleVar<'_> = b.truncated(base, &params, l, f64::INFINITY);
+    b.observe(z, DoubleTensor::scalar(beyond));
+}
+
+/// A censored base with parameters that depend on latents: observations at fixed bounds and `inside` them, and a
+/// latent value `inside` bounds that depend on latents.
+fn censored_family(
+    b: &GraphBuilder,
+    base: DistributionKind,
+    params: &[FamilyParam],
+    (lower, upper): (f64, f64),
+    inside: f64,
+) {
+    let params = family_params(b, params);
+    let fixed = b.constant(v(&[lower, lower, lower]));
+    let y: DoubleVar<'_> = b.censored(base.clone(), &params, fixed, upper);
+    b.observe(y, v(&[lower, inside, upper]));
+    let (l, u) = bounds(b, lower, upper - lower);
+    let x: DoubleVar<'_> = b.censored(base, &params, l, u);
+    b.set_value(x, DoubleTensor::scalar(inside));
+}
+
 fn distribution_cases() -> Vec<DistributionCase> {
     use DistributionKind as K;
     vec![
@@ -2000,6 +2059,269 @@ fn distribution_cases() -> Vec<DistributionCase> {
             ];
             let y: IntVar<'_> = b.censored(K::NegativeBinomial, &params, 0.0, 7.0);
             b.observe(y, ints(&[0, 3, 7]));
+        }),
+        // the families written as one scalar formula
+        case("skew_normal", |b| {
+            let (xi, omega, alpha) = (
+                scalar_latent(b, 0.2),
+                positive(b, 0.8),
+                scalar_latent(b, 1.5),
+            );
+            let x = b.skew_normal(xi, omega, alpha);
+            b.set_value(x, DoubleTensor::scalar(0.9));
+            let y = b.skew_normal_with_shape(&[3], xi, omega, alpha * -0.5);
+            b.observe(y, v(&[-0.5, 1.4, 2.0]));
+        }),
+        case("ex_gaussian", |b| {
+            let (mu, sigma, lambda) = (scalar_latent(b, 0.3), positive(b, 0.6), positive(b, 1.4));
+            let x = b.ex_gaussian(mu, sigma, lambda);
+            b.set_value(x, DoubleTensor::scalar(1.0));
+            let y = b.ex_gaussian_with_shape(&[2], mu, sigma, lambda);
+            b.observe(y, v(&[-0.2, 2.5]));
+        }),
+        case("gumbel", |b| {
+            let (mu, beta) = (scalar_latent(b, 0.1), positive(b, 1.2));
+            let x = b.gumbel(mu, beta);
+            b.set_value(x, DoubleTensor::scalar(0.5));
+            let y = b.gumbel_with_shape(&[2], mu, beta);
+            b.observe(y, v(&[-1.0, 3.0]));
+        }),
+        case("generalized_extreme_value", |b| {
+            let (mu, sigma) = (scalar_latent(b, 0.2), positive(b, 1.1));
+            // Fréchet, Weibull and Gumbel types
+            for (xi, observed) in [(0.15, [-1.5, 3.0]), (-0.2, [-2.0, 4.0]), (0.0, [-1.0, 2.0])] {
+                let xi = scalar_latent(b, xi);
+                let x = b.generalized_extreme_value(mu, sigma, xi);
+                b.set_value(x, DoubleTensor::scalar(0.7));
+                let y = b.generalized_extreme_value_with_shape(&[2], mu, sigma, xi);
+                b.observe(y, v(&observed));
+            }
+        }),
+        case("generalized_pareto", |b| {
+            let (mu, sigma) = (scalar_latent(b, 0.1), positive(b, 0.8));
+            for xi in [0.2, -0.2, 0.0] {
+                let xi = scalar_latent(b, xi);
+                let x = b.generalized_pareto(mu, sigma, xi);
+                b.set_value(x, DoubleTensor::scalar(1.0));
+                let y = b.generalized_pareto_with_shape(&[2], mu, sigma, xi);
+                b.observe(y, v(&[0.5, 3.0]));
+            }
+        }),
+        case("inverse_gaussian", |b| {
+            let (mu, lambda) = (positive(b, 1.3), positive(b, 2.5));
+            let x = b.inverse_gaussian(mu, lambda);
+            b.set_value(x, DoubleTensor::scalar(0.9));
+            let y = b.inverse_gaussian_with_shape(&[2], mu, lambda);
+            b.observe(y, v(&[0.4, 2.8]));
+        }),
+        case("kumaraswamy", |b| {
+            let (a, c) = (positive(b, 2.2), positive(b, 3.1));
+            let x = b.kumaraswamy(a, c);
+            b.set_value(x, DoubleTensor::scalar(0.4));
+            let y = b.kumaraswamy_with_shape(&[2], a, c);
+            b.observe(y, v(&[0.2, 0.7]));
+        }),
+        case("logit_normal", |b| {
+            let (mu, sigma) = (scalar_latent(b, 0.3), positive(b, 0.9));
+            let x = b.logit_normal(mu, sigma);
+            b.set_value(x, DoubleTensor::scalar(0.6));
+            let y = b.logit_normal_with_shape(&[2], mu, sigma);
+            b.observe(y, v(&[0.2, 0.85]));
+        }),
+        case("half_student_t", |b| {
+            let (nu, sigma) = (positive(b, 4.5), positive(b, 1.2));
+            let x = b.half_student_t(nu, sigma);
+            b.set_value(x, DoubleTensor::scalar(0.7));
+            let y = b.half_student_t_with_shape(&[2], nu, sigma);
+            b.observe(y, v(&[0.3, 2.5]));
+        }),
+        case("asymmetric_laplace", |b| {
+            let (mu, sigma) = (scalar_latent(b, 0.1), positive(b, 1.1));
+            let tau = scalar_latent(b, (0.3_f64 / 0.7).ln()).sigmoid();
+            let x = b.asymmetric_laplace(mu, sigma, tau);
+            b.set_value(x, DoubleTensor::scalar(0.9));
+            let y = b.asymmetric_laplace_with_shape(&[2], mu, sigma, tau);
+            b.observe(y, v(&[-1.0, 2.0]));
+        }),
+        case("log_logistic", |b| {
+            let (alpha, beta) = (positive(b, 1.4), positive(b, 3.0));
+            let x = b.log_logistic(alpha, beta);
+            b.set_value(x, DoubleTensor::scalar(1.1));
+            let y = b.log_logistic_with_shape(&[2], alpha, beta);
+            b.observe(y, v(&[0.5, 2.6]));
+        }),
+        case("rice", |b| {
+            let (nu, sigma) = (positive(b, 1.2), positive(b, 0.7));
+            let x = b.rice(nu, sigma);
+            b.set_value(x, DoubleTensor::scalar(1.0));
+            let y = b.rice_with_shape(&[2], nu, sigma);
+            b.observe(y, v(&[0.4, 2.2]));
+        }),
+        case("generalized_gamma", |b| {
+            let (theta, k, p) = (positive(b, 1.3), positive(b, 2.1), positive(b, 1.6));
+            let x = b.generalized_gamma(theta, k, p);
+            b.set_value(x, DoubleTensor::scalar(1.2));
+            let y = b.generalized_gamma_with_shape(&[2], theta, k, p);
+            b.observe(y, v(&[0.5, 2.4]));
+        }),
+        case("truncated skew_normal", |b| {
+            truncated_family(
+                b,
+                K::SkewNormal,
+                &[R(0.2), P(0.8), R(1.5)],
+                (-0.4, 2.0),
+                0.5,
+                2.5,
+            )
+        }),
+        case("truncated ex_gaussian", |b| {
+            truncated_family(
+                b,
+                K::ExGaussian,
+                &[R(0.3), P(0.6), P(1.4)],
+                (-0.4, 2.0),
+                0.5,
+                2.5,
+            )
+        }),
+        case("truncated gumbel", |b| {
+            truncated_family(b, K::Gumbel, &[R(0.1), P(1.2)], (-0.4, 2.0), 0.5, 2.5)
+        }),
+        case("truncated generalized_extreme_value", |b| {
+            let base = K::GeneralizedExtremeValue;
+            truncated_family(
+                b,
+                base.clone(),
+                &[R(0.2), P(1.1), R(0.15)],
+                (-0.4, 2.0),
+                0.5,
+                2.5,
+            );
+            truncated_family(b, base, &[R(0.2), P(1.1), R(-0.15)], (-0.4, 2.0), 0.5, 2.5);
+        }),
+        case("truncated generalized_pareto", |b| {
+            let base = K::GeneralizedPareto;
+            truncated_family(
+                b,
+                base.clone(),
+                &[R(0.1), P(0.8), R(0.2)],
+                (0.5, 2.0),
+                1.2,
+                3.0,
+            );
+            truncated_family(b, base, &[R(0.1), P(0.8), R(-0.1)], (0.5, 2.0), 1.2, 3.0);
+        }),
+        case("truncated inverse_gaussian", |b| {
+            truncated_family(
+                b,
+                K::InverseGaussian,
+                &[P(1.3), P(2.5)],
+                (0.5, 2.0),
+                1.2,
+                3.0,
+            )
+        }),
+        case("truncated kumaraswamy", |b| {
+            truncated_family(b, K::Kumaraswamy, &[P(2.2), P(3.1)], (0.2, 0.5), 0.4, 0.8)
+        }),
+        case("truncated logit_normal", |b| {
+            truncated_family(b, K::LogitNormal, &[R(0.3), P(0.9)], (0.2, 0.5), 0.4, 0.8)
+        }),
+        case("truncated half_student_t", |b| {
+            truncated_family(b, K::HalfStudentT, &[P(4.5), P(1.2)], (0.5, 2.0), 1.2, 3.0)
+        }),
+        case("truncated asymmetric_laplace", |b| {
+            truncated_family(
+                b,
+                K::AsymmetricLaplace,
+                &[R(0.1), P(1.1), U(0.3)],
+                (-0.4, 2.0),
+                0.5,
+                2.5,
+            )
+        }),
+        case("truncated log_logistic", |b| {
+            truncated_family(b, K::LogLogistic, &[P(1.4), P(3.0)], (0.5, 2.0), 1.2, 3.0)
+        }),
+        case("truncated generalized_gamma", |b| {
+            truncated_family(
+                b,
+                K::GeneralizedGamma,
+                &[P(1.3), P(2.1), P(1.6)],
+                (0.5, 2.0),
+                1.2,
+                3.0,
+            )
+        }),
+        case("censored skew_normal", |b| {
+            censored_family(
+                b,
+                K::SkewNormal,
+                &[R(0.2), P(0.8), R(1.5)],
+                (-0.4, 1.6),
+                0.3,
+            )
+        }),
+        case("censored ex_gaussian", |b| {
+            censored_family(
+                b,
+                K::ExGaussian,
+                &[R(0.3), P(0.6), P(1.4)],
+                (-0.4, 1.6),
+                0.3,
+            )
+        }),
+        case("censored gumbel", |b| {
+            censored_family(b, K::Gumbel, &[R(0.1), P(1.2)], (-0.4, 1.6), 0.3)
+        }),
+        case("censored generalized_extreme_value", |b| {
+            let base = K::GeneralizedExtremeValue;
+            censored_family(
+                b,
+                base.clone(),
+                &[R(0.2), P(1.1), R(0.15)],
+                (-0.4, 1.6),
+                0.3,
+            );
+            censored_family(b, base, &[R(0.2), P(1.1), R(-0.15)], (-0.4, 1.6), 0.3);
+        }),
+        case("censored generalized_pareto", |b| {
+            let base = K::GeneralizedPareto;
+            censored_family(b, base.clone(), &[R(0.1), P(0.8), R(0.2)], (0.5, 2.5), 1.3);
+            censored_family(b, base, &[R(0.1), P(0.8), R(-0.1)], (0.5, 2.5), 1.3);
+        }),
+        case("censored inverse_gaussian", |b| {
+            censored_family(b, K::InverseGaussian, &[P(1.3), P(2.5)], (0.5, 2.5), 1.3)
+        }),
+        case("censored kumaraswamy", |b| {
+            censored_family(b, K::Kumaraswamy, &[P(2.2), P(3.1)], (0.2, 0.7), 0.4)
+        }),
+        case("censored logit_normal", |b| {
+            censored_family(b, K::LogitNormal, &[R(0.3), P(0.9)], (0.2, 0.7), 0.4)
+        }),
+        case("censored half_student_t", |b| {
+            censored_family(b, K::HalfStudentT, &[P(4.5), P(1.2)], (0.5, 2.5), 1.3)
+        }),
+        case("censored asymmetric_laplace", |b| {
+            censored_family(
+                b,
+                K::AsymmetricLaplace,
+                &[R(0.1), P(1.1), U(0.3)],
+                (-0.4, 1.6),
+                0.3,
+            )
+        }),
+        case("censored log_logistic", |b| {
+            censored_family(b, K::LogLogistic, &[P(1.4), P(3.0)], (0.5, 2.5), 1.3)
+        }),
+        case("censored generalized_gamma", |b| {
+            censored_family(
+                b,
+                K::GeneralizedGamma,
+                &[P(1.3), P(2.1), P(1.6)],
+                (0.5, 2.5),
+                1.3,
+            )
         }),
     ]
 }

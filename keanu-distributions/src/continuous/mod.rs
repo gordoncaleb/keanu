@@ -4,6 +4,7 @@
 //! the broadcast of x and the parameters; they are unspecified where `log_prob` is -infinity.
 
 use crate::error::{Result, invalid_parameter};
+use crate::jet::{ElementDerivatives, Jet};
 use crate::param::{IntoParam, Param};
 use crate::rng::KeanuRng;
 use crate::util::{
@@ -14,14 +15,24 @@ use keanu_tensor::DoubleTensor;
 use keanu_tensor::special::{log_bessel_i0, log_bessel_i1};
 use std::f64::consts::{LN_2, PI};
 
+#[macro_use]
+mod derived;
 mod bounded;
 mod circular;
+mod extreme;
+mod lifetime;
 mod location_scale;
 mod positive;
+mod skewed;
+mod unit_interval;
 
 pub use bounded::*;
 pub use circular::*;
+pub use extreme::*;
+pub use lifetime::*;
 pub use location_scale::*;
 pub use positive::*;
+pub use skewed::*;
+pub use unit_interval::*;
 
 pub(crate) const LN_SQRT_2PI: f64 = 0.918_938_533_204_672_8;

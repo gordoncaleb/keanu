@@ -12,6 +12,7 @@ Each distribution has a builder method taking its parameters, which can be other
 | Kind | Distributions |
 |---|---|
 | Continuous | `gaussian`, `half_gaussian`, `cauchy`, `half_cauchy`, `beta`, `chi_squared`, `dirichlet`, `exponential` (takes a rate), `gamma` (scale θ, shape k), `inverse_gamma`, `laplace`, `logistic`, `log_normal`, `multivariate_gaussian`, `pareto`, `student_t`, `triangular`, `uniform`, `weibull` (shape α, scale β), `von_mises` (an angle), `kde` |
+| Skewed, extreme-value, bounded and positive | `skew_normal`, `ex_gaussian`, `asymmetric_laplace`, `gumbel`, `generalized_extreme_value`, `generalized_pareto`, `kumaraswamy`, `logit_normal`, `inverse_gaussian`, `half_student_t`, `log_logistic`, `rice`, `generalized_gamma`; see [Skewed, extreme-value and other continuous families](#skewed-extreme-value-and-other-continuous-families) |
 | Zero-sum vectors | `zero_sum_normal(n, sigma)`: n elements summing to zero, N(0, σ² I) restricted to that subspace (`zero_sum_normal_with_shape(&[.., n], sigma)` for a batch); see [Sum-to-zero group effects](#sum-to-zero-group-effects) |
 | Spatial (areal) effects | `icar(adjacency, sigma)`, `car(adjacency, tau, alpha)` and `bym2(adjacency, sigma, rho)` over the areas of an `Adjacency`; see [Spatial models](spatial-models.md) |
 | Correlation matrices | `lkj_cholesky(k, eta)`: the k × k lower triangular Cholesky factor `L` of a correlation matrix `L Lᵀ` under the LKJ(η) prior (`lkj_cholesky_with_shape(&[.., k, k], eta)` for a batch) |
@@ -36,6 +37,34 @@ Each distribution has a builder method taking its parameters, which can be other
 ```rust,ignore
 {{#include ../../keanu/tests/book.rs:new_distributions}}
 ```
+
+### Skewed, extreme-value and other continuous families
+
+Each of these follows Stan's parameterisation where Stan has the family and PyMC's otherwise; the rustdoc of each
+`keanu_distributions` type gives its density. All have gradients and second derivatives in the value and every
+parameter, and all can be mixture components. Those with a CDF can be [truncated or
+censored](#truncated-and-censored-distributions); "inverse" means a truncation is sampled by inverting the CDF,
+"rejection" by rejection sampling.
+
+| Builder method | Parameters | Support | Following | CDF |
+|---|---|---|---|---|
+| `skew_normal` | location ξ, scale ω, shape α | real | Stan `skew_normal` | rejection |
+| `ex_gaussian` | normal mean μ and sd σ, exponential rate λ | real | Stan `exp_mod_normal` | rejection |
+| `asymmetric_laplace` | location μ (the τ-quantile), scale σ, skewness τ in (0, 1) | real | Stan `skew_double_exponential` | inverse |
+| `gumbel` | location μ, scale β | real | Stan `gumbel` | inverse |
+| `generalized_extreme_value` | location μ, scale σ, shape ξ (ξ > 0 heavy-tailed) | 1 + ξ(x − μ)/σ > 0 | PyMC `GenExtreme` | inverse |
+| `generalized_pareto` | threshold μ, scale σ, shape ξ | x > μ (and x < μ − σ/ξ for ξ < 0) | the usual peaks-over-threshold form | inverse |
+| `kumaraswamy` | shapes a, b | (0, 1) | PyMC `Kumaraswamy` | inverse |
+| `logit_normal` | logit mean μ and sd σ | (0, 1) | PyMC `LogitNormal` | inverse |
+| `inverse_gaussian` | mean μ, shape λ | positive | PyMC `Wald` | rejection |
+| `half_student_t` | degrees of freedom ν (real), scale σ | positive | PyMC `HalfStudentT` | rejection |
+| `log_logistic` | scale α (the median), shape β | positive | Stan `loglogistic` | inverse |
+| `rice` | noncentrality ν, scale σ | positive | PyMC `Rice` | none |
+| `generalized_gamma` | scale θ, shape k, power p (`gamma(θ, k)` at p = 1) | positive | Stacy's family | rejection |
+
+The generalized extreme value and generalized Pareto supports depend on the parameters (like a uniform's on its
+bounds), so a latent of either moves inside the support the current parameters give. Their densities, CDFs and
+derivatives are continuous as ξ passes through 0, where they are the Gumbel and the (shifted) exponential.
 
 ### Zero-inflated, hurdle and logit counts
 

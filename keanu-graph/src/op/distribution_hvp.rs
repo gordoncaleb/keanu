@@ -85,6 +85,19 @@ impl DistributionKind {
             | K::Uniform
             | K::Weibull
             | K::VonMises
+            | K::SkewNormal
+            | K::ExGaussian
+            | K::Gumbel
+            | K::GeneralizedExtremeValue
+            | K::GeneralizedPareto
+            | K::InverseGaussian
+            | K::Kumaraswamy
+            | K::LogitNormal
+            | K::HalfStudentT
+            | K::AsymmetricLaplace
+            | K::LogLogistic
+            | K::Rice
+            | K::GeneralizedGamma
             | K::Bernoulli
             | K::Binomial
             | K::Geometric

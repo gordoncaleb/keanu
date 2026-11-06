@@ -1145,6 +1145,32 @@ pub enum DistributionKind {
     Icar = 48,
     /// Parameters: `tau`, `alpha`.
     Car = 49,
+    /// Parameters: `xi`, `omega`, `alpha`.
+    SkewNormal = 50,
+    /// Parameters: `mu`, `sigma`, `lambda`.
+    ExGaussian = 51,
+    /// Parameters: `mu`, `beta`.
+    Gumbel = 52,
+    /// Parameters: `mu`, `sigma`, `xi`.
+    GeneralizedExtremeValue = 53,
+    /// Parameters: `mu`, `sigma`, `xi`.
+    GeneralizedPareto = 54,
+    /// Parameters: `mu`, `lambda`.
+    InverseGaussian = 55,
+    /// Parameters: `a`, `b`.
+    Kumaraswamy = 56,
+    /// Parameters: `mu`, `sigma`.
+    LogitNormal = 57,
+    /// Parameters: `nu`, `sigma`.
+    HalfStudentT = 58,
+    /// Parameters: `mu`, `sigma`, `tau`.
+    AsymmetricLaplace = 59,
+    /// Parameters: `alpha`, `beta`.
+    LogLogistic = 60,
+    /// Parameters: `nu`, `sigma`.
+    Rice = 61,
+    /// Parameters: `theta`, `k`, `p`.
+    GeneralizedGamma = 62,
 }
 impl DistributionKind {
     /// String value of the enum field names used in the ProtoBuf definition.
@@ -1205,6 +1231,21 @@ impl DistributionKind {
             Self::Garch11 => "DISTRIBUTION_KIND_GARCH11",
             Self::Icar => "DISTRIBUTION_KIND_ICAR",
             Self::Car => "DISTRIBUTION_KIND_CAR",
+            Self::SkewNormal => "DISTRIBUTION_KIND_SKEW_NORMAL",
+            Self::ExGaussian => "DISTRIBUTION_KIND_EX_GAUSSIAN",
+            Self::Gumbel => "DISTRIBUTION_KIND_GUMBEL",
+            Self::GeneralizedExtremeValue => {
+                "DISTRIBUTION_KIND_GENERALIZED_EXTREME_VALUE"
+            }
+            Self::GeneralizedPareto => "DISTRIBUTION_KIND_GENERALIZED_PARETO",
+            Self::InverseGaussian => "DISTRIBUTION_KIND_INVERSE_GAUSSIAN",
+            Self::Kumaraswamy => "DISTRIBUTION_KIND_KUMARASWAMY",
+            Self::LogitNormal => "DISTRIBUTION_KIND_LOGIT_NORMAL",
+            Self::HalfStudentT => "DISTRIBUTION_KIND_HALF_STUDENT_T",
+            Self::AsymmetricLaplace => "DISTRIBUTION_KIND_ASYMMETRIC_LAPLACE",
+            Self::LogLogistic => "DISTRIBUTION_KIND_LOG_LOGISTIC",
+            Self::Rice => "DISTRIBUTION_KIND_RICE",
+            Self::GeneralizedGamma => "DISTRIBUTION_KIND_GENERALIZED_GAMMA",
         }
     }
     /// Creates an enum from field names used in the ProtoBuf definition.
@@ -1262,6 +1303,21 @@ impl DistributionKind {
             "DISTRIBUTION_KIND_GARCH11" => Some(Self::Garch11),
             "DISTRIBUTION_KIND_ICAR" => Some(Self::Icar),
             "DISTRIBUTION_KIND_CAR" => Some(Self::Car),
+            "DISTRIBUTION_KIND_SKEW_NORMAL" => Some(Self::SkewNormal),
+            "DISTRIBUTION_KIND_EX_GAUSSIAN" => Some(Self::ExGaussian),
+            "DISTRIBUTION_KIND_GUMBEL" => Some(Self::Gumbel),
+            "DISTRIBUTION_KIND_GENERALIZED_EXTREME_VALUE" => {
+                Some(Self::GeneralizedExtremeValue)
+            }
+            "DISTRIBUTION_KIND_GENERALIZED_PARETO" => Some(Self::GeneralizedPareto),
+            "DISTRIBUTION_KIND_INVERSE_GAUSSIAN" => Some(Self::InverseGaussian),
+            "DISTRIBUTION_KIND_KUMARASWAMY" => Some(Self::Kumaraswamy),
+            "DISTRIBUTION_KIND_LOGIT_NORMAL" => Some(Self::LogitNormal),
+            "DISTRIBUTION_KIND_HALF_STUDENT_T" => Some(Self::HalfStudentT),
+            "DISTRIBUTION_KIND_ASYMMETRIC_LAPLACE" => Some(Self::AsymmetricLaplace),
+            "DISTRIBUTION_KIND_LOG_LOGISTIC" => Some(Self::LogLogistic),
+            "DISTRIBUTION_KIND_RICE" => Some(Self::Rice),
+            "DISTRIBUTION_KIND_GENERALIZED_GAMMA" => Some(Self::GeneralizedGamma),
             _ => None,
         }
     }

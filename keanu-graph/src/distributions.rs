@@ -57,6 +57,40 @@ continuous! {
     /// Von Mises with mean direction mu and concentration kappa: an angle, mapped to unconstrained space with a
     /// circular transform by the gradient based algorithms. Samples are in [-π, π).
     von_mises, von_mises_with_shape => VonMises(mu, kappa);
+    /// Skew normal with location xi, scale omega and shape alpha (Stan's `skew_normal`); see
+    /// [`keanu_distributions::SkewNormal`].
+    skew_normal, skew_normal_with_shape => SkewNormal(xi, omega, alpha);
+    /// Exponentially modified Gaussian: N(mu, sigma) plus an exponential with rate lambda (Stan's
+    /// `exp_mod_normal`); see [`keanu_distributions::ExGaussian`].
+    ex_gaussian, ex_gaussian_with_shape => ExGaussian(mu, sigma, lambda);
+    /// Gumbel with location mu and scale beta; see [`keanu_distributions::Gumbel`].
+    gumbel, gumbel_with_shape => Gumbel(mu, beta);
+    /// Generalized extreme value with location mu, scale sigma and shape xi (ξ > 0 heavy-tailed); its support
+    /// depends on the parameters. See [`keanu_distributions::GeneralizedExtremeValue`].
+    generalized_extreme_value, generalized_extreme_value_with_shape => GeneralizedExtremeValue(mu, sigma, xi);
+    /// Generalized Pareto with location (threshold) mu, scale sigma and shape xi; its support depends on the
+    /// parameters. See [`keanu_distributions::GeneralizedPareto`].
+    generalized_pareto, generalized_pareto_with_shape => GeneralizedPareto(mu, sigma, xi);
+    /// Inverse Gaussian (Wald) with mean mu and shape lambda; see [`keanu_distributions::InverseGaussian`].
+    inverse_gaussian, inverse_gaussian_with_shape => InverseGaussian(mu, lambda);
+    /// Kumaraswamy with shapes a and b, on [0, 1]; see [`keanu_distributions::Kumaraswamy`].
+    kumaraswamy, kumaraswamy_with_shape => Kumaraswamy(a, b);
+    /// Logit-normal: the sigmoid of N(mu, sigma), on [0, 1]; see [`keanu_distributions::LogitNormal`].
+    logit_normal, logit_normal_with_shape => LogitNormal(mu, sigma);
+    /// Half Student-t with nu (real) degrees of freedom and scale sigma; see
+    /// [`keanu_distributions::HalfStudentT`].
+    half_student_t, half_student_t_with_shape => HalfStudentT(nu, sigma);
+    /// Asymmetric Laplace with location mu (the tau-quantile), scale sigma and skewness tau in (0, 1) (Stan's
+    /// `skew_double_exponential`); see [`keanu_distributions::AsymmetricLaplace`].
+    asymmetric_laplace, asymmetric_laplace_with_shape => AsymmetricLaplace(mu, sigma, tau);
+    /// Log-logistic with scale alpha and shape beta (Stan's `loglogistic`); see
+    /// [`keanu_distributions::LogLogistic`].
+    log_logistic, log_logistic_with_shape => LogLogistic(alpha, beta);
+    /// Rice with noncentrality nu and scale sigma; see [`keanu_distributions::Rice`].
+    rice, rice_with_shape => Rice(nu, sigma);
+    /// Generalized gamma with scale theta, shape k and power p (Gamma(theta, k) at p = 1); see
+    /// [`keanu_distributions::GeneralizedGamma`].
+    generalized_gamma, generalized_gamma_with_shape => GeneralizedGamma(theta, k, p);
 }
 
 impl GraphBuilder {
@@ -672,15 +706,18 @@ impl GraphBuilder {
 
 impl GraphBuilder {
     /// A truncated distribution: `base` (a univariate distribution kind with a CDF: Gaussian, LogNormal,
-    /// Exponential, Gamma, Beta, StudentT, Cauchy, Laplace, Logistic, Uniform, Weibull, Poisson, Binomial,
-    /// BetaBinomial or NegativeBinomial) with
+    /// Exponential, Gamma, Beta, StudentT, Cauchy, Laplace, Logistic, Uniform, Weibull, SkewNormal, ExGaussian,
+    /// Gumbel, GeneralizedExtremeValue, GeneralizedPareto, InverseGaussian, Kumaraswamy, LogitNormal, HalfStudentT,
+    /// AsymmetricLaplace, LogLogistic, GeneralizedGamma, Poisson, Binomial, BetaBinomial or NegativeBinomial) with
     /// `parameters` (its parameter nodes, in its order), restricted to `[lower, upper]` and renormalised by the
     /// probability the base gives that range. Either bound may be infinite; for a discrete base both must be whole
     /// numbers (or infinite) and the range includes them.
     ///
     /// The node's support is the base's intersected with the bounds, so gradient based samplers keep a latent
     /// truncated node inside them. Values are drawn by inverting the base's CDF where it has a closed-form inverse
-    /// (Gaussian, LogNormal, Exponential, Cauchy, Laplace, Logistic, Uniform, Weibull) and by rejection otherwise,
+    /// (Gaussian, LogNormal, Exponential, Cauchy, Laplace, Logistic, Uniform, Weibull, Gumbel,
+    /// GeneralizedExtremeValue, GeneralizedPareto, Kumaraswamy, LogitNormal, AsymmetricLaplace, LogLogistic) and by
+    /// rejection otherwise,
     /// which fails with an error if the bounds hold too little of the base's probability.
     ///
     /// The handle type must match the base's value type ([`DoubleVar`] or [`IntVar`]). Building fails if the base

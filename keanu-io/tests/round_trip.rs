@@ -631,6 +631,19 @@ const DISTRIBUTIONS: &[&str] = &[
     "Garch11",
     "Icar",
     "Car",
+    "SkewNormal",
+    "ExGaussian",
+    "Gumbel",
+    "GeneralizedExtremeValue",
+    "GeneralizedPareto",
+    "InverseGaussian",
+    "Kumaraswamy",
+    "LogitNormal",
+    "HalfStudentT",
+    "AsymmetricLaplace",
+    "LogLogistic",
+    "Rice",
+    "GeneralizedGamma",
 ];
 
 fn distribution_kinds() -> Vec<DistributionKind> {
@@ -700,6 +713,19 @@ fn distribution_kinds() -> Vec<DistributionKind> {
             )
             .unwrap(),
         )),
+        SkewNormal,
+        ExGaussian,
+        Gumbel,
+        GeneralizedExtremeValue,
+        GeneralizedPareto,
+        InverseGaussian,
+        Kumaraswamy,
+        LogitNormal,
+        HalfStudentT,
+        AsymmetricLaplace,
+        LogLogistic,
+        Rice,
+        GeneralizedGamma,
     ]
 }
 

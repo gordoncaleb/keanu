@@ -120,6 +120,43 @@ pub enum DistributionKind {
     /// Parameters: `mu` (mean direction), `kappa` (concentration). Support: circular (angles; the density is
     /// periodic with period 2π).
     VonMises,
+    /// Parameters: `xi` (location), `omega` (scale), `alpha` (shape). Support: real. See
+    /// [`keanu_distributions::SkewNormal`].
+    SkewNormal,
+    /// Parameters: `mu`, `sigma` (the normal part), `lambda` (the exponential part's rate). Support: real. See
+    /// [`keanu_distributions::ExGaussian`].
+    ExGaussian,
+    /// Parameters: `mu` (location), `beta` (scale). Support: real. See [`keanu_distributions::Gumbel`].
+    Gumbel,
+    /// Parameters: `mu` (location), `sigma` (scale), `xi` (shape). Support: greater than μ − σ/ξ for ξ > 0, less
+    /// than it for ξ < 0 and real for ξ = 0, element-wise. See [`keanu_distributions::GeneralizedExtremeValue`].
+    GeneralizedExtremeValue,
+    /// Parameters: `mu` (location, the threshold), `sigma` (scale), `xi` (shape). Support: greater than μ, and less
+    /// than μ − σ/ξ for ξ < 0, element-wise. See [`keanu_distributions::GeneralizedPareto`].
+    GeneralizedPareto,
+    /// Parameters: `mu` (mean), `lambda` (shape). Support: greater than 0. See
+    /// [`keanu_distributions::InverseGaussian`].
+    InverseGaussian,
+    /// Parameters: `a`, `b` (shapes). Support: the interval [0, 1]. See [`keanu_distributions::Kumaraswamy`].
+    Kumaraswamy,
+    /// Parameters: `mu`, `sigma` (of the logit). Support: the interval [0, 1]. See
+    /// [`keanu_distributions::LogitNormal`].
+    LogitNormal,
+    /// Parameters: `nu` (degrees of freedom, real), `sigma` (scale). Support: greater than 0. See
+    /// [`keanu_distributions::HalfStudentT`].
+    HalfStudentT,
+    /// Parameters: `mu` (location, the τ-quantile), `sigma` (scale), `tau` (skewness, in (0, 1)). Support: real. See
+    /// [`keanu_distributions::AsymmetricLaplace`].
+    AsymmetricLaplace,
+    /// Parameters: `alpha` (scale), `beta` (shape). Support: greater than 0. See
+    /// [`keanu_distributions::LogLogistic`].
+    LogLogistic,
+    /// Parameters: `nu` (noncentrality), `sigma` (scale). Support: greater than 0. See
+    /// [`keanu_distributions::Rice`].
+    Rice,
+    /// Parameters: `theta` (scale), `k` (shape), `p` (power). Support: greater than 0. See
+    /// [`keanu_distributions::GeneralizedGamma`].
+    GeneralizedGamma,
     /// No parameters: a kernel density estimate from fixed samples. Support: real.
     Kde(Arc<d::Kde>),
     /// Parameters: `sigma` (a scalar); the value has one element per area of the neighbourhood, shape `[n]`: the
@@ -1003,6 +1040,49 @@ distributions! {
     VonMises "von_mises" (mu: F64, kappa: F64) -> F64 => d::VonMises::new(mu, kappa),
         support = Support::Circular,
         cdf = none;
+    SkewNormal "skew_normal" (xi: F64, omega: F64, alpha: F64) -> F64 => d::SkewNormal::new(xi, omega, alpha),
+        support = Support::Real,
+        cdf = rejection;
+    ExGaussian "ex_gaussian" (mu: F64, sigma: F64, lambda: F64) -> F64 => d::ExGaussian::new(mu, sigma, lambda),
+        support = Support::Real,
+        cdf = rejection;
+    Gumbel "gumbel" (mu: F64, beta: F64) -> F64 => d::Gumbel::new(mu, beta),
+        support = Support::Real,
+        cdf = inverse;
+    GeneralizedExtremeValue "generalized_extreme_value" (mu: F64, sigma: F64, xi: F64) -> F64 =>
+        d::GeneralizedExtremeValue::new(mu, sigma, xi),
+        support = shape_dependent_support(mu, sigma, xi, false)?,
+        cdf = inverse;
+    GeneralizedPareto "generalized_pareto" (mu: F64, sigma: F64, xi: F64) -> F64 =>
+        d::GeneralizedPareto::new(mu, sigma, xi),
+        support = shape_dependent_support(mu, sigma, xi, true)?,
+        cdf = inverse;
+    InverseGaussian "inverse_gaussian" (mu: F64, lambda: F64) -> F64 => d::InverseGaussian::new(mu, lambda),
+        support = Support::greater_than(0.0),
+        cdf = rejection;
+    Kumaraswamy "kumaraswamy" (a: F64, b: F64) -> F64 => d::Kumaraswamy::new(a, b),
+        support = Support::interval(0.0, 1.0),
+        cdf = inverse;
+    LogitNormal "logit_normal" (mu: F64, sigma: F64) -> F64 => d::LogitNormal::new(mu, sigma),
+        support = Support::interval(0.0, 1.0),
+        cdf = inverse;
+    HalfStudentT "half_student_t" (nu: F64, sigma: F64) -> F64 => d::HalfStudentT::new(nu, sigma),
+        support = Support::greater_than(0.0),
+        cdf = rejection;
+    AsymmetricLaplace "asymmetric_laplace" (mu: F64, sigma: F64, tau: F64) -> F64 =>
+        d::AsymmetricLaplace::new(mu, sigma, tau),
+        support = Support::Real,
+        cdf = inverse;
+    LogLogistic "log_logistic" (alpha: F64, beta: F64) -> F64 => d::LogLogistic::new(alpha, beta),
+        support = Support::greater_than(0.0),
+        cdf = inverse;
+    Rice "rice" (nu: F64, sigma: F64) -> F64 => d::Rice::new(nu, sigma),
+        support = Support::greater_than(0.0),
+        cdf = none;
+    GeneralizedGamma "generalized_gamma" (theta: F64, k: F64, p: F64) -> F64 =>
+        d::GeneralizedGamma::new(theta, k, p),
+        support = Support::greater_than(0.0),
+        cdf = rejection;
     Bernoulli "bernoulli" (prob_true: F64) -> Bool => d::Bernoulli::new(prob_true),
         support = Support::Discrete;
     Binomial "binomial" (p: F64, n: I64) -> I64 => d::Binomial::new(p, n),
@@ -1037,6 +1117,54 @@ distributions! {
     PoissonLog "poisson_log" (log_mu: F64) -> I64 => d::PoissonLog::new(log_mu),
         support = Support::Discrete,
         cdf = none;
+}
+
+/// The support of a generalized extreme value (`pareto` false) or generalized Pareto (`pareto` true)
+/// distribution, element-wise over the broadcast of its parameters: 1 + ξ(x − μ)/σ > 0, so x > μ − σ/ξ where ξ > 0
+/// and x < μ − σ/ξ where ξ < 0, and for the generalized Pareto also x > μ. Reported as real, greater than or less
+/// than where every element has the same kind of bound, else as an interval with infinite ends where unbounded.
+fn shape_dependent_support(
+    mu: &DoubleTensor,
+    sigma: &DoubleTensor,
+    xi: &DoubleTensor,
+    pareto: bool,
+) -> Result<Support> {
+    let shape = keanu_tensor::broadcast_shape(
+        &keanu_tensor::broadcast_shape(mu.shape(), sigma.shape())?,
+        xi.shape(),
+    )?;
+    let (mu, sigma, xi) = (
+        mu.broadcast_to(&shape)?,
+        sigma.broadcast_to(&shape)?,
+        xi.broadcast_to(&shape)?,
+    );
+    let ends: Vec<(f64, f64)> = mu
+        .as_slice()
+        .iter()
+        .zip(sigma.as_slice())
+        .zip(xi.as_slice())
+        .map(|((&m, &s), &x)| {
+            let end = m - s / x;
+            let lower = if pareto {
+                m
+            } else if x > 0.0 {
+                end
+            } else {
+                f64::NEG_INFINITY
+            };
+            let upper = if x < 0.0 { end } else { f64::INFINITY };
+            (lower, upper)
+        })
+        .collect();
+    let lower = DoubleTensor::new(&shape, ends.iter().map(|e| e.0).collect())?;
+    let upper = DoubleTensor::new(&shape, ends.iter().map(|e| e.1).collect())?;
+    let unbounded = |t: &DoubleTensor| t.as_slice().iter().all(|v| v.is_infinite());
+    Ok(match (unbounded(&lower), unbounded(&upper)) {
+        (true, true) => Support::Real,
+        (false, true) => Support::GreaterThan(lower),
+        (true, false) => Support::LessThan(upper),
+        (false, false) => Support::Interval(lower, upper),
+    })
 }
 
 impl DistributionKind {
