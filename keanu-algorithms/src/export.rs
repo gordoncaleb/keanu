@@ -6,11 +6,13 @@
 //!
 //! 1. comment lines, starting with `#`, describing the run in CmdStan's `key = value` form: the model name, the
 //!    method (`sample`), the number of draws, warm-up steps and the thinning interval, and for NUTS the target
-//!    acceptance probability, maximum tree depth and the (diagonal) metric, and the chain's `id` (1-based);
+//!    acceptance probability, maximum tree depth and the metric (`diag_e` or `dense_e`), and the chain's `id`
+//!    (1-based);
 //! 2. a header line naming the columns: the sampler's columns, whose names end in `__`, then each sampled node's
 //!    elements, then the pointwise log likelihood if given;
 //! 3. for NUTS, the adaptation results as comments, `# Adaptation terminated`, `# Step size = …` and
-//!    `# Diagonal elements of inverse mass matrix:` followed by the values;
+//!    `# Diagonal elements of inverse mass matrix:` followed by the values, or for a dense metric
+//!    ([`Metric::Dense`]) `# Elements of inverse mass matrix:` followed by one comment line per row of the matrix;
 //! 4. one line per draw.
 //!
 //! Column names follow Stan's conventions: a scalar node is its name; an element of a tensor is the name followed
@@ -66,7 +68,7 @@
 use crate::error::{AlgorithmError, Result};
 use crate::loglik::PointwiseLogLik;
 use crate::mcmc::SamplingOptions;
-use crate::mcmc::nuts::{Nuts, NutsStatistics};
+use crate::mcmc::nuts::{Metric, Nuts, NutsStatistics};
 use crate::samples::{ChainSamples, NetworkSample, NetworkSamples};
 use keanu_graph::{Graph, NodeId, Value};
 use std::collections::HashSet;
@@ -239,14 +241,29 @@ impl<'a> CmdStanCsv<'a> {
             if let Some(step) = statistics.step_size.last() {
                 text.push_str(&format!("# Step size = {}\n", number(*step)));
             }
-            text.push_str("# Diagonal elements of inverse mass matrix:\n# ");
-            let metric: Vec<String> = statistics
-                .inverse_metric
-                .iter()
-                .map(|v| number(*v))
-                .collect();
-            text.push_str(&metric.join(", "));
-            text.push('\n');
+            match &statistics.dense_inverse_metric {
+                // as CmdStan writes a dense metric: one comment line per row
+                Some(matrix) => {
+                    text.push_str("# Elements of inverse mass matrix:\n");
+                    let n = statistics.inverse_metric.len();
+                    for row in matrix.as_slice().chunks(n.max(1)) {
+                        let row: Vec<String> = row.iter().map(|v| number(*v)).collect();
+                        text.push_str("# ");
+                        text.push_str(&row.join(", "));
+                        text.push('\n');
+                    }
+                }
+                None => {
+                    text.push_str("# Diagonal elements of inverse mass matrix:\n# ");
+                    let metric: Vec<String> = statistics
+                        .inverse_metric
+                        .iter()
+                        .map(|v| number(*v))
+                        .collect();
+                    text.push_str(&metric.join(", "));
+                    text.push('\n');
+                }
+            }
         }
 
         let mut row: Vec<String> = Vec::with_capacity(header.len());
@@ -302,7 +319,11 @@ impl<'a> CmdStanCsv<'a> {
                 line(4, "engine = nuts".into());
                 line(5, "nuts".into());
                 line(6, format!("max_depth = {}", run.settings.max_tree_height));
-                line(4, "metric = diag_e".into());
+                let metric = match run.settings.potential.metric {
+                    Metric::Dense => "dense_e",
+                    _ => "diag_e",
+                };
+                line(4, format!("metric = {metric}"));
             }
             None => line(2, "algorithm = keanu".into()),
         }

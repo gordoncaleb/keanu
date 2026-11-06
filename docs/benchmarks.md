@@ -211,6 +211,10 @@ out: its posterior is unbounded, so neither optimizer has an optimum to reach.
 |---|---:|---:|---:|
 | takeSamples | 249.12 ms | 204.83 ms | 1.2× |
 
+On 2026-11-06 (same machine, `cargo bench -p keanu --all-features --bench models -- NUTSBenchmark`), adding the
+dense metric left the default diagonal metric unchanged: 264–267 ms against 259–279 ms just before it, in
+alternating runs (the absolute times are higher than the table's because the machine was busier).
+
 ### Golden models: log prob, its gradient, and 1000 Metropolis–Hastings steps (`ModelBenchmark`)
 
 | Case | Java | Rust | Java ÷ Rust |

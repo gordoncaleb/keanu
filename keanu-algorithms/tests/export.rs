@@ -8,7 +8,7 @@ use keanu_algorithms::loglik::PointwiseLogLik;
 use keanu_algorithms::mcmc::SamplingOptions;
 use keanu_algorithms::mcmc::chains::run_chains;
 use keanu_algorithms::mcmc::metropolis::MetropolisHastings;
-use keanu_algorithms::mcmc::nuts::{Nuts, NutsStatistics};
+use keanu_algorithms::mcmc::nuts::{Metric, Nuts, NutsStatistics, QuadraticPotential};
 use keanu_algorithms::{AlgorithmError, ChainSamples};
 use keanu_distributions::KeanuRng;
 use keanu_graph::{GraphBuilder, Model, NodeId, State};
@@ -282,6 +282,51 @@ fn nuts_chains_read_back_as_arviz_reads_them() {
         assert_eq!(metric, stats.inverse_metric);
         assert_eq!(metric.len(), 10);
         assert!(metric.iter().all(|v| *v > 0.0 && *v != 1.0));
+    }
+}
+
+/// A dense metric is written as CmdStan writes one: `metric = dense_e`, and the matrix one row per comment line.
+#[test]
+fn a_dense_metric_is_written_row_by_row() {
+    let (model, state, latents) = model();
+    let nuts = Nuts::default()
+        .with_adapt_count(ADAPT)
+        .with_save_statistics(true)
+        .with_potential(QuadraticPotential::default().with_metric(Metric::Dense));
+    let options = SamplingOptions::default().with_drop(ADAPT);
+    let runs = run_chains(1, 6, &state, |state, rng| {
+        nuts.sample_with_statistics(&model, state, &latents, ADAPT + 20, options, rng)
+    })
+    .unwrap();
+    let (samples, statistics): (Vec<_>, Vec<_>) = runs.into_iter().unzip();
+    let chains = ChainSamples::new(samples).unwrap();
+    let mut out = Vec::new();
+    CmdStanCsv::new(model.graph())
+        .with_nuts(&nuts, &statistics, options)
+        .write_chain(&chains, 0, &mut out)
+        .unwrap();
+    let file = CmdStanFile::parse(std::str::from_utf8(&out).unwrap());
+    assert_eq!(file.config["metric"], "dense_e");
+    assert_eq!(file.adaptation[0], "Adaptation terminated");
+    assert_eq!(file.adaptation[2], "Elements of inverse mass matrix:");
+    // ten latent elements: ten rows of ten
+    let rows: Vec<Vec<f64>> = file.adaptation[3..]
+        .iter()
+        .map(|row| row.split(", ").map(|v| v.parse().unwrap()).collect())
+        .collect();
+    assert_eq!(rows.len(), 10);
+    let matrix = statistics[0].dense_inverse_metric.as_ref().unwrap();
+    assert_eq!(rows.concat(), matrix.as_slice());
+    // the matrix was adapted, and is symmetric
+    assert!(
+        rows.iter()
+            .enumerate()
+            .any(|(i, row)| row[(i + 1) % 10] != 0.0)
+    );
+    for (i, row) in rows.iter().enumerate() {
+        for (j, value) in row.iter().enumerate() {
+            assert_eq!(*value, rows[j][i]);
+        }
     }
 }
 

@@ -4,7 +4,7 @@ mod mcmc_common;
 
 use keanu_algorithms::mcmc::SamplingOptions;
 use keanu_algorithms::mcmc::chains::run_chains;
-use keanu_algorithms::mcmc::nuts::{Nuts, QuadraticPotential};
+use keanu_algorithms::mcmc::nuts::{Metric, Nuts, NutsStatistics, QuadraticPotential};
 use keanu_algorithms::statistics::effective_sample_size;
 use keanu_algorithms::{AlgorithmError, diagnostics};
 use keanu_graph::{GraphBuilder, Model, NodeId, State};
@@ -582,4 +582,205 @@ fn block_nuts_rejects_invalid_blocks() {
         error.to_string().contains("depends on the latent"),
         "{error}"
     );
+}
+
+/// x ~ MVN(0, Σ) with Σ = diag(s) R diag(s): returns the model, the state and x.
+fn correlated_gaussian(covariance: &[f64]) -> (Model, State, NodeId) {
+    let n = (covariance.len() as f64).sqrt() as usize;
+    let b = GraphBuilder::new();
+    let x = b.multivariate_gaussian(
+        DoubleTensor::vector(vec![0.0; n]),
+        DoubleTensor::new(&[n, n], covariance.to_vec()).unwrap(),
+    );
+    b.set_value(x, DoubleTensor::vector(vec![0.5; n]));
+    let x = x.id();
+    let (graph, state) = b.build().unwrap();
+    let model = Model::new(graph, &state).unwrap();
+    (model, state, x)
+}
+
+fn dense() -> QuadraticPotential {
+    QuadraticPotential::default().with_metric(Metric::Dense)
+}
+
+/// Runs `chains` chains of `draws` draws after `adapt` adaptation steps, returning each chain's draws of every
+/// element of `x` and its statistics.
+fn run_correlated(
+    model: &Model,
+    state: &State,
+    x: NodeId,
+    nuts: Nuts,
+    chains: usize,
+    draws: usize,
+    seed: u64,
+) -> (Vec<Vec<Vec<f64>>>, Vec<NutsStatistics>) {
+    let adapt = nuts.adapt_count;
+    let nuts = nuts.with_save_statistics(true);
+    let runs = run_chains(chains, seed, state, |state, rng| {
+        nuts.sample_with_statistics(
+            model,
+            state,
+            &[x],
+            adapt + draws,
+            SamplingOptions::default().with_drop(adapt),
+            rng,
+        )
+    })
+    .unwrap();
+    let n = runs[0].0.f64(x).unwrap().as_slice()[0].len();
+    let per_element = (0..n)
+        .map(|i| {
+            runs.iter()
+                .map(|(samples, _)| samples.f64(x).unwrap().element(&[i]).unwrap())
+                .collect()
+        })
+        .collect();
+    (per_element, runs.into_iter().map(|(_, s)| s).collect())
+}
+
+/// The smallest bulk ESS over the elements, per leapfrog step (gradient evaluation) after adaptation.
+fn ess_per_gradient(draws: &[Vec<Vec<f64>>], statistics: &[NutsStatistics], adapt: usize) -> f64 {
+    let ess = draws
+        .iter()
+        .map(|chains| diagnostics::ess_bulk(chains).unwrap())
+        .fold(f64::INFINITY, f64::min);
+    let gradients: usize = statistics
+        .iter()
+        .map(|s| s.tree_size[adapt..].iter().sum::<usize>())
+        .sum();
+    ess / gradients as f64
+}
+
+/// AE7: on a 2-D Gaussian with correlation 0.99 the dense metric reaches at least 5 times the diagonal metric's
+/// bulk ESS per gradient evaluation (its trees are a few steps long where the diagonal metric's must follow the
+/// narrow ridge), and adapts to the covariance.
+#[test]
+fn a_dense_metric_samples_a_highly_correlated_gaussian_efficiently() {
+    let covariance = [1.0, 0.99, 0.99, 1.0];
+    let (model, state, x) = correlated_gaussian(&covariance);
+    let adapt = 500;
+    let nuts = Nuts::default().with_adapt_count(adapt);
+    let (diagonal_draws, diagonal_stats) = run_correlated(&model, &state, x, nuts, 2, 1000, 31);
+    let (dense_draws, dense_stats) =
+        run_correlated(&model, &state, x, nuts.with_potential(dense()), 2, 1000, 31);
+    let diagonal = ess_per_gradient(&diagonal_draws, &diagonal_stats, adapt);
+    let dense_efficiency = ess_per_gradient(&dense_draws, &dense_stats, adapt);
+    assert!(
+        dense_efficiency >= 5.0 * diagonal,
+        "dense {dense_efficiency} vs diagonal {diagonal} ESS per gradient"
+    );
+    assert!(diagonal_stats[0].dense_inverse_metric.is_none());
+    for stats in &dense_stats {
+        let metric = stats.dense_inverse_metric.as_ref().unwrap();
+        assert_eq!(metric.shape(), [2, 2]);
+        // the last window has 200 strongly autocorrelated draws early in adaptation, so the variances are rough
+        // estimates, but the correlation is accurate
+        let m = metric.as_slice();
+        assert!(
+            (0.6..1.5).contains(&m[0]) && (0.6..1.5).contains(&m[3]),
+            "{m:?}"
+        );
+        let correlation = m[1] / (m[0] * m[3]).sqrt();
+        assert!(correlation > 0.97 && m[1] == m[2], "{m:?}");
+        assert_eq!(
+            stats.inverse_metric,
+            [metric.as_slice()[0], metric.as_slice()[3]]
+        );
+    }
+    // both chains sample the right distribution
+    for element in &dense_draws {
+        let all: Vec<f64> = element.concat();
+        assert_moments(&all, 0.0, 1.0, "dense metric");
+    }
+}
+
+/// The adapted dense metric approximates the posterior covariance of a 3-D Gaussian with different scales and
+/// correlations, and the draws have that covariance.
+#[test]
+fn the_adapted_dense_metric_approximates_the_posterior_covariance() {
+    let scale = [1.0, 3.0, 0.5];
+    let correlation = [1.0, 0.9, -0.5, 0.9, 1.0, -0.3, -0.5, -0.3, 1.0];
+    let covariance: Vec<f64> = (0..9)
+        .map(|k| correlation[k] * scale[k / 3] * scale[k % 3])
+        .collect();
+    let (model, state, x) = correlated_gaussian(&covariance);
+    let nuts = Nuts::default()
+        .with_adapt_count(1000)
+        .with_potential(dense());
+    let (draws, statistics) = run_correlated(&model, &state, x, nuts, 2, 2000, 32);
+    for stats in &statistics {
+        let metric = stats.dense_inverse_metric.as_ref().unwrap();
+        for j in 0..3 {
+            for k in 0..3 {
+                let estimate = metric.as_slice()[j * 3 + k];
+                let truth = covariance[j * 3 + k];
+                // the last window has 500 draws: a sampling error of about 0.1 of the scale
+                let tolerance = 0.25 * scale[j] * scale[k];
+                assert!(
+                    (estimate - truth).abs() < tolerance,
+                    "({j}, {k}): {estimate} vs {truth}"
+                );
+            }
+        }
+    }
+    let all: Vec<Vec<f64>> = draws.iter().map(|chains| chains.concat()).collect();
+    for j in 0..3 {
+        assert_moments(&all[j], 0.0, covariance[j * 4], "dense metric");
+        for k in 0..j {
+            let n = all[j].len() as f64;
+            let sample = all[j].iter().zip(&all[k]).map(|(a, b)| a * b).sum::<f64>() / n;
+            let truth = covariance[j * 3 + k];
+            assert!(
+                (sample - truth).abs() < 0.1 * scale[j] * scale[k],
+                "({j}, {k}): {sample} vs {truth}"
+            );
+        }
+    }
+}
+
+/// On independent Gaussians with different scales the dense metric finds (nearly) no correlation and samples as
+/// the diagonal one does.
+#[test]
+fn a_dense_metric_on_an_uncorrelated_target_matches_the_diagonal_one() {
+    let scale = [1.0, 5.0, 0.2];
+    let b = GraphBuilder::new();
+    let x = b.gaussian_with_shape(&[3], 0.0, DoubleTensor::vector(scale.to_vec()));
+    b.set_value(x, DoubleTensor::vector(vec![0.1; 3]));
+    let x = x.id();
+    let (graph, state) = b.build().unwrap();
+    let model = Model::new(graph, &state).unwrap();
+    let nuts = Nuts::default().with_adapt_count(1000);
+    let (diagonal, diagonal_stats) = run_correlated(&model, &state, x, nuts, 2, 2000, 33);
+    let (dense_draws, dense_stats) =
+        run_correlated(&model, &state, x, nuts.with_potential(dense()), 2, 2000, 33);
+    for j in 0..3 {
+        let truth = scale[j] * scale[j];
+        assert_moments(&diagonal[j].concat(), 0.0, truth, "diagonal metric");
+        assert_moments(&dense_draws[j].concat(), 0.0, truth, "dense metric");
+    }
+    let mean_tree = |stats: &[NutsStatistics]| {
+        let sizes: Vec<usize> = stats
+            .iter()
+            .flat_map(|s| s.tree_size[1000..].to_vec())
+            .collect();
+        sizes.iter().sum::<usize>() as f64 / sizes.len() as f64
+    };
+    let (a, b) = (mean_tree(&diagonal_stats), mean_tree(&dense_stats));
+    assert!(
+        (a - b).abs() < 0.5 * a.max(b),
+        "mean tree sizes {a} and {b}"
+    );
+    // the last adaptation window has 500 draws: the estimated variances are near the true ones, and the
+    // correlations near 0, within the window's sampling error
+    for stats in &dense_stats {
+        let metric = stats.dense_inverse_metric.as_ref().unwrap().as_slice();
+        for j in 0..3 {
+            let relative = metric[j * 4] / (scale[j] * scale[j]);
+            assert!((0.6..1.6).contains(&relative), "{j}: {relative}");
+            for k in 0..j {
+                let correlation = metric[j * 3 + k] / (metric[j * 4] * metric[k * 4]).sqrt();
+                assert!(correlation.abs() < 0.3, "({j}, {k}): {correlation}");
+            }
+        }
+    }
 }

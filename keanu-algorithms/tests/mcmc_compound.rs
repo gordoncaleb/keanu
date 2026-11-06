@@ -7,7 +7,7 @@ use keanu_algorithms::mcmc::SamplingOptions;
 use keanu_algorithms::mcmc::chains::sample_chains;
 use keanu_algorithms::mcmc::compound::{Compound, CompoundStep};
 use keanu_algorithms::mcmc::metropolis::MetropolisHastings;
-use keanu_algorithms::mcmc::nuts::Nuts;
+use keanu_algorithms::mcmc::nuts::{Metric, Nuts, QuadraticPotential};
 use keanu_algorithms::mcmc::select::{Sampler, is_differentiable_wrt};
 use keanu_algorithms::{AlgorithmError, ChainSamples};
 use keanu_graph::op::DistributionKind;
@@ -336,4 +336,112 @@ fn compound_steps_must_cover_the_latents_once() {
         .metropolis_hastings(MetropolisHastings::default(), &[mu])
         .sampler(&model, &mut state.clone(), &[mu], &mut rng(1))
         .unwrap();
+}
+
+/// A dense-metric NUTS block inside a compound sampler: a, b ~ N(0, 10²) and y_i ~ N(a + b x_i, 1) with x far from
+/// centred (so a and b are strongly correlated), and k ~ UniformInt[0, 3) with w_j ~ N(k, 0.7), sampled by Gibbs.
+/// The posterior factorises: (a, b) is Gaussian, k is discrete, both exact.
+#[test]
+fn a_dense_nuts_block_samples_correlated_latents_in_a_compound_sampler() {
+    let xs = [4.0, 5.0, 6.0, 7.0, 8.0, 9.0];
+    let ys = [2.9, 3.6, 4.2, 4.4, 5.3, 5.6];
+    let ws = [1.2, 0.8, 1.5];
+    let b = GraphBuilder::new();
+    let a = b.gaussian(0.0, 10.0);
+    let slope = b.gaussian(0.0, 10.0);
+    let x = b.constant(DoubleTensor::vector(xs.to_vec()));
+    let y = b.gaussian(a + slope * x, 1.0);
+    b.observe(y, DoubleTensor::vector(ys.to_vec()));
+    let k = b.uniform_int(0, 3);
+    let w = b.gaussian_with_shape(&[ws.len()], k.to_double(), 0.7);
+    b.observe(w, DoubleTensor::vector(ws.to_vec()));
+    b.set_value(a, DoubleTensor::scalar(0.0));
+    b.set_value(slope, DoubleTensor::scalar(0.0));
+    b.set_value(k, IntTensor::scalar(0));
+    let (a, slope, k) = (a.id(), slope.id(), k.id());
+    let (graph, state) = b.build().unwrap();
+    let model = Model::new(graph, &state).unwrap();
+
+    let nuts = Nuts::default()
+        .with_adapt_count(500)
+        .with_potential(QuadraticPotential::default().with_metric(Metric::Dense));
+    let compound = Compound::new().nuts_with(nuts, &[a, slope]).gibbs(&[k]);
+    let chains = sample_chains(2, 41, &state, |state, rng| {
+        let (samples, statistics) = compound.sample_with_statistics(
+            &model,
+            state,
+            &[a, slope, k],
+            3500,
+            SamplingOptions::default().with_drop(500),
+            rng,
+        )?;
+        let metric = statistics.nuts[0].dense_inverse_metric.clone().unwrap();
+        assert_eq!(metric.shape(), [2, 2]);
+        // the adapted metric has the posterior's strong negative correlation
+        let m = metric.as_slice();
+        assert!(m[1] / (m[0] * m[3]).sqrt() < -0.9, "{m:?}");
+        Ok(samples)
+    })
+    .unwrap();
+
+    // the exact posterior of (a, b): precision P = XᵀX + I / 100, mean P⁻¹ Xᵀ y
+    let n = xs.len() as f64;
+    let (sx, sxx) = (
+        xs.iter().sum::<f64>(),
+        xs.iter().map(|x| x * x).sum::<f64>(),
+    );
+    let (sy, sxy) = (
+        ys.iter().sum::<f64>(),
+        xs.iter().zip(&ys).map(|(x, y)| x * y).sum::<f64>(),
+    );
+    let p = [n + 0.01, sx, sx, sxx + 0.01];
+    let det = p[0] * p[3] - p[1] * p[2];
+    let covariance = [p[3] / det, -p[1] / det, -p[2] / det, p[0] / det];
+    let mean = [
+        covariance[0] * sy + covariance[1] * sxy,
+        covariance[2] * sy + covariance[3] * sxy,
+    ];
+    for (id, (m, v)) in [
+        (a, (mean[0], covariance[0])),
+        (slope, (mean[1], covariance[3])),
+    ] {
+        let summary = chains.summarize(id, &[]).unwrap();
+        assert!(
+            (summary.mean - m).abs() < 5.0 * summary.mcse_mean,
+            "{} vs {m} (mcse {})",
+            summary.mean,
+            summary.mcse_mean
+        );
+        let relative = summary.sd * summary.sd / v;
+        assert!(
+            (0.8..1.25).contains(&relative),
+            "variance {relative} of the true one"
+        );
+        assert!(summary.r_hat < 1.01, "{}", summary.r_hat);
+    }
+    // k's posterior: P(k) ∝ Π N(w_j | k, 0.7)
+    let log_weight = |k: f64| -ws.iter().map(|w| (w - k) * (w - k)).sum::<f64>() / (2.0 * 0.49);
+    let weights: Vec<f64> = (0..3).map(|k| log_weight(k as f64).exp()).collect();
+    let total: f64 = weights.iter().sum();
+    let draws: Vec<i64> = chains
+        .chains()
+        .iter()
+        .flat_map(|c| {
+            c.i64(k)
+                .unwrap()
+                .as_slice()
+                .iter()
+                .map(|t| t.to_scalar().unwrap())
+                .collect::<Vec<_>>()
+        })
+        .collect();
+    for (value, weight) in weights.iter().enumerate() {
+        let frequency =
+            draws.iter().filter(|&&d| d == value as i64).count() as f64 / draws.len() as f64;
+        let probability = weight / total;
+        assert!(
+            (frequency - probability).abs() < 0.03,
+            "P(k = {value}): {frequency} vs {probability}"
+        );
+    }
 }

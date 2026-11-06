@@ -605,6 +605,35 @@ fn posterior_sampling() -> keanu::Result<()> {
     assert!((mean_a - 21.0).abs() < 0.2);
     // ANCHOR_END: nuts
 
+    // ANCHOR: nuts_dense
+    use keanu::algorithms::mcmc::nuts::{Metric, QuadraticPotential};
+    // a strongly correlated posterior: x ~ MVN(0, [[1, 0.95], [0.95, 1]])
+    let b = GraphBuilder::new();
+    let x = b.multivariate_gaussian(
+        DoubleTensor::vector(vec![0.0, 0.0]),
+        DoubleTensor::new(&[2, 2], vec![1.0, 0.95, 0.95, 1.0])?,
+    );
+    b.set_value(x, DoubleTensor::vector(vec![0.0, 0.0]));
+    let x = x.id();
+    let (graph, mut correlated_state) = b.build()?;
+    let correlated = Model::new(graph, &correlated_state)?;
+    let dense = Nuts::default()
+        .with_adapt_count(500)
+        .with_potential(QuadraticPotential::default().with_metric(Metric::Dense));
+    let (_, statistics) = dense.sample_with_statistics(
+        &correlated,
+        &mut correlated_state,
+        &[x],
+        1500,
+        SamplingOptions::default().with_drop(500),
+        &mut rng,
+    )?;
+    // the adapted inverse mass matrix estimates the posterior covariance, correlation included
+    let metric = statistics.dense_inverse_metric.unwrap();
+    let m = metric.as_slice();
+    assert!(m[1] / (m[0] * m[3]).sqrt() > 0.9);
+    // ANCHOR_END: nuts_dense
+
     // ANCHOR: nuts_transforms
     // sigma ~ HalfGaussian(1), observed through y ~ N(0, sigma): NUTS moves log(sigma), so every draw is positive
     let b = GraphBuilder::new();

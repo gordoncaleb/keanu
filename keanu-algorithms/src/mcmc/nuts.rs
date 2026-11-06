@@ -1,5 +1,5 @@
 //! The No-U-Turn sampler (NUTS): Hamiltonian Monte Carlo that chooses its own trajectory length, with dual
-//! averaging step size adaptation and an adaptive diagonal mass matrix.
+//! averaging step size adaptation and an adaptive diagonal or dense mass matrix.
 //!
 //! It follows Stan's NUTS: multinomial sampling from the trajectory, the generalised no-U-turn criterion with the
 //! extra checks across subtree boundaries Stan added in 2.21, and Stan's windowed adaptation of the step size and
@@ -30,19 +30,41 @@ use keanu_tensor::special::log_sum_exp;
 use std::cell::RefCell;
 use std::rc::Rc;
 
-/// The adaptive diagonal quadratic potential (mass matrix) settings, and the schedule NUTS adapts on.
+/// The form of the mass matrix (metric) NUTS adapts, as Stan's `metric` setting.
+///
+/// The kinetic energy is ½ pᵀ M⁻¹ p for momentum p and mass matrix M, and NUTS adapts the inverse mass matrix M⁻¹
+/// to an estimate of the posterior covariance in the coordinates it moves in. A good estimate makes the target look
+/// like a standard Gaussian to the integrator, so that one step size suits every direction.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[non_exhaustive]
+pub enum Metric {
+    /// A diagonal M⁻¹ (Stan's `diag_e`, the default): each latent element's variance. It corrects for latents on
+    /// different scales but not for correlations between them. Each leapfrog step costs O(n) on top of the
+    /// gradient, for n latent elements.
+    #[default]
+    Diagonal,
+    /// A dense M⁻¹ (Stan's `dense_e`): the full covariance matrix of the latent elements, so it also corrects for
+    /// linear correlations. Momentum is drawn with the Cholesky factor of M⁻¹, and each leapfrog step costs O(n²)
+    /// on top of the gradient; a window needs more draws than there are latent elements to estimate it well, so it
+    /// suits strongly correlated posteriors of up to a few hundred elements.
+    Dense,
+}
+
+/// The adaptive quadratic potential (mass matrix) settings, and the schedule NUTS adapts on.
 ///
 /// NUTS adapts as Stan does (its windowed adaptation, with Stan's defaults), over the first
 /// [`Nuts::adapt_count`] steps:
 ///
 /// 1. an initial fast interval of [`initial_buffer`](Self::initial_buffer) steps (75) in which only the step size
 ///    is adapted, while the chain finds the typical set;
-/// 2. slow windows in which the draws are also collected to estimate each latent's (unconstrained) variance. The
-///    first is [`adaptation_window`](Self::adaptation_window) steps (25) long and each one after it twice as long as
-///    the one before, with the last stretched to fill the space left. At the end of each window the potential's
-///    variance (the inverse mass matrix) becomes the window's sample variance, regularised towards a small value as
-///    (n / (n + 5)) · var + 10⁻³ · 5 / (n + 5) for n draws; then a new reasonable step size is found for it and step
-///    size adaptation restarts;
+/// 2. slow windows in which the draws are also collected to estimate each latent's (unconstrained) variance, or with
+///    [`Metric::Dense`] the covariance of all the latent elements. The first is
+///    [`adaptation_window`](Self::adaptation_window) steps (25) long and each one after it twice as long as the one
+///    before, with the last stretched to fill the space left. At the end of each window the potential's variance
+///    (the inverse mass matrix) becomes the window's sample variance, regularised towards a small value as
+///    (n / (n + 5)) · var + 10⁻³ · 5 / (n + 5) for n draws (with a dense metric, the sample covariance Σ as
+///    (n / (n + 5)) · Σ + 10⁻³ · 5 / (n + 5) · I); then a new reasonable step size is found for it and step size
+///    adaptation restarts;
 /// 3. a terminal fast interval of [`terminal_buffer`](Self::terminal_buffer) steps (50) in which only the step
 ///    size is adapted, to the final potential.
 ///
@@ -50,7 +72,7 @@ use std::rc::Rc;
 /// `adapt_count` steps, they take 15%, 75% and 10% of them instead (one slow window).
 ///
 /// Until the first slow window ends every latent element has variance
-/// [`initial_variance`](Self::initial_variance).
+/// [`initial_variance`](Self::initial_variance) (and, with a dense metric, no correlation with the others).
 #[derive(Debug, Clone, Copy, PartialEq)]
 #[non_exhaustive]
 pub struct QuadraticPotential {
@@ -75,6 +97,8 @@ pub struct QuadraticPotential {
     /// The steps at the end of adaptation in which only the step size is adapted (Stan's `term_buffer`).
     /// Default 50.
     pub terminal_buffer: usize,
+    /// The form of the mass matrix: [`Metric::Diagonal`] (the default) or [`Metric::Dense`].
+    pub metric: Metric,
 }
 
 /// Setters for each setting, for use as `QuadraticPotential::default().with_...(...)`.
@@ -126,6 +150,13 @@ impl QuadraticPotential {
         self.terminal_buffer = terminal_buffer;
         self
     }
+
+    /// Sets [`metric`](Self::metric).
+    #[must_use]
+    pub fn with_metric(mut self, metric: Metric) -> Self {
+        self.metric = metric;
+        self
+    }
 }
 
 impl Default for QuadraticPotential {
@@ -138,6 +169,7 @@ impl Default for QuadraticPotential {
             adaptation_window: 25,
             initial_buffer: 75,
             terminal_buffer: 50,
+            metric: Metric::Diagonal,
         }
     }
 }
@@ -306,8 +338,13 @@ pub struct NutsStatistics {
     /// The height (depth) of each step's tree (Stan's `treedepth__`; when saving statistics).
     pub tree_depth: Vec<usize>,
     /// The diagonal of the inverse mass matrix (each latent element's variance in the coordinates NUTS moves in,
-    /// in the order of the latents sampled), as it was last adapted. Always recorded.
+    /// in the order of the latents sampled), as it was last adapted. Always recorded, for either
+    /// [`Metric`].
     pub inverse_metric: Vec<f64>,
+    /// With [`Metric::Dense`], the whole inverse mass matrix as it was last adapted: an [n, n] tensor for n latent
+    /// elements, in the order of [`inverse_metric`](Self::inverse_metric) (whose values are its diagonal). `None`
+    /// with a diagonal metric. Always recorded.
+    pub dense_inverse_metric: Option<DoubleTensor>,
 }
 
 impl NutsStatistics {
@@ -484,6 +521,7 @@ impl Nuts {
             }),
         };
         sampler.statistics.inverse_metric = sampler.potential.diagonal();
+        sampler.statistics.dense_inverse_metric = sampler.potential.dense();
         if self.adapt_step_size && self.adapt_count > 0 {
             sampler.find_reasonable_step_size(state, rng)?;
         }
@@ -646,6 +684,63 @@ impl VarianceEstimator {
     }
 }
 
+/// Running mean and sample covariance of the whole position (Welford, as Stan's `welford_covar_estimator`),
+/// restarted for each slow adaptation window.
+#[derive(Debug, Clone)]
+struct CovarianceEstimator {
+    count: usize,
+    mean: Vec<f64>,
+    /// The sum of outer products of deviations, n × n row-major.
+    m2: Vec<f64>,
+}
+
+impl CovarianceEstimator {
+    fn new(dimension: usize) -> Self {
+        Self {
+            count: 0,
+            mean: vec![0.0; dimension],
+            m2: vec![0.0; dimension * dimension],
+        }
+    }
+
+    fn add(&mut self, sample: &[DoubleTensor]) {
+        self.count += 1;
+        let count = self.count as f64;
+        let x = concat(sample);
+        let n = self.mean.len();
+        let delta: Vec<f64> = x.iter().zip(&self.mean).map(|(x, m)| x - m).collect();
+        for (m, d) in self.mean.iter_mut().zip(&delta) {
+            *m += d / count;
+        }
+        for ((row, x), mean) in self.m2.chunks_exact_mut(n.max(1)).zip(&x).zip(&self.mean) {
+            let after = x - mean;
+            for (m2, d) in row.iter_mut().zip(&delta) {
+                *m2 += after * d;
+            }
+        }
+    }
+
+    /// The sample covariance Σ (with n − 1 in the denominator) regularised as Stan regularises it:
+    /// (n / (n + 5)) · Σ + 10⁻³ · 5 / (n + 5) · I, symmetrised. `None` with fewer than two draws.
+    fn regularised_covariance(&self) -> Option<Vec<f64>> {
+        if self.count < 2 {
+            return None;
+        }
+        let count = self.count as f64;
+        let shrink = count / (count + 5.0) / (count - 1.0);
+        let floor = 1e-3 * 5.0 / (count + 5.0);
+        let n = self.mean.len();
+        let mut covariance = vec![0.0; n * n];
+        for i in 0..n {
+            for j in 0..n {
+                let m2 = 0.5 * (self.m2[i * n + j] + self.m2[j * n + i]);
+                covariance[i * n + j] = shrink * m2 + if i == j { floor } else { 0.0 };
+            }
+        }
+        Some(covariance)
+    }
+}
+
 /// Stan's adaptation windows (its `windowed_adaptation`): where the slow windows fall in the adaptation steps.
 #[derive(Debug, Clone)]
 struct AdaptationWindows {
@@ -721,47 +816,120 @@ impl AdaptationWindows {
     }
 }
 
-/// One run's adaptive diagonal quadratic potential.
+/// The inverse mass matrix of one run.
+#[derive(Debug, Clone)]
+enum InverseMetric {
+    Diagonal {
+        variance: Vec<DoubleTensor>,
+        standard_deviation: Vec<DoubleTensor>,
+        estimator: VarianceEstimator,
+    },
+    Dense {
+        /// M⁻¹, n × n row-major.
+        matrix: Vec<f64>,
+        /// The lower triangular Cholesky factor L of M⁻¹ = L Lᵀ, n × n row-major.
+        cholesky: Vec<f64>,
+        /// The shape of each latent's block of the position.
+        shapes: Vec<Vec<usize>>,
+        estimator: CovarianceEstimator,
+    },
+}
+
+/// One run's adaptive quadratic potential.
 #[derive(Debug, Clone)]
 struct PotentialState {
-    /// The inverse mass matrix.
-    variance: Vec<DoubleTensor>,
-    standard_deviation: Vec<DoubleTensor>,
-    estimator: VarianceEstimator,
+    metric: InverseMetric,
     windows: AdaptationWindows,
 }
 
 impl PotentialState {
     fn new(settings: &QuadraticPotential, adapt_count: usize, like: &[DoubleTensor]) -> Self {
-        let variance: Vec<DoubleTensor> = like
-            .iter()
-            .map(|t| DoubleTensor::full(t.shape(), settings.initial_variance))
-            .collect();
+        let metric = match settings.metric {
+            Metric::Diagonal => {
+                let variance: Vec<DoubleTensor> = like
+                    .iter()
+                    .map(|t| DoubleTensor::full(t.shape(), settings.initial_variance))
+                    .collect();
+                InverseMetric::Diagonal {
+                    standard_deviation: variance.iter().map(DoubleTensor::sqrt).collect(),
+                    variance,
+                    estimator: VarianceEstimator::new(like),
+                }
+            }
+            Metric::Dense => {
+                let n: usize = like.iter().map(DoubleTensor::len).sum();
+                let diagonal = |value: f64| {
+                    let mut matrix = vec![0.0; n * n];
+                    (0..n).for_each(|i| matrix[i * n + i] = value);
+                    matrix
+                };
+                InverseMetric::Dense {
+                    matrix: diagonal(settings.initial_variance),
+                    cholesky: diagonal(settings.initial_variance.sqrt()),
+                    shapes: like.iter().map(|t| t.shape().to_vec()).collect(),
+                    estimator: CovarianceEstimator::new(n),
+                }
+            }
+        };
         Self {
-            standard_deviation: variance.iter().map(DoubleTensor::sqrt).collect(),
-            variance,
-            estimator: VarianceEstimator::new(like),
+            metric,
             windows: AdaptationWindows::new(settings, adapt_count),
         }
     }
 
-    /// Learns from an adaptation step's draw (Stan's `var_adaptation::learn_variance`). Returns whether the step
-    /// ended a slow window, so that the variance changed.
+    /// Learns from an adaptation step's draw (Stan's `var_adaptation::learn_variance` or
+    /// `covar_adaptation::learn_covariance`). Returns whether the step ended a slow window, so that the metric
+    /// changed.
     fn update(&mut self, position: &[DoubleTensor]) -> Result<bool> {
         if self.windows.num_warmup == 0 {
             return Ok(false);
         }
-        if self.windows.in_window() {
-            self.estimator.add(position)?;
-        }
+        let in_window = self.windows.in_window();
         let ends_window = self.windows.ends_window();
         if ends_window {
             self.windows.compute_next_window();
-            if let Some(variance) = self.estimator.regularised_variance() {
-                self.standard_deviation = variance.iter().map(DoubleTensor::sqrt).collect();
-                self.variance = variance;
+        }
+        match &mut self.metric {
+            InverseMetric::Diagonal {
+                variance,
+                standard_deviation,
+                estimator,
+            } => {
+                if in_window {
+                    estimator.add(position)?;
+                }
+                if ends_window {
+                    if let Some(estimate) = estimator.regularised_variance() {
+                        *standard_deviation = estimate.iter().map(DoubleTensor::sqrt).collect();
+                        *variance = estimate;
+                    }
+                    *estimator = VarianceEstimator::new(position);
+                }
             }
-            self.estimator = VarianceEstimator::new(position);
+            InverseMetric::Dense {
+                matrix,
+                cholesky,
+                estimator,
+                ..
+            } => {
+                if in_window {
+                    estimator.add(position);
+                }
+                if ends_window {
+                    if let Some(estimate) = estimator.regularised_covariance() {
+                        let n = estimator.mean.len();
+                        // the regularised estimate is positive definite; should rounding make it fail to factorise,
+                        // the previous metric stays
+                        if let Ok(factor) =
+                            DoubleTensor::new(&[n, n], estimate.clone()).and_then(|m| m.cholesky())
+                        {
+                            *cholesky = factor.as_slice().to_vec();
+                            *matrix = estimate;
+                        }
+                    }
+                    *estimator = CovarianceEstimator::new(estimator.mean.len());
+                }
+            }
         }
         self.windows.counter += 1;
         Ok(ends_window)
@@ -769,25 +937,76 @@ impl PotentialState {
 
     /// The inverse mass matrix's diagonal, as one vector.
     fn diagonal(&self) -> Vec<f64> {
-        self.variance
-            .iter()
-            .flat_map(|v| v.as_slice().iter().copied())
-            .collect()
+        match &self.metric {
+            InverseMetric::Diagonal { variance, .. } => variance
+                .iter()
+                .flat_map(|v| v.as_slice().iter().copied())
+                .collect(),
+            InverseMetric::Dense { matrix, shapes, .. } => {
+                let n: usize = shapes.iter().map(|s| s.iter().product::<usize>()).sum();
+                (0..n).map(|i| matrix[i * n + i]).collect()
+            }
+        }
     }
 
+    /// The whole inverse mass matrix, [n, n], with a dense metric.
+    fn dense(&self) -> Option<DoubleTensor> {
+        match &self.metric {
+            InverseMetric::Diagonal { .. } => None,
+            InverseMetric::Dense { matrix, .. } => {
+                let n = (matrix.len() as f64).sqrt().round() as usize;
+                DoubleTensor::new(&[n, n], matrix.clone()).ok()
+            }
+        }
+    }
+
+    /// A momentum drawn from N(0, M): with a diagonal metric each element's standard normal draw divided by its
+    /// standard deviation, and with a dense one L⁻ᵀ u for u ~ N(0, I) and M⁻¹ = L Lᵀ (as Stan's `dense_e_metric`).
     fn random_momentum(&self, rng: &mut KeanuRng) -> Result<Vec<DoubleTensor>> {
-        self.standard_deviation
-            .iter()
-            .map(|sd| Ok(rng.gaussian(sd.shape()).div(sd)?))
-            .collect()
+        match &self.metric {
+            InverseMetric::Diagonal {
+                standard_deviation, ..
+            } => standard_deviation
+                .iter()
+                .map(|sd| Ok(rng.gaussian(sd.shape()).div(sd)?))
+                .collect(),
+            InverseMetric::Dense {
+                cholesky, shapes, ..
+            } => {
+                let n: usize = shapes.iter().map(|s| s.iter().product::<usize>()).sum();
+                let mut p = rng.gaussian(&[n]).as_slice().to_vec();
+                // back substitution for Lᵀ p = u
+                for i in (0..n).rev() {
+                    let mut sum = p[i];
+                    for k in i + 1..n {
+                        sum -= cholesky[k * n + i] * p[k];
+                    }
+                    p[i] = sum / cholesky[i * n + i];
+                }
+                Ok(split(&p, shapes))
+            }
+        }
     }
 
+    /// M⁻¹ p: the velocity (the derivative of the position) for momentum p.
     fn velocity(&self, momentum: &[DoubleTensor]) -> Result<Vec<DoubleTensor>> {
-        self.variance
-            .iter()
-            .zip(momentum)
-            .map(|(v, p)| Ok(v.mul(p)?))
-            .collect()
+        match &self.metric {
+            InverseMetric::Diagonal { variance, .. } => variance
+                .iter()
+                .zip(momentum)
+                .map(|(v, p)| Ok(v.mul(p)?))
+                .collect(),
+            InverseMetric::Dense { matrix, shapes, .. } => {
+                let p = concat(momentum);
+                let n = p.len();
+                let v: Vec<f64> = matrix
+                    .chunks_exact(n.max(1))
+                    .take(n)
+                    .map(|row| row.iter().zip(&p).map(|(m, p)| m * p).sum())
+                    .collect();
+                Ok(split(&v, shapes))
+            }
+        }
     }
 }
 
@@ -1241,6 +1460,11 @@ impl NutsSampler<'_> {
         &self.statistics.inverse_metric
     }
 
+    /// The whole current inverse mass matrix with a dense metric ([`NutsStatistics::dense_inverse_metric`]).
+    pub fn dense_inverse_metric(&self) -> Option<&DoubleTensor> {
+        self.statistics.dense_inverse_metric.as_ref()
+    }
+
     /// Stan's heuristic for a reasonable step size (its `init_stepsize`, after Hoffman & Gelman 2014, Algorithm 4):
     /// from the current step size, doubles it while one leapfrog step from the current sample (with fresh momentum
     /// each time) has acceptance probability above 0.8, or halves it while it is below, then restarts dual averaging
@@ -1378,6 +1602,7 @@ impl SamplingAlgorithm for NutsSampler<'_> {
                 self.config.adapt_potential && self.potential.update(&self.proposal.position)?;
             if potential_changed {
                 self.statistics.inverse_metric = self.potential.diagonal();
+                self.statistics.dense_inverse_metric = self.potential.dense();
             }
             if potential_changed && self.config.adapt_step_size {
                 self.find_reasonable_step_size(state, rng)?;
@@ -1457,7 +1682,7 @@ mod tests {
             let updated = potential.update(&[DoubleTensor::scalar(x)]).unwrap();
             assert_eq!(updated, i == 99, "step {i}");
             if i < 99 {
-                assert_eq!(potential.variance[0].to_scalar().unwrap(), 1.0);
+                assert_eq!(potential.diagonal(), [1.0]);
             }
         }
         let window = &draws[75..100];
@@ -1465,10 +1690,106 @@ mod tests {
         let mean = window.iter().sum::<f64>() / n;
         let var = window.iter().map(|x| (x - mean) * (x - mean)).sum::<f64>() / (n - 1.0);
         let expected = n / (n + 5.0) * var + 1e-3 * 5.0 / (n + 5.0);
-        let actual = potential.variance[0].to_scalar().unwrap();
+        let actual = potential.diagonal()[0];
         assert!((actual - expected).abs() < 1e-12, "{actual} vs {expected}");
-        let sd = potential.standard_deviation[0].to_scalar().unwrap();
+        let InverseMetric::Diagonal {
+            standard_deviation, ..
+        } = &potential.metric
+        else {
+            unreachable!()
+        };
+        let sd = standard_deviation[0].to_scalar().unwrap();
         assert!((sd - expected.sqrt()).abs() < 1e-12);
+    }
+
+    #[test]
+    fn the_dense_metric_is_the_regularised_sample_covariance_of_the_window() {
+        let settings = QuadraticPotential::default().with_metric(Metric::Dense);
+        // two latents, a scalar and a vector of two: three elements
+        let like = [
+            DoubleTensor::scalar(0.0),
+            DoubleTensor::vector(vec![0.0, 0.0]),
+        ];
+        let mut potential = PotentialState::new(&settings, 150, &like);
+        let draw = |i: usize| {
+            let a = ((i * 37) % 11) as f64;
+            let b = ((i * 13) % 7) as f64;
+            [a, a + 0.5 * b, b - a]
+        };
+        for i in 0..150 {
+            let x = draw(i);
+            let position = [
+                DoubleTensor::scalar(x[0]),
+                DoubleTensor::vector(vec![x[1], x[2]]),
+            ];
+            assert_eq!(potential.update(&position).unwrap(), i == 99, "step {i}");
+        }
+        let window: Vec<[f64; 3]> = (75..100).map(draw).collect();
+        let n = window.len() as f64;
+        let mean: Vec<f64> = (0..3)
+            .map(|j| window.iter().map(|x| x[j]).sum::<f64>() / n)
+            .collect();
+        let dense = potential.dense().unwrap();
+        assert_eq!(dense.shape(), [3, 3]);
+        for j in 0..3 {
+            for k in 0..3 {
+                let covariance = window
+                    .iter()
+                    .map(|x| (x[j] - mean[j]) * (x[k] - mean[k]))
+                    .sum::<f64>()
+                    / (n - 1.0);
+                let floor = if j == k { 1e-3 * 5.0 / (n + 5.0) } else { 0.0 };
+                let expected = n / (n + 5.0) * covariance + floor;
+                let actual = dense.as_slice()[j * 3 + k];
+                assert!(
+                    (actual - expected).abs() < 1e-12,
+                    "({j}, {k}): {actual} vs {expected}"
+                );
+            }
+        }
+        assert_eq!(
+            potential.diagonal(),
+            (0..3).map(|j| dense.as_slice()[j * 4]).collect::<Vec<_>>()
+        );
+    }
+
+    /// With a dense metric the momentum is N(0, M) and the velocity M⁻¹ p, so the velocity's covariance is M⁻¹.
+    #[test]
+    fn dense_momentum_has_the_mass_matrix_as_covariance() {
+        let settings = QuadraticPotential::default().with_metric(Metric::Dense);
+        let like = [DoubleTensor::vector(vec![0.0, 0.0])];
+        let mut potential = PotentialState::new(&settings, 0, &like);
+        let inverse = vec![2.0, 0.9, 0.9, 0.5];
+        potential.metric = InverseMetric::Dense {
+            cholesky: DoubleTensor::new(&[2, 2], inverse.clone())
+                .unwrap()
+                .cholesky()
+                .unwrap()
+                .as_slice()
+                .to_vec(),
+            matrix: inverse.clone(),
+            shapes: vec![vec![2]],
+            estimator: CovarianceEstimator::new(2),
+        };
+        let mut rng = KeanuRng::seed_from_u64(3);
+        let count = 40_000;
+        let mut sums = [0.0; 4];
+        for _ in 0..count {
+            let p = potential.random_momentum(&mut rng).unwrap();
+            let v = potential.velocity(&p).unwrap();
+            let v = v[0].as_slice();
+            sums[0] += v[0] * v[0];
+            sums[1] += v[0] * v[1];
+            sums[2] += v[1] * v[0];
+            sums[3] += v[1] * v[1];
+        }
+        for (sum, expected) in sums.iter().zip(&inverse) {
+            let estimate = sum / count as f64;
+            assert!(
+                (estimate - expected).abs() < 0.05,
+                "{estimate} vs {expected}"
+            );
+        }
     }
 
     /// Whether one leapfrog step from x = 0.3 with momentum 0.5, in a trajectory that started at energy

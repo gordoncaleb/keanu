@@ -373,6 +373,18 @@ Work from `docs/plans/2026-11-05-001-feat-applied-modelling-gaps-plan.md`.
   uses for the node's log probability and gradient together. The new `co2_forecast` example fits a local linear
   trend and a two-harmonic 12-month cycle to simulated monthly CO₂ with NUTS, decomposes it and forecasts 24 held-out
   months, and the guide's sequences chapter has a section on structural time series.
+- keanu-algorithms: **dense mass matrix for NUTS** (`mcmc::nuts::Metric`, `QuadraticPotential::metric` and
+  `with_metric`). `Metric::Dense` adapts the whole inverse mass matrix as Stan's `dense_e` does: in each slow window
+  the draws' sample covariance Σ, regularised to (n / (n + 5)) · Σ + 10⁻³ · 5 / (n + 5) · I, becomes M⁻¹; momentum is
+  drawn as L⁻ᵀ u with M⁻¹ = L Lᵀ, and the velocity M⁻¹ p enters the kinetic energy and the no-U-turn criterion. It
+  works in block mode and so in compound samplers. `NutsStatistics::dense_inverse_metric` and
+  `NutsSampler::dense_inverse_metric` hold the adapted [n, n] matrix (`inverse_metric` stays its diagonal), and
+  `CmdStanCsv` writes `metric = dense_e` and the matrix one row per comment line, as CmdStan does. On a 2-D Gaussian
+  with correlation 0.99 it reaches 11 to 34 times the diagonal metric's bulk ESS per gradient evaluation. The
+  diagonal metric is the default and its trajectories are unchanged. The HSGP NUTS test now uses the dense metric
+  (about 13 leapfrog steps per tree instead of about 100; 7 s instead of 18 s without the `parallel` feature), and
+  allows for the HSGP's own deviation from the exact GP's posterior mean (up to 0.0051, measured with long runs of
+  both metrics, which agree).
 
 ### Code review fixes
 

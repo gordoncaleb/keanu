@@ -48,8 +48,8 @@ Settings on `Nuts`:
 
 - **Adaptation:** `adapt_count` (the steps used to adapt, Stan's `num_warmup`; default 1000), `adapt_step_size`,
   `initial_step_size` and `target_acceptance_prob` (default 0.8, as Stan's `delta`).
-- **Mass matrix:** `potential` (a `QuadraticPotential`: the initial variance and the adaptation schedule) and
-  `adapt_potential`.
+- **Mass matrix:** `potential` (a `QuadraticPotential`: the metric, the initial variance and the adaptation
+  schedule) and `adapt_potential`.
 - **Trajectories:** `max_tree_height`, and `max_energy_change` (the threshold for marking a trajectory divergent).
 - **Diagnostics:** `save_statistics`, used with `sample_with_statistics` for per-step step sizes, acceptance rates,
   log probabilities and tree sizes. Divergences and energies are recorded either way (see below).
@@ -67,6 +67,28 @@ set from them (regularised towards a small value), a new step size is found and 
 `terminal_buffer` set the three lengths. With fewer than 20 adaptation steps only the step size is adapted, and when
 the three stages don't fit they take 15%, 75% and 10% of the steps instead. After adaptation the step size and mass
 matrix stay fixed, so drop the adaptation steps (`SamplingOptions::with_drop(adapt_count)`) from the draws.
+
+### Dense mass matrix
+
+The default mass matrix is diagonal (Stan's `diag_e`): it learns each latent element's scale, but not correlations
+between elements. A posterior with strong linear correlations (regression coefficients of uncentred predictors,
+basis-function weights, the parameters of a growth curve) forms a narrow ridge, and with a diagonal metric NUTS has
+to take a small step size and long trajectories to follow it. `QuadraticPotential::with_metric(Metric::Dense)`
+adapts the whole inverse mass matrix instead (Stan's `dense_e`): in each slow window it estimates the covariance Σ
+of the draws, regularised as Stan does to (n / (n + 5)) · Σ + 10⁻³ · 5 / (n + 5) · I for n draws, and draws
+momentum through its Cholesky factor, so the ridge looks round to the integrator.
+
+```rust,ignore
+{{#include ../../keanu/tests/book.rs:nuts_dense}}
+```
+
+On a 2-D Gaussian with correlation 0.99 the dense metric gets over 10 times the effective sample size per gradient
+evaluation of the diagonal one. It costs O(n²) per leapfrog step for n latent elements (the diagonal metric O(n)),
+on top of the gradient, and a window needs more draws than there are elements to estimate it; so it suits models
+of up to a few hundred correlated elements, and the default suits large models with weakly correlated latents.
+`NutsStatistics::dense_inverse_metric` holds the adapted matrix (and `inverse_metric` its diagonal), and
+[CmdStan CSV export](#exporting-to-arviz-and-stan-tools) writes it as CmdStan writes a dense metric. A dense NUTS
+block works inside a compound sampler like any other (`Compound::nuts_with`).
 
 ### Constrained latents
 
@@ -221,7 +243,8 @@ The pointwise log likelihood is what [model comparison](model-comparison.md) by 
 
 `CmdStanCsv` writes each chain in the CmdStan CSV format, which ArviZ's `from_cmdstan`, R's `posterior` (through
 `cmdstanr` or `rstan::read_stan_csv`) and other Stan tools read: comment lines with the run's settings, a header,
-the adaptation results (step size and the diagonal of the inverse mass matrix) and a line per draw.
+the adaptation results (step size and the diagonal of the inverse mass matrix, or the whole matrix one row per line
+for a dense metric) and a line per draw.
 
 ```rust,ignore
 {{#include ../../keanu/tests/book.rs:cmdstan_export}}

@@ -1,10 +1,11 @@
-//! NUTS on a Hilbert space approximate GP over a 1,000-point series: the chains converge, and the posterior mean of
-//! the function agrees with the exact GP's on a 200-point subset. The hyperparameters are fixed, so that the exact
-//! GP's posterior mean is a closed form to compare with; the GP regression example samples them.
+//! NUTS, with a dense metric, on a Hilbert space approximate GP over a 1,000-point series: the chains converge, and
+//! the posterior mean of the function agrees with the exact GP's on a 200-point subset. The hyperparameters are
+//! fixed, so that the exact GP's posterior mean is a closed form to compare with; the GP regression example samples
+//! them.
 
 use keanu_algorithms::mcmc::SamplingOptions;
 use keanu_algorithms::mcmc::chains::sample_chains;
-use keanu_algorithms::mcmc::nuts::Nuts;
+use keanu_algorithms::mcmc::nuts::{Metric, Nuts, QuadraticPotential};
 use keanu_distributions::KeanuRng;
 use keanu_graph::gp::{GaussianProcess, Hsgp, Kernel};
 use keanu_graph::{GraphBuilder, Model};
@@ -75,9 +76,13 @@ fn nuts_on_a_thousand_point_series_matches_the_exact_gp_posterior_mean() {
     let (graph, state) = b.build().unwrap();
     let model = Model::new(graph, &state).unwrap();
 
-    // 4 chains of 300 draws after 200 adaptation steps: the weights' posterior is correlated (the basis functions
-    // are not orthogonal on the data's part of the domain), so trees are about 7 deep, and this takes ~20 s
-    let nuts = Nuts::default().with_adapt_count(200);
+    // 4 chains of 300 draws after 200 adaptation steps. The weights' posterior is correlated (the basis functions
+    // are not orthogonal on the data's part of the domain), and with fixed hyperparameters it is exactly Gaussian,
+    // so a dense metric suits it: trees are about 13 steps long, against about 100 with a diagonal metric, and the
+    // test takes half the time
+    let nuts = Nuts::default()
+        .with_adapt_count(200)
+        .with_potential(QuadraticPotential::default().with_metric(Metric::Dense));
     let samples = sample_chains(4, 7, &state, |state, rng| {
         nuts.sample_with_statistics(
             &model,
@@ -98,10 +103,12 @@ fn nuts_on_a_thousand_point_series_matches_the_exact_gp_posterior_mean() {
     let exact = exact_posterior_mean(&x, &y, &x_subset, AMPLITUDE, LENGTH_SCALE, NOISE);
     for (&i, &exact) in indices.iter().zip(&exact) {
         let s = samples.summarize(f, &[i]).unwrap();
-        // the posterior sd of f is about 0.06 and the Monte Carlo error of its mean a few thousandths
+        // the posterior sd of f is about 0.06 and the Monte Carlo error of its mean about a thousandth. The HSGP's
+        // own posterior mean differs from the exact GP's by up to 0.0051 on this subset (measured with 4 chains of
+        // 3000 draws, where the diagonal and dense metrics agree within their Monte Carlo errors of 0.0003)
         let error = (s.mean - exact).abs();
         assert!(
-            error < 0.02 && error < 5.0 * s.mcse_mean + 1e-3,
+            error < 0.02 && error < 5.0 * s.mcse_mean + 0.006,
             "f({}): HSGP posterior mean {} vs exact {exact} (MCSE {})",
             x.as_slice()[i],
             s.mean,
