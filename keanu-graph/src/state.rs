@@ -168,7 +168,15 @@ impl State {
     }
 
     /// Recomputes the deterministic descendants of `from` (and `from` itself if deterministic), in topological
-    /// order, stopping at probabilistic nodes.
+    /// order, stopping at probabilistic nodes. A deterministic node without a value that one of them needs (one an
+    /// earlier failed cascade cleared, say) is computed first, from its ancestors' values.
+    ///
+    /// Where a node fails to evaluate at an impossible point ([`GraphError::is_impossible_point`], such as a failed
+    /// ODE solve), the cascade goes on: that node and every deterministic node downstream of it lose their values
+    /// (they have none at these parents), the others are recomputed, and the first such error is returned. So no
+    /// node keeps a value computed from the previous parents: reading one of the cleared values is a missing value
+    /// rather than a stale one, and setting the parents again (as a rejected proposal does) recomputes them. Any
+    /// other error stops the cascade where it occurs.
     ///
     /// The cost is proportional to the descendants recomputed, not to the size of the graph: nodes are visited
     /// in increasing id order from a heap, and as a node's children have larger ids, every path to a node has been
@@ -177,6 +185,9 @@ impl State {
         self.check_ids(graph, from)?;
         let mut pending: BinaryHeap<Reverse<NodeId>> = from.iter().map(|&id| Reverse(id)).collect();
         let mut last = None;
+        // the nodes cleared because they (or a parent) failed at an impossible point, and the first such error
+        let mut failed: Vec<NodeId> = Vec::new();
+        let mut impossible: Option<GraphError> = None;
         while let Some(Reverse(id)) = pending.pop() {
             if last.replace(id) == Some(id) {
                 continue;
@@ -187,8 +198,25 @@ impl State {
                         "probabilistic node {id:?} has no value to cascade from"
                     )));
                 }
-            } else {
-                self.update(graph, id, None)?;
+            } else if !self.observed[id.0] {
+                let result = if graph[id].parents.iter().any(|p| failed.contains(p)) {
+                    Err(None)
+                } else {
+                    self.recompute(graph, id).map_err(Some)
+                };
+                match result {
+                    Ok(()) => {}
+                    Err(error) => match error {
+                        Some(e) if !e.is_impossible_point() => return Err(e),
+                        error => {
+                            self.values[id.0] = None;
+                            failed.push(id);
+                            if impossible.is_none() {
+                                impossible = error;
+                            }
+                        }
+                    },
+                }
             }
             pending.extend(
                 graph
@@ -198,7 +226,25 @@ impl State {
                     .map(|&child| Reverse(child)),
             );
         }
-        Ok(())
+        impossible.map_or(Ok(()), Err)
+    }
+
+    /// Recomputes a deterministic node, first computing any deterministic ancestors without a value that it needs
+    /// (without sampling: a probabilistic ancestor without a value is an error).
+    fn recompute(&mut self, graph: &Graph, id: NodeId) -> Result<()> {
+        let missing: Vec<NodeId> = graph[id]
+            .parents
+            .iter()
+            .copied()
+            .filter(|&p| !self.has_value(p) && !graph[p].is_probabilistic())
+            .collect();
+        if !missing.is_empty() {
+            let plan = self.plan(graph, &missing, true);
+            for p in plan {
+                self.update(graph, p, None)?;
+            }
+        }
+        self.update(graph, id, None)
     }
 
     /// The nodes an eval (or lazy eval) of the targets updates, in topological order: deterministic nodes to

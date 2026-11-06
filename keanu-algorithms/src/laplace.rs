@@ -47,7 +47,9 @@
 use crate::error::{AlgorithmError, Result};
 use crate::optimizer::{Fitness, Lbfgs, Objective};
 use crate::samples::NetworkSamples;
-use crate::support::{check_latents, compute_deterministic, node_name, norm, sample_approximation};
+use crate::support::{
+    Unevaluable, check_latents, compute_deterministic, node_name, norm, sample_approximation,
+};
 use keanu_distributions::KeanuRng;
 use keanu_graph::{Model, NodeId, Parameterisation, State, Support, node_support};
 use keanu_tensor::{DoubleTensor, TensorError};
@@ -338,13 +340,15 @@ impl LaplaceResult<'_> {
     /// `count` independent draws from the approximation, recording the values of `nodes` at each: each draw is
     /// mapped to the latents' constrained values ([`Parameterisation::to_state`]) and their descendants are
     /// recomputed. The log probability recorded with each sample is the model's at the draw (without the Jacobian),
-    /// as the samplers record it. `state` must be the state the approximation was fitted with (or one with values
-    /// for the same nodes); it is left at the last draw.
+    /// as the samplers record it. A draw where the model can't be evaluated (a failed ODE solve), which has no
+    /// values to record, is drawn again. `state` must be the state the approximation was fitted with (or one with
+    /// values for the same nodes); it is left at the last draw.
     ///
     /// # Errors
     ///
     /// [`AlgorithmError::InvalidArgument`] if `nodes` is empty, [`keanu_graph::GraphError::UnknownNode`] if a node
-    /// is not in the model's graph, and any error evaluating the model.
+    /// is not in the model's graph, the solver's error ([`keanu_graph::GraphError::SolverFailed`]) if 1000 draws in
+    /// a row can't be evaluated, and any other error evaluating the model.
     pub fn sample(
         &self,
         state: &mut State,
@@ -352,7 +356,14 @@ impl LaplaceResult<'_> {
         count: usize,
         rng: &mut KeanuRng,
     ) -> Result<NetworkSamples> {
-        sample_approximation(&self.param, || self.draw(rng), state, nodes, count)
+        sample_approximation(
+            &self.param,
+            || Some(self.draw(rng)),
+            state,
+            nodes,
+            count,
+            Unevaluable::Redraw,
+        )
     }
 }
 

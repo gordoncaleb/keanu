@@ -2,10 +2,10 @@
 
 use crate::error::{AlgorithmError, Result};
 use crate::samples::NetworkSamples;
-use crate::support::check_nodes;
+use crate::support::{MAX_REDRAWS, check_nodes};
 use keanu_distributions::KeanuRng;
 use keanu_graph::{
-    Graph, Model, NodeId, State, downstream_lambda_section, upstream_lambda_section,
+    Graph, GraphError, Model, NodeId, State, downstream_lambda_section, upstream_lambda_section,
 };
 
 /// Samples from the prior by sampling each latent in topological order and recomputing the deterministic nodes
@@ -13,6 +13,11 @@ use keanu_graph::{
 ///
 /// Observations are kept as they are, so forward sampling only makes sense when no observation depends on a
 /// latent; that case is an error.
+///
+/// A draw where the model can't be evaluated (a failed ODE solve, an impossible point: see
+/// [`GraphError::is_impossible_point`]) is drawn again, as the samplers reject such points and the approximations
+/// redraw them, so the samples are from the prior where the model can be evaluated. A thousand such draws in a row
+/// are the solver's error.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct ForwardSampler {
@@ -38,7 +43,7 @@ impl ForwardSampler {
     }
 
     /// Draws `count` samples of `nodes`, leaving `state` at the last sample. Fails with
-    /// [`GraphError::UnknownNode`](keanu_graph::GraphError::UnknownNode) if a node is not in the model's graph.
+    /// [`GraphError::UnknownNode`] if a node is not in the model's graph.
     pub fn sample(
         &self,
         model: &Model,
@@ -72,27 +77,51 @@ impl ForwardSampler {
         state.lazy_eval(graph, nodes, rng)?;
 
         let mut samples = NetworkSamples::new(graph, nodes)?;
-        for _ in 0..count {
-            for &id in &order {
-                if state.is_observed(id) {
-                    continue;
+        let mut in_a_row = 0;
+        while samples.len() < count {
+            match self.draw(model, state, &order, rng) {
+                Ok(log_prob) => {
+                    in_a_row = 0;
+                    samples.record(state, log_prob)?;
                 }
-                // clearing and lazily evaluating samples a probabilistic node from its prior given its parents,
-                // and recomputes a deterministic node from its parents
-                state.clear(id)?;
-                state.lazy_eval(graph, &[id], rng)?;
+                Err(e) if e.is_impossible_point() => {
+                    in_a_row += 1;
+                    if in_a_row == MAX_REDRAWS {
+                        return Err(e.into());
+                    }
+                }
+                Err(e) => return Err(e.into()),
             }
-            let log_prob = if self.calculate_log_prob {
-                // only nodes the requested ones depend on were resampled, but the log probability covers the
-                // whole model: recompute the deterministic nodes downstream of them so none is stale
-                state.cascade(graph, &order)?;
-                model.log_prob(state)?
-            } else {
-                0.0
-            };
-            samples.record(state, log_prob)?;
         }
         Ok(samples)
+    }
+
+    /// One draw: samples the nodes of `order` (in order) and gives the log probability to record.
+    fn draw(
+        &self,
+        model: &Model,
+        state: &mut State,
+        order: &[NodeId],
+        rng: &mut KeanuRng,
+    ) -> std::result::Result<f64, GraphError> {
+        let graph = model.graph();
+        for &id in order {
+            if state.is_observed(id) {
+                continue;
+            }
+            // clearing and lazily evaluating samples a probabilistic node from its prior given its parents,
+            // and recomputes a deterministic node from its parents
+            state.clear(id)?;
+            state.lazy_eval(graph, &[id], rng)?;
+        }
+        Ok(if self.calculate_log_prob {
+            // only nodes the requested ones depend on were resampled, but the log probability covers the
+            // whole model: recompute the deterministic nodes downstream of them so none is stale
+            state.cascade(graph, order)?;
+            model.log_prob(state)?
+        } else {
+            0.0
+        })
     }
 }
 

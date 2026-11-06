@@ -3,7 +3,7 @@
 
 use crate::error::{AlgorithmError, Result};
 use crate::samples::NetworkSamples;
-use crate::support::{check_latents, evaluate_all, sample_approximation, start_point};
+use crate::support::{Unevaluable, check_latents, evaluate_all, sample_approximation, start_point};
 use crate::vi::minibatch::{Batches, Minibatch};
 use keanu_distributions::KeanuRng;
 use keanu_graph::{Model, NodeId, Parameterisation, State};
@@ -241,8 +241,9 @@ impl Advi {
 
     /// Fits the approximation to the posterior of `model`'s latents, starting with its mean at their current values
     /// in `state` (latents without a value are sampled from their priors first) and unit scale. Leaves `state` at
-    /// the constrained values of the fitted mean (with a [minibatch](Self#minibatches), and the batched nodes at
-    /// their values before the fit; after an error they can hold a batch).
+    /// the constrained values of the fitted mean or, where the model can't be evaluated there (a failed ODE solve),
+    /// at the starting values; with a [minibatch](Self#minibatches) the batched nodes get their values from before
+    /// the fit back however it ends, an error included.
     ///
     /// # Errors
     ///
@@ -264,13 +265,38 @@ impl Advi {
         check_latents(model)?;
         evaluate_all(model.graph(), state, rng)?;
         let mut batches = match &self.minibatch {
-            Some(minibatch) => {
-                let mut batches = minibatch.batches(model, state)?;
-                batches.next(state, rng)?;
-                Some(batches)
-            }
+            Some(minibatch) => Some(minibatch.batches(model, state)?),
             None => None,
         };
+        let fitted = self.fit_batched(model, state, &mut batches, rng);
+        // the batched nodes get their data back however the fit ends
+        if let Some(batches) = &batches {
+            let restored = batches.restore(state);
+            if fitted.is_ok() {
+                restored?;
+            }
+        }
+        let (fitted, start) = fitted?;
+        // a mean where the model can't be evaluated (a failed ODE solve) leaves the state at the starting values,
+        // where it was evaluated
+        if !fitted.param.try_to_state(fitted.mean(), state)? {
+            fitted.param.to_state(&start, state)?;
+        }
+        Ok(fitted)
+    }
+
+    /// [`fit`](Self::fit) after the checks, observing `batches` (if any) and returning the fit with its starting
+    /// point; the caller restores the batched nodes and sets the state to the fit.
+    fn fit_batched<'m>(
+        &self,
+        model: &'m Model,
+        state: &mut State,
+        batches: &mut Option<Batches<'_>>,
+        rng: &mut KeanuRng,
+    ) -> Result<(AdviResult<'m>, Vec<f64>)> {
+        if let Some(batches) = batches.as_mut() {
+            batches.next(state, rng)?;
+        }
         let mut param = Parameterisation::new(model, state)?;
         if param.dimension() == 0 {
             return Err(AlgorithmError::NoLatents);
@@ -300,7 +326,7 @@ impl Advi {
         let eta = if self.adapt {
             self.adapt_eta(
                 &mut target,
-                &mut batches,
+                batches,
                 fixed_rows.as_deref(),
                 &initial,
                 initial_elbo,
@@ -322,7 +348,7 @@ impl Advi {
         let mut iterations = 0;
         while iterations < self.max_iterations && !converged {
             iterations += 1;
-            if let Some(batches) = &mut batches {
+            if let Some(batches) = batches.as_mut() {
                 batches.next(target.state, rng)?;
             }
             let gradient = target
@@ -335,7 +361,7 @@ impl Advi {
             ascent.step(&mut q, &gradient, eta);
             if iterations % self.eval_elbo == 0 {
                 let previous = elbo;
-                if let Some(batches) = &mut batches {
+                if let Some(batches) = batches.as_mut() {
                     batches.next(target.state, rng)?;
                 }
                 let estimate = target.elbo(&q, self.elbo_samples, rng)?;
@@ -363,18 +389,17 @@ impl Advi {
                 converged = mean < self.tol_rel_obj || median(&changes) < self.tol_rel_obj;
             }
         }
-        if let Some(batches) = &batches {
-            batches.restore(state)?;
-        }
-        param.to_state(&q.params[..q.dim], state)?;
-        Ok(AdviResult {
-            param,
-            q,
-            elbo_trace,
-            eta,
-            iterations,
-            converged,
-        })
+        Ok((
+            AdviResult {
+                param,
+                q,
+                elbo_trace,
+                eta,
+                iterations,
+                converged,
+            },
+            start,
+        ))
     }
 
     /// Stan's grid search for η: see the [type documentation](Self).
@@ -728,13 +753,15 @@ impl AdviResult<'_> {
     /// `count` independent draws from the approximation, recording the values of `nodes` at each: each draw is
     /// mapped to the latents' constrained values ([`Parameterisation::to_state`]) and their descendants are
     /// recomputed. The log probability recorded with each sample is the model's at the draw (without the Jacobian),
-    /// as the samplers record it. `state` must be the state the approximation was fitted with (or one with values
-    /// for the same nodes); it is left at the last draw.
+    /// as the samplers record it. A draw where the model can't be evaluated (a failed ODE solve), which has no
+    /// values to record, is drawn again. `state` must be the state the approximation was fitted with (or one with
+    /// values for the same nodes); it is left at the last draw.
     ///
     /// # Errors
     ///
     /// [`AlgorithmError::InvalidArgument`] if `nodes` is empty, [`keanu_graph::GraphError::UnknownNode`] if a node
-    /// is not in the model's graph, and any error evaluating the model.
+    /// is not in the model's graph, the solver's error ([`keanu_graph::GraphError::SolverFailed`]) if 1000 draws in
+    /// a row can't be evaluated, and any other error evaluating the model.
     pub fn sample(
         &self,
         state: &mut State,
@@ -742,6 +769,13 @@ impl AdviResult<'_> {
         count: usize,
         rng: &mut KeanuRng,
     ) -> Result<NetworkSamples> {
-        sample_approximation(&self.param, || self.draw(rng), state, nodes, count)
+        sample_approximation(
+            &self.param,
+            || Some(self.draw(rng)),
+            state,
+            nodes,
+            count,
+            Unevaluable::Redraw,
+        )
     }
 }

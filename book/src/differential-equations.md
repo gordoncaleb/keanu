@@ -91,6 +91,13 @@ point of zero probability, rather than an error that stops inference (`GraphErro
 | Gradient optimizers | the step is rejected (as one with −∞ log probability) |
 | `probe_for_non_zero_probability` | resamples, as for any impossible state |
 | ADVI | a draw at an impossible point makes the ELBO non-finite (`NonFiniteElbo`), as for any model with zero-probability regions |
+| `sample` of a Laplace, ADVI or Pathfinder fit | the draw is drawn again (Laplace, ADVI) or left out (Pathfinder's fixed draws) |
+| `ForwardSampler`, `PredictiveSampler::prior` | the draw is drawn again, so the draws are from the prior where the model can be solved |
+| `PredictiveSampler::posterior` | `SolverFailed`: the posterior draw's latents are given, so it can't be drawn again |
+
+A failed evaluation never leaves a value computed from the previous parameters behind: `State::cascade` clears the
+failed node and everything deterministic downstream of it, so those nodes have no value until the parameters are
+set to a point that solves.
 
 ```rust,ignore
 {{#include ../../keanu/tests/book.rs:ode_failure}}

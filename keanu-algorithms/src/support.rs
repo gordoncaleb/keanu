@@ -48,15 +48,32 @@ pub(crate) fn check_latents(model: &Model) -> Result<()> {
     Ok(())
 }
 
-/// `count` independent draws from a fitted approximation (`draw` gives each in unconstrained space), recording
-/// the values of `nodes` at each with the model's log probability there: what `LaplaceResult::sample` and
-/// `AdviResult::sample` do.
+/// What [`sample_approximation`] does with a draw where the model can't be evaluated (a failed ODE solve), whose
+/// nodes have no values to record.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Unevaluable {
+    /// Draw again in its place, so that `count` samples are recorded: for approximations that can draw afresh
+    /// (Laplace, ADVI). [`MAX_REDRAWS`] such draws in a row are the solver's error.
+    Redraw,
+    /// Leave it out, so fewer samples are recorded: for a fixed set of draws (Pathfinder's).
+    Skip,
+}
+
+/// The most draws in a row that [`sample_approximation`] redraws because the model can't be evaluated there.
+pub(crate) const MAX_REDRAWS: usize = 1000;
+
+/// `count` draws from a fitted approximation (`draw` gives each in unconstrained space, `None` when there are no
+/// more), recording the values of `nodes` at each with the model's log probability there: what
+/// `LaplaceResult::sample`, `AdviResult::sample` and `PathfinderResult::sample` do. A draw where the model can't be
+/// evaluated ([`GraphError::is_impossible_point`], a failed ODE solve) has no values to record, and is redrawn or
+/// skipped as `unevaluable` says; draws that evaluate are recorded even where their log probability is −∞.
 pub(crate) fn sample_approximation(
     param: &Parameterisation<'_>,
-    mut draw: impl FnMut() -> Vec<f64>,
+    mut draw: impl FnMut() -> Option<Vec<f64>>,
     state: &mut State,
     nodes: &[NodeId],
     count: usize,
+    unevaluable: Unevaluable,
 ) -> Result<NetworkSamples> {
     if nodes.is_empty() {
         return Err(AlgorithmError::InvalidArgument("no nodes to sample".into()));
@@ -64,9 +81,20 @@ pub(crate) fn sample_approximation(
     let model = param.model();
     check_nodes(model.graph(), nodes)?;
     let mut samples = NetworkSamples::new(model.graph(), nodes)?;
-    for _ in 0..count {
-        let z = draw();
-        // a draw where the model can't be evaluated (a failed ODE solve) is recorded as impossible
+    let mut in_a_row = 0;
+    while samples.len() < count {
+        let Some(z) = draw() else { break };
+        match param.to_state(&z, state) {
+            Ok(()) => in_a_row = 0,
+            Err(e) if e.is_impossible_point() => {
+                in_a_row += 1;
+                if unevaluable == Unevaluable::Redraw && in_a_row == MAX_REDRAWS {
+                    return Err(e.into());
+                }
+                continue;
+            }
+            Err(e) => return Err(e.into()),
+        }
         let log_prob = param.log_prob(&z, false, state)?;
         samples.record(state, log_prob)?;
     }

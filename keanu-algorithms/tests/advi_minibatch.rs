@@ -488,3 +488,42 @@ fn invalid_minibatches_are_errors() {
         Err(AlgorithmError::InvalidArgument(_))
     ));
 }
+
+/// A minibatch fit that fails after observing a batch gives the batched nodes their data back, as a fit that
+/// succeeds does: here the initial approximation's draws make ln(intercept) NaN, a non-finite ELBO.
+#[test]
+fn a_failed_minibatch_fit_restores_the_batched_nodes() {
+    let (n, b) = (60, 12);
+    let (x, y) = data(n, 5);
+    let (x12, y12) = (x.slice(":12").unwrap(), y.slice(":12").unwrap());
+    let builder = GraphBuilder::new();
+    let intercept = builder.gaussian(0.0, 10.0);
+    let slope = builder.gaussian(0.0, 10.0);
+    builder.set_value(intercept, DoubleTensor::scalar(0.3));
+    builder.set_value(slope, DoubleTensor::scalar(-0.8));
+    let xs = builder.constant(x12.clone());
+    let ys = builder.gaussian(intercept + slope * xs, 0.7);
+    builder.observe(ys, y12.clone());
+    builder.factor(intercept.ln());
+    let (xs, ys) = (xs.id(), ys.id());
+    let (graph, mut state) = builder.build().unwrap();
+    state
+        .lazy_eval(&graph, &graph.ids().collect::<Vec<_>>(), &mut rng(0))
+        .unwrap();
+    let model = Model::new(graph, &state).unwrap();
+    let minibatch = Minibatch::from(
+        MinibatchGroup::new(b)
+            .observed(ys, y.clone())
+            .covariate(xs, x.clone()),
+    );
+    let result = Advi::mean_field()
+        .with_minibatch(minibatch)
+        .fit(&model, &mut state, &mut rng(6));
+    assert!(
+        matches!(result, Err(AlgorithmError::NonFiniteElbo(_))),
+        "{:?}",
+        result.err()
+    );
+    assert_eq!(state.f64(ys).unwrap(), &y12);
+    assert_eq!(state.f64(xs).unwrap(), &x12);
+}

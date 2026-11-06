@@ -3,9 +3,9 @@
 
 use crate::error::{AlgorithmError, Result};
 use crate::samples::NetworkSamples;
-use crate::support::check_nodes;
+use crate::support::{MAX_REDRAWS, check_nodes};
 use keanu_distributions::KeanuRng;
-use keanu_graph::{Graph, Model, NodeId, State};
+use keanu_graph::{Graph, GraphError, Model, NodeId, State};
 
 /// Draws prior- and posterior-predictive samples of observed nodes (the "targets").
 ///
@@ -49,9 +49,11 @@ impl PredictiveSampler {
     /// that target's draw.
     ///
     /// Fails if `targets` is empty, if a target is not a node of the model's graph
-    /// ([`GraphError::UnknownNode`](keanu_graph::GraphError::UnknownNode)) or not an observed probabilistic node,
-    /// if `samples` doesn't hold every latent the targets depend on, or if [`draws`](Self::draws) is zero or more
-    /// than the number of samples.
+    /// ([`GraphError::UnknownNode`]) or not an observed probabilistic node, if `samples` doesn't hold every latent
+    /// the targets depend on, or if [`draws`](Self::draws) is zero or more than the number of samples. The latents
+    /// of each draw are given, so a draw where the model can't be evaluated at them (a failed ODE solve, which a
+    /// sampler never records) can't be drawn again, and is the solver's error
+    /// ([`GraphError::SolverFailed`]).
     pub fn posterior(
         &self,
         model: &Model,
@@ -117,9 +119,13 @@ impl PredictiveSampler {
     /// [`ForwardSampler`](crate::ForwardSampler), so an observed node that a target depends on must not itself
     /// depend on a latent (make it a target too); observed nodes the targets don't depend on are ignored.
     ///
+    /// A draw where the model can't be evaluated (a failed ODE solve) is drawn again, as the
+    /// [`ForwardSampler`](crate::ForwardSampler) does, so the draws are from the prior where the model can be
+    /// evaluated; a thousand such draws in a row are the solver's error.
+    ///
     /// Fails if `targets` is empty, if a target is not a node of the model's graph
-    /// ([`GraphError::UnknownNode`](keanu_graph::GraphError::UnknownNode)) or not an observed probabilistic node,
-    /// or if an observed node the targets depend on depends on a latent.
+    /// ([`GraphError::UnknownNode`]) or not an observed probabilistic node, or if an observed node the targets
+    /// depend on depends on a latent.
     pub fn prior(
         &self,
         model: &Model,
@@ -163,9 +169,21 @@ impl PredictiveSampler {
             .collect();
 
         let mut predictive = NetworkSamples::new(graph, targets)?;
-        for _ in 0..count {
-            redraw(graph, &mut work, &to_redraw, targets, rng)?;
-            predictive.record(&work, 0.0)?;
+        let mut in_a_row = 0;
+        while predictive.len() < count {
+            match redraw(graph, &mut work, &to_redraw, targets, rng) {
+                Ok(()) => {
+                    in_a_row = 0;
+                    predictive.record(&work, 0.0)?;
+                }
+                Err(e) if e.is_impossible_point() => {
+                    in_a_row += 1;
+                    if in_a_row == MAX_REDRAWS {
+                        return Err(e.into());
+                    }
+                }
+                Err(e) => return Err(e.into()),
+            }
         }
         Ok(predictive)
     }
@@ -243,7 +261,7 @@ fn redraw(
     nodes: &[NodeId],
     targets: &[NodeId],
     rng: &mut KeanuRng,
-) -> Result<()> {
+) -> std::result::Result<(), GraphError> {
     for &id in nodes {
         state.clear(id)?;
     }

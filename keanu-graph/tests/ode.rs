@@ -351,6 +351,70 @@ fn a_failed_solve_is_an_impossible_point() {
     assert!(!param.try_to_state(&z, &mut state).unwrap());
 }
 
+/// A cascade that fails at an impossible point leaves no stale value: the failed node and every deterministic node
+/// downstream of it lose their values (nodes the failure doesn't reach are still recomputed), so nothing can read
+/// the solution of the previous parameters. Reading the model there is an error rather than a stale value, and
+/// setting a solvable value recomputes them; so does a later cascade from another node that needs them.
+#[test]
+fn a_failed_cascade_clears_the_failed_node_and_its_descendants() {
+    let b = GraphBuilder::new();
+    let (k, y) = blow_up(&b, OdeOptions::default());
+    let doubled = (y * 2.0).label("doubled");
+    let other = b.gaussian(0.0, 1.0).label("other");
+    b.set_value(other, DoubleTensor::scalar(0.25));
+    // depends on the solution and on another latent
+    let both = (doubled + other).label("both");
+    let k_squared = (k * k).label("k squared");
+    let observed = b.gaussian(both, 10.0);
+    b.observe(observed, DoubleTensor::new(&[1, 1], vec![2.0]).unwrap());
+    let (k, y, doubled, other, both, k_squared) = (
+        k.id(),
+        y.id(),
+        doubled.id(),
+        other.id(),
+        both.id(),
+        k_squared.id(),
+    );
+    let (graph, mut state) = evaluated(b);
+    let model = Model::new(graph.clone(), &state).unwrap();
+    let error = state
+        .set_and_cascade(&graph, k, DoubleTensor::scalar(1.2))
+        .unwrap_err();
+    assert!(error.is_impossible_point(), "{error}");
+    for id in [y, doubled, both] {
+        assert!(
+            !state.has_value(id),
+            "{} kept a stale value",
+            graph.describe(id)
+        );
+    }
+    // a sibling the failure doesn't reach is recomputed for the new value
+    assert_close(
+        state.f64(k_squared).unwrap().as_slice()[0],
+        1.44,
+        1e-15,
+        "k²",
+    );
+    assert!(model.log_prob(&state).is_err());
+
+    // a cascade from another latent recomputes the missing solution, failing again while k is unsolvable
+    let error = state
+        .set_and_cascade(&graph, other, DoubleTensor::scalar(0.5))
+        .unwrap_err();
+    assert!(error.is_impossible_point(), "{error}");
+    assert!(!state.has_value(y) && !state.has_value(both));
+    state.set(&graph, k, DoubleTensor::scalar(0.5)).unwrap();
+    state
+        .set_and_cascade(&graph, other, DoubleTensor::scalar(0.5))
+        .unwrap();
+    assert_close_rel(
+        state.f64(both).unwrap().as_slice()[0],
+        4.5,
+        1e-5,
+        "2 y(1) + 0.5",
+    );
+}
+
 #[test]
 fn the_step_limit_is_a_solver_failure() {
     let b = GraphBuilder::new();

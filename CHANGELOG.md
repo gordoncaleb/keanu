@@ -485,6 +485,26 @@ Work from `docs/plans/2026-11-05-001-feat-applied-modelling-gaps-plan.md`.
     naming that latent (its values were fixed at those of the latent's value when marginalised, giving a wrong log
     probability once the latent moved); and the search for latents those parameters depend on stops at observed
     nodes, so a binomial whose count is an observed node with a latent rate is no longer rejected.
+  - keanu-graph: `State::cascade` no longer leaves stale values after a node fails at an impossible point (a failed
+    ODE solve): it clears that node and every deterministic node downstream of it, recomputes the rest, and returns
+    the first such error; a later cascade computes a cleared node it needs. Reading a cleared value is a missing
+    value instead of the previous parameters' solution.
+  - keanu-algorithms: `sample` of a Laplace or ADVI fit draws again where the model can't be evaluated (the
+    solver's error after 1000 such draws in a row), and Pathfinder's `sample` leaves such draws out, so no recorded
+    sample pairs new latents with an old trajectory; they were recorded with log probability −∞ and the previous
+    draw's deterministic values before.
+  - keanu-algorithms: `ForwardSampler::sample` and `PredictiveSampler::prior` draw again where the model can't be
+    evaluated (the solver's error after 1000 such draws in a row), as the approximations do, instead of failing on
+    the first failed solve; `PredictiveSampler::posterior`, whose latents are given, documents that such a draw is
+    `GraphError::SolverFailed`.
+  - keanu-algorithms: an ADVI fit whose final mean can't be evaluated (a failed solve) leaves the state at the
+    starting values, and a single Pathfinder path at the L-BFGS iterate of its best approximation (multi-path
+    Pathfinder at the last draw that can be evaluated, else the best path's iterate), instead of turning a
+    completed fit into `SolverFailed`.
+  - keanu-algorithms: minibatch ADVI gives the batched nodes their data back however the fit ends; after an error
+    they used to hold the last batch.
+  - keanu-graph: the ODE integrators' initial step is at least 100 ε |t₀|, so a zero initial state at a large
+    initial time (y' = cos(10⁻¹² t) from t₀ = 10¹²) no longer fails with `StepSizeUnderflow` on its first step.
 
 ### Code review fixes
 

@@ -708,3 +708,35 @@ fn sensitivities_of_a_non_autonomous_problem_match_their_closed_form() {
         }
     }
 }
+
+/// At a large initial time a zero initial state no longer gives a first step too small to advance t:
+/// y' = cos(10⁻¹² t), y(10¹²) = 0, whose solution is 10¹² (sin(10⁻¹² t) − sin 1).
+#[test]
+fn a_zero_state_at_a_large_initial_time_takes_a_step_that_advances_time() {
+    let t0 = 1e12;
+    for solver in SOLVERS {
+        let ts = [t0 + 10.0, t0 + 1000.0];
+        let states = integrate(
+            |t, _, dy| dy[0] = (1e-12 * t).cos(),
+            |t, _, j, dt| {
+                j[0] = 0.0;
+                dt[0] = -1e-12 * (1e-12 * t).sin();
+            },
+            t0,
+            &[0.0],
+            &ts,
+            &OdeOptions::new(solver),
+        )
+        .unwrap_or_else(|e| panic!("{solver:?}: {e}"));
+        for (t, y) in ts.iter().zip(&states) {
+            // 10¹² (sin(10⁻¹² t) − sin 1) ≈ cos(1) (t − t0) for t − t0 ≪ 10¹²; times near 10¹² are only
+            // resolved to about 10⁻⁴
+            let expected = 1f64.cos() * (t - t0);
+            assert!(
+                (y[0] - expected).abs() < 1e-3 + 1e-6 * expected,
+                "{solver:?}: y({t}) = {}, expected {expected}",
+                y[0]
+            );
+        }
+    }
+}

@@ -680,6 +680,11 @@ pub(crate) fn error_norm(error: &[f64], z0: &[f64], z1: &[f64], options: &OdeOpt
 
 /// The initial step size by Hairer, Nørsett and Wanner's heuristic (Solving ODEs I, II.4): a step that makes an
 /// explicit Euler step's error estimate small relative to the tolerances, for a method of the given order.
+///
+/// Every candidate is at least 100 ε |t₀| (ε the machine epsilon), ten times the size the integrators count as an
+/// underflow (a step of at most 10 ε |t|, which no longer moves t), so that a small fallback such as the 10⁻⁶ for
+/// a zero state can't underflow at a large initial time; the step controller shrinks it from there if the error
+/// needs it.
 pub(crate) fn initial_step<P: Problem>(
     problem: &mut P,
     t0: f64,
@@ -691,11 +696,13 @@ pub(crate) fn initial_step<P: Problem>(
 ) -> Result<f64, OdeError<P::Error>> {
     let norm = |v: &[f64]| error_norm(v, z0, z0, options);
     let (d0, d1) = (norm(z0), norm(f0));
+    let floor = 100.0 * f64::EPSILON * t0.abs();
     let h0 = if d0 < 1e-5 || d1 < 1e-5 {
         1e-6
     } else {
         0.01 * d0 / d1
     }
+    .max(floor)
     .min(span);
     let z1: Vec<f64> = z0.iter().zip(f0).map(|(z, f)| z + h0 * f).collect();
     let mut f1 = vec![0.0; z0.len()];
@@ -710,5 +717,5 @@ pub(crate) fn initial_step<P: Problem>(
     } else {
         (0.01 / largest).powf(1.0 / order as f64)
     };
-    Ok((100.0 * h0).min(h1).min(span))
+    Ok((100.0 * h0).min(h1).max(floor).min(span))
 }

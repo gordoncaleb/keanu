@@ -6,7 +6,9 @@ use crate::optimizer::Lbfgs;
 use crate::optimizer::lbfgs::Iterate;
 use crate::psis::{khat_threshold, psis};
 use crate::samples::NetworkSamples;
-use crate::support::{check_latents, dot, evaluate_all, sample_approximation, start_point};
+use crate::support::{
+    Unevaluable, check_latents, dot, evaluate_all, sample_approximation, start_point,
+};
 use keanu_distributions::KeanuRng;
 use keanu_graph::{Model, NodeId, Parameterisation, State};
 use keanu_tensor::DoubleTensor;
@@ -160,7 +162,9 @@ impl Pathfinder {
 
     /// Runs one path from the latents' current values in `state` (latents without a value are sampled from their
     /// priors first) and returns [`draws`](Self::draws) draws from its best approximation, unweighted, with the
-    /// Pareto k̂ of their importance ratios. Leaves `state` at the constrained values of the approximation's mean.
+    /// Pareto k̂ of their importance ratios. Leaves `state` at the constrained values of the approximation's mean
+    /// or, where the model can't be evaluated there (a failed ODE solve), of the L-BFGS iterate the approximation
+    /// was built at (see [`PathfinderPath::best_iteration`]), where it was evaluated.
     ///
     /// # Errors
     ///
@@ -181,7 +185,10 @@ impl Pathfinder {
         let (draws, log_density, approximation_log_density) =
             self.draw_from(&param, state, &path, rng)?;
         let pareto_k = pareto_k(&log_density, &approximation_log_density);
-        param.to_state(path.mean(), state)?;
+        // a mean where the model can't be evaluated (a failed ODE solve) leaves the state at the best iterate
+        if !param.try_to_state(path.mean(), state)? {
+            param.to_state(&path.iterate, state)?;
+        }
         Ok(PathfinderResult {
             param,
             weighted_draws: draws.len(),
@@ -200,7 +207,8 @@ impl Pathfinder {
     /// gradient), and pools their draws, resampled by importance weight with [`resample`](Self::resample) (see the
     /// [type documentation](Self)). Paths that fail (no finite ELBO, or no possible starting point) are skipped
     /// and counted ([`PathfinderResult::failed_paths`]). The paths run one after another. Leaves `state` at the
-    /// constrained values of the last draw.
+    /// constrained values of the last draw where the model can be evaluated (not a failed ODE solve), or of the
+    /// best path's iterate if there is none.
     ///
     /// # Errors
     ///
@@ -264,8 +272,20 @@ impl Pathfinder {
                 .map(|&i| approximation_log_density[i])
                 .collect();
         }
-        if let Some(last) = draws.last() {
-            param.to_state(last, state)?;
+        // the last draw where the model can be evaluated (not a failed ODE solve), else the best path's iterate
+        let mut placed = false;
+        for draw in draws.iter().rev() {
+            if param.try_to_state(draw, state)? {
+                placed = true;
+                break;
+            }
+        }
+        if !placed {
+            let best = paths
+                .iter()
+                .max_by(|a, b| a.elbo.total_cmp(&b.elbo))
+                .expect("a path succeeded");
+            param.to_state(&best.iterate, state)?;
         }
         Ok(PathfinderResult {
             param,
@@ -370,6 +390,7 @@ impl Pathfinder {
             ));
         };
         Ok(PathfinderPath {
+            iterate: iterates[best_iteration].point.clone(),
             approximation,
             elbo,
             elbo_trace,
@@ -822,6 +843,8 @@ fn thin_qr(mut columns: Vec<Vec<f64>>, n: usize) -> (Vec<Vec<f64>>, Vec<f64>) {
 /// One Pathfinder path: its best Gaussian approximation and what the path recorded.
 #[derive(Debug, Clone)]
 pub struct PathfinderPath {
+    /// The L-BFGS iterate the best approximation was built at, where the log density was evaluated.
+    iterate: Vec<f64>,
     approximation: Approximation,
     elbo: f64,
     elbo_trace: Vec<f64>,
@@ -967,8 +990,10 @@ impl<'m> PathfinderResult<'m> {
 
     /// The draws as samples of `nodes`: each draw is mapped to the latents' constrained values
     /// ([`Parameterisation::to_state`]) and their descendants are recomputed. The log probability recorded with each
-    /// sample is the model's at the draw (without the Jacobian), as the samplers record it. `state` must be the
-    /// state Pathfinder ran with (or one with values for the same nodes); it is left at the last draw.
+    /// sample is the model's at the draw (without the Jacobian), as the samplers record it. Draws where the model
+    /// can't be evaluated (a failed ODE solve, where [`log_density`](Self::log_density) is −∞), which have no values
+    /// to record, are left out, so there can be fewer samples than draws. `state` must be the state Pathfinder ran
+    /// with (or one with values for the same nodes); it is left at the last draw recorded.
     ///
     /// # Errors
     ///
@@ -978,10 +1003,11 @@ impl<'m> PathfinderResult<'m> {
         let mut draws = self.draws.iter();
         sample_approximation(
             &self.param,
-            || draws.next().cloned().unwrap_or_default(),
+            || draws.next().cloned(),
             state,
             nodes,
             self.draws.len(),
+            Unevaluable::Skip,
         )
     }
 

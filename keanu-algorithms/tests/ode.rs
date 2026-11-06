@@ -127,3 +127,178 @@ fn the_laplace_approximation_has_no_second_order_rule_for_an_ode() {
         other => panic!("expected no second-order rule, got {:?}", other.err()),
     }
 }
+
+/// k and the solution y(1) recorded together by `sample`.
+fn recorded(samples: &keanu_algorithms::NetworkSamples, k: NodeId, y: NodeId) -> Vec<(f64, f64)> {
+    let ks = series(samples, k);
+    let ys = samples
+        .f64(y)
+        .unwrap()
+        .as_slice()
+        .iter()
+        .map(|t| t.as_slice()[0])
+        .collect::<Vec<_>>();
+    ks.into_iter().zip(ys).collect()
+}
+
+/// Draws from a fitted approximation where the solve fails are never recorded with the previous draw's solution:
+/// Pathfinder's draws past the cut-off are skipped, and every recorded solution is the one of its own k.
+#[test]
+fn approximation_draws_where_the_solve_fails_are_not_recorded() {
+    let (model, mut state, k) = blow_up(20.0, 0.5);
+    let y = model
+        .graph()
+        .ids()
+        .find(|&id| model.graph()[id].op().name() == "ode")
+        .unwrap();
+    let result = keanu_algorithms::vi::Pathfinder::default()
+        .with_draws(400)
+        .single_path(&model, &mut state, &mut rng(3))
+        .unwrap();
+    let impossible = result
+        .log_density()
+        .iter()
+        .filter(|d| **d == f64::NEG_INFINITY)
+        .count();
+    assert!(impossible > 0, "some draws are past the cut-off");
+    let samples = result.sample(&mut state, &[k, y]).unwrap();
+    assert_eq!(samples.len(), 400 - impossible);
+    for (k, y) in recorded(&samples, k, y) {
+        assert!(k < 1.0, "k = {k}");
+        // the solver's tolerance near the singularity; a stale solution is off by far more
+        assert!(
+            (y - 1.0 / (1.0 - k)).abs() < 1e-2 * y,
+            "y(1) = {y} at k = {k}"
+        );
+    }
+}
+
+/// k ~ N(0, 1) with an observation N(k, 0.5) = 0.3, and dy/dt = −y · (k − m)/(k − m), y(0) = 1, observed at t = 1:
+/// the same model whatever m, except that the solve fails (a NaN derivative) at exactly k = m.
+#[allow(clippy::eq_op)] // (k − m)/(k − m) is 1 except at k = m, where it is NaN
+fn fails_at(m: f64) -> (Model, State, NodeId) {
+    let b = GraphBuilder::new();
+    let k = b.gaussian(0.0, 1.0).label("k");
+    b.set_value(k, DoubleTensor::scalar(-0.4));
+    let observed = b.gaussian(k, 0.5);
+    b.observe(observed, DoubleTensor::scalar(0.3));
+    let y = b.ode(
+        b.constant(DoubleTensor::vector(vec![1.0])),
+        b.constant(DoubleTensor::vector(vec![1.0])),
+        b.scalar(0.0),
+        &[k],
+        OdeOptions::default(),
+        move |_, _, y, p| -y * ((p[0] - m) / (p[0] - m)),
+    );
+    let y_observed = b.gaussian(y, 1.0);
+    b.observe(y_observed, DoubleTensor::new(&[1, 1], vec![0.4]).unwrap());
+    let k = k.id();
+    let (graph, mut state) = b.build().unwrap();
+    let all: Vec<NodeId> = graph.ids().collect();
+    state.lazy_eval(&graph, &all, &mut rng(0)).unwrap();
+    let model = Model::new(graph, &state).unwrap();
+    (model, state, k)
+}
+
+/// A fit whose final point (the fitted mean) can't be evaluated still succeeds: ADVI leaves the state at the
+/// starting values and Pathfinder at the best approximation's L-BFGS iterate, both of which were evaluated.
+#[test]
+fn a_fit_whose_mean_cannot_be_evaluated_falls_back_to_an_evaluated_point() {
+    let advi = Advi::mean_field().with_max_iterations(200);
+    let (model, mut state, k) = fails_at(1e6);
+    let mean = advi.fit(&model, &mut state, &mut rng(9)).unwrap().mean()[0];
+    let (model, mut state, k_node) = fails_at(mean);
+    assert_eq!(k_node, k);
+    let fitted = advi.fit(&model, &mut state, &mut rng(9)).unwrap();
+    assert_eq!(fitted.mean()[0], mean, "the same fit");
+    assert_eq!(
+        state.f64(k).unwrap().as_slice()[0],
+        -0.4,
+        "the starting value"
+    );
+
+    let pathfinder = keanu_algorithms::vi::Pathfinder::default();
+    let (model, mut state, k) = fails_at(1e6);
+    let path = pathfinder
+        .single_path(&model, &mut state, &mut rng(9))
+        .unwrap();
+    let mean = path.paths()[0].mean()[0];
+    let (model, mut state, _) = fails_at(mean);
+    let fitted = pathfinder
+        .single_path(&model, &mut state, &mut rng(9))
+        .unwrap();
+    let fitted_path = &fitted.paths()[0];
+    assert_eq!(fitted_path.mean()[0], mean, "the same path");
+    let value = state.f64(k).unwrap().as_slice()[0];
+    assert!(value != mean && value.is_finite(), "{value}");
+    assert!(model.log_prob(&state).unwrap().is_finite());
+}
+
+/// Prior draws where the solve fails (k ≥ 1, a third of the prior) are drawn again, as the approximations redraw
+/// them: forward sampling and prior predictive draws are from the prior where the model can be evaluated, and no
+/// draw pairs a k with another draw's solution.
+#[test]
+fn prior_draws_where_the_solve_fails_are_drawn_again() {
+    let b = GraphBuilder::new();
+    let k = b.uniform(0.0, 1.5).label("k");
+    b.set_value(k, DoubleTensor::scalar(0.5));
+    let y = b.ode(
+        b.constant(DoubleTensor::vector(vec![1.0])),
+        b.constant(DoubleTensor::vector(vec![1.0])),
+        b.scalar(0.0),
+        &[k],
+        OdeOptions::default(),
+        |_, _, y, p| p[0] * y * y,
+    );
+    let (k, y) = (k.id(), y.id());
+    let (graph, mut state) = b.build().unwrap();
+    let all: Vec<NodeId> = graph.ids().collect();
+    state.lazy_eval(&graph, &all, &mut rng(0)).unwrap();
+    let model = Model::new(graph, &state).unwrap();
+    for calculate_log_prob in [false, true] {
+        let samples = keanu_algorithms::ForwardSampler::new()
+            .with_calculate_log_prob(calculate_log_prob)
+            .sample(&model, &mut state, &[k, y], 300, &mut rng(1))
+            .unwrap();
+        assert_eq!(samples.len(), 300);
+        let draws = recorded(&samples, k, y);
+        assert!(
+            draws.iter().any(|&(k, _)| k > 0.9),
+            "draws near the cut-off"
+        );
+        for (k, y) in draws {
+            assert!(k < 1.0, "k = {k}");
+            assert!(
+                (y - 1.0 / (1.0 - k)).abs() < 1e-2 * y,
+                "y(1) = {y} at k = {k}"
+            );
+        }
+    }
+
+    // the prior predictive draws of an observation of the solution
+    let b = GraphBuilder::new();
+    let k = b.uniform(0.0, 1.5).label("k");
+    b.set_value(k, DoubleTensor::scalar(0.5));
+    let y = b.ode(
+        b.constant(DoubleTensor::vector(vec![1.0])),
+        b.constant(DoubleTensor::vector(vec![1.0])),
+        b.scalar(0.0),
+        &[k],
+        OdeOptions::default(),
+        |_, _, y, p| p[0] * y * y,
+    );
+    let observed = b.gaussian(y, 1e-6);
+    b.observe(observed, DoubleTensor::new(&[1, 1], vec![2.0]).unwrap());
+    let observed = observed.id();
+    let (graph, mut state) = b.build().unwrap();
+    let all: Vec<NodeId> = graph.ids().collect();
+    state.lazy_eval(&graph, &all, &mut rng(0)).unwrap();
+    let model = Model::new(graph, &state).unwrap();
+    let draws = keanu_algorithms::PredictiveSampler::new()
+        .prior(&model, &state, &[observed], 300, &mut rng(2))
+        .unwrap();
+    assert_eq!(draws.len(), 300);
+    // y(1) = 1 / (1 − k) ≥ 1 for k in [0, 1)
+    let values = draws.f64(observed).unwrap();
+    assert!(values.as_slice().iter().all(|y| y.as_slice()[0] > 0.99));
+}
