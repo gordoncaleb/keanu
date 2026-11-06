@@ -34,7 +34,7 @@ pub struct Node {
     pub label: ::prost::alloc::string::String,
     #[prost(
         oneof = "node::Op",
-        tags = "10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64, 65, 66, 100, 101"
+        tags = "10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 100, 101"
     )]
     pub op: ::core::option::Option<node::Op>,
 }
@@ -158,6 +158,9 @@ pub mod node {
         /// The matrix exponential of each square matrix.
         #[prost(message, tag = "66")]
         MatrixExp(super::Empty),
+        /// The product of a constant sparse matrix with the one parent.
+        #[prost(message, tag = "67")]
+        SparseMatmul(super::SparseMatrix),
         #[prost(message, tag = "100")]
         Scan(super::Scan),
         #[prost(message, tag = "101")]
@@ -281,6 +284,21 @@ pub struct Concat {
 pub struct Take {
     #[prost(uint64, repeated, tag = "1")]
     pub index: ::prost::alloc::vec::Vec<u64>,
+}
+/// A constant sparse matrix: its shape and its stored entries as (row, column, value) triplets, in row-major order
+/// with no position repeated.
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct SparseMatrix {
+    #[prost(uint64, tag = "1")]
+    pub rows: u64,
+    #[prost(uint64, tag = "2")]
+    pub cols: u64,
+    #[prost(uint64, repeated, tag = "3")]
+    pub row_indices: ::prost::alloc::vec::Vec<u64>,
+    #[prost(uint64, repeated, tag = "4")]
+    pub col_indices: ::prost::alloc::vec::Vec<u64>,
+    #[prost(double, repeated, tag = "5")]
+    pub values: ::prost::alloc::vec::Vec<f64>,
 }
 /// Parents: input, indices (i64). The input's elements selected along an axis by index, as numpy's `take`.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]

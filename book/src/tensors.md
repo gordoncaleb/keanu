@@ -33,3 +33,7 @@ Some details worth knowing:
 - `eigh()` returns the eigenvalues (ascending) and eigenvectors (columns, each signed so its first component within a
   relative 1e-10 of the largest magnitude is positive) of symmetric matrices, reading only the lower triangle. The
   eigenvectors are discontinuous where that sign convention switches and at repeated eigenvalues.
+- `SparseMatrix` holds a constant matrix with mostly zero entries in compressed sparse row form, built from
+  `(row, column, value)` triplets or a dense matrix. `matvec`, `matmat` and their transposed forms cost time
+  proportional to the stored entries; in a model, `x.sparse_matmul(a)` multiplies a node by it, with exact first and
+  second derivatives.

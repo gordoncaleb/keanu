@@ -112,7 +112,7 @@ pub mod prelude {
         Marginalized, Model, NodeId, Parameterisation, Space, State, Support, Value, Var,
         marginalize,
     };
-    pub use crate::tensor::{BoolTensor, DoubleTensor, IntTensor, Tensor};
+    pub use crate::tensor::{BoolTensor, DoubleTensor, IntTensor, SparseMatrix, Tensor};
     pub use crate::{Error, Result};
 }
 

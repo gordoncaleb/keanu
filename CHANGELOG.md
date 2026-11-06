@@ -520,6 +520,18 @@ Work from `docs/plans/2026-11-05-001-feat-applied-modelling-gaps-plan.md`.
     than 2 y₀; with a regression the level starts at y₀, documented as the first residual at the default weights'
     prior mean of 0.
 
+### Spatial models, distributions, Newton and causal tools
+
+- keanu-tensor, keanu-graph, keanu-io: **sparse matrices**. `keanu_tensor::SparseMatrix` is a compressed sparse
+  row matrix of finite f64 values, built from triplets (`from_triplets`, rejecting out of range and repeated
+  positions), from CSR arrays (`from_csr`, checking the offsets and that each row's column indices are strictly
+  increasing) or from a dense matrix (`from_dense`), with `matvec`, `matmat`, `transpose_matvec`,
+  `transpose_matmat`, `mul_along_axis` (the product along any axis of a tensor), `transpose`, `triplets` and
+  `to_dense`; a product costs time proportional to the stored entries. `Op::SparseMatMul` (`DoubleVar::sparse_matmul`)
+  multiplies a constant sparse m × n matrix by a vector [n] or a matrix [n, k]; its Jacobian-vector product is A·ẋ,
+  its vector-Jacobian product Aᵀ·ḡ and its second-order rule zero. The save schema gained a `SparseMatrix` message
+  (shape and triplets) and the `sparse_matmul` operation (67).
+
 ### Code review fixes
 
 Fixes from the 2026-11-04 whole-codebase review. Where a fix changes a result recorded from Java, the golden

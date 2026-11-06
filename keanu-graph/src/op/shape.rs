@@ -114,6 +114,25 @@ fn infer(op: &Op, parents: &[(DType, &[usize])]) -> Result<(DType, Shape)> {
             square_batch(op, s)?;
             Ok((DType::F64, Shape::from_slice(&s[..s.len() - 2])))
         }
+        Op::SparseMatMul(a) => {
+            f64_parents(1)?;
+            let s = parents[0].1;
+            match s {
+                [n] if *n == a.cols() => Ok((DType::F64, Shape::from_slice(&[a.rows()]))),
+                [n, k] if *n == a.cols() => Ok((DType::F64, Shape::from_slice(&[a.rows(), *k]))),
+                _ => Err(invalid(
+                    op,
+                    format!(
+                        "cannot multiply a {} × {} sparse matrix by a tensor of shape {s:?} (it needs [{}] or \
+                         [{}, k])",
+                        a.rows(),
+                        a.cols(),
+                        a.cols(),
+                        a.cols()
+                    ),
+                )),
+            }
+        }
         Op::EighVectors => {
             f64_parents(1)?;
             square_batch(op, parents[0].1)?;
@@ -701,6 +720,7 @@ fn check_arity(op: &Op, count: usize) -> Result<()> {
         | Op::Eigvalsh
         | Op::EighVectors
         | Op::MatrixExp
+        | Op::SparseMatMul(_)
         | Op::Cast(_)
         | Op::ReplaceNan(_)
         | Op::Assert(_)

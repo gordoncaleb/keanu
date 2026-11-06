@@ -355,6 +355,7 @@ pub(crate) fn eval(op: &Op, inputs: &[&Value]) -> Result<Value> {
         Op::Eigvalsh => Value::F64(inputs[0].f64()?.eigh()?.0),
         Op::EighVectors => Value::F64(inputs[0].f64()?.eigh()?.1),
         Op::MatrixExp => Value::F64(inputs[0].f64()?.matrix_exp()?),
+        Op::SparseMatMul(a) => Value::F64(sparse_matmul(a, inputs[0].f64()?)?),
 
         Op::Cast(to) => cast(inputs[0], *to),
 
@@ -576,4 +577,15 @@ fn arg_reduce(op: &Op, kind: ArgOp, axis: Option<isize>, input: &Value) -> Resul
             format!("{k:?} over {a:?} does not apply to {:?}", v.dtype()),
         )),
     }
+}
+
+/// A·x for a vector or matrix x, as [`Op::SparseMatMul`].
+fn sparse_matmul(
+    a: &keanu_tensor::SparseMatrix,
+    x: &keanu_tensor::DoubleTensor,
+) -> Result<keanu_tensor::DoubleTensor> {
+    Ok(match x.rank() {
+        1 => a.matvec(x)?,
+        _ => a.matmat(x)?,
+    })
 }

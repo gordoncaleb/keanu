@@ -447,6 +447,12 @@ pub enum Op {
     /// squaring with Padé approximants, as [`DoubleTensor::matrix_exp`](keanu_tensor::DoubleTensor::matrix_exp).
     /// Its derivatives are the exponential's first and second Fréchet derivatives.
     MatrixExp,
+    /// Parents: `input`, f64 (`[n]` or `[n, k]`) -> the product A·input (`[m]` or `[m, k]`) with a constant m × n
+    /// sparse matrix A, as [`SparseMatrix::matvec`](keanu_tensor::SparseMatrix::matvec) and
+    /// [`SparseMatrix::matmat`](keanu_tensor::SparseMatrix::matmat). It is linear in its parent: its Jacobian-vector
+    /// product is A·ẋ, its vector-Jacobian product Aᵀ·ḡ and its second derivatives zero. See
+    /// [`DoubleVar::sparse_matmul`](crate::DoubleVar::sparse_matmul).
+    SparseMatMul(Arc<keanu_tensor::SparseMatrix>),
     /// Parents: `input` -> the given type. Numbers to bool are true where equal to 1; bool to numbers is a 0/1 mask;
     /// f64 to i64 truncates.
     Cast(DType),
@@ -565,6 +571,7 @@ op_names! {
     Op::Eigvalsh => "eigvalsh",
     Op::EighVectors => "eigh_vectors",
     Op::MatrixExp => "matrix_exp",
+    Op::SparseMatMul(_) => "sparse_matmul",
     Op::Cast(_) => "cast",
     Op::Where => "where",
     Op::Multiplexer => "multiplexer",

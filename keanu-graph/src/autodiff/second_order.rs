@@ -207,6 +207,7 @@ fn vjp_tangent(
         | Op::TrianglePart { .. }
         | Op::Gather { .. }
         | Op::ScatterAdd { .. }
+        | Op::SparseMatMul(_)
         | Op::Where
         | Op::Cpt { .. }
         | Op::Multiplexer

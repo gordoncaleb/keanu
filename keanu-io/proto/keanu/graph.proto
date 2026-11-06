@@ -95,6 +95,8 @@ message Node {
     LogDensity log_density = 65;
     // The matrix exponential of each square matrix.
     Empty matrix_exp = 66;
+    // The product of a constant sparse matrix with the one parent.
+    SparseMatrix sparse_matmul = 67;
     Scan scan = 100;
     Ode ode = 101;
   }
@@ -311,6 +313,16 @@ message Concat {
 // The element at an index, as a scalar.
 message Take {
   repeated uint64 index = 1;
+}
+
+// A constant sparse matrix: its shape and its stored entries as (row, column, value) triplets, in row-major order
+// with no position repeated.
+message SparseMatrix {
+  uint64 rows = 1;
+  uint64 cols = 2;
+  repeated uint64 row_indices = 3;
+  repeated uint64 col_indices = 4;
+  repeated double values = 5;
 }
 
 // Parents: input, indices (i64). The input's elements selected along an axis by index, as numpy's `take`.

@@ -126,7 +126,8 @@ pub fn is_differentiable(graph: &Graph, id: NodeId) -> bool {
             | Op::LogAbsDeterminant
             | Op::Eigvalsh
             | Op::EighVectors
-            | Op::MatrixExp => true,
+            | Op::MatrixExp
+            | Op::SparseMatMul(_) => true,
             Op::Where | Op::Cpt { .. } | Op::Multiplexer => true,
             Op::SetWithMask | Op::ReplaceNan(_) => true,
             Op::Lambda(l) => l.jacobian.is_some(),
@@ -1509,6 +1510,12 @@ fn jvp(
             let rotated = q.matmul_transposed(&ds, true, false)?.matmul(q)?;
             Some(q.matmul(&rotated.mul(&eigen_gaps(&lambda)?)?)?)
         }
+        Op::SparseMatMul(a) => {
+            // linear: A ẋ for each direction, along the axis after the batch
+            let Some(t0) = t[0] else { return Ok(None) };
+            let t0 = fit(t0.clone(), b, f64v(parents[0])?.shape())?;
+            Some(a.mul_along_axis(&t0, 1, false)?)
+        }
         Op::MatrixExp => {
             let Some(t0) = t[0] else { return Ok(None) };
             // d exp(A) = L(A, dA), the Fréchet derivative
@@ -1847,6 +1854,11 @@ fn vjp(
                 .mul(&eigen_gaps(&lambda)?)?;
             let s_bar = q.matmul(&inner)?.matmul_transposed(q, false, true)?;
             vec![Some(lower_from_symmetric(&s_bar)?)]
+        }
+        Op::SparseMatMul(a) => {
+            // linear: Aᵀ ḡ for each direction
+            let g = fit(g.clone(), b, &out_shape)?;
+            vec![Some(a.mul_along_axis(&g, 1, true)?)]
         }
         Op::MatrixExp => {
             // Ā = L(Aᵀ, G): the adjoint of L(A, ·) in the trace inner product

@@ -32,6 +32,7 @@ mod error;
 /// The tensor operations, grouped by kind. They are all methods on [`Tensor`].
 pub mod ops;
 mod shape;
+mod sparse;
 pub mod special;
 mod tensor;
 
@@ -39,4 +40,5 @@ pub use error::{Result, TensorError};
 pub use ops::elementwise::{Numeric, int_pow};
 pub use ops::linalg::LuFactorization;
 pub use shape::{Shape, broadcast_shape};
+pub use sparse::SparseMatrix;
 pub use tensor::{BoolTensor, DoubleTensor, Element, IntTensor, Tensor};

@@ -144,6 +144,7 @@ fn save_op(graph: &Graph, id: NodeId) -> Result<P> {
         Op::Eigvalsh => P::Eigvalsh(empty()),
         Op::EighVectors => P::EighVectors(empty()),
         Op::MatrixExp => P::MatrixExp(empty()),
+        Op::SparseMatMul(a) => P::SparseMatmul(sparse_matrix(a)),
         Op::Cast(dtype) => P::Cast(encode(dtype)?),
         Op::Where => P::Where(empty()),
         Op::Multiplexer => P::Multiplexer(empty()),
@@ -266,4 +267,21 @@ pub(crate) fn save_model(
         graph: Some(save_graph(graph, Some(state))?),
         metadata: metadata.clone(),
     })
+}
+
+/// The saved form of a sparse matrix: its shape and its entries' triplets.
+pub(crate) fn sparse_matrix(a: &keanu_tensor::SparseMatrix) -> proto::SparseMatrix {
+    let (mut row_indices, mut col_indices, mut values) = (Vec::new(), Vec::new(), Vec::new());
+    for (i, j, v) in a.triplets() {
+        row_indices.push(i as u64);
+        col_indices.push(j as u64);
+        values.push(v);
+    }
+    proto::SparseMatrix {
+        rows: a.rows() as u64,
+        cols: a.cols() as u64,
+        row_indices,
+        col_indices,
+        values,
+    }
 }

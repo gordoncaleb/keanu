@@ -1145,3 +1145,61 @@ fn matrix_exp_values_and_gradients() {
         |_, v| (v[0] * v[1]).matrix_exp().sum(),
     );
 }
+
+#[test]
+fn sparse_matmul_values_and_gradients() {
+    use keanu_tensor::SparseMatrix;
+    use std::sync::Arc;
+    let a = Arc::new(
+        SparseMatrix::from_triplets(
+            4,
+            3,
+            &[(0, 0, 1.5), (0, 2, -0.5), (2, 1, 2.0), (3, 2, 0.25)],
+        )
+        .unwrap(),
+    );
+    // the values are the dense products, for a vector and a matrix
+    let x = t(&[3], &[0.4, -1.2, 0.7]);
+    let m = t(&[3, 2], &[0.3, -0.2, 0.6, 0.1, -0.7, 0.4]);
+    let g = GraphBuilder::new();
+    let ax = g.constant(x.clone()).sparse_matmul(a.clone()).id();
+    let am = g.constant(m.clone()).sparse_matmul(a.clone()).id();
+    let (graph, mut state) = g.build().unwrap();
+    state
+        .lazy_eval(&graph, &[ax, am], &mut KeanuRng::seed_from_u64(1))
+        .unwrap();
+    let dense = a.to_dense();
+    for (id, rhs) in [(ax, x.reshape(&[3, 1]).unwrap()), (am, m)] {
+        let expected = dense.matmul(&rhs).unwrap();
+        let actual = state.f64(id).unwrap();
+        assert_eq!(actual.len(), expected.len());
+        for (a, e) in actual.as_slice().iter().zip(expected.as_slice()) {
+            assert!((a - e).abs() < 1e-15);
+        }
+    }
+    assert_eq!(state.f64(ax).unwrap().shape(), &[4]);
+    assert_eq!(state.f64(am).unwrap().shape(), &[4, 2]);
+
+    // forward and reverse partials, alone and composed
+    check(&[range(-1.0, 1.0, &[3])], |_, v| {
+        v[0].sparse_matmul(a.clone())
+    });
+    check(&[range(-1.0, 1.0, &[3, 2])], |_, v| {
+        v[0].sparse_matmul(a.clone())
+    });
+    check(&[range(0.2, 1.3, &[3])], |_, v| {
+        (v[0].sparse_matmul(a.clone()) * 2.0).exp().sum()
+    });
+
+    // a mismatched parent is a build error
+    let g = GraphBuilder::new();
+    g.constant(t(&[4], &[1.0, 2.0, 3.0, 4.0]))
+        .sparse_matmul(a.clone());
+    assert!(matches!(
+        g.build(),
+        Err(keanu_graph::GraphError::InvalidNode {
+            op: "sparse_matmul",
+            ..
+        })
+    ));
+}

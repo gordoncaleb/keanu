@@ -844,6 +844,13 @@ impl<'b> DoubleVar<'b> {
     pub fn matrix_exp(self) -> Self {
         self.same(Op::MatrixExp)
     }
+    /// The product A·self with a constant sparse matrix A (m × n), for a vector self `[n]` (giving `[m]`) or a
+    /// matrix `[n, k]` (giving `[m, k]`): the cost is proportional to A's stored entries, not to m × n. Use it for
+    /// neighbourhood sums, sparse design matrices and graph Laplacians. Linear, so differentiable to any order.
+    /// See [`Op::SparseMatMul`].
+    pub fn sparse_matmul(self, a: impl Into<std::sync::Arc<keanu_tensor::SparseMatrix>>) -> Self {
+        self.same(Op::SparseMatMul(a.into()))
+    }
     /// The symmetric eigendecomposition A = Q diag(λ) Qᵀ as two nodes, (λ, Q): [`Self::eigvalsh`] and
     /// [`Self::eigh_vectors`].
     pub fn eigh(self) -> (Self, Self) {

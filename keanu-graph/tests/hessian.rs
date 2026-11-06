@@ -484,6 +484,24 @@ fn general_cases() -> Vec<Case> {
             Expect::Matches,
         ),
         (
+            "sparse matrix products",
+            |b| {
+                let a = std::sync::Arc::new(
+                    keanu_tensor::SparseMatrix::from_triplets(
+                        2,
+                        3,
+                        &[(0, 0, 1.5), (0, 2, -0.5), (1, 1, 2.0)],
+                    )
+                    .unwrap(),
+                );
+                let x = latent_vector(b, &[0.5, -0.4, 1.1]);
+                observe(b, (x.sparse_matmul(a.clone()) * x.slice(":2")).exp());
+                let m = latent(b, t(&[3, 2], &[0.3, -0.2, 0.6, 0.1, -0.7, 0.4]));
+                observe(b, m.sparse_matmul(a).sin());
+            },
+            Expect::Matches,
+        ),
+        (
             "selections, masks, proxies and assertions",
             |b| {
                 let x = latent_vector(b, &[0.5, -0.5, 2.0]);

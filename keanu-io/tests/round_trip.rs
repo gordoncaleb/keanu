@@ -357,6 +357,23 @@ fn op_cases() -> Vec<(String, Graph, State)> {
         op_case(Op::Eigvalsh, &[square()]),
         op_case(Op::EighVectors, &[square()]),
         op_case(Op::MatrixExp, &[square()]),
+        op_case(
+            Op::SparseMatMul(Arc::new(
+                keanu_tensor::SparseMatrix::from_triplets(
+                    2,
+                    3,
+                    &[(0, 2, 1.5), (0, 0, -0.25), (1, 1, f64::MAX)],
+                )
+                .unwrap(),
+            )),
+            &[f64s(&[3, 2], &[0.2, 0.5, 0.7, 0.3, 0.9, 0.4])],
+        ),
+        op_case(
+            Op::SparseMatMul(Arc::new(
+                keanu_tensor::SparseMatrix::from_triplets(4, 3, &[]).unwrap(),
+            )),
+            &[f64s(&[3], &[1.0, -2.0, 0.5])],
+        ),
         op_case(Op::Where, &[boolean(true), scalar(1.0), scalar(2.0)]),
         op_case(Op::Multiplexer, &[int(1), scalar(1.0), scalar(2.0)]),
         op_case(
@@ -783,6 +800,7 @@ fn every_operation_round_trips() {
         "eigvalsh",
         "eigh_vectors",
         "matrix_exp",
+        "sparse_matmul",
         "cast",
         "where",
         "multiplexer",
@@ -1358,6 +1376,31 @@ fn invalid_shapes_and_values_are_decode_errors() {
     assert!(is_decode_error(load_json(&mismatched)));
     let no_values = with_node(serde_json::json!({"constant": {"shape": [2]}}));
     assert!(is_decode_error(load_json(&no_values)));
+    // sparse matrices with repeated or out of range entries, or ragged triplets
+    let sparse = |m: Json| with_node(serde_json::json!({"parents": [0], "sparseMatmul": m}));
+    let valid = sparse(
+        serde_json::json!({"rows": 2, "cols": 3, "rowIndices": [0, 1], "colIndices": [2, 0],
+        "values": [1.0, 2.0]}),
+    );
+    assert!(load_json(&valid).is_ok());
+    for malformed in [
+        serde_json::json!({"rows": 2, "cols": 3, "rowIndices": [0, 0], "colIndices": [2, 2], "values": [1.0, 2.0]}),
+        serde_json::json!({"rows": 2, "cols": 3, "rowIndices": [2], "colIndices": [0], "values": [1.0]}),
+        serde_json::json!({"rows": 2, "cols": 3, "rowIndices": [0], "colIndices": [3], "values": [1.0]}),
+        serde_json::json!({"rows": 2, "cols": 3, "rowIndices": [0, 1], "colIndices": [0], "values": [1.0]}),
+        serde_json::json!({"rows": 2, "cols": 3, "rowIndices": [0], "colIndices": [0], "values": ["NaN"]}),
+    ] {
+        assert!(
+            is_decode_error(load_json(&sparse(malformed.clone()))),
+            "{malformed}"
+        );
+    }
+    // a sparse matrix whose columns don't match its parent
+    let mismatched = sparse(
+        serde_json::json!({"rows": 2, "cols": 4, "rowIndices": [], "colIndices": [],
+        "values": []}),
+    );
+    assert!(matches!(load_json(&mismatched), Err(IoError::Graph(_))));
 
     // a value stored for a node that doesn't exist
     let mut model = saved_vector();

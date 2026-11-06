@@ -369,6 +369,7 @@ fn add_node(
         P::Eigvalsh(_) => Op::Eigvalsh,
         P::EighVectors(_) => Op::EighVectors,
         P::MatrixExp(_) => Op::MatrixExp,
+        P::SparseMatmul(p) => Op::SparseMatMul(Arc::new(sparse_matrix(p)?)),
         P::Cast(code) => Op::Cast(decode(*code)?),
         P::Where(_) => Op::Where,
         P::Multiplexer(_) => Op::Multiplexer,
@@ -430,4 +431,26 @@ fn add_node(
         }
     };
     Ok(builder.add_node(op, parents)?)
+}
+
+/// A sparse matrix from its saved triplets.
+pub(crate) fn sparse_matrix(p: &proto::SparseMatrix) -> Result<keanu_tensor::SparseMatrix> {
+    let (rows, cols) = (usize_of(p.rows)?, usize_of(p.cols)?);
+    if p.row_indices.len() != p.values.len() || p.col_indices.len() != p.values.len() {
+        return Err(IoError::Decode(format!(
+            "a sparse matrix has {} row indices, {} column indices and {} values",
+            p.row_indices.len(),
+            p.col_indices.len(),
+            p.values.len()
+        )));
+    }
+    let triplets = p
+        .row_indices
+        .iter()
+        .zip(&p.col_indices)
+        .zip(&p.values)
+        .map(|((&i, &j), &v)| Ok((usize_of(i)?, usize_of(j)?, v)))
+        .collect::<Result<Vec<_>>>()?;
+    keanu_tensor::SparseMatrix::from_triplets(rows, cols, &triplets)
+        .map_err(|e| IoError::Decode(format!("invalid sparse matrix: {e}")))
 }

@@ -3294,6 +3294,9 @@ impl serde::Serialize for Node {
                 node::Op::MatrixExp(v) => {
                     struct_ser.serialize_field("matrixExp", v)?;
                 }
+                node::Op::SparseMatmul(v) => {
+                    struct_ser.serialize_field("sparseMatmul", v)?;
+                }
                 node::Op::Scan(v) => {
                     struct_ser.serialize_field("scan", v)?;
                 }
@@ -3388,6 +3391,8 @@ impl<'de> serde::Deserialize<'de> for Node {
             "logDensity",
             "matrix_exp",
             "matrixExp",
+            "sparse_matmul",
+            "sparseMatmul",
             "scan",
             "ode",
         ];
@@ -3453,6 +3458,7 @@ impl<'de> serde::Deserialize<'de> for Node {
             Factor,
             LogDensity,
             MatrixExp,
+            SparseMatmul,
             Scan,
             Ode,
         }
@@ -3535,6 +3541,7 @@ impl<'de> serde::Deserialize<'de> for Node {
                             "factor" => Ok(GeneratedField::Factor),
                             "logDensity" | "log_density" => Ok(GeneratedField::LogDensity),
                             "matrixExp" | "matrix_exp" => Ok(GeneratedField::MatrixExp),
+                            "sparseMatmul" | "sparse_matmul" => Ok(GeneratedField::SparseMatmul),
                             "scan" => Ok(GeneratedField::Scan),
                             "ode" => Ok(GeneratedField::Ode),
                             _ => Err(serde::de::Error::unknown_field(value, FIELDS)),
@@ -3966,6 +3973,13 @@ impl<'de> serde::Deserialize<'de> for Node {
                                 return Err(serde::de::Error::duplicate_field("matrixExp"));
                             }
                             op__ = map_.next_value::<::std::option::Option<_>>()?.map(node::Op::MatrixExp)
+;
+                        }
+                        GeneratedField::SparseMatmul => {
+                            if op__.is_some() {
+                                return Err(serde::de::Error::duplicate_field("sparseMatmul"));
+                            }
+                            op__ = map_.next_value::<::std::option::Option<_>>()?.map(node::Op::SparseMatmul)
 ;
                         }
                         GeneratedField::Scan => {
@@ -5592,6 +5606,184 @@ impl<'de> serde::Deserialize<'de> for SolveTriangular {
             }
         }
         deserializer.deserialize_struct("keanu.SolveTriangular", FIELDS, GeneratedVisitor)
+    }
+}
+impl serde::Serialize for SparseMatrix {
+    #[allow(deprecated)]
+    fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        use serde::ser::SerializeStruct;
+        let mut len = 0;
+        if self.rows != 0 {
+            len += 1;
+        }
+        if self.cols != 0 {
+            len += 1;
+        }
+        if !self.row_indices.is_empty() {
+            len += 1;
+        }
+        if !self.col_indices.is_empty() {
+            len += 1;
+        }
+        if !self.values.is_empty() {
+            len += 1;
+        }
+        let mut struct_ser = serializer.serialize_struct("keanu.SparseMatrix", len)?;
+        if self.rows != 0 {
+            #[allow(clippy::needless_borrow)]
+            #[allow(clippy::needless_borrows_for_generic_args)]
+            struct_ser.serialize_field("rows", ToString::to_string(&self.rows).as_str())?;
+        }
+        if self.cols != 0 {
+            #[allow(clippy::needless_borrow)]
+            #[allow(clippy::needless_borrows_for_generic_args)]
+            struct_ser.serialize_field("cols", ToString::to_string(&self.cols).as_str())?;
+        }
+        if !self.row_indices.is_empty() {
+            struct_ser.serialize_field("rowIndices", &self.row_indices.iter().map(ToString::to_string).collect::<Vec<_>>())?;
+        }
+        if !self.col_indices.is_empty() {
+            struct_ser.serialize_field("colIndices", &self.col_indices.iter().map(ToString::to_string).collect::<Vec<_>>())?;
+        }
+        if !self.values.is_empty() {
+            struct_ser.serialize_field("values", &self.values)?;
+        }
+        struct_ser.end()
+    }
+}
+impl<'de> serde::Deserialize<'de> for SparseMatrix {
+    #[allow(deprecated)]
+    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        const FIELDS: &[&str] = &[
+            "rows",
+            "cols",
+            "row_indices",
+            "rowIndices",
+            "col_indices",
+            "colIndices",
+            "values",
+        ];
+
+        #[allow(clippy::enum_variant_names)]
+        enum GeneratedField {
+            Rows,
+            Cols,
+            RowIndices,
+            ColIndices,
+            Values,
+        }
+        impl<'de> serde::Deserialize<'de> for GeneratedField {
+            fn deserialize<D>(deserializer: D) -> std::result::Result<GeneratedField, D::Error>
+            where
+                D: serde::Deserializer<'de>,
+            {
+                struct GeneratedVisitor;
+
+                impl serde::de::Visitor<'_> for GeneratedVisitor {
+                    type Value = GeneratedField;
+
+                    fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                        write!(formatter, "expected one of: {:?}", &FIELDS)
+                    }
+
+                    #[allow(unused_variables)]
+                    fn visit_str<E>(self, value: &str) -> std::result::Result<GeneratedField, E>
+                    where
+                        E: serde::de::Error,
+                    {
+                        match value {
+                            "rows" => Ok(GeneratedField::Rows),
+                            "cols" => Ok(GeneratedField::Cols),
+                            "rowIndices" | "row_indices" => Ok(GeneratedField::RowIndices),
+                            "colIndices" | "col_indices" => Ok(GeneratedField::ColIndices),
+                            "values" => Ok(GeneratedField::Values),
+                            _ => Err(serde::de::Error::unknown_field(value, FIELDS)),
+                        }
+                    }
+                }
+                deserializer.deserialize_identifier(GeneratedVisitor)
+            }
+        }
+        struct GeneratedVisitor;
+        impl<'de> serde::de::Visitor<'de> for GeneratedVisitor {
+            type Value = SparseMatrix;
+
+            fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                formatter.write_str("struct keanu.SparseMatrix")
+            }
+
+            fn visit_map<V>(self, mut map_: V) -> std::result::Result<SparseMatrix, V::Error>
+                where
+                    V: serde::de::MapAccess<'de>,
+            {
+                let mut rows__ = None;
+                let mut cols__ = None;
+                let mut row_indices__ = None;
+                let mut col_indices__ = None;
+                let mut values__ = None;
+                while let Some(k) = map_.next_key()? {
+                    match k {
+                        GeneratedField::Rows => {
+                            if rows__.is_some() {
+                                return Err(serde::de::Error::duplicate_field("rows"));
+                            }
+                            rows__ = 
+                                Some(map_.next_value::<::pbjson::private::NumberDeserialize<_>>()?.0)
+                            ;
+                        }
+                        GeneratedField::Cols => {
+                            if cols__.is_some() {
+                                return Err(serde::de::Error::duplicate_field("cols"));
+                            }
+                            cols__ = 
+                                Some(map_.next_value::<::pbjson::private::NumberDeserialize<_>>()?.0)
+                            ;
+                        }
+                        GeneratedField::RowIndices => {
+                            if row_indices__.is_some() {
+                                return Err(serde::de::Error::duplicate_field("rowIndices"));
+                            }
+                            row_indices__ = 
+                                Some(map_.next_value::<Vec<::pbjson::private::NumberDeserialize<_>>>()?
+                                    .into_iter().map(|x| x.0).collect())
+                            ;
+                        }
+                        GeneratedField::ColIndices => {
+                            if col_indices__.is_some() {
+                                return Err(serde::de::Error::duplicate_field("colIndices"));
+                            }
+                            col_indices__ = 
+                                Some(map_.next_value::<Vec<::pbjson::private::NumberDeserialize<_>>>()?
+                                    .into_iter().map(|x| x.0).collect())
+                            ;
+                        }
+                        GeneratedField::Values => {
+                            if values__.is_some() {
+                                return Err(serde::de::Error::duplicate_field("values"));
+                            }
+                            values__ = 
+                                Some(map_.next_value::<Vec<::pbjson::private::NumberDeserialize<_>>>()?
+                                    .into_iter().map(|x| x.0).collect())
+                            ;
+                        }
+                    }
+                }
+                Ok(SparseMatrix {
+                    rows: rows__.unwrap_or_default(),
+                    cols: cols__.unwrap_or_default(),
+                    row_indices: row_indices__.unwrap_or_default(),
+                    col_indices: col_indices__.unwrap_or_default(),
+                    values: values__.unwrap_or_default(),
+                })
+            }
+        }
+        deserializer.deserialize_struct("keanu.SparseMatrix", FIELDS, GeneratedVisitor)
     }
 }
 impl serde::Serialize for Stack {
