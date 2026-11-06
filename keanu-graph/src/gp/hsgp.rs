@@ -181,8 +181,9 @@ impl<'b> Hsgp<'b> {
     /// # Errors
     ///
     /// [`GraphError::InvalidNode`] for a kernel without a spectral density here (only
-    /// [`exp_quad`](Kernel::exp_quad), [`matern12`](Kernel::matern12), [`matern32`](Kernel::matern32) and
-    /// [`matern52`](Kernel::matern52) have one; for a sum of kernels, add one HSGP per term), for `m` = 0, and for
+    /// [`exp_quad`](Kernel::exp_quad), [`matern12`](Kernel::matern12), [`matern32`](Kernel::matern32),
+    /// [`matern52`](Kernel::matern52) and the general [`matern`](Kernel::matern) have one; for a sum of kernels,
+    /// add one HSGP per term), for `m` = 0, and for
     /// `c` not finite or below 1.
     pub fn new(kernel: &Kernel<'b>, m: usize, c: f64) -> Result<Self> {
         let Kind::Stationary {
@@ -200,8 +201,8 @@ impl<'b> Hsgp<'b> {
                 Kind::Stationary { .. } => unreachable!("handled above"),
             };
             return Err(invalid(format!(
-                "{which} has no spectral density for the HSGP approximation; use exp_quad, matern12, matern32 or \
-                 matern52"
+                "{which} has no spectral density for the HSGP approximation; use exp_quad, matern12, matern32, \
+                 matern52 or matern"
             )));
         };
         if m == 0 {
@@ -342,10 +343,11 @@ impl<'b> Hsgp<'b> {
         let log_lengths = length_scale.ln().sum();
         let log_density = match self.form {
             Form::ExpQuad => q * -0.5 + log_lengths + 0.5 * df * (2.0 * PI).ln(),
-            Form::Matern12 | Form::Matern32 | Form::Matern52 => {
+            Form::Matern12 | Form::Matern32 | Form::Matern52 | Form::Matern(_) => {
                 let nu = match self.form {
                     Form::Matern12 => 0.5,
                     Form::Matern32 => 1.5,
+                    Form::Matern(nu) => nu,
                     _ => 2.5,
                 };
                 let constant =

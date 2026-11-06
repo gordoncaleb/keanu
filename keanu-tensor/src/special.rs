@@ -2,8 +2,20 @@
 
 use std::f64::consts::PI;
 
+mod bessel;
+mod hypergeometric;
 mod jet;
+mod lambert;
+mod owens_t;
 use jet::Jet;
+
+pub use bessel::{
+    bessel_i, bessel_i_ratio, bessel_i_scaled, bessel_k, bessel_k_dx, bessel_k_ratio,
+    bessel_k_scaled, log_bessel_i, log_bessel_i_dx, log_bessel_k, log_bessel_k_dx,
+};
+pub use hypergeometric::{Hyp2f1Derivatives, hyp2f1, hyp2f1_derivatives, hyp2f1_dz};
+pub use lambert::{lambert_w_dx, lambert_w_dx2, lambert_w0, lambert_wm1};
+pub use owens_t::{owens_t, owens_t_da, owens_t_dh};
 
 /// The Euler–Mascheroni constant. Defined here rather than taken from `std::f64::consts::EULER_GAMMA`, which needs
 /// Rust 1.94, to keep the minimum supported Rust version lower.
@@ -1612,7 +1624,7 @@ pub fn log_inc_beta_db2(a: f64, b: f64, x: f64) -> f64 {
 /// ln I_ν(κ) for ν ∈ {0, 1} and κ >= 0: the power series (DLMF 10.25.2) up to κ = 30, where all its terms are
 /// positive, and the Hankel asymptotic expansion (DLMF 10.40.1) beyond, which is accurate to rounding there and
 /// never overflows.
-fn log_bessel_i(nu: u8, kappa: f64) -> f64 {
+fn log_bessel_i_integer(nu: u8, kappa: f64) -> f64 {
     if kappa.is_infinite() {
         return f64::INFINITY;
     }
@@ -1654,7 +1666,7 @@ pub fn log_bessel_i0(kappa: f64) -> f64 {
     if kappa.is_nan() {
         return kappa;
     }
-    log_bessel_i(0, kappa.abs())
+    log_bessel_i_integer(0, kappa.abs())
 }
 
 /// ln I₁(κ), the log of the modified Bessel function of the first kind of order 1, for κ >= 0 (-∞ at 0, NaN for
@@ -1663,7 +1675,7 @@ pub fn log_bessel_i1(kappa: f64) -> f64 {
     if kappa.is_nan() || kappa < 0.0 {
         return f64::NAN;
     }
-    log_bessel_i(1, kappa)
+    log_bessel_i_integer(1, kappa)
 }
 
 #[cfg(test)]

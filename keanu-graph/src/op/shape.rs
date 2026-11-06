@@ -356,6 +356,12 @@ fn infer(op: &Op, parents: &[(DType, &[usize])]) -> Result<(DType, Shape)> {
         Op::Standardize | Op::ReplaceNan(_) => {
             Ok((DType::F64, expect(parents[0], DType::F64)?.into()))
         }
+        Op::Bessel { kind, order } => {
+            if let Some(message) = super::bessel::invalid_order(*kind, *order) {
+                return Err(invalid(op, message));
+            }
+            Ok((DType::F64, expect(parents[0], DType::F64)?.into()))
+        }
         Op::Softmax { axis } | Op::LogSoftmax { axis } => {
             let shape = expect(parents[0], DType::F64)?;
             axis_of(*axis, shape.len())?;
@@ -723,6 +729,7 @@ fn check_arity(op: &Op, count: usize) -> Result<()> {
         | Op::SparseMatMul(_)
         | Op::Cast(_)
         | Op::ReplaceNan(_)
+        | Op::Bessel { .. }
         | Op::Assert(_)
         | Op::Factor => (1, Some(1)),
         Op::Binary(_)

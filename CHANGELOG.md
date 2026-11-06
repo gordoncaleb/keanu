@@ -554,6 +554,28 @@ Work from `docs/plans/2026-11-05-001-feat-applied-modelling-gaps-plan.md`.
   intervals of σ, ρ and both coefficients cover the true values, that R-hat is below 1.01 and that the posterior mean
   area effects correlate with the true ones above 0.9. The guide's new chapter, "Spatial models", covers
   neighbourhoods, sparse products, the ICAR, the proper CAR and BYM2.
+- keanu-tensor, keanu-graph, keanu-io: **Bessel, Lambert W, hypergeometric and Owen's T functions, and a general
+  Matérn kernel**. `keanu_tensor::special` gained modified Bessel functions of real order: `log_bessel_k`,
+  `bessel_k` and `bessel_k_scaled` (any real ν, x >= 0), `log_bessel_i`, `bessel_i` and `bessel_i_scaled` (ν >= 0),
+  the ratios `bessel_k_ratio` and `bessel_i_ratio` and the x-derivatives `bessel_k_dx`, `log_bessel_k_dx` and
+  `log_bessel_i_dx` (ν is a constant: no derivatives in it), by Temme's series, Steed's continued fraction, the
+  I_{ν+1}/I_ν continued fraction, the power series, the Hankel expansion and, for ν >= 30, Debye's uniform
+  expansions, all in logs so they never overflow; `lambert_w0` and `lambert_wm1` with `lambert_w_dx` and
+  `lambert_w_dx2` (Fritsch's iteration, and the branch-point series within 0.1 of −1/e in p); `hyp2f1` for real
+  parameters and z < 1 (the Gauss series for 0 <= z <= ½, Pfaff's transformation for z < 0, and beyond ½ a
+  continuation by Taylor series of the hypergeometric equation, so with no special cases where c − a − b is an
+  integer), with `hyp2f1_dz` and `hyp2f1_derivatives`, the exact gradient and Hessian in (a, b, c, z) from dual
+  numbers; and `owens_t` with `owens_t_dh` and `owens_t_da` (Patefield and Tandy's reductions to h >= 0 and
+  0 <= a <= 1, then a 32-point Gauss–Legendre rule). Each is checked against about 8,400 50-digit mpmath values
+  (`tests/fixtures/special_extra.py`) to 1e-14 relative error in general, with documented looser bounds where the
+  value is the exponential of a large log, and for ₂F₁'s second derivatives as z nears 1. keanu-graph gained the
+  unary ops `LambertW0` and `LambertWm1`, the binary op `OwensT` and `Op::Bessel { kind, order }` with
+  `BesselOp::{K, LogK, LogI, Matern}` (the Matérn correlation 2^{1−ν}/Γ(ν) x^ν K_ν(x)), each with first and
+  second derivatives (`DoubleVar::lambert_w0`, `lambert_wm1`, `owens_t`, `bessel_k`, `log_bessel_k`,
+  `log_bessel_i` and `matern_correlation`), and `gp::Kernel::matern(b, ν, amplitude, length_scale)` for any constant
+  ν > 0, equal to `matern12`, `matern32` and `matern52` at ν = ½, 3/2 and 5/2 and supported by `Hsgp` through
+  its spectral density. The save schema gained the `bessel` operation (68) with its `Bessel` message and `BesselOp`
+  enum, and the unary (40, 41) and binary (14) codes.
 
 ### Code review fixes
 

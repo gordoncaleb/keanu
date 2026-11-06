@@ -217,6 +217,32 @@ fn unary_cases() -> Vec<UnaryCase> {
         ("softplus", |x| x.softplus(), MIXED),
         ("logit", |x| x.logit(), IN_UNIT),
         ("log1mexp", |x| x.log1mexp(), [-2.0, -0.7, -0.1]),
+        ("lambert_w0", |x| x.lambert_w0(), [-0.3, 0.35, 4.0]),
+        ("lambert_wm1", |x| x.lambert_wm1(), [-0.3, -0.2, -0.05]),
+        ("bessel_k", |x| x.bessel_k(1.3), [0.4, 1.7, 6.0]),
+        ("bessel_k of order 0", |x| x.bessel_k(0.0), [0.4, 1.7, 6.0]),
+        ("log_bessel_k", |x| x.log_bessel_k(-0.4), [0.4, 1.7, 35.0]),
+        (
+            "log_bessel_k of large order",
+            |x| x.log_bessel_k(40.0),
+            [0.4, 17.0, 60.0],
+        ),
+        ("log_bessel_i", |x| x.log_bessel_i(2.5), [0.4, 1.7, 45.0]),
+        (
+            "log_bessel_i of large order",
+            |x| x.log_bessel_i(35.0),
+            [0.4, 17.0, 60.0],
+        ),
+        (
+            "matern_correlation",
+            |x| x.matern_correlation(0.7),
+            [0.4, 1.7, 6.0],
+        ),
+        (
+            "smooth matern_correlation",
+            |x| x.matern_correlation(2.2),
+            [0.05, 1.7, 6.0],
+        ),
         // not differentiable: they contribute nothing, so only the smooth factor's derivatives remain
         ("floor", |x| x.floor() * x.sin(), [0.3, 1.55, -0.8]),
         ("ceil", |x| x.ceil() * x.sin(), [0.3, 1.55, -0.8]),
@@ -246,6 +272,7 @@ fn binary_cases() -> Vec<BinaryCase> {
         ("log_add_exp2", |l, r| l.log_add_exp2(r), MIXED, IN_UNIT),
         ("safe_ln_times", |l, r| l.safe_ln_times(r), IN_UNIT, MIXED),
         ("log_beta", |l, r| l.log_beta(r), [0.4, 1.7, 3.0], IN_UNIT),
+        ("owens_t", |l, r| l.owens_t(r), MIXED, [0.3, -1.5, 2.5]),
     ]
 }
 

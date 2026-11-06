@@ -3,7 +3,7 @@
 use crate::builder::GraphBuilder;
 use crate::graph::NodeId;
 use crate::op::{
-    ArgOp, BinaryOp, CompareOp, CumulativeOp, LogicOp, Op, Predicate, ReduceOp, UnaryOp,
+    ArgOp, BesselOp, BinaryOp, CompareOp, CumulativeOp, LogicOp, Op, Predicate, ReduceOp, UnaryOp,
 };
 use crate::value::DType;
 use keanu_tensor::{BoolTensor, DoubleTensor, IntTensor};
@@ -634,6 +634,41 @@ impl<'b> DoubleVar<'b> {
     pub fn log1mexp(self) -> Self {
         self.map(UnaryOp::Log1mExp)
     }
+    /// A node computing the principal branch W₀(x) of the Lambert W function, the solution w >= −1 of w eʷ = x,
+    /// for x >= −1/e (NaN below), as [`special::lambert_w0`](keanu_tensor::special::lambert_w0).
+    pub fn lambert_w0(self) -> Self {
+        self.map(UnaryOp::LambertW0)
+    }
+    /// A node computing the lower branch W₋₁(x) of the Lambert W function, the solution w <= −1 of w eʷ = x, for
+    /// −1/e <= x < 0 (NaN elsewhere), as [`special::lambert_wm1`](keanu_tensor::special::lambert_wm1).
+    pub fn lambert_wm1(self) -> Self {
+        self.map(UnaryOp::LambertWm1)
+    }
+    /// A node computing K_ν(x), the modified Bessel function of the second kind, of each element x >= 0 for a
+    /// constant real order ν (see [`BesselOp::K`](crate::op::BesselOp::K)). Differentiable to second order in x
+    /// (not in ν). A non-finite order is a build error.
+    pub fn bessel_k(self, order: f64) -> Self {
+        self.bessel(BesselOp::K, order)
+    }
+    /// A node computing ln K_ν(x) without overflow or underflow, for a constant real order ν (see
+    /// [`BesselOp::LogK`](crate::op::BesselOp::LogK)).
+    pub fn log_bessel_k(self, order: f64) -> Self {
+        self.bessel(BesselOp::LogK, order)
+    }
+    /// A node computing ln I_ν(x), the log of the modified Bessel function of the first kind, of each element
+    /// x >= 0 for a constant order ν >= 0 (see [`BesselOp::LogI`](crate::op::BesselOp::LogI)). Differentiable to
+    /// second order in x (not in ν). A negative or non-finite order is a build error.
+    pub fn log_bessel_i(self, order: f64) -> Self {
+        self.bessel(BesselOp::LogI, order)
+    }
+    /// A node computing the Matérn correlation function 2^{1−ν}/Γ(ν) x^ν K_ν(x) of each element x >= 0 for a
+    /// constant ν > 0 (1 at x = 0; see [`BesselOp::Matern`](crate::op::BesselOp::Matern)).
+    pub fn matern_correlation(self, nu: f64) -> Self {
+        self.bessel(BesselOp::Matern, nu)
+    }
+    fn bessel(self, kind: BesselOp, order: f64) -> Self {
+        self.same(Op::Bessel { kind, order })
+    }
 
     /// Element-wise atan2(y, self).
     pub fn atan2(self, y: impl IntoDoubleVar<'b>) -> Self {
@@ -654,6 +689,11 @@ impl<'b> DoubleVar<'b> {
     /// A node computing ln B(self, b), the log of the beta function.
     pub fn log_beta(self, b: impl IntoDoubleVar<'b>) -> Self {
         self.binary(BinaryOp::LogBeta, b)
+    }
+    /// A node computing Owen's T function T(self, a) (h is self), as
+    /// [`special::owens_t`](keanu_tensor::special::owens_t): differentiable to second order in both.
+    pub fn owens_t(self, a: impl IntoDoubleVar<'b>) -> Self {
+        self.binary(BinaryOp::OwensT, a)
     }
 
     /// 1.0 where self > other, else 0.0.

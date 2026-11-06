@@ -82,6 +82,35 @@ fn matern_kernels_are_approximated_too_and_improve_with_more_basis_functions() {
 }
 
 #[test]
+fn the_general_matern_kernel_is_approximated_and_matches_the_half_integer_spectra() {
+    let x = grid(101);
+    // ν between 3/2 and 5/2 needs a number of basis functions between theirs
+    let error = covariance_error(|b| Kernel::matern(b, 2.0, 1.0, 0.3), &x, 60, 2.0);
+    assert!(error < 1e-3, "Matérn 2: {error}");
+    // the same spectral density as the closed forms: the approximations agree to rounding
+    for (k, nu) in [0.5, 1.5, 2.5].into_iter().enumerate() {
+        let b = GraphBuilder::new();
+        let general = Hsgp::new(&Kernel::matern(&b, nu, 1.2, 0.4), 30, 1.5).unwrap();
+        let closed = [Kernel::matern12, Kernel::matern32, Kernel::matern52][k](&b, 1.2, 0.4);
+        let closed = Hsgp::new(&closed, 30, 1.5).unwrap();
+        let (general, closed) = (general.prior(x.clone()), closed.prior(x.clone()));
+        let ids = [
+            general.covariance(x.clone(), x.clone()).id(),
+            closed.covariance(x.clone(), x.clone()).id(),
+        ];
+        drop((general, closed));
+        let (graph, mut state) = b.build().unwrap();
+        state
+            .lazy_eval(&graph, &ids, &mut KeanuRng::seed_from_u64(1))
+            .unwrap();
+        let (a, c) = (state.f64(ids[0]).unwrap(), state.f64(ids[1]).unwrap());
+        for (a, c) in a.as_slice().iter().zip(c.as_slice()) {
+            assert!((a - c).abs() < 1e-12, "ν = {nu}: {a} vs {c}");
+        }
+    }
+}
+
+#[test]
 fn two_dimensional_inputs_use_a_tensor_grid_of_basis_functions() {
     // a 7 × 7 grid on [−1, 1]²
     let side = grid(7);
@@ -205,11 +234,12 @@ fn hsgp_model(
 #[test]
 fn gradients_and_hessian_vector_products_match_finite_differences() {
     type KernelFn = for<'b> fn(&'b GraphBuilder, DoubleVar<'b>, DoubleVar<'b>) -> Kernel<'b>;
-    let kernels: [(&str, KernelFn); 4] = [
+    let kernels: [(&str, KernelFn); 5] = [
         ("exp_quad", |b, a, l| Kernel::exp_quad(b, a, l)),
         ("matern12", |b, a, l| Kernel::matern12(b, a, l)),
         ("matern32", |b, a, l| Kernel::matern32(b, a, l)),
         ("matern52", |b, a, l| Kernel::matern52(b, a, l)),
+        ("matern 1.8", |b, a, l| Kernel::matern(b, 1.8, a, l)),
     ];
     for (name, kernel) in kernels {
         let (model, mut state) = hsgp_model(kernel);

@@ -31,6 +31,8 @@ fn kernels<'b>(b: &'b GraphBuilder, d: usize) -> Vec<(&'static str, Kernel<'b>)>
         ("matern12", Kernel::matern12(b, 0.9, 1.1)),
         ("matern32", Kernel::matern32(b, 1.1, ard.clone())),
         ("matern52", Kernel::matern52(b, 1.2, 0.6)),
+        ("matern", Kernel::matern(b, 0.8, 1.0, ard.clone())),
+        ("matern_smooth", Kernel::matern(b, 6.3, 1.1, 0.9)),
         (
             "rational_quadratic",
             Kernel::rational_quadratic(b, 1.0, 0.9, 2.5),
@@ -159,6 +161,78 @@ fn cross_covariances_match_the_closed_forms() {
                 );
             }
         }
+    }
+}
+
+#[test]
+fn the_general_matern_kernel_matches_the_half_integer_closed_forms() {
+    // inputs with repeats, so that the distance is zero on and off the diagonal
+    let x1 = t(&[4, 2], &[0.0, 0.0, 0.3, -0.2, 1.5, 0.4, 0.3, -0.2]);
+    let x2 = t(&[3, 2], &[0.3, -0.2, 2.0, 1.0, -0.7, 0.1]);
+    let b = GraphBuilder::new();
+    let (amplitude, length_scale) = (1.3, DoubleTensor::vector(vec![0.6, 1.4]));
+    let pairs = [
+        (0.5, Kernel::matern12(&b, amplitude, length_scale.clone())),
+        (1.5, Kernel::matern32(&b, amplitude, length_scale.clone())),
+        (2.5, Kernel::matern52(&b, amplitude, length_scale.clone())),
+    ];
+    let mut ids = Vec::new();
+    for (nu, closed) in &pairs {
+        let general = Kernel::matern(&b, *nu, amplitude, length_scale.clone());
+        for (a, c) in [(&x1, &x2), (&x1, &x1)] {
+            ids.push((
+                *nu,
+                general.covariance(a.clone(), c.clone()).id(),
+                closed.covariance(a.clone(), c.clone()).id(),
+            ));
+        }
+    }
+    // ν = 7/2 against its closed form (1 + a + 2a²/5 + a³/15) e^{−a}, a = √7 r, in one dimension
+    let (u, v) = (t(&[3], &[0.0, 0.4, 2.0]), t(&[2], &[0.1, 1.0]));
+    let seven_halves = Kernel::matern(&b, 3.5, 1.0, 0.8)
+        .covariance(u.clone(), v.clone())
+        .id();
+    drop(pairs);
+    let (graph, mut state) = b.build().unwrap();
+    let all: Vec<NodeId> = ids
+        .iter()
+        .flat_map(|&(_, g, c)| [g, c])
+        .chain([seven_halves])
+        .collect();
+    state
+        .lazy_eval(&graph, &all, &mut KeanuRng::seed_from_u64(1))
+        .unwrap();
+    for (nu, general, closed) in ids {
+        let (g, c) = (state.f64(general).unwrap(), state.f64(closed).unwrap());
+        assert_eq!(g.shape(), c.shape());
+        for (g, c) in g.as_slice().iter().zip(c.as_slice()) {
+            assert!(
+                (g - c).abs() < 1e-14 * c.abs().max(1.0),
+                "ν = {nu}: {g} vs {c}"
+            );
+        }
+    }
+    let value = state.f64(seven_halves).unwrap();
+    for i in 0..3 {
+        for j in 0..2 {
+            let a = 7f64.sqrt() * (u.as_slice()[i] - v.as_slice()[j]).abs() / 0.8;
+            let expected = (1.0 + a + 0.4 * a * a + a * a * a / 15.0) * (-a).exp();
+            let actual = value.as_slice()[i * 2 + j];
+            assert!((actual - expected).abs() < 1e-14, "{actual} vs {expected}");
+        }
+    }
+}
+
+#[test]
+fn a_matern_smoothness_that_is_not_positive_is_a_build_error() {
+    for nu in [0.0, -1.0, f64::NAN, f64::INFINITY] {
+        let b = GraphBuilder::new();
+        Kernel::matern(&b, nu, 1.0, 1.0).covariance(t(&[2], &[0.0, 1.0]), t(&[2], &[0.0, 1.0]));
+        let error = b.build().unwrap_err();
+        assert!(
+            matches!(error, GraphError::InvalidNode { .. }),
+            "{nu}: {error}"
+        );
     }
 }
 
@@ -430,6 +504,12 @@ fn hyperparameter_gradients_match_finite_differences() {
     });
     check_hyperparameter_gradients("matern52", &[1.2, 0.6, 0.2, 0.3], |b, h| {
         (Kernel::matern52(b, h[0], h[1]), h[2])
+    });
+    check_hyperparameter_gradients("matern 1.3", &[1.2, 0.6, 0.2, 0.3], |b, h| {
+        (Kernel::matern(b, 1.3, h[0], h[1]), h[2])
+    });
+    check_hyperparameter_gradients("matern 0.3", &[1.2, 0.6, 0.2, 0.3], |b, h| {
+        (Kernel::matern(b, 0.3, h[0], h[1]), h[2])
     });
     check_hyperparameter_gradients("rational_quadratic", &[1.0, 0.9, 2.5, 0.2, 0.0], |b, h| {
         (Kernel::rational_quadratic(b, h[0], h[1], h[2]), h[3])

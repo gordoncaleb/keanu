@@ -1,5 +1,6 @@
 //! Node operations: what each node computes from its parents' values.
 
+pub(crate) mod bessel;
 mod distribution;
 mod distribution_hvp;
 mod enumerate;
@@ -113,6 +114,10 @@ pub enum UnaryOp {
     Logit,
     /// Ln(1 - eˣ), for x <= 0.
     Log1mExp,
+    /// The principal branch W₀(x) of the Lambert W function (w >= −1 with w eʷ = x), for x >= −1/e.
+    LambertW0,
+    /// The lower branch W₋₁(x) of the Lambert W function (w <= −1 with w eʷ = x), for −1/e <= x < 0.
+    LambertWm1,
 }
 
 impl UnaryOp {
@@ -152,6 +157,28 @@ pub enum BinaryOp {
     SafeLnTimes,
     /// Ln B(a, b), the log of the beta function, for a, b > 0.
     LogBeta,
+    /// Owen's T function T(h, a) of h (left) and a (right), as
+    /// [`special::owens_t`](keanu_tensor::special::owens_t).
+    OwensT,
+}
+
+/// Element-wise special functions of x with a constant real order ν: see [`Op::Bessel`]. Each is differentiable
+/// to second order in x; ν is a constant of the op, so there are no derivatives in it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
+pub enum BesselOp {
+    /// K_ν(x), the modified Bessel function of the second kind, for x >= 0 and any real ν (K_{−ν} = K_ν), as
+    /// [`special::bessel_k`](keanu_tensor::special::bessel_k).
+    K,
+    /// Ln K_ν(x), without overflow or underflow, as [`special::log_bessel_k`](keanu_tensor::special::log_bessel_k).
+    LogK,
+    /// Ln I_ν(x), the log of the modified Bessel function of the first kind, for x >= 0 and ν >= 0, as
+    /// [`special::log_bessel_i`](keanu_tensor::special::log_bessel_i).
+    LogI,
+    /// The Matérn correlation function 2^{1−ν}/Γ(ν) x^ν K_ν(x) for x >= 0 and ν > 0: 1 at x = 0, decreasing to 0,
+    /// computed in logs so that it neither overflows nor underflows. With x = √(2ν) r/ℓ it is the Matérn kernel's
+    /// correlation at distance r and length scale ℓ (see [`Kernel::matern`](crate::gp::Kernel::matern)).
+    Matern,
 }
 
 /// Element-wise comparisons with broadcasting.
@@ -453,6 +480,17 @@ pub enum Op {
     /// product is A·ẋ, its vector-Jacobian product Aᵀ·ḡ and its second derivatives zero. See
     /// [`DoubleVar::sparse_matmul`](crate::DoubleVar::sparse_matmul).
     SparseMatMul(Arc<keanu_tensor::SparseMatrix>),
+    /// Parents: `input`, f64 -> the special function `kind` of each element, with the constant real order ν
+    /// (`order`), which must be finite and in the function's range (any for [`BesselOp::K`] and
+    /// [`BesselOp::LogK`], ν >= 0 for [`BesselOp::LogI`] and ν > 0 for [`BesselOp::Matern`]). Differentiable to
+    /// second order in its parent; x-derivatives come from the Bessel recurrences (DLMF 10.29.2) and the
+    /// modified Bessel equation.
+    Bessel {
+        /// The function.
+        kind: BesselOp,
+        /// The order ν.
+        order: f64,
+    },
     /// Parents: `input` -> the given type. Numbers to bool are true where equal to 1; bool to numbers is a 0/1 mask;
     /// f64 to i64 truncates.
     Cast(DType),
@@ -572,6 +610,7 @@ op_names! {
     Op::EighVectors => "eigh_vectors",
     Op::MatrixExp => "matrix_exp",
     Op::SparseMatMul(_) => "sparse_matmul",
+    Op::Bessel { .. } => "bessel",
     Op::Cast(_) => "cast",
     Op::Where => "where",
     Op::Multiplexer => "multiplexer",

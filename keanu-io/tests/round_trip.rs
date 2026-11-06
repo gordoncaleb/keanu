@@ -7,8 +7,8 @@
 
 use keanu_distributions::{Kde, KeanuRng};
 use keanu_graph::op::{
-    ArgOp, BinaryOp, CompareOp, CumulativeOp, DistributionKind, LogicOp, Op, Predicate, ReduceOp,
-    UnaryOp,
+    ArgOp, BesselOp, BinaryOp, CompareOp, CumulativeOp, DistributionKind, LogicOp, Op, Predicate,
+    ReduceOp, UnaryOp,
 };
 use keanu_graph::{CustomDistribution, DType, Graph, GraphBuilder, Model, NodeId, State, Value};
 use keanu_io::{IoError, Loaded, Metadata, load_json, load_protobuf, save_json, save_protobuf};
@@ -146,6 +146,7 @@ const UNARY: &[UnaryOp] = {
         Abs, Neg, Sign, Reciprocal, Exp, Exp2, ExpM1, Ln, Ln1p, Log2, Log10, Sqrt, Sin, Cos, Tan,
         Asin, Acos, Atan, Sinh, Cosh, Tanh, Asinh, Acosh, Atanh, Sigmoid, Floor, Ceil, Round,
         LnGamma, Digamma, Trigamma, Erf, Erfc, ErfInv, LogNdtr, Ndtri, Softplus, Logit, Log1mExp,
+        LambertW0, LambertWm1,
     ]
 };
 
@@ -165,6 +166,7 @@ const BINARY: &[BinaryOp] = {
         LogAddExp2,
         SafeLnTimes,
         LogBeta,
+        OwensT,
     ]
 };
 
@@ -207,7 +209,16 @@ fn op_cases() -> Vec<(String, Graph, State)> {
         ),
     ];
     for &op in UNARY {
-        cases.push(op_case(Op::Unary(op), &[scalar(0.5)]));
+        let x = if op == UnaryOp::LambertWm1 { -0.2 } else { 0.5 };
+        cases.push(op_case(Op::Unary(op), &[scalar(x)]));
+    }
+    for (kind, order) in [
+        (BesselOp::K, 1.5),
+        (BesselOp::LogK, -0.3),
+        (BesselOp::LogI, 40.0),
+        (BesselOp::Matern, 0.7),
+    ] {
+        cases.push(op_case(Op::Bessel { kind, order }, &[scalar(2.5)]));
     }
     for &op in BINARY {
         let parents = if op == BinaryOp::Rem {
@@ -816,6 +827,7 @@ fn every_operation_round_trips() {
         "eigh_vectors",
         "matrix_exp",
         "sparse_matmul",
+        "bessel",
         "cast",
         "where",
         "multiplexer",

@@ -226,6 +226,55 @@ fn special_function_ops() {
 }
 
 #[test]
+fn lambert_w_owens_t_and_bessel_ops() {
+    let around_zero = t(&[2, 3], &[-0.35, -0.2, -0.01, 0.0, 0.7, 30.0]);
+    check(&[around_zero], |_, v| v[0].lambert_w0());
+    check(&[t(&[3], &[-0.35, -0.1, -1e-3])], |_, v| v[0].lambert_wm1());
+    check(&[DoubleTensor::scalar(2.0)], |_, v| v[0].lambert_w0());
+    let h = t(&[2, 3], &[-1.7, -0.3, 0.0, 0.4, 2.2, 6.0]);
+    let a = t(&[3], &[-2.0, 0.5, 4.0]);
+    check(&[h.clone(), a.clone()], |_, v| v[0].owens_t(v[1]));
+    check(
+        &[DoubleTensor::scalar(0.8), DoubleTensor::scalar(1.3)],
+        |_, v| v[0].owens_t(v[1]),
+    );
+    let positive = t(&[2, 3], &[0.05, 0.3, 1.0, 2.5, 9.0, 40.0]);
+    for order in [0.0, 0.4, 1.0, 2.7, 35.0] {
+        check(&[positive.clone()], |_, v| v[0].log_bessel_k(order));
+        check(&[positive.clone()], |_, v| v[0].log_bessel_i(order));
+        check(&[positive.clone()], |_, v| v[0].bessel_k(order) * 1e-3);
+    }
+    for nu in [0.2, 0.5, 1.0, 1.5, 3.7] {
+        check(&[positive.clone()], |_, v| v[0].matern_correlation(nu));
+    }
+}
+
+#[test]
+fn bessel_orders_out_of_their_range_are_build_errors() {
+    type Build = for<'b> fn(DoubleVar<'b>) -> DoubleVar<'b>;
+    let cases: [Build; 5] = [
+        |x| x.bessel_k(f64::NAN),
+        |x| x.log_bessel_k(f64::INFINITY),
+        |x| x.log_bessel_i(-0.5),
+        |x| x.matern_correlation(0.0),
+        |x| x.matern_correlation(-1.0),
+    ];
+    for build in cases {
+        let g = GraphBuilder::new();
+        build(g.constant(DoubleTensor::scalar(1.0)));
+        let error = g.build().unwrap_err();
+        assert!(
+            matches!(error, GraphError::InvalidNode { op: "bessel", .. }),
+            "{error}"
+        );
+    }
+    // negative orders are fine for K (K_{−ν} = K_ν)
+    let g = GraphBuilder::new();
+    g.constant(DoubleTensor::scalar(1.0)).bessel_k(-2.5);
+    assert!(g.build().is_ok());
+}
+
+#[test]
 fn binary_ops_with_broadcasting() {
     let shapes: [(&[usize], &[usize]); 4] = [
         (&[2, 3], &[2, 3]),

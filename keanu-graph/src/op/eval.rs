@@ -53,6 +53,8 @@ fn unary_f64(op: UnaryOp, x: &DoubleTensor) -> DoubleTensor {
         UnaryOp::Softplus => x.softplus(),
         UnaryOp::Logit => x.logit(),
         UnaryOp::Log1mExp => x.log1mexp(),
+        UnaryOp::LambertW0 => x.map(keanu_tensor::special::lambert_w0),
+        UnaryOp::LambertWm1 => x.map(keanu_tensor::special::lambert_wm1),
     }
 }
 
@@ -70,6 +72,7 @@ fn binary_f64(op: BinaryOp, a: &DoubleTensor, b: &DoubleTensor) -> Result<Option
         BinaryOp::LogAddExp2 => a.log_add_exp2(b)?,
         BinaryOp::SafeLnTimes => a.safe_ln_times(b)?,
         BinaryOp::LogBeta => a.log_beta(b)?,
+        BinaryOp::OwensT => a.zip_with(b, keanu_tensor::special::owens_t)?,
         BinaryOp::Rem => return Ok(None),
     }))
 }
@@ -393,6 +396,14 @@ pub(crate) fn eval(op: &Op, inputs: &[&Value]) -> Result<Value> {
                 ));
             }
             Value::F64(operand.zip_with(mask, |x, m| if m == 1.0 { value } else { x })?)
+        }
+        Op::Bessel { kind, order } => {
+            let (kind, order) = (*kind, *order);
+            Value::F64(
+                inputs[0]
+                    .f64()?
+                    .map(|x| super::bessel::value(kind, order, x)),
+            )
         }
         Op::ReplaceNan(with) => {
             let with = *with;

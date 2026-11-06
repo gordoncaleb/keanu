@@ -159,6 +159,10 @@ fn save_op(graph: &Graph, id: NodeId) -> Result<P> {
         }),
         Op::SetWithMask => P::SetWithMask(empty()),
         Op::ReplaceNan(value) => P::ReplaceNan(proto::ReplaceNan { value: *value }),
+        Op::Bessel { kind, order } => P::Bessel(proto::Bessel {
+            kind: encode(kind)?,
+            order: *order,
+        }),
         Op::Proxy => P::Proxy(proto::Proxy {
             dtype: encode(&node.dtype())?,
             shape: dims(node.shape()),

@@ -128,6 +128,7 @@ pub fn is_differentiable(graph: &Graph, id: NodeId) -> bool {
             | Op::EighVectors
             | Op::MatrixExp
             | Op::SparseMatMul(_) => true,
+            Op::Bessel { .. } => true,
             Op::Where | Op::Cpt { .. } | Op::Multiplexer => true,
             Op::SetWithMask | Op::ReplaceNan(_) => true,
             Op::Lambda(l) => l.jacobian.is_some(),
@@ -850,7 +851,9 @@ fn unary_derivative(u: UnaryOp, x: &DoubleTensor, y: &DoubleTensor) -> Result<Do
         | UnaryOp::Ndtri
         | UnaryOp::Softplus
         | UnaryOp::Logit
-        | UnaryOp::Log1mExp => x.zip_with(y, |x, y| special_unary_derivative(u, x, y))?,
+        | UnaryOp::Log1mExp
+        | UnaryOp::LambertW0
+        | UnaryOp::LambertWm1 => x.zip_with(y, |x, y| special_unary_derivative(u, x, y))?,
         UnaryOp::Floor | UnaryOp::Ceil | UnaryOp::Round | UnaryOp::Sign => {
             return Err(GraphError::NotDifferentiable(format!(
                 "{u:?} is not differentiable"
@@ -879,8 +882,21 @@ fn special_unary_derivative(u: UnaryOp, x: f64, y: f64) -> f64 {
         UnaryOp::Softplus => 1.0 / (1.0 + (-x).exp()),
         UnaryOp::Logit => 1.0 / (x * (1.0 - x)),
         UnaryOp::Log1mExp => -1.0 / (-x).exp_m1(),
+        UnaryOp::LambertW0 | UnaryOp::LambertWm1 => special::lambert_w_dx(x, y),
         _ => f64::NAN,
     }
+}
+
+/// The first x-derivative of a [`BesselOp`](crate::op::BesselOp) function at x with y = f(x).
+fn bessel_derivative(
+    kind: crate::op::BesselOp,
+    order: f64,
+    x: &DoubleTensor,
+    y: &DoubleTensor,
+) -> Result<DoubleTensor> {
+    Ok(x.zip_with(y, |x, y| {
+        crate::op::bessel::derivatives(kind, order, x, y).0
+    })?)
 }
 
 /// ∂/∂a ln B(a, b) = ψ(a) - ψ(a + b).
@@ -965,6 +981,10 @@ fn binary_derivatives<'a>(
             owned(l.zip_with(r, log_beta_derivative)?),
             owned(r.zip_with(l, log_beta_derivative)?),
         ),
+        BinaryOp::OwensT => (
+            owned(l.zip_with(r, special::owens_t_dh)?),
+            owned(l.zip_with(r, special::owens_t_da)?),
+        ),
         BinaryOp::Rem => {
             return Err(GraphError::NotDifferentiable(
                 "rem is not differentiable".into(),
@@ -1026,7 +1046,9 @@ fn unary_derivative_scalar(u: UnaryOp, x: f64, y: f64) -> Option<f64> {
         | UnaryOp::Ndtri
         | UnaryOp::Softplus
         | UnaryOp::Logit
-        | UnaryOp::Log1mExp => special_unary_derivative(u, x, y),
+        | UnaryOp::Log1mExp
+        | UnaryOp::LambertW0
+        | UnaryOp::LambertWm1 => special_unary_derivative(u, x, y),
         _ => return None,
     })
 }
@@ -1052,6 +1074,7 @@ fn binary_derivatives_scalar(op: BinaryOp, l: f64, r: f64, y: f64) -> Option<(f6
         BinaryOp::LogAddExp2 => ((l - y).exp2(), (r - y).exp2()),
         BinaryOp::SafeLnTimes => (r / l, if r == 0.0 { f64::NAN } else { l.ln() }),
         BinaryOp::LogBeta => (log_beta_derivative(l, r), log_beta_derivative(r, l)),
+        BinaryOp::OwensT => (special::owens_t_dh(l, r), special::owens_t_da(l, r)),
         _ => return None,
     })
 }
@@ -1568,6 +1591,13 @@ fn jvp(
             let Some(t0) = t[0] else { return Ok(None) };
             Some(scale(t0, &not_nan_mask(parents)?)?)
         }
+        Op::Bessel { kind, order } => {
+            let Some(t0) = t[0] else { return Ok(None) };
+            Some(scale(
+                t0,
+                &bessel_derivative(*kind, *order, f64v(parents[0])?, y)?,
+            )?)
+        }
         Op::Scan(body) => body.jvp(parents, y, t, b)?,
         Op::Ode(body) => body.jvp(parents, y, t, b)?,
         // the sum of every element
@@ -1901,6 +1931,11 @@ fn vjp(
             vec![Some(to_operand), None, Some(to_value)]
         }
         Op::ReplaceNan(_) => vec![Some(g.mul(&not_nan_mask(parents)?)?)],
+        Op::Bessel { kind, order } => {
+            let x = f64v(parents[0])?;
+            let d = bessel_derivative(*kind, *order, x, y)?;
+            vec![Some(reduce_to(g.mul(&d)?, x.shape())?)]
+        }
         Op::Scan(body) => body.vjp(parents, y, g, b)?,
         Op::Ode(body) => {
             // constants never lead to a latent, so their sensitivities aren't integrated

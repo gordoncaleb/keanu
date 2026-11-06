@@ -241,6 +241,31 @@ Execution order: U1, U2, U3, U4, U5, U6, U7, U8, U9, U11, U10, U12, U13, then a 
   - x-derivatives against finite differences;
   - recurrences;
   - the general Matérn at ν = 1.5 and 2.5 equals the closed forms.
+- **Implementation note:** the functions are in `keanu-tensor/src/special/{bessel,lambert,hypergeometric,owens_t}.rs`.
+  - Bessel: K_ν (any real ν) and I_ν (ν >= 0) are computed in logs (with scaled forms and the ratios
+    K_{ν+1}/K_ν and I_{ν+1}/I_ν, from which the x-derivatives follow), by Temme/Steed plus the forward recurrence
+    for K, and the power series, the Hankel expansion or the Wronskian with the I-ratio continued fraction for I;
+    for ν >= 30 by Debye's uniform expansions (fourteen terms, coefficients generated exactly offline). ν is a
+    constant everywhere: Skellam and von Mises–Fisher need no ν-derivatives (ν is the data or the dimension). I_ν
+    of a negative argument is NaN.
+  - ₂F₁: rather than A&S 15.3's transformations about z = 1, whose integer c − a − b cases need separate limiting
+    forms, z in (½, 1) is reached by continuing the solution from z = ½ with Taylor series of the hypergeometric
+    equation (each step half way to 1), and z < 0 by Pfaff's transformation; polynomial cases (and polynomial
+    Euler transforms) are summed directly. The whole algorithm runs over the existing dual numbers, so
+    `hyp2f1_derivatives` gives exact first and second derivatives in a, b, c and z (no finite differences). No
+    unit of this plan consumes ₂F₁ (the CLV likelihoods are not planned here), so there is no graph op for it.
+    Accuracy: 1e-14 on z in [−1, 0.999), 5e-14 elsewhere for the fixture's parameters (|a|, |b| <= 25,
+    0 < c <= 26); second derivatives lose accuracy as z nears 1 (1e-9 at 1 − z = 1e-6, 1e-5 at 1e-10), because
+    the equation determines F'' through a cancellation there.
+  - Owen's T: Patefield and Tandy's reductions (symmetry and the a > 1 identity with complementary normal CDFs),
+    then one 32-point Gauss–Legendre rule for the reduced integral (in x for h <= 1, in y = hx truncated at 9.5
+    otherwise) instead of their six-method table; it is within 2e-14 of mpmath everywhere tested.
+  - Graph ops: `UnaryOp::{LambertW0, LambertWm1}`, `BinaryOp::OwensT`, and `Op::Bessel { kind, order }` with
+    `BesselOp::{K, LogK, LogI, Matern}` (ν is part of the op, not a parent, so it cannot be given a gradient by
+    mistake; an order out of range is a build error). The Matérn correlation is an op of its own so that
+    x^ν K_ν(x) is formed in logs and its derivatives, −x^ν K_{ν−1} and f + (2ν − 1) f'/x, avoid the unstable
+    downward recurrence. `Kernel::matern` works with `Hsgp` for any ν (the spectral density was already general).
+  - Fixtures: `keanu-tensor/tests/fixtures/special_extra.{py,json}` (mpmath, 50 digits, about 8,400 cases).
 
 ### U5. Continuous distributions
 - **Requirements:** R5, R9.

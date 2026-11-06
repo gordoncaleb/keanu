@@ -34,7 +34,7 @@ pub struct Node {
     pub label: ::prost::alloc::string::String,
     #[prost(
         oneof = "node::Op",
-        tags = "10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 100, 101"
+        tags = "10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 100, 101"
     )]
     pub op: ::core::option::Option<node::Op>,
 }
@@ -161,6 +161,9 @@ pub mod node {
         /// The product of a constant sparse matrix with the one parent.
         #[prost(message, tag = "67")]
         SparseMatmul(super::SparseMatrix),
+        /// An element-wise special function of the one parent with a constant order.
+        #[prost(message, tag = "68")]
+        Bessel(super::Bessel),
         #[prost(message, tag = "100")]
         Scan(super::Scan),
         #[prost(message, tag = "101")]
@@ -392,6 +395,14 @@ pub struct ReplaceNan {
     #[prost(double, tag = "1")]
     pub value: f64,
 }
+/// An element-wise special function of x with a constant real order nu.
+#[derive(Clone, Copy, PartialEq, ::prost::Message)]
+pub struct Bessel {
+    #[prost(enumeration = "BesselOp", tag = "1")]
+    pub kind: i32,
+    #[prost(double, tag = "2")]
+    pub order: f64,
+}
 /// A proxy of the given type and shape, connected to its parent if it has one.
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct Proxy {
@@ -599,6 +610,8 @@ pub enum UnaryOp {
     Softplus = 37,
     Logit = 38,
     Log1mExp = 39,
+    LambertW0 = 40,
+    LambertWm1 = 41,
 }
 impl UnaryOp {
     /// String value of the enum field names used in the ProtoBuf definition.
@@ -647,6 +660,8 @@ impl UnaryOp {
             Self::Softplus => "UNARY_OP_SOFTPLUS",
             Self::Logit => "UNARY_OP_LOGIT",
             Self::Log1mExp => "UNARY_OP_LOG1M_EXP",
+            Self::LambertW0 => "UNARY_OP_LAMBERT_W0",
+            Self::LambertWm1 => "UNARY_OP_LAMBERT_WM1",
         }
     }
     /// Creates an enum from field names used in the ProtoBuf definition.
@@ -692,6 +707,8 @@ impl UnaryOp {
             "UNARY_OP_SOFTPLUS" => Some(Self::Softplus),
             "UNARY_OP_LOGIT" => Some(Self::Logit),
             "UNARY_OP_LOG1M_EXP" => Some(Self::Log1mExp),
+            "UNARY_OP_LAMBERT_W0" => Some(Self::LambertW0),
+            "UNARY_OP_LAMBERT_WM1" => Some(Self::LambertWm1),
             _ => None,
         }
     }
@@ -714,6 +731,7 @@ pub enum BinaryOp {
     LogAddExp2 = 11,
     SafeLnTimes = 12,
     LogBeta = 13,
+    OwensT = 14,
 }
 impl BinaryOp {
     /// String value of the enum field names used in the ProtoBuf definition.
@@ -736,6 +754,7 @@ impl BinaryOp {
             Self::LogAddExp2 => "BINARY_OP_LOG_ADD_EXP2",
             Self::SafeLnTimes => "BINARY_OP_SAFE_LN_TIMES",
             Self::LogBeta => "BINARY_OP_LOG_BETA",
+            Self::OwensT => "BINARY_OP_OWENS_T",
         }
     }
     /// Creates an enum from field names used in the ProtoBuf definition.
@@ -755,6 +774,7 @@ impl BinaryOp {
             "BINARY_OP_LOG_ADD_EXP2" => Some(Self::LogAddExp2),
             "BINARY_OP_SAFE_LN_TIMES" => Some(Self::SafeLnTimes),
             "BINARY_OP_LOG_BETA" => Some(Self::LogBeta),
+            "BINARY_OP_OWENS_T" => Some(Self::OwensT),
             _ => None,
         }
     }
@@ -980,6 +1000,46 @@ impl ArgOp {
             "ARG_OP_ARG_MIN" => Some(Self::ArgMin),
             "ARG_OP_NAN_ARG_MAX" => Some(Self::NanArgMax),
             "ARG_OP_NAN_ARG_MIN" => Some(Self::NanArgMin),
+            _ => None,
+        }
+    }
+}
+/// The functions of a `Bessel` operation.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
+#[repr(i32)]
+pub enum BesselOp {
+    Unspecified = 0,
+    /// K_nu(x), the modified Bessel function of the second kind.
+    K = 1,
+    /// ln K_nu(x).
+    LogK = 2,
+    /// ln I_nu(x), the log of the modified Bessel function of the first kind.
+    LogI = 3,
+    /// The Matern correlation 2^(1 - nu) / Gamma(nu) x^nu K_nu(x).
+    Matern = 4,
+}
+impl BesselOp {
+    /// String value of the enum field names used in the ProtoBuf definition.
+    ///
+    /// The values are not transformed in any way and thus are considered stable
+    /// (if the ProtoBuf definition does not change) and safe for programmatic use.
+    pub fn as_str_name(&self) -> &'static str {
+        match self {
+            Self::Unspecified => "BESSEL_OP_UNSPECIFIED",
+            Self::K => "BESSEL_OP_K",
+            Self::LogK => "BESSEL_OP_LOG_K",
+            Self::LogI => "BESSEL_OP_LOG_I",
+            Self::Matern => "BESSEL_OP_MATERN",
+        }
+    }
+    /// Creates an enum from field names used in the ProtoBuf definition.
+    pub fn from_str_name(value: &str) -> ::core::option::Option<Self> {
+        match value {
+            "BESSEL_OP_UNSPECIFIED" => Some(Self::Unspecified),
+            "BESSEL_OP_K" => Some(Self::K),
+            "BESSEL_OP_LOG_K" => Some(Self::LogK),
+            "BESSEL_OP_LOG_I" => Some(Self::LogI),
+            "BESSEL_OP_MATERN" => Some(Self::Matern),
             _ => None,
         }
     }

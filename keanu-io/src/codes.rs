@@ -8,8 +8,8 @@ use keanu_distributions::{Adjacency, Kde};
 use keanu_graph::DType;
 use keanu_graph::ode::OdeSolver;
 use keanu_graph::op::{
-    ArgOp, BinaryOp, CompareOp, CumulativeOp, DistributionKind, LogicOp, Nested, Predicate,
-    ReduceOp, UnaryOp,
+    ArgOp, BesselOp, BinaryOp, CompareOp, CumulativeOp, DistributionKind, LogicOp, Nested,
+    Predicate, ReduceOp, UnaryOp,
 };
 use std::sync::Arc;
 
@@ -66,11 +66,12 @@ codes! {
     "unary op": UnaryOp => UnaryOp {
         Abs, Neg, Sign, Reciprocal, Exp, Exp2, ExpM1, Ln, Ln1p, Log2, Log10, Sqrt, Sin, Cos, Tan, Asin, Acos, Atan,
         Sinh, Cosh, Tanh, Asinh, Acosh, Atanh, Sigmoid, Floor, Ceil, Round, LnGamma, Digamma, Trigamma,
-        Erf, Erfc, ErfInv, LogNdtr, Ndtri, Softplus, Logit, Log1mExp,
+        Erf, Erfc, ErfInv, LogNdtr, Ndtri, Softplus, Logit, Log1mExp, LambertW0, LambertWm1,
     }
     "binary op": BinaryOp => BinaryOp {
-        Add, Sub, Mul, Div, Pow, Max, Min, Rem, Atan2, LogAddExp, LogAddExp2, SafeLnTimes, LogBeta,
+        Add, Sub, Mul, Div, Pow, Max, Min, Rem, Atan2, LogAddExp, LogAddExp2, SafeLnTimes, LogBeta, OwensT,
     }
+    "Bessel op": BesselOp => BesselOp { K, LogK, LogI, Matern }
     "comparison": CompareOp => CompareOp { Gt, Ge, Lt, Le, Eq, Ne }
     "logic op": LogicOp => LogicOp { And, Or, Xor }
     "predicate": Predicate => Predicate {
@@ -304,8 +305,9 @@ mod tests {
 
     #[test]
     fn every_schema_value_has_a_variant() {
-        every_code_has_a_variant::<UnaryOp>(39);
-        every_code_has_a_variant::<BinaryOp>(13);
+        every_code_has_a_variant::<UnaryOp>(41);
+        every_code_has_a_variant::<BinaryOp>(14);
+        every_code_has_a_variant::<BesselOp>(4);
         every_code_has_a_variant::<CompareOp>(6);
         every_code_has_a_variant::<LogicOp>(3);
         every_code_has_a_variant::<Predicate>(6);

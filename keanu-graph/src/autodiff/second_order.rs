@@ -214,6 +214,16 @@ fn vjp_tangent(
         | Op::SetWithMask
         | Op::ReplaceNan(_)
         | Op::Factor => none(),
+        Op::Bessel { kind, order } => {
+            // as a unary op: x̄ = ḡ f'(x), whose derivative is ḡ f''(x) ẋ
+            let Some(t0) = t[0] else { return Ok(none()) };
+            let x = f64v(parents[0])?;
+            let (kind, order) = (*kind, *order);
+            let d2 = x.zip_with(y, |x, y| {
+                crate::op::bessel::derivatives(kind, order, x, y).1
+            })?;
+            vec![Some(reduce_to(scale(t0, &d2)?.mul(g)?, x.shape())?)]
+        }
         Op::Unary(u) => {
             // x̄ = ḡ f'(x): its derivative is ḡ f''(x) ẋ
             let Some(t0) = t[0] else { return Ok(none()) };
@@ -837,6 +847,7 @@ fn unary_second_derivative(u: UnaryOp, x: f64, y: f64) -> f64 {
             let e = (-x).exp_m1();
             -(-x).exp() / (e * e)
         }
+        UnaryOp::LambertW0 | UnaryOp::LambertWm1 => special::lambert_w_dx2(x, y),
         UnaryOp::Floor | UnaryOp::Ceil | UnaryOp::Round | UnaryOp::Sign => 0.0,
     }
 }
@@ -911,6 +922,21 @@ fn binary_second_partials_scalar(op: BinaryOp, l: f64, r: f64, y: f64) -> [f64; 
                 -both,
                 -both,
                 special::trigamma(r) - both,
+            ]
+        }
+        // h is left and a right; with e = exp(−½h²(1 + a²)) = 2π φ(h) φ(ah)
+        BinaryOp::OwensT => {
+            use std::f64::consts::PI;
+            let s = 1.0 + r * r;
+            let e = (-0.5 * l * l * s).exp() / (2.0 * PI);
+            let phi = (-0.5 * l * l).exp() / (2.0 * PI).sqrt();
+            let erf = special::erf(l * r * std::f64::consts::FRAC_1_SQRT_2);
+            let ha = -l * e;
+            [
+                0.5 * l * phi * erf - r * e,
+                ha,
+                ha,
+                -2.0 * r * e / s * (0.5 * l * l + 1.0 / s),
             ]
         }
         _ => [0.0; 4],

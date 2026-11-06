@@ -585,6 +585,198 @@ impl<'de> serde::Deserialize<'de> for Axes {
         deserializer.deserialize_struct("keanu.Axes", FIELDS, GeneratedVisitor)
     }
 }
+impl serde::Serialize for Bessel {
+    #[allow(deprecated)]
+    fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        use serde::ser::SerializeStruct;
+        let mut len = 0;
+        if self.kind != 0 {
+            len += 1;
+        }
+        if self.order != 0. {
+            len += 1;
+        }
+        let mut struct_ser = serializer.serialize_struct("keanu.Bessel", len)?;
+        if self.kind != 0 {
+            let v = BesselOp::try_from(self.kind)
+                .map_err(|_| serde::ser::Error::custom(format!("Invalid variant {}", self.kind)))?;
+            struct_ser.serialize_field("kind", &v)?;
+        }
+        if self.order != 0. {
+            struct_ser.serialize_field("order", &self.order)?;
+        }
+        struct_ser.end()
+    }
+}
+impl<'de> serde::Deserialize<'de> for Bessel {
+    #[allow(deprecated)]
+    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        const FIELDS: &[&str] = &[
+            "kind",
+            "order",
+        ];
+
+        #[allow(clippy::enum_variant_names)]
+        enum GeneratedField {
+            Kind,
+            Order,
+        }
+        impl<'de> serde::Deserialize<'de> for GeneratedField {
+            fn deserialize<D>(deserializer: D) -> std::result::Result<GeneratedField, D::Error>
+            where
+                D: serde::Deserializer<'de>,
+            {
+                struct GeneratedVisitor;
+
+                impl serde::de::Visitor<'_> for GeneratedVisitor {
+                    type Value = GeneratedField;
+
+                    fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                        write!(formatter, "expected one of: {:?}", &FIELDS)
+                    }
+
+                    #[allow(unused_variables)]
+                    fn visit_str<E>(self, value: &str) -> std::result::Result<GeneratedField, E>
+                    where
+                        E: serde::de::Error,
+                    {
+                        match value {
+                            "kind" => Ok(GeneratedField::Kind),
+                            "order" => Ok(GeneratedField::Order),
+                            _ => Err(serde::de::Error::unknown_field(value, FIELDS)),
+                        }
+                    }
+                }
+                deserializer.deserialize_identifier(GeneratedVisitor)
+            }
+        }
+        struct GeneratedVisitor;
+        impl<'de> serde::de::Visitor<'de> for GeneratedVisitor {
+            type Value = Bessel;
+
+            fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                formatter.write_str("struct keanu.Bessel")
+            }
+
+            fn visit_map<V>(self, mut map_: V) -> std::result::Result<Bessel, V::Error>
+                where
+                    V: serde::de::MapAccess<'de>,
+            {
+                let mut kind__ = None;
+                let mut order__ = None;
+                while let Some(k) = map_.next_key()? {
+                    match k {
+                        GeneratedField::Kind => {
+                            if kind__.is_some() {
+                                return Err(serde::de::Error::duplicate_field("kind"));
+                            }
+                            kind__ = Some(map_.next_value::<BesselOp>()? as i32);
+                        }
+                        GeneratedField::Order => {
+                            if order__.is_some() {
+                                return Err(serde::de::Error::duplicate_field("order"));
+                            }
+                            order__ = 
+                                Some(map_.next_value::<::pbjson::private::NumberDeserialize<_>>()?.0)
+                            ;
+                        }
+                    }
+                }
+                Ok(Bessel {
+                    kind: kind__.unwrap_or_default(),
+                    order: order__.unwrap_or_default(),
+                })
+            }
+        }
+        deserializer.deserialize_struct("keanu.Bessel", FIELDS, GeneratedVisitor)
+    }
+}
+impl serde::Serialize for BesselOp {
+    #[allow(deprecated)]
+    fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        let variant = match self {
+            Self::Unspecified => "BESSEL_OP_UNSPECIFIED",
+            Self::K => "BESSEL_OP_K",
+            Self::LogK => "BESSEL_OP_LOG_K",
+            Self::LogI => "BESSEL_OP_LOG_I",
+            Self::Matern => "BESSEL_OP_MATERN",
+        };
+        serializer.serialize_str(variant)
+    }
+}
+impl<'de> serde::Deserialize<'de> for BesselOp {
+    #[allow(deprecated)]
+    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        const FIELDS: &[&str] = &[
+            "BESSEL_OP_UNSPECIFIED",
+            "BESSEL_OP_K",
+            "BESSEL_OP_LOG_K",
+            "BESSEL_OP_LOG_I",
+            "BESSEL_OP_MATERN",
+        ];
+
+        struct GeneratedVisitor;
+
+        impl serde::de::Visitor<'_> for GeneratedVisitor {
+            type Value = BesselOp;
+
+            fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                write!(formatter, "expected one of: {:?}", &FIELDS)
+            }
+
+            fn visit_i64<E>(self, v: i64) -> std::result::Result<Self::Value, E>
+            where
+                E: serde::de::Error,
+            {
+                i32::try_from(v)
+                    .ok()
+                    .and_then(|x| x.try_into().ok())
+                    .ok_or_else(|| {
+                        serde::de::Error::invalid_value(serde::de::Unexpected::Signed(v), &self)
+                    })
+            }
+
+            fn visit_u64<E>(self, v: u64) -> std::result::Result<Self::Value, E>
+            where
+                E: serde::de::Error,
+            {
+                i32::try_from(v)
+                    .ok()
+                    .and_then(|x| x.try_into().ok())
+                    .ok_or_else(|| {
+                        serde::de::Error::invalid_value(serde::de::Unexpected::Unsigned(v), &self)
+                    })
+            }
+
+            fn visit_str<E>(self, value: &str) -> std::result::Result<Self::Value, E>
+            where
+                E: serde::de::Error,
+            {
+                match value {
+                    "BESSEL_OP_UNSPECIFIED" => Ok(BesselOp::Unspecified),
+                    "BESSEL_OP_K" => Ok(BesselOp::K),
+                    "BESSEL_OP_LOG_K" => Ok(BesselOp::LogK),
+                    "BESSEL_OP_LOG_I" => Ok(BesselOp::LogI),
+                    "BESSEL_OP_MATERN" => Ok(BesselOp::Matern),
+                    _ => Err(serde::de::Error::unknown_variant(value, FIELDS)),
+                }
+            }
+        }
+        deserializer.deserialize_any(GeneratedVisitor)
+    }
+}
 impl serde::Serialize for BinaryOp {
     #[allow(deprecated)]
     fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
@@ -606,6 +798,7 @@ impl serde::Serialize for BinaryOp {
             Self::LogAddExp2 => "BINARY_OP_LOG_ADD_EXP2",
             Self::SafeLnTimes => "BINARY_OP_SAFE_LN_TIMES",
             Self::LogBeta => "BINARY_OP_LOG_BETA",
+            Self::OwensT => "BINARY_OP_OWENS_T",
         };
         serializer.serialize_str(variant)
     }
@@ -631,6 +824,7 @@ impl<'de> serde::Deserialize<'de> for BinaryOp {
             "BINARY_OP_LOG_ADD_EXP2",
             "BINARY_OP_SAFE_LN_TIMES",
             "BINARY_OP_LOG_BETA",
+            "BINARY_OP_OWENS_T",
         ];
 
         struct GeneratedVisitor;
@@ -685,6 +879,7 @@ impl<'de> serde::Deserialize<'de> for BinaryOp {
                     "BINARY_OP_LOG_ADD_EXP2" => Ok(BinaryOp::LogAddExp2),
                     "BINARY_OP_SAFE_LN_TIMES" => Ok(BinaryOp::SafeLnTimes),
                     "BINARY_OP_LOG_BETA" => Ok(BinaryOp::LogBeta),
+                    "BINARY_OP_OWENS_T" => Ok(BinaryOp::OwensT),
                     _ => Err(serde::de::Error::unknown_variant(value, FIELDS)),
                 }
             }
@@ -3452,6 +3647,9 @@ impl serde::Serialize for Node {
                 node::Op::SparseMatmul(v) => {
                     struct_ser.serialize_field("sparseMatmul", v)?;
                 }
+                node::Op::Bessel(v) => {
+                    struct_ser.serialize_field("bessel", v)?;
+                }
                 node::Op::Scan(v) => {
                     struct_ser.serialize_field("scan", v)?;
                 }
@@ -3548,6 +3746,7 @@ impl<'de> serde::Deserialize<'de> for Node {
             "matrixExp",
             "sparse_matmul",
             "sparseMatmul",
+            "bessel",
             "scan",
             "ode",
         ];
@@ -3614,6 +3813,7 @@ impl<'de> serde::Deserialize<'de> for Node {
             LogDensity,
             MatrixExp,
             SparseMatmul,
+            Bessel,
             Scan,
             Ode,
         }
@@ -3697,6 +3897,7 @@ impl<'de> serde::Deserialize<'de> for Node {
                             "logDensity" | "log_density" => Ok(GeneratedField::LogDensity),
                             "matrixExp" | "matrix_exp" => Ok(GeneratedField::MatrixExp),
                             "sparseMatmul" | "sparse_matmul" => Ok(GeneratedField::SparseMatmul),
+                            "bessel" => Ok(GeneratedField::Bessel),
                             "scan" => Ok(GeneratedField::Scan),
                             "ode" => Ok(GeneratedField::Ode),
                             _ => Err(serde::de::Error::unknown_field(value, FIELDS)),
@@ -4135,6 +4336,13 @@ impl<'de> serde::Deserialize<'de> for Node {
                                 return Err(serde::de::Error::duplicate_field("sparseMatmul"));
                             }
                             op__ = map_.next_value::<::std::option::Option<_>>()?.map(node::Op::SparseMatmul)
+;
+                        }
+                        GeneratedField::Bessel => {
+                            if op__.is_some() {
+                                return Err(serde::de::Error::duplicate_field("bessel"));
+                            }
+                            op__ = map_.next_value::<::std::option::Option<_>>()?.map(node::Op::Bessel)
 ;
                         }
                         GeneratedField::Scan => {
@@ -6748,6 +6956,8 @@ impl serde::Serialize for UnaryOp {
             Self::Softplus => "UNARY_OP_SOFTPLUS",
             Self::Logit => "UNARY_OP_LOGIT",
             Self::Log1mExp => "UNARY_OP_LOG1M_EXP",
+            Self::LambertW0 => "UNARY_OP_LAMBERT_W0",
+            Self::LambertWm1 => "UNARY_OP_LAMBERT_WM1",
         };
         serializer.serialize_str(variant)
     }
@@ -6799,6 +7009,8 @@ impl<'de> serde::Deserialize<'de> for UnaryOp {
             "UNARY_OP_SOFTPLUS",
             "UNARY_OP_LOGIT",
             "UNARY_OP_LOG1M_EXP",
+            "UNARY_OP_LAMBERT_W0",
+            "UNARY_OP_LAMBERT_WM1",
         ];
 
         struct GeneratedVisitor;
@@ -6879,6 +7091,8 @@ impl<'de> serde::Deserialize<'de> for UnaryOp {
                     "UNARY_OP_SOFTPLUS" => Ok(UnaryOp::Softplus),
                     "UNARY_OP_LOGIT" => Ok(UnaryOp::Logit),
                     "UNARY_OP_LOG1M_EXP" => Ok(UnaryOp::Log1mExp),
+                    "UNARY_OP_LAMBERT_W0" => Ok(UnaryOp::LambertW0),
+                    "UNARY_OP_LAMBERT_WM1" => Ok(UnaryOp::LambertWm1),
                     _ => Err(serde::de::Error::unknown_variant(value, FIELDS)),
                 }
             }

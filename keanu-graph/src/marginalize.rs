@@ -931,6 +931,7 @@ fn check_aligned(
         | Op::Cast(_)
         | Op::Where
         | Op::ReplaceNan(_)
+        | Op::Bessel { .. }
         | Op::SetWithMask
         | Op::Assert(_)
         | Op::LogDensity(_)

@@ -27,12 +27,18 @@ scale ℓ, which is a scalar or one value per feature (automatic relevance deter
 | `Kernel::matern12(&b, σ, ℓ)` | σ² exp(−r) |
 | `Kernel::matern32(&b, σ, ℓ)` | σ² (1 + √3 r) exp(−√3 r) |
 | `Kernel::matern52(&b, σ, ℓ)` | σ² (1 + √5 r + 5r²/3) exp(−√5 r) |
+| `Kernel::matern(&b, ν, σ, ℓ)` | σ² 2^(1−ν)/Γ(ν) (√(2ν) r)^ν K_ν(√(2ν) r), any constant ν > 0 |
 | `Kernel::rational_quadratic(&b, σ, ℓ, α)` | σ² (1 + r²/(2α))^(−α) |
 | `Kernel::periodic(&b, σ, ℓ, p)` | σ² exp(−2 Σ_d sin²(π (x_d − x'_d)/p) / ℓ_d²) |
 | `Kernel::linear(&b, σ_b, σ_s, c)` | σ_b² + σ_s² (x − c)·(x' − c) |
 
 Kernels combine with `+` and `*`: `Kernel::exp_quad(&b, 1.0, 10.0) * Kernel::periodic(&b, 1.0, 1.0, 12.0)` is a
 locally periodic kernel, and adding `Kernel::linear(..)` adds a trend.
+
+The general Matérn kernel takes its smoothness ν as a number, not a node, and computes the modified Bessel function
+K_ν in the graph (`DoubleVar::matern_correlation`), with first and second derivatives in the distance, so its
+amplitude and length scale may be latent. At ν = 1/2, 3/2 and 5/2 it equals the closed forms above, which are
+cheaper; it tends to the exponentiated quadratic as ν grows.
 
 ## Marginal likelihood and prediction
 
@@ -78,11 +84,11 @@ graph's autodiff.
 {{#include ../../keanu/tests/book.rs:hsgp}}
 ```
 
-- `Hsgp::new(&kernel, m, c)` takes the kernel (`exp_quad`, `matern12`, `matern32` or `matern52`; other kernels and
-  sums or products of kernels have no spectral density here and are an error: for a sum, add one HSGP per term),
-  the number of basis functions m per input dimension and the factor c ≥ 1 by which the box extends the inputs'
-  range: L = c · S, with S half the range, centred on its midpoint. `with_domain(HsgpDomain::new(centre, L))` sets
-  the box instead, for instance to predict beyond the data.
+- `Hsgp::new(&kernel, m, c)` takes the kernel (`exp_quad`, `matern12`, `matern32`, `matern52` or `matern`; other
+  kernels and sums or products of kernels have no spectral density here and are an error: for a sum, add one HSGP
+  per term), the number of basis functions m per input dimension and the factor c ≥ 1 by which the box extends the
+  inputs' range: L = c · S, with S half the range, centred on its midpoint.
+  `with_domain(HsgpDomain::new(centre, L))` sets the box instead, for instance to predict beyond the data.
 - `hsgp.prior(x)` adds the weights (`prior.beta`, of length m^d) and returns `prior.f`, the function at the inputs
   (`[n]`, or `[n, d]` with one row per point). Inputs with d dimensions use the full tensor grid of m functions per
   dimension, so m^d weights; the length scale is a scalar or one per dimension.

@@ -97,6 +97,8 @@ message Node {
     Empty matrix_exp = 66;
     // The product of a constant sparse matrix with the one parent.
     SparseMatrix sparse_matmul = 67;
+    // An element-wise special function of the one parent with a constant order.
+    Bessel bessel = 68;
     Scan scan = 100;
     Ode ode = 101;
   }
@@ -186,6 +188,8 @@ enum UnaryOp {
   UNARY_OP_SOFTPLUS = 37;
   UNARY_OP_LOGIT = 38;
   UNARY_OP_LOG1M_EXP = 39;
+  UNARY_OP_LAMBERT_W0 = 40;
+  UNARY_OP_LAMBERT_WM1 = 41;
 }
 
 // Element-wise binary operations.
@@ -204,6 +208,7 @@ enum BinaryOp {
   BINARY_OP_LOG_ADD_EXP2 = 11;
   BINARY_OP_SAFE_LN_TIMES = 12;
   BINARY_OP_LOG_BETA = 13;
+  BINARY_OP_OWENS_T = 14;
 }
 
 // Element-wise comparisons: `compare` gives bool, `mask` gives f64 (1.0 where the comparison holds).
@@ -395,6 +400,25 @@ message CptKey {
 
 message ReplaceNan {
   double value = 1;
+}
+
+// An element-wise special function of x with a constant real order nu.
+message Bessel {
+  BesselOp kind = 1;
+  double order = 2;
+}
+
+// The functions of a `Bessel` operation.
+enum BesselOp {
+  BESSEL_OP_UNSPECIFIED = 0;
+  // K_nu(x), the modified Bessel function of the second kind.
+  BESSEL_OP_K = 1;
+  // ln K_nu(x).
+  BESSEL_OP_LOG_K = 2;
+  // ln I_nu(x), the log of the modified Bessel function of the first kind.
+  BESSEL_OP_LOG_I = 3;
+  // The Matern correlation 2^(1 - nu) / Gamma(nu) x^nu K_nu(x).
+  BESSEL_OP_MATERN = 4;
 }
 
 // A proxy of the given type and shape, connected to its parent if it has one.

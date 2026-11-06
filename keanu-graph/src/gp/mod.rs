@@ -94,6 +94,8 @@ enum Form {
     Matern12,
     Matern32,
     Matern52,
+    /// The Matérn kernel of any smoothness ν > 0, through the Bessel function K_ν.
+    Matern(f64),
 }
 
 #[derive(Clone, Debug)]
@@ -241,6 +243,30 @@ impl<'b> Kernel<'b> {
         Self::stationary(b, Form::Matern52, amplitude, length_scale)
     }
 
+    /// The Matérn kernel of smoothness ν > 0 (a constant): σ² 2^{1−ν}/Γ(ν) (√(2ν) r)^ν K_ν(√(2ν) r), with K_ν the
+    /// modified Bessel function of the second kind (the correlation is [`DoubleVar::matern_correlation`], an
+    /// [`Op::Bessel`](crate::op::Op::Bessel) node, differentiable to second order in the distance, so in the
+    /// amplitude, length scale and inputs). Its sample paths are ⌈ν⌉ − 1 times differentiable, and it is the
+    /// exponentiated quadratic in the limit ν → ∞. At ν = ½, 3/2 and 5/2 it equals [`matern12`](Self::matern12),
+    /// [`matern32`](Self::matern32) and [`matern52`](Self::matern52) to rounding, which are cheaper. It has a
+    /// spectral density, so [`Hsgp`] approximates it for any ν. A ν that is not finite and positive is a build
+    /// error.
+    pub fn matern(
+        b: &'b GraphBuilder,
+        nu: f64,
+        amplitude: impl IntoDoubleVar<'b>,
+        length_scale: impl IntoDoubleVar<'b>,
+    ) -> Self {
+        if !(nu.is_finite() && nu > 0.0) {
+            fail(
+                b,
+                KERNEL,
+                format!("the Matérn smoothness ν must be finite and positive, not {nu}"),
+            );
+        }
+        Self::stationary(b, Form::Matern(nu), amplitude, length_scale)
+    }
+
     /// The rational quadratic kernel σ² (1 + r² / (2α))^(−α), a scale mixture of exponentiated quadratics that
     /// tends to [`exp_quad`](Self::exp_quad) as the (scalar) α grows.
     pub fn rational_quadratic(
@@ -351,6 +377,7 @@ impl<'b> Kernel<'b> {
                         let a = distance() * 5f64.sqrt();
                         (a + 1.0 + r2 * (5.0 / 3.0)) * (-a).exp()
                     }
+                    Form::Matern(nu) => (distance() * (2.0 * nu).sqrt()).matern_correlation(nu),
                 };
                 correlation * (amplitude * amplitude)
             }
