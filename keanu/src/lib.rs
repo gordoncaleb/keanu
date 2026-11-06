@@ -100,7 +100,8 @@ pub mod prelude {
         Regularization, SamplingFitting, accuracy, coefficient_of_determination,
     };
     pub use crate::algorithms::vi::{
-        Advi, AdviResult, Pathfinder, PathfinderResult, VariationalFamily,
+        Advi, AdviResult, Minibatch, MinibatchGroup, Pathfinder, PathfinderResult,
+        VariationalFamily,
     };
     pub use crate::algorithms::{NetworkSample, NetworkSamples, Samples};
     pub use crate::distributions::KeanuRng;

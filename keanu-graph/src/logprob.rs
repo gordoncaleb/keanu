@@ -316,9 +316,42 @@ pub fn log_prob_gradient(
     Ok(gradient.expect("every node has gradient parts"))
 }
 
+/// Per-node weights of the terms of a log probability, indexed by node id; `None` weighs every term 1, as does a
+/// node past the end.
+pub(crate) type Weights<'w> = Option<&'w [f64]>;
+
+/// The weight of a node's term.
+pub(crate) fn weight_of(weights: Weights<'_>, id: NodeId) -> f64 {
+    weights.and_then(|w| w.get(id.0).copied()).unwrap_or(1.0)
+}
+
+/// `w · term`, except that an impossible term (−∞ or NaN) stays as it is whatever its weight.
+pub(crate) fn weighted_term(w: f64, term: f64) -> f64 {
+    if w == 1.0 || !term.is_finite() {
+        term
+    } else {
+        w * term
+    }
+}
+
+fn scale_option(t: Option<DoubleTensor>, w: f64) -> Option<DoubleTensor> {
+    t.map(|t| t * w)
+}
+
+fn scale_parts((value, parameters): LogProbGradientParts, w: f64) -> LogProbGradientParts {
+    if w == 1.0 {
+        return (value, parameters);
+    }
+    (
+        scale_option(value, w),
+        parameters.into_iter().map(|p| scale_option(p, w)).collect(),
+    )
+}
+
 /// The total log probability of the probabilistic nodes `of` and its gradient with respect to the latents in
 /// `wrt`, exactly as [`log_prob`] (summed in the order of `of`) and [`log_prob_gradient`], but in one pass that
-/// reads each node's value and parameters and builds its distribution once.
+/// reads each node's value and parameters and builds its distribution once. Each node's term (and its gradient)
+/// is multiplied by its weight in `weights`.
 ///
 /// None if any node's log probability is impossible (-infinity or NaN); the remaining nodes are not evaluated.
 pub(crate) fn log_prob_and_gradient(
@@ -326,6 +359,7 @@ pub(crate) fn log_prob_and_gradient(
     state: &State,
     of: &[NodeId],
     wrt: &[NodeId],
+    weights: Weights<'_>,
 ) -> Result<Option<(f64, LogProbGradient)>> {
     let mut log_prob = 0.0;
     let gradient = gradient_from_parts(graph, state, of, wrt, |node| {
@@ -339,8 +373,9 @@ pub(crate) fn log_prob_and_gradient(
             kind(graph, node)?
                 .log_prob_and_gradient(value(state, node)?, &parameters(graph, state, node)?)?
         };
-        log_prob += node_log_prob;
-        Ok(parts)
+        let w = weight_of(weights, node);
+        log_prob += weighted_term(w, node_log_prob);
+        Ok(parts.map(|parts| scale_parts(parts, w)))
     })?;
     Ok(gradient.map(|gradient| (log_prob, gradient)))
 }
@@ -408,6 +443,8 @@ pub(crate) type LogProbHvp = Vec<Option<DoubleTensor>>;
 /// [`GraphError::NoSecondOrderRule`] naming the node if a distribution whose log density depends on the directions
 /// (through its value or a parameter) or a deterministic node between such a parameter and a latent has no
 /// second-order rule.
+///
+/// Each node's term is multiplied by its weight in `weights`, and so are its gradient and Hessian-vector products.
 pub(crate) fn log_prob_hvp(
     graph: &Graph,
     state: &State,
@@ -415,6 +452,7 @@ pub(crate) fn log_prob_hvp(
     wrt: &[NodeId],
     tangents: impl IntoIterator<Item = (NodeId, DoubleTensor)>,
     b: usize,
+    weights: Weights<'_>,
 ) -> Result<(LogProbGradient, LogProbHvp)> {
     graph.check_ids(of.iter().chain(wrt))?;
     let mut is_wrt = vec![false; graph.len()];
@@ -432,7 +470,9 @@ pub(crate) fn log_prob_hvp(
     let mut hvp: LogProbHvp = vec![None; graph.len()];
     let mut seeds: Vec<SecondOrderSeed> = Vec::new();
     for &node in of {
-        let (value_gradient, parameter_gradients) = node_gradient_parts(graph, state, node)?;
+        let w = weight_of(weights, node);
+        let (value_gradient, parameter_gradients) =
+            scale_parts(node_gradient_parts(graph, state, node)?, w);
         let parents = graph[node].parents();
         let value_tangent = node_tangents[node.0].as_ref();
         let parent_tangents: SmallVec<[Option<&DoubleTensor>; 4]> = parents
@@ -462,6 +502,7 @@ pub(crate) fn log_prob_hvp(
                     other => other,
                 })?
         };
+        let (value_hvp, parameter_hvps) = scale_parts((value_hvp, parameter_hvps), w);
         if is_wrt[node.0] {
             if let Some(dx) = value_gradient {
                 gradient.add(node, dx)?;

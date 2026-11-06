@@ -3,7 +3,9 @@
 
 use crate::error::{GraphError, Result};
 use crate::graph::{Graph, NodeId};
-use crate::logprob::{LogProbGradient, log_prob_gradient, node_log_prob};
+use crate::logprob::{
+    LogProbGradient, Weights, log_prob_gradient, node_log_prob, weight_of, weighted_term,
+};
 use crate::op::eval;
 use crate::state::State;
 use crate::value::{DType, Value};
@@ -238,6 +240,15 @@ impl Model {
     }
 
     fn log_prob_of(&self, state: &State, nodes: &[NodeId]) -> Result<f64> {
+        self.weighted_log_prob_of(state, nodes, None)
+    }
+
+    fn weighted_log_prob_of(
+        &self,
+        state: &State,
+        nodes: &[NodeId],
+        weights: Weights<'_>,
+    ) -> Result<f64> {
         let mut sum = 0.0;
         for &id in nodes {
             let node = &self.graph[id];
@@ -246,7 +257,7 @@ impl Model {
                 if lp == f64::NEG_INFINITY || lp.is_nan() {
                     return Ok(f64::NEG_INFINITY);
                 }
-                sum += lp;
+                sum += weighted_term(weight_of(weights, id), lp);
             } else if contradicts_observation(&self.graph, state, id)? {
                 return Ok(f64::NEG_INFINITY);
             }
@@ -257,6 +268,11 @@ impl Model {
     /// The joint log probability of the latent and observed nodes, with the factors' terms.
     pub fn log_prob(&self, state: &State) -> Result<f64> {
         self.log_prob_of(state, &self.joint)
+    }
+
+    /// The joint log probability with each node's term multiplied by its weight in `weights`.
+    pub(crate) fn weighted_log_prob(&self, state: &State, weights: Weights<'_>) -> Result<f64> {
+        self.weighted_log_prob_of(state, &self.joint, weights)
     }
 
     /// The log likelihood: the log probability of the observed nodes, with the factors' terms.
@@ -387,7 +403,7 @@ impl Model {
     /// distribution once (for gradient based samplers, which need both at every step). A gradient that fails at an
     /// impossible point ([`GraphError::is_impossible_point`]) gives (−∞, None).
     pub fn log_prob_and_gradient(&self, state: &State) -> Result<(f64, Option<LogProbGradient>)> {
-        self.log_prob_and_gradient_of(state, &self.continuous)
+        self.log_prob_and_gradient_of(state, &self.continuous, None)
     }
 
     /// The joint log probability and, unless it is impossible (-∞), its gradient with respect to the continuous
@@ -411,14 +427,16 @@ impl Model {
                 self.graph.describe(id)
             )));
         }
-        self.log_prob_and_gradient_of(state, wrt)
+        self.log_prob_and_gradient_of(state, wrt, None)
     }
 
-    /// [`Self::log_prob_and_gradient_wrt`] without checking `wrt`.
+    /// [`Self::log_prob_and_gradient_wrt`] without checking `wrt`, with each node's term multiplied by its weight
+    /// in `weights`.
     pub(crate) fn log_prob_and_gradient_of(
         &self,
         state: &State,
         wrt: &[NodeId],
+        weights: Weights<'_>,
     ) -> Result<(f64, Option<LogProbGradient>)> {
         for &id in &self.observed {
             if !self.graph[id].is_probabilistic()
@@ -432,6 +450,7 @@ impl Model {
             state,
             &self.probabilistic_joint,
             wrt,
+            weights,
         ) {
             Err(e) if e.is_impossible_point() => return Ok((f64::NEG_INFINITY, None)),
             joint => joint?,
@@ -444,12 +463,14 @@ impl Model {
 
     /// The gradient of the joint log probability with respect to each continuous latent and its derivatives along
     /// `b` directions, given as each latent's batched tangent `[b, latent shape...]` (see
-    /// [`log_prob_hvp`](crate::logprob::log_prob_hvp)). Observed deterministic nodes are not checked.
+    /// [`log_prob_hvp`](crate::logprob::log_prob_hvp)), each node's term weighted by `weights`. Observed
+    /// deterministic nodes are not checked.
     pub(crate) fn log_prob_gradient_and_hvp(
         &self,
         state: &State,
         tangents: impl IntoIterator<Item = (NodeId, keanu_tensor::DoubleTensor)>,
         b: usize,
+        weights: Weights<'_>,
     ) -> Result<(LogProbGradient, crate::logprob::LogProbHvp)> {
         crate::logprob::log_prob_hvp(
             &self.graph,
@@ -458,6 +479,7 @@ impl Model {
             &self.continuous,
             tangents,
             b,
+            weights,
         )
     }
 }

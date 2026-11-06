@@ -401,6 +401,22 @@ Work from `docs/plans/2026-11-05-001-feat-applied-modelling-gaps-plan.md`.
   `mcmc::chains::run_chains_from` and `sample_chains_from` run one chain from each. The radon example gained
   `model`, `sample` and `run_from_pathfinder`, whose chains converge with a 150-step warm-up, and the guide's VI
   chapter a Pathfinder section.
+- keanu-graph, keanu-algorithms: **minibatch ADVI** (`Advi::with_minibatch` and the `minibatch` field;
+  `vi::Minibatch`, `MinibatchGroup` and `Batches`; `Minibatch` and `MinibatchGroup` also in the crate root and the
+  `keanu` prelude) and **log probability weights** (`Parameterisation::set_weight`, `with_weights` and `weight`,
+  which multiply a latent's, observed node's or factor's term, its gradient and its Hessian-vector products by a
+  finite non-negative weight; an impossible term stays impossible at any weight). A `MinibatchGroup` holds
+  observed nodes and covariates (constants or observed nodes) with their full data of N rows along axis 0, a batch
+  size B, and factors to weigh; each iteration sets every node of a group to the same B rows, drawn without
+  replacement within an epoch and reshuffled each epoch (the N mod B rows left over are skipped), recomputes their
+  descendants, and weighs the group's probabilistic nodes and factors by N / B. Batches are validated against the
+  model: leading dimension B in the graph, N rows of the same trailing shape and type in the data, B ≤ N, no node
+  twice, and every latent, observation or factor downstream of the data in the group (local latents are rejected).
+  Each ELBO estimate uses a fresh batch and convergence is judged on the running mean of the last estimates; the
+  step size adaptation runs on minibatches but compares ELBOs on one fixed batch. Without a minibatch, ADVI is
+  unchanged, except that `Advi` is no longer `Copy`. On a 100 000-row regression, batches of 1000 rows give the
+  exact posterior's coefficients to within 0.05 and their standard deviations to within a factor of 2, in about
+  0.2 s. The guide's VI chapter has a Minibatches section.
 
 ### Code review fixes
 

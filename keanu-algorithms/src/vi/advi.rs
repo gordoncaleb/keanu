@@ -4,6 +4,7 @@
 use crate::error::{AlgorithmError, Result};
 use crate::samples::NetworkSamples;
 use crate::support::{check_latents, evaluate_all, sample_approximation, start_point};
+use crate::vi::minibatch::{Batches, Minibatch};
 use keanu_distributions::KeanuRng;
 use keanu_graph::{Model, NodeId, Parameterisation, State};
 use keanu_tensor::DoubleTensor;
@@ -64,7 +65,22 @@ pub enum VariationalFamily {
 ///
 /// ADVI handles continuous latents only: a model with discrete latents is rejected, so observe them or sum them out
 /// (for instance with a mixture) first.
-#[derive(Debug, Clone, Copy, PartialEq)]
+///
+/// # Minibatches
+///
+/// With [`with_minibatch`](Self::with_minibatch), each iteration observes a fresh random batch of B of the N data
+/// rows (see [`Minibatch`]) before estimating the gradient, and the log probability weighs the batched nodes' terms
+/// by N / B (see [`Parameterisation::set_weight`]), so the gradient is an unbiased estimate of the full data's at
+/// the cost of B rows. Each ELBO estimate is made on a fresh batch too, so the estimates are noisier: convergence is
+/// judged on their running mean, the mean of the last max(⌊0.1·`max_iterations` / `eval_elbo`⌋, 2) estimates (the
+/// change buffer's length), whose relative change goes in the buffer instead of the latest estimate's, with the same
+/// mean-or-median rule. The adaptation runs on minibatches as well, each of its iterations on a fresh batch, but it
+/// estimates the initial ELBO and every candidate η's on one fixed batch (the first), so that the comparison
+/// between step sizes is not swamped by the differences between batches. The [ELBO trace](AdviResult::elbo_trace)
+/// holds the noisy estimates; they seldom meet a tight tolerance, so bound the fit with
+/// [`max_iterations`](Self::max_iterations). After the fit, the batched nodes get back the values they had before
+/// it.
+#[derive(Debug, Clone, PartialEq)]
 #[non_exhaustive]
 pub struct Advi {
     /// The Gaussian family to fit (default mean field).
@@ -85,6 +101,9 @@ pub struct Advi {
     pub adapt_iterations: usize,
     /// The step size scale η used without adaptation (default 1).
     pub eta: f64,
+    /// The data to subsample each iteration (default none: every iteration uses all of it). See the
+    /// [type documentation](Self#minibatches).
+    pub minibatch: Option<Minibatch>,
 }
 
 /// Setters for each setting, for use as `Advi::default().with_...(...)`.
@@ -151,6 +170,14 @@ impl Advi {
         self.eta = eta;
         self
     }
+
+    /// Sets [`minibatch`](Self::minibatch): each iteration observes a random batch of the data, weighted up to the
+    /// full data. A [`MinibatchGroup`](super::MinibatchGroup) converts into a [`Minibatch`].
+    #[must_use]
+    pub fn with_minibatch(mut self, minibatch: impl Into<Minibatch>) -> Self {
+        self.minibatch = Some(minibatch.into());
+        self
+    }
 }
 
 impl Default for Advi {
@@ -165,6 +192,7 @@ impl Default for Advi {
             adapt: true,
             adapt_iterations: 50,
             eta: 1.0,
+            minibatch: None,
         }
     }
 }
@@ -213,7 +241,8 @@ impl Advi {
 
     /// Fits the approximation to the posterior of `model`'s latents, starting with its mean at their current values
     /// in `state` (latents without a value are sampled from their priors first) and unit scale. Leaves `state` at
-    /// the constrained values of the fitted mean.
+    /// the constrained values of the fitted mean (with a [minibatch](Self#minibatches), and the batched nodes at
+    /// their values before the fit; after an error they can hold a batch).
     ///
     /// # Errors
     ///
@@ -223,7 +252,8 @@ impl Advi {
     /// an error from [`Parameterisation::new`] if a latent's support has no transform; and
     /// [`AlgorithmError::NonFiniteElbo`] if the ELBO of the initial approximation is not finite (a draw has zero
     /// probability or a NaN log probability), if every step size the adaptation tries diverges, or if a draw's log
-    /// probability or gradient stops being finite during the fit.
+    /// probability or gradient stops being finite during the fit. With a minibatch, any error from
+    /// [`Minibatch::batches`] for an invalid one.
     pub fn fit<'m>(
         &self,
         model: &'m Model,
@@ -233,10 +263,25 @@ impl Advi {
         self.validate()?;
         check_latents(model)?;
         evaluate_all(model.graph(), state, rng)?;
-        let param = Parameterisation::new(model, state)?;
+        let mut batches = match &self.minibatch {
+            Some(minibatch) => {
+                let mut batches = minibatch.batches(model, state)?;
+                batches.next(state, rng)?;
+                Some(batches)
+            }
+            None => None,
+        };
+        let mut param = Parameterisation::new(model, state)?;
         if param.dimension() == 0 {
             return Err(AlgorithmError::NoLatents);
         }
+        if let Some(batches) = &batches {
+            for &(node, weight) in batches.weights() {
+                param.set_weight(node, weight)?;
+            }
+        }
+        // the batch the initial ELBO and the adaptation's ELBOs are estimated on
+        let fixed_rows = batches.as_ref().map(Batches::current_rows);
         let start = start_point(&param, state)?;
         let initial = Gaussian::initial(self.family, &start);
         let mut target = Target {
@@ -253,7 +298,14 @@ impl Advi {
             ));
         }
         let eta = if self.adapt {
-            self.adapt_eta(&mut target, &initial, initial_elbo, rng)?
+            self.adapt_eta(
+                &mut target,
+                &mut batches,
+                fixed_rows.as_deref(),
+                &initial,
+                initial_elbo,
+                rng,
+            )?
         } else {
             self.eta
         };
@@ -263,11 +315,16 @@ impl Advi {
         let mut elbo_trace = vec![initial_elbo];
         let window = ((0.1 * self.max_iterations as f64 / self.eval_elbo as f64) as usize).max(2);
         let mut changes: VecDeque<f64> = VecDeque::with_capacity(window);
+        // with minibatches, the last `window` ELBO estimates, whose mean is compared
+        let mut recent: VecDeque<f64> = VecDeque::with_capacity(window);
         let mut elbo = 0.0;
         let mut converged = false;
         let mut iterations = 0;
         while iterations < self.max_iterations && !converged {
             iterations += 1;
+            if let Some(batches) = &mut batches {
+                batches.next(target.state, rng)?;
+            }
             let gradient = target
                 .elbo_gradient(&q, self.grad_samples, rng)?
                 .ok_or_else(|| {
@@ -278,13 +335,25 @@ impl Advi {
             ascent.step(&mut q, &gradient, eta);
             if iterations % self.eval_elbo == 0 {
                 let previous = elbo;
-                elbo = target.elbo(&q, self.elbo_samples, rng)?;
-                if !elbo.is_finite() {
+                if let Some(batches) = &mut batches {
+                    batches.next(target.state, rng)?;
+                }
+                let estimate = target.elbo(&q, self.elbo_samples, rng)?;
+                if !estimate.is_finite() {
                     return Err(AlgorithmError::NonFiniteElbo(format!(
                         "the ELBO is not finite at iteration {iterations}"
                     )));
                 }
-                elbo_trace.push(elbo);
+                elbo_trace.push(estimate);
+                elbo = if batches.is_some() {
+                    if recent.len() == window {
+                        recent.pop_front();
+                    }
+                    recent.push_back(estimate);
+                    recent.iter().sum::<f64>() / recent.len() as f64
+                } else {
+                    estimate
+                };
                 // Stan's relative difference, with the first estimate compared against 0 (a change of 1)
                 if changes.len() == window {
                     changes.pop_front();
@@ -293,6 +362,9 @@ impl Advi {
                 let mean = changes.iter().sum::<f64>() / changes.len() as f64;
                 converged = mean < self.tol_rel_obj || median(&changes) < self.tol_rel_obj;
             }
+        }
+        if let Some(batches) = &batches {
+            batches.restore(state)?;
         }
         param.to_state(&q.params[..q.dim], state)?;
         Ok(AdviResult {
@@ -309,6 +381,8 @@ impl Advi {
     fn adapt_eta(
         &self,
         target: &mut Target<'_, '_>,
+        batches: &mut Option<Batches<'_>>,
+        fixed_rows: Option<&[Vec<usize>]>,
         initial: &Gaussian,
         initial_elbo: f64,
         rng: &mut KeanuRng,
@@ -319,6 +393,9 @@ impl Advi {
             let mut q = initial.clone();
             let mut ascent = Ascent::new(q.params.len());
             for _ in 0..self.adapt_iterations {
+                if let Some(batches) = batches {
+                    batches.next(target.state, rng)?;
+                }
                 // a diverging η gives non-finite gradients, or values the model cannot evaluate: zero the gradient
                 // and let the ELBO below reject this η (the initial ELBO has already shown the model evaluates)
                 let gradient = match target.elbo_gradient(&q, self.grad_samples, rng) {
@@ -326,6 +403,9 @@ impl Advi {
                     _ => vec![0.0; q.params.len()],
                 };
                 ascent.step(&mut q, &gradient, eta);
+            }
+            if let (Some(batches), Some(rows)) = (batches.as_ref(), fixed_rows) {
+                batches.observe_rows(target.state, rows)?;
             }
             let elbo = match target.elbo(&q, self.elbo_samples, rng) {
                 Ok(elbo) if elbo.is_finite() => elbo,

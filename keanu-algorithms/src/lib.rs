@@ -66,4 +66,6 @@ pub use marginal::{LatentMarginals, recover_marginals};
 pub use predictive::PredictiveSampler;
 pub use psis::Psis;
 pub use samples::{ChainSamples, ChainSummary, NetworkSample, NetworkSamples, Samples, SummaryRow};
-pub use vi::{Advi, AdviResult, Pathfinder, PathfinderResult, VariationalFamily};
+pub use vi::{
+    Advi, AdviResult, Minibatch, MinibatchGroup, Pathfinder, PathfinderResult, VariationalFamily,
+};

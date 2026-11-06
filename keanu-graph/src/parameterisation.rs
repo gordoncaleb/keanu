@@ -41,6 +41,11 @@
 //! `x = lo + (hi − lo)·u`). Which parameters a support depends on is found by evaluating the support again with each
 //! latent-dependent parameter changed: the parameters whose change moves the support are bounds.
 //!
+//! # Weights
+//!
+//! [`Parameterisation::set_weight`] multiplies a node's term of the log probability (and its derivatives) by a
+//! weight, as minibatch variational inference does to scale a batch's log likelihood up to the full data's.
+//!
 //! # Second order
 //!
 //! [`Parameterisation::hvp`] is the exact product of the Hessian of the log probability (with or without the
@@ -124,6 +129,8 @@ pub struct Parameterisation<'m> {
     latents: Vec<NodeId>,
     slots: Vec<Slot>,
     dimension: usize,
+    /// Each node's log probability weight, by node id; `None` while every weight is 1.
+    weights: Option<Vec<f64>>,
 }
 
 /// For each node, one of `sources` (latents) its value depends on (itself, for a source), following
@@ -299,7 +306,68 @@ impl<'m> Parameterisation<'m> {
             latents,
             slots,
             dimension: offset,
+            weights: None,
         })
+    }
+
+    /// Sets the weights of some nodes' log probability terms (see [`set_weight`](Self::set_weight)), for use as
+    /// `Parameterisation::new(&model, &state)?.with_weights([(y, 100.0)])?`.
+    ///
+    /// # Errors
+    ///
+    /// As [`set_weight`](Self::set_weight).
+    pub fn with_weights(
+        mut self,
+        weights: impl IntoIterator<Item = (NodeId, f64)>,
+    ) -> Result<Self> {
+        for (node, weight) in weights {
+            self.set_weight(node, weight)?;
+        }
+        Ok(self)
+    }
+
+    /// Multiplies `node`'s term of the log probability by `weight`, for [`log_prob`](Self::log_prob),
+    /// [`log_prob_and_gradient`](Self::log_prob_and_gradient), [`hvp`](Self::hvp) and
+    /// [`hessian`](Self::hessian) (the gradient and second derivatives of the term are scaled with it). Every
+    /// node's weight is 1 until it is set; setting it again replaces it.
+    ///
+    /// Minibatch variational inference weighs the observed nodes holding a batch of B of N data rows by N / B, so
+    /// that the weighted log likelihood estimates the full data's. The node can be a latent (weighing its prior
+    /// term), an observed probabilistic node, or a factor. A factor is weighted only by its own weight, never
+    /// because a node it depends on is weighted: a factor that sums terms over the rows of a batch needs the same
+    /// weight as the batch's observed nodes, set explicitly.
+    ///
+    /// An impossible term (−∞) keeps the log probability impossible whatever its weight, even 0, so a weight of 0
+    /// drops a term but not its support.
+    ///
+    /// # Errors
+    ///
+    /// [`GraphError::UnknownNode`] if `node` is not a node of the model's graph, and
+    /// [`GraphError::InvalidValue`] if it has no log probability term (it is neither probabilistic nor a factor) or
+    /// `weight` is negative or not finite.
+    pub fn set_weight(&mut self, node: NodeId, weight: f64) -> Result<()> {
+        let graph = self.model.graph();
+        let n = graph.node(node).ok_or(GraphError::UnknownNode(node))?;
+        if !(n.is_probabilistic() || n.is_factor()) {
+            return Err(GraphError::InvalidValue(format!(
+                "{} has no log probability term to weigh: only probabilistic nodes and factors have one",
+                graph.describe(node)
+            )));
+        }
+        if !(weight.is_finite() && weight >= 0.0) {
+            return Err(GraphError::InvalidValue(format!(
+                "the weight of {} must be finite and not negative, got {weight}",
+                graph.describe(node)
+            )));
+        }
+        let len = graph.len();
+        self.weights.get_or_insert_with(|| vec![1.0; len])[node.index()] = weight;
+        Ok(())
+    }
+
+    /// The weight of `node`'s term of the log probability: 1 unless [`set_weight`](Self::set_weight) changed it.
+    pub fn weight(&self, node: NodeId) -> f64 {
+        crate::logprob::weight_of(self.weights.as_deref(), node)
     }
 
     /// The model.
@@ -393,7 +461,9 @@ impl<'m> Parameterisation<'m> {
         if !self.try_to_state(z, state)? {
             return Ok(f64::NEG_INFINITY);
         }
-        let log_prob = self.model.log_prob(state)?;
+        let log_prob = self
+            .model
+            .weighted_log_prob(state, self.weights.as_deref())?;
         if jacobian && log_prob.is_finite() {
             Ok(log_prob + self.log_det_jacobian(z)?)
         } else {
@@ -481,7 +551,9 @@ impl<'m> Parameterisation<'m> {
         if !self.try_to_state(z, state)? {
             return Ok((f64::NEG_INFINITY, None));
         }
-        let (log_prob, gradient) = self.model.log_prob_and_gradient_of(state, &self.latents)?;
+        let (log_prob, gradient) =
+            self.model
+                .log_prob_and_gradient_of(state, &self.latents, self.weights.as_deref())?;
         let Some(gradient) = gradient else {
             return Ok((log_prob, None));
         };
@@ -588,7 +660,9 @@ impl<'m> Parameterisation<'m> {
             let batched: Vec<usize> = std::iter::once(b).chain(shape.iter().copied()).collect();
             tangents.push((slot.id, DoubleTensor::new(&batched, data)?));
         }
-        let (gradient, hvps) = self.model.log_prob_gradient_and_hvp(state, tangents, b)?;
+        let (gradient, hvps) =
+            self.model
+                .log_prob_gradient_and_hvp(state, tangents, b, self.weights.as_deref())?;
         let mut products = vec![vec![0.0; n]; b];
         let add = |row: &mut [f64], terms: Vec<f64>| {
             for (r, t) in row.iter_mut().zip(terms) {

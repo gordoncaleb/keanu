@@ -1482,6 +1482,48 @@ fn variational_inference() -> keanu::Result<()> {
 }
 
 #[test]
+fn minibatch_variational_inference() -> keanu::Result<()> {
+    // 20 000 rows of a linear regression
+    let mut rng = KeanuRng::seed_from_u64(3);
+    let n = 20_000;
+    let xs: Vec<f64> = (0..n).map(|_| rng.next_gaussian()).collect();
+    let ys: Vec<f64> = xs
+        .iter()
+        .map(|x| 1.0 + 2.0 * x + 0.5 * rng.next_gaussian())
+        .collect();
+    let (xs, ys) = (DoubleTensor::vector(xs), DoubleTensor::vector(ys));
+
+    // ANCHOR: advi_minibatch
+    // the model is built for one batch of 500 rows: x and y have leading dimension 500
+    let batch = 500;
+    let b = GraphBuilder::new();
+    let intercept = b.gaussian(0.0, 10.0).label("intercept");
+    let slope = b.gaussian(0.0, 10.0).label("slope");
+    let sigma = b.half_gaussian(2.0).label("sigma");
+    b.set_value(intercept, DoubleTensor::scalar(0.0));
+    b.set_value(slope, DoubleTensor::scalar(0.0));
+    b.set_value(sigma, DoubleTensor::scalar(1.0));
+    let x = b.constant(xs.slice(":500")?);
+    let y = b.gaussian(intercept + slope * x, sigma);
+    b.observe(y, ys.slice(":500")?);
+    let (slope, x, y) = (slope.id(), x.id(), y.id());
+    let (graph, mut state) = b.build()?;
+    let model = Model::new(graph, &state)?;
+
+    // each iteration observes y and sets x to the same 500 random rows of the data, weighting y's log
+    // likelihood by 20 000 / 500 = 40
+    let minibatch = MinibatchGroup::new(batch).observed(y, ys).covariate(x, xs);
+    let result = Advi::mean_field()
+        .with_minibatch(minibatch)
+        .with_max_iterations(5000)
+        .fit(&model, &mut state, &mut rng)?;
+    let slope_mean = result.mean()[result.parameterisation().range(slope).unwrap().start];
+    assert!((slope_mean - 2.0).abs() < 0.05);
+    // ANCHOR_END: advi_minibatch
+    Ok(())
+}
+
+#[test]
 fn gaussian_processes() -> keanu::Result<()> {
     // ANCHOR: gaussian_processes
     use keanu::graph::gp::{GaussianProcess, Kernel};

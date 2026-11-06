@@ -3,8 +3,8 @@
 Variational inference replaces sampling with optimization: it picks the member of a simple family of distributions
 that is closest to the posterior, and uses that as the answer. Keanu implements **automatic differentiation
 variational inference** (ADVI, Kucukelbir et al. 2017) with Stan's defaults, and **Pathfinder** (Zhang et al.
-2022, [below](#pathfinder)). Both are usually much faster than NUTS, and both return an approximation rather than
-exact draws.
+2022, [below](#pathfinder)). ADVI can subsample large data sets ([minibatches](#minibatches)). Both are usually
+much faster than NUTS, and both return an approximation rather than exact draws.
 
 ## How it works
 
@@ -57,6 +57,51 @@ The defaults are Stan's:
 
 The default tolerance is loose: it can stop while the approximation is still moving. Lower `tol_rel_obj` to 0.001
 when the estimates matter, and raise `grad_samples` for less noisy results.
+
+## Minibatches
+
+On a large data set each ADVI iteration costs a pass over all the data. With a **minibatch**, each iteration uses a
+random batch of B of the N rows instead, and weighs the batch's log likelihood by N / B, so that it estimates the
+full data's without bias and the gradient costs B rows rather than N. Build the model for one batch: every node
+holding data (observations and covariates alike) has leading dimension B, holding any B rows at first. Then
+describe the data in a `MinibatchGroup`:
+
+```rust,ignore
+{{#include ../../keanu/tests/book.rs:advi_minibatch}}
+```
+
+- **`observed(node, data)`** adds an observed node and its full data, N rows along axis 0; its log probability is
+  weighted by N / B.
+- **`covariate(node, data)`** adds a constant (or observed) node of covariates and its full data. Each batch sets it
+  to the same rows as the observations, so row i of x stays with row i of y, and recomputes what depends on it,
+  such as `intercept + slope * x`.
+- **`factor(node)`** adds a factor whose term sums over the batch's rows, weighted by N / B too. Factors are never
+  weighted implicitly.
+
+Data with different numbers of rows (two data sets of a hierarchical model) go in separate groups, each with its
+own batch size, combined with `Minibatch::new([group1, group2])`. Within a group, each epoch shuffles the rows
+and takes them B at a time; the N mod B left over at the end of an epoch are skipped, so every batch is a uniformly
+random set of B distinct rows. The weighting is exact in expectation for terms that are sums over independent rows
+(a Gaussian, Poisson or Bernoulli observation, or a batch of multivariate events), not for a single multivariate
+distribution over all the rows, such as a Gaussian process.
+
+The configuration is checked when the fit starts: every node must have leading dimension B in the graph and its
+data N rows with the same trailing shape and type, B must be at most N, and any latent, observation or factor that
+depends on the batched data must be in the group, since its term would otherwise be a batch's but unweighted.
+Minibatching supports only latents shared by every row; a latent per row (a local latent) is rejected.
+
+The ELBO estimates are made on fresh batches, so they are noisy; convergence is judged on the running mean of the
+last few estimates (as many as the change buffer holds) rather than on the latest one, and the noisy estimates
+seldom meet a tight `tol_rel_obj`, so set `max_iterations` to what you can afford. The step size adaptation also
+runs on minibatches, but compares the step sizes' ELBOs on one fixed batch. After the fit, the batched nodes get
+back the values they had before it. `Parameterisation::set_weight` is the underlying mechanism, available to other
+algorithms: it multiplies any node's term of the log probability, and its derivatives, by a weight.
+
+Each coordinate's step is about η / √k, whatever the size of the gradient, so after k iterations the fitted mean
+still moves by about that much from step to step, with or without minibatches. On a 100 000-row regression whose
+coefficients have posterior standard deviations of 0.003, minibatches of 1000 rows give the coefficients to within
+about 0.03 (full-batch ADVI, at 100 times the cost per iteration, is no closer) and their standard deviations to
+within about 40%.
 
 ## Pathfinder
 

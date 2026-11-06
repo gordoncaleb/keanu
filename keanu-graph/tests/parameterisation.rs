@@ -480,3 +480,138 @@ fn a_block_of_latents_has_the_joint_log_prob_and_its_partial_gradient() {
     }
     assert!(model.log_prob_and_gradient_wrt(&state, &[k]).is_err());
 }
+
+/// mu ~ N(0, 1), sigma ~ HalfGaussian(2), y ~ N(mu, sigma) observed (three values), and a factor −mu²·sigma / 2.
+/// Returns the model, its state, and (mu, sigma, y, factor).
+fn weighted_model() -> (Model, State, [NodeId; 4]) {
+    let b = GraphBuilder::new();
+    let mu = b.gaussian(0.0, 1.0);
+    let sigma = b.half_gaussian(2.0);
+    let y = b.gaussian_with_shape(&[3], mu, sigma);
+    b.observe(y, v(&[0.4, -1.2, 2.0]));
+    let factor = b.factor(mu * mu * sigma * -0.5);
+    let ids = [mu.id(), sigma.id(), y.id(), factor.id()];
+    let (graph, mut state) = b.build().unwrap();
+    evaluate(&graph, &mut state, 3);
+    let model = Model::new(graph, &state).unwrap();
+    (model, state, ids)
+}
+
+#[test]
+fn weights_scale_each_term_and_its_derivatives() {
+    let (model, mut state, [mu, sigma, y, factor]) = weighted_model();
+    let plain = Parameterisation::new(&model, &state).unwrap();
+    let weighted = Parameterisation::new(&model, &state)
+        .unwrap()
+        .with_weights([(y, 7.5), (factor, 2.0), (mu, 0.5)])
+        .unwrap();
+    assert_eq!(weighted.weight(y), 7.5);
+    assert_eq!(weighted.weight(sigma), 1.0);
+    let z = [0.3, -0.4];
+    for jacobian in [false, true] {
+        // the value: each term times its weight
+        plain.to_state(&z, &mut state).unwrap();
+        let graph = model.graph();
+        let term = |id| keanu_graph::node_log_prob(graph, &state, id).unwrap();
+        let (lp_mu, lp_y, lp_f) = (term(mu), term(y), term(factor));
+        let unweighted = plain.log_prob(&z, jacobian, &mut state).unwrap();
+        let value = weighted.log_prob(&z, jacobian, &mut state).unwrap();
+        assert_close_rel(
+            value,
+            unweighted + 6.5 * lp_y + 1.0 * lp_f - 0.5 * lp_mu,
+            1e-12,
+            "weighted log prob",
+        );
+        let (with_gradient, gradient) = weighted
+            .log_prob_and_gradient(&z, jacobian, &mut state)
+            .unwrap();
+        assert_close_rel(with_gradient, value, 1e-12, "with the gradient");
+        let gradient = gradient.unwrap();
+        // the gradient against finite differences of the weighted value
+        let step = 1e-6;
+        for i in 0..2 {
+            let mut plus = z;
+            plus[i] += step;
+            let mut minus = z;
+            minus[i] -= step;
+            let fd = (weighted.log_prob(&plus, jacobian, &mut state).unwrap()
+                - weighted.log_prob(&minus, jacobian, &mut state).unwrap())
+                / (2.0 * step);
+            assert!((gradient[i] - fd).abs() < 1e-5, "{} vs {fd}", gradient[i]);
+        }
+        // the Hessian against finite differences of the weighted gradient
+        let hessian = weighted.hessian(&z, jacobian, &mut state).unwrap();
+        let direction = [0.7, -1.3];
+        let hvp = weighted.hvp(&z, &direction, jacobian, &mut state).unwrap();
+        let grad_at = |z: &[f64], state: &mut State| {
+            weighted
+                .log_prob_and_gradient(z, jacobian, state)
+                .unwrap()
+                .1
+                .unwrap()
+        };
+        let plus: Vec<f64> = z
+            .iter()
+            .zip(&direction)
+            .map(|(z, d)| z + step * d)
+            .collect();
+        let minus: Vec<f64> = z
+            .iter()
+            .zip(&direction)
+            .map(|(z, d)| z - step * d)
+            .collect();
+        let (gp, gm) = (grad_at(&plus, &mut state), grad_at(&minus, &mut state));
+        for i in 0..2 {
+            let fd = (gp[i] - gm[i]) / (2.0 * step);
+            assert!((hvp[i] - fd).abs() < 1e-5, "{} vs {fd}", hvp[i]);
+            let row: f64 = (0..2)
+                .map(|j| hessian.as_slice()[i * 2 + j] * direction[j])
+                .sum();
+            assert_close_rel(row, hvp[i], 1e-10, "Hessian row");
+        }
+    }
+}
+
+#[test]
+fn an_impossible_term_stays_impossible_whatever_its_weight() {
+    let (model, mut state, [_, sigma, y, _]) = weighted_model();
+    let param = Parameterisation::with_space(&model, &state, Space::Constrained)
+        .unwrap()
+        .with_weights([(sigma, 0.0), (y, 0.0)])
+        .unwrap();
+    // sigma = −1 is outside its support
+    let log_prob = param.log_prob(&[0.0, -1.0], false, &mut state).unwrap();
+    assert_eq!(log_prob, f64::NEG_INFINITY);
+    // a weight of 0 drops a possible term
+    let dropped = param.log_prob(&[0.0, 1.0], false, &mut state).unwrap();
+    let mu_only = keanu_graph::node_log_prob(model.graph(), &state, model.latents()[0]).unwrap()
+        + keanu_graph::node_log_prob(model.graph(), &state, model.factors()[0]).unwrap();
+    assert_close_rel(dropped, mu_only, 1e-12, "dropped terms");
+}
+
+#[test]
+fn invalid_weights_are_errors() {
+    let (model, state, [mu, _, y, _]) = weighted_model();
+    let mut param = Parameterisation::new(&model, &state).unwrap();
+    for weight in [-1.0, f64::NAN, f64::INFINITY] {
+        assert!(matches!(
+            param.set_weight(y, weight),
+            Err(GraphError::InvalidValue(_))
+        ));
+    }
+    // a deterministic node has no term to weigh
+    let graph = model.graph();
+    let deterministic = graph
+        .ids()
+        .find(|&id| id > mu && !graph[id].is_probabilistic() && !graph[id].is_factor())
+        .unwrap();
+    assert!(matches!(
+        param.set_weight(deterministic, 2.0),
+        Err(GraphError::InvalidValue(_))
+    ));
+    assert!(matches!(
+        param.set_weight(NodeId::from_index(10_000), 2.0),
+        Err(GraphError::UnknownNode(_))
+    ));
+    assert_eq!(param.weight(y), 1.0);
+}

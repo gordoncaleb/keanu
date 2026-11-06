@@ -12,6 +12,9 @@
 //! cannot represent skewed or multimodal posteriors there. Use it for quick estimates, large models, or initialising
 //! a sampler, and check important results with NUTS.
 //!
+//! With a [`Minibatch`], ADVI subsamples the data each iteration: it observes a random batch of B of N rows and
+//! weighs the batch's log likelihood by N / B, so that each iteration costs B rows rather than N.
+//!
 //! [`Pathfinder`] (Zhang et al. 2022) is cheaper still: it follows an L-BFGS optimization path, fits a Gaussian
 //! with a low-rank-plus-diagonal covariance at each point of it from the optimizer's curvature estimates, and keeps
 //! the one with the best ELBO. Several paths from random starting points, with their pooled draws resampled by
@@ -42,7 +45,9 @@
 //! ```
 
 mod advi;
+mod minibatch;
 mod pathfinder;
 
 pub use advi::{Advi, AdviResult, VariationalFamily};
+pub use minibatch::{Batches, Minibatch, MinibatchGroup};
 pub use pathfinder::{Pathfinder, PathfinderPath, PathfinderResult};
