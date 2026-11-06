@@ -29,6 +29,8 @@ mod cheating_students;
 mod co2_forecast;
 #[path = "../examples/coal_mining_disasters.rs"]
 mod coal_mining_disasters;
+#[path = "../examples/cure_model.rs"]
+mod cure_model;
 #[path = "../examples/custom_distribution.rs"]
 mod custom_distribution;
 #[path = "../examples/disease_mapping.rs"]
@@ -37,6 +39,8 @@ mod disease_mapping;
 mod drift_diffusion;
 #[path = "../examples/eight_schools.rs"]
 mod eight_schools;
+#[path = "../examples/extreme_values.rs"]
+mod extreme_values;
 #[path = "../examples/gaussian_mixture.rs"]
 mod gaussian_mixture;
 #[path = "../examples/gp_regression.rs"]
@@ -1124,4 +1128,72 @@ fn drift_diffusion_recovers_the_condition_drifts_and_each_subjects_parameters() 
         (easy.q5, easy.q95),
         (hard.q5, hard.q95)
     );
+}
+
+#[test]
+fn extreme_values_recovers_the_gev_parameters_and_return_levels() {
+    // sixty annual maxima simulated from a known GEV: the 90% intervals cover μ, σ, ξ and the 10-, 50- and 100-year
+    // return levels, every quantity converges, and NUTS rarely meets the parameter-dependent support's edge
+    use extreme_values::{PERIODS, TRUE_MU, TRUE_SIGMA, TRUE_XI, return_level};
+    let maxima = extreme_values::data(extreme_values::DATA_SEED);
+    let fit = extreme_values::run(&maxima, 4, 1000, 1).unwrap();
+    assert!(fit.divergences <= 40, "{} divergences", fit.divergences);
+    let mut checks = vec![
+        (fit.mu, vec![], TRUE_MU, "mu".to_owned()),
+        (fit.sigma, vec![], TRUE_SIGMA, "sigma".to_owned()),
+        (fit.xi, vec![], TRUE_XI, "xi".to_owned()),
+    ];
+    for (i, &period) in PERIODS.iter().enumerate() {
+        let truth = return_level(TRUE_MU, TRUE_SIGMA, TRUE_XI, period);
+        checks.push((
+            fit.return_levels,
+            vec![i],
+            truth,
+            format!("{period}-year return level"),
+        ));
+    }
+    for (node, index, truth, what) in checks {
+        let summary = fit.chains.summarize(node, &index).unwrap();
+        assert!(summary.r_hat < 1.01, "{what}: R-hat {}", summary.r_hat);
+        assert!(
+            summary.q5 < truth && truth < summary.q95,
+            "{what}: {truth} outside [{}, {}]",
+            summary.q5,
+            summary.q95
+        );
+    }
+    // the return levels increase with the period, in every draw
+    let draws = fit.chains.element(fit.return_levels, &[0]).unwrap();
+    let longer = fit.chains.element(fit.return_levels, &[2]).unwrap();
+    for (short, long) in draws.iter().zip(&longer) {
+        assert!(short.iter().zip(long).all(|(s, l)| s < l));
+    }
+}
+
+#[test]
+fn cure_model_recovers_the_cure_fraction_and_the_relapse_times() {
+    // relapse times of 400 patients, right-censored, simulated from a mixture cure model: the 90% intervals cover the
+    // cure model's coefficients, the Weibull scale's coefficients and the shape, with no divergences and R-hat below
+    // 1.01
+    use cure_model::{TRUE_BETA, TRUE_GAMMA, TRUE_K};
+    let patients = cure_model::data(cure_model::DATA_SEED);
+    let fit = cure_model::run(&patients, 4, 1000, 1).unwrap();
+    assert_eq!(fit.divergences, 0);
+    let checks = [
+        (fit.gamma, vec![0], TRUE_GAMMA[0], "gamma0"),
+        (fit.gamma, vec![1], TRUE_GAMMA[1], "gamma1"),
+        (fit.beta, vec![0], TRUE_BETA[0], "beta0"),
+        (fit.beta, vec![1], TRUE_BETA[1], "beta1"),
+        (fit.k, vec![], TRUE_K, "k"),
+    ];
+    for (node, index, truth, what) in checks {
+        let summary = fit.chains.summarize(node, &index).unwrap();
+        assert!(summary.r_hat < 1.01, "{what}: R-hat {}", summary.r_hat);
+        assert!(
+            summary.q5 < truth && truth < summary.q95,
+            "{what}: {truth} outside [{}, {}]",
+            summary.q5,
+            summary.q95
+        );
+    }
 }

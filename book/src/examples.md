@@ -3,8 +3,8 @@
 These live in `keanu/examples`. Run one with `cargo run --release --example <name>`. Each is also an
 integration test (`keanu/tests/examples.rs`): the examples ported from Java check the same results the Java
 examples' tests check, and the hierarchical ones check multi-chain R-hat, divergences and posterior means.
-The Gaussian process, stochastic volatility, hidden Markov model, CO₂ forecasting, pharmacokinetic, multi-state and
-stochastic SIR examples check their results against the functions or parameters their synthetic data were generated
+The Gaussian process, stochastic volatility, hidden Markov model, CO₂ forecasting, pharmacokinetic, multi-state,
+extreme-value, cure-model and stochastic SIR examples check their results against the functions or parameters their synthetic data were generated
 from, and the SMC model comparison checks its evidence against the closed form.
 
 | Example | Question |
@@ -21,6 +21,8 @@ from, and the SMC model comparison checks its evidence against the closed form.
 | `occupancy` | Which sites does a species occupy, when surveys sometimes miss it? Occupancy latents sampled, marginalised and written as a zero-inflated binomial |
 | `disease_mapping` | Where is a disease more common than expected? A BYM2 spatial model of counts on a lattice |
 | `drift_diffusion` | How fast do people take in evidence, and does an easier task speed it up? A hierarchical drift-diffusion model of response times |
+| `extreme_values` | How high will the river rise once in a hundred years? A generalized extreme value model of annual maxima, with return levels |
+| `cure_model` | What fraction of patients does a treatment cure, and how soon do the others relapse? A mixture cure model of censored survival times |
 | `gp_regression` | What smooth function produced noisy measurements? Gaussian process hyperparameters by NUTS, exactly and with an HSGP |
 | `stochastic_volatility` | How volatile are daily returns, and how persistent is the volatility? A scan over latent innovations |
 | `hmm` | When does a series switch regime, and how often? A two-state hidden Markov model |
@@ -135,6 +137,38 @@ chains of 1,000 draws) with no divergences, and that the easy condition's drift 
 
 ```rust,ignore
 {{#include ../../keanu/examples/drift_diffusion.rs}}
+```
+
+## Extreme values
+
+Sixty annual maxima, simulated from a generalized extreme value distribution with location 30, scale 6 and shape
+ξ = 0.15 (a heavy upper tail), are fitted with `generalized_extreme_value`. The T-year return level, the level
+exceeded in any one year with probability 1/T, is the GEV's 1 − 1/T quantile, μ + σ((−ln(1 − 1/T))^(−ξ) − 1)/ξ; it
+is a deterministic node of the parameters, so the posterior draws give its posterior directly. The GEV's support
+depends on its parameters, so NUTS rejects the parameters that put an observed maximum outside it (a few
+divergences, the test allows up to 1% of the draws). The test checks that the 90% intervals of μ, σ, ξ and the 10-,
+50- and 100-year return levels cover the true values, with R-hat below 1.01 over 4 chains of 1,000 draws, and that
+the return levels increase with the period in every draw.
+
+```rust,ignore
+{{#include ../../keanu/examples/extreme_values.rs}}
+```
+
+## A mixture cure model
+
+Relapse times of 400 patients, followed for between 2 and 8 years, come from a mixture cure model: each patient is
+cured with a probability that depends on a biomarker through a logistic regression, and otherwise relapses after a
+Weibull time whose scale depends on the biomarker too. A patient's likelihood is (1 − π) f(t) for a relapse at t and
+π + (1 − π) S(c) for a patient still relapse-free at the end of follow-up c. The model writes this as a
+[mixture of different families](building-models.md#mixtures-of-different-families-and-transformed-distributions):
+a Weibull censored above at c for the uncured, and for the cured a uniform on [c, c + 1] censored above at c, whose
+mass all lies at or beyond c, so its survival at c is 1 and its density before c is 0. The data are simulated from
+known values; the test checks that the 90% intervals of the cure model's two coefficients, the Weibull scale's two
+coefficients and the Weibull shape cover the truth, with R-hat below 1.01 over 4 chains of 1,000 draws and no
+divergences.
+
+```rust,ignore
+{{#include ../../keanu/examples/cure_model.rs}}
 ```
 
 ## Gaussian process regression

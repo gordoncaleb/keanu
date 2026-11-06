@@ -656,6 +656,16 @@ Work from `docs/plans/2026-11-05-001-feat-applied-modelling-gaps-plan.md`.
   its base can't be censored or a hurdle. A Gaussian through `LowerBound(a)` is a log-normal shifted by a. The save
   schema gained the `MIXTURE_OF` (77) and `TRANSFORMED` (78) kinds, a repeated `components` field and an
   `ElementBijector` message on `Distribution` and `DistributionType`.
+- keanu: **extreme-value and cure-model examples**. `extreme_values` fits a generalized extreme value distribution
+  to sixty simulated annual maxima, with the 10-, 50- and 100-year return levels (the GEV's 1 − 1/T quantiles) as
+  deterministic nodes; its test checks that the 90% intervals of μ, σ, ξ and the three return levels cover the true
+  values, that R-hat is below 1.01, that divergences (NUTS meeting the parameter-dependent support) stay below 1% of
+  the draws and that the return levels increase with the period. `cure_model` fits a mixture cure model to 400
+  simulated right-censored relapse times: a logistic cure probability and a Weibull relapse time, both with a
+  covariate, written as a `mixture_of` a Weibull censored at each patient's follow-up time and a cured component, a
+  uniform on [c, c + 1] censored at c (survival exactly 1 at c, density 0 before it), so the likelihood is exactly
+  (1 − π) f(t) for a relapse and π + (1 − π) S(c) for a censored patient; its test checks that the 90% intervals of
+  all five coefficients cover the truth, with R-hat below 1.01 and no divergences.
 
 ### Code review fixes
 

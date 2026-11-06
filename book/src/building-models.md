@@ -228,6 +228,8 @@ or censored. Its base can't be censored or a hurdle either, since their point ma
 {{#include ../../keanu/tests/book.rs:mixture_of}}
 ```
 
+The [cure-model example](examples.md#a-mixture-cure-model) mixes a censored Weibull with a cured component.
+
 ## Factors
 
 `factor(expr)` adds an arbitrary term to the joint log probability, like PyMC's `Potential` or Stan's

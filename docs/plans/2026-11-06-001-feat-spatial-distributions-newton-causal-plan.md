@@ -409,6 +409,16 @@ Execution order: U1, U2, U3, U4, U5, U6, U7, U8, U9, U11, U10, U12, U13, then a 
   - Example 1: GEV for annual maxima with return levels (simulated, or a small public-domain series with provenance).
   - Example 2: a mixture cure survival model (cured fraction plus censored Weibull/LogLogistic) using heterogeneous mixtures with censoring.
 - **Tests:** recover simulated parameters within 90% intervals; return-level intervals cover the truth.
+- **Implementation note:** `keanu/examples/{extreme_values,cure_model}.rs`. Both use simulated data (no external
+  series, so no provenance to carry). The GEV's return levels are deterministic nodes μ + σ expm1(−ξ ln y_T)/ξ; the
+  GEV's parameter-dependent support makes NUTS reject proposals that put a datum outside it, reported as
+  divergences (0 for data seed 1, 1 to 47 of 4,000 for seeds 2 to 16), so the test allows up to 1%. Over data seeds
+  1 to 16 the six GEV intervals missed twice in all (seeds 11 and 13). The cure model is a heterogeneous mixture of
+  a censored Weibull and, for the cured, a censored uniform on [c, c + 1] with c the patient's censoring time: its
+  survival at c is exactly 1 and its density before c is 0, so the mixture's likelihood is exactly the cure model's
+  (no factor needed; any component with all its mass beyond c would do, and the uniform has a CDF). Over data seeds
+  1 to 16 the five intervals missed 10 times of 80 (8 expected at 90%, spread over the parameters, no bias); data
+  seed 3 covers all five. Runtimes: about 1 s (GEV) and 5 s (cure model) for 4 chains of 2,000 steps, in release.
 
 ### U10. Trust-region Newton
 - **Requirements:** R10.
