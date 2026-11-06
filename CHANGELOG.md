@@ -505,6 +505,16 @@ Work from `docs/plans/2026-11-05-001-feat-applied-modelling-gaps-plan.md`.
     they used to hold the last batch.
   - keanu-graph: the ODE integrators' initial step is at least 100 ε |t₀|, so a zero initial state at a large
     initial time (y' = cos(10⁻¹² t) from t₀ = 10¹²) no longer fails with `StepSizeUnderflow` on its first step.
+  - keanu-algorithms: `CmdStanCsv` writes `num_samples` as CmdStan counts it, the post-warm-up iterations before
+    thinning (the rows times `thin`, so the rows are ⌈num_samples / thin⌉); it wrote the number of rows, which
+    cmdstanpy rejects as too many draws for a thinned run.
+  - keanu-algorithms: `is_differentiable_wrt_latents` includes the model's factors, so a model whose factor is not
+    differentiable in a latent (`factor(floor(x) · 2)`) no longer gets NUTS by default, as its documentation and
+    the compound sampler's `is_differentiable_wrt` already said.
+  - keanu-algorithms: Pathfinder's documentation notes that a single path's accuracy is limited by its L-BFGS
+    history (a history of 12 or more gave variance errors of 0.03–0.15 log units on a 5-dimensional Gaussian with
+    correlation 0.8, where the default 6 was off by up to a factor of 1.7), and the plan's U23 note records the
+    review's diagnosis.
 
 ### Code review fixes
 

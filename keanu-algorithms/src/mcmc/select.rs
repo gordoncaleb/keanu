@@ -13,9 +13,9 @@ use keanu_graph::{DType, Graph, Model, NodeId, State, is_differentiable};
 use std::collections::HashSet;
 
 /// True if the joint log probability can be differentiated with respect to every latent: every unobserved
-/// probabilistic node is continuous, and between each probabilistic node and its probabilistic ancestors there are
-/// only differentiable operations, or operations whose value can't change (they depend only on constants and
-/// observations).
+/// probabilistic node is continuous, and between each probabilistic node or factor and its probabilistic ancestors
+/// there are only differentiable operations, or operations whose value can't change (they depend only on constants
+/// and observations).
 pub fn is_differentiable_wrt_latents(model: &Model, state: &State) -> bool {
     let graph = model.graph();
     let nodes: Vec<NodeId> = model
@@ -34,9 +34,11 @@ pub fn is_differentiable_wrt_latents(model: &Model, state: &State) -> bool {
 
     let mut constant_cache: HashSet<NodeId> = HashSet::new();
     let mut visited: HashSet<NodeId> = HashSet::new();
+    // a factor's own op (and the ops it is computed from) are terms of the log probability too
     let mut queue: Vec<NodeId> = nodes
         .iter()
         .flat_map(|&id| graph[id].parents().iter().copied())
+        .chain(model.factors().iter().copied())
         .collect();
     while let Some(id) = queue.pop() {
         if !visited.insert(id) {

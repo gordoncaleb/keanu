@@ -5,7 +5,8 @@
 //! file format"):
 //!
 //! 1. comment lines, starting with `#`, describing the run in CmdStan's `key = value` form: the model name, the
-//!    method (`sample`), the number of draws, warm-up steps and the thinning interval, and for NUTS the target
+//!    method (`sample`), the number of post-warm-up iterations before thinning (`num_samples`, the draws times
+//!    the thinning interval, as CmdStan counts them), warm-up steps and the thinning interval, and for NUTS the target
 //!    acceptance probability, maximum tree depth and the metric (`diag_e` or `dense_e`), and the chain's `id`
 //!    (1-based);
 //! 2. a header line naming the columns: the sampler's columns, whose names end in `__`, then each sampled node's
@@ -296,10 +297,12 @@ impl<'a> CmdStanCsv<'a> {
         line(0, format!("model = {}", self.model_name));
         line(0, "method = sample".into());
         line(1, "sample".into());
-        line(2, format!("num_samples = {draws}"));
         let (warmup, thin) = self.nuts.as_ref().map_or((0, 1), |run| {
             (run.options.drop, run.options.down_sample_interval)
         });
+        // CmdStan's num_samples counts the iterations after warm-up before thinning, and readers such as cmdstanpy
+        // expect ⌈num_samples / thin⌉ rows; every row stands for `thin` iterations
+        line(2, format!("num_samples = {}", draws * thin));
         line(2, format!("num_warmup = {warmup}"));
         line(2, "save_warmup = 0".into());
         line(2, format!("thin = {thin}"));

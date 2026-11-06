@@ -206,7 +206,14 @@ fn nuts_chains_read_back_as_arviz_reads_them() {
         );
         assert_eq!(file.config["model"], "hierarchy");
         assert_eq!(file.config["method"], "sample");
-        assert_eq!(file.config["num_samples"], "100");
+        // CmdStan's num_samples counts the post-warm-up iterations before thinning: the rows are
+        // ⌈num_samples / thin⌉, as cmdstanpy checks
+        assert_eq!(
+            file.config["num_samples"],
+            (100 * OPTIONS_INTERVAL).to_string()
+        );
+        let num_samples: usize = file.config["num_samples"].parse().unwrap();
+        assert_eq!(num_samples.div_ceil(OPTIONS_INTERVAL), file.rows.len());
         assert_eq!(file.config["num_warmup"], ADAPT.to_string());
         assert_eq!(file.config["thin"], OPTIONS_INTERVAL.to_string());
         assert_eq!(file.config["engine"], "nuts");

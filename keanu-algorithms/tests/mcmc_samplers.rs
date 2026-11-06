@@ -164,6 +164,18 @@ fn sampler_selection_uses_nuts_for_differentiable_models() {
     let model = Model::new(graph, &state).unwrap();
     assert!(!is_differentiable_wrt_latents(&model, &state));
 
+    // nor is one behind a floor in a factor, which the log probability includes
+    let b = GraphBuilder::new();
+    let x = b.gaussian(0.0, 1.0);
+    b.factor(x.floor() * 2.0);
+    let (graph, state) = b.build().unwrap();
+    let model = Model::new(graph, &state).unwrap();
+    assert!(!is_differentiable_wrt_latents(&model, &state));
+    assert!(!matches!(
+        Sampler::for_model(&model, &state),
+        Sampler::Nuts(_)
+    ));
+
     // but a floor of constants and observations is fine
     let b = GraphBuilder::new();
     let a = b.gaussian(0.0, 1.0);
