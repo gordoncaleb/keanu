@@ -837,6 +837,42 @@ fn factors_and_log_densities_keep_their_log_probability() {
     assert_eq!(model.log_prob(&loaded.state).unwrap(), expected);
 }
 
+/// A structural time series with a regression, whose likelihood is a factor of a state-space log density, keeps
+/// its log probability through saving and loading.
+#[test]
+fn a_state_space_log_density_keeps_its_log_probability() {
+    use keanu_graph::sts::{Component, StructuralModel};
+    let b = GraphBuilder::new();
+    let y = [1.0, 1.8, 0.6, 2.2, 2.9, 1.4];
+    let design = DoubleTensor::new(&[6, 1], vec![0.3, -0.1, 0.8, 0.2, -0.6, 0.4]).unwrap();
+    StructuralModel::new(&b, &y)
+        .with(Component::local_linear_trend())
+        .with(Component::seasonal(2))
+        .with(Component::regression(design))
+        .build()
+        .unwrap();
+    let (graph, mut state) = b.build().unwrap();
+    let all: Vec<NodeId> = graph.ids().collect();
+    state
+        .lazy_eval(&graph, &all, &mut KeanuRng::seed_from_u64(1))
+        .unwrap();
+    let expected = Model::new(graph.clone(), &state)
+        .unwrap()
+        .log_prob(&state)
+        .unwrap();
+    assert!(expected.is_finite());
+    let bytes = save_protobuf(&graph, &state, &Metadata::new()).unwrap();
+    let mut loaded = load_protobuf(&bytes).unwrap();
+    let all: Vec<NodeId> = loaded.graph.ids().collect();
+    loaded
+        .state
+        .lazy_eval(&loaded.graph, &all, &mut KeanuRng::seed_from_u64(1))
+        .unwrap();
+    let model = Model::new(loaded.graph, &loaded.state).unwrap();
+    assert_eq!(model.factors().len(), 1);
+    assert_eq!(model.log_prob(&loaded.state).unwrap(), expected);
+}
+
 /// A model rewritten by marginalising a discrete latent (whose factor holds Bernoulli log densities) keeps its log
 /// probability and the latent's log weights through saving and loading.
 #[test]

@@ -5,10 +5,15 @@
 //! form, whose values are boolean and which therefore can't be mixture components, have element-wise densities too:
 //! their values and derivatives come from their nodes' unreduced log probability terms and gradients, which are
 //! element-wise.
+//!
+//! The linear Gaussian state space model has a *joint* density instead: its log density node is a scalar, the
+//! Kalman filter's log likelihood of the whole series, and its derivatives are the distribution's gradient and
+//! Hessian-vector products. A model whose observations are a deterministic function of latents (a structural time
+//! series with a regression offset, see [`crate::sts`]) uses it in a factor.
 
-use super::distribution::{DistributionKind, LogProbGradientParts, Univariate};
+use super::distribution::{DistributionKind, DistributionOp, LogProbGradientParts, Univariate};
 use super::distribution_hvp::{elementwise, spread, spread_tangent};
-use crate::autodiff::{batched_shape, fit, reduce_to};
+use crate::autodiff::{batched_shape, fit, lift, reduce_to};
 use crate::error::{GraphError, Result};
 use crate::value::{DType, Value};
 use keanu_tensor::{DoubleTensor, Shape, broadcast_shape};
@@ -28,6 +33,12 @@ pub(crate) fn has_elementwise_density(kind: &DistributionKind) -> bool {
             kind,
             DistributionKind::Bernoulli | DistributionKind::BernoulliLogit
         )
+}
+
+/// Whether `kind` has a joint log density, so that a log density node of it is the scalar log probability of the
+/// whole value: the linear Gaussian state space model.
+pub(crate) fn has_joint_density(kind: &DistributionKind) -> bool {
+    matches!(kind, DistributionKind::LinearGaussianStateSpace)
 }
 
 /// The element-wise log density of `value` given the parameters and, with `gradient`, its element-wise derivatives
@@ -57,12 +68,15 @@ pub(crate) fn arity(kind: &DistributionKind) -> Option<usize> {
 }
 
 /// The type and shape of a log density of `kind` given its parents' (the value's, then each parameter's): f64, the
-/// broadcast of all their shapes. Fails for a kind that isn't element-wise and for parents of the wrong types.
+/// broadcast of all their shapes (a scalar for a kind with a [joint density](has_joint_density), whose value and
+/// parameters must have the shapes a node of the kind would). Fails for a kind that is neither element-wise nor
+/// joint and for parents of the wrong types.
 pub(crate) fn output_type(
     kind: &DistributionKind,
     parents: &[(DType, &[usize])],
 ) -> Result<(DType, Shape)> {
-    if !has_elementwise_density(kind) {
+    let joint = has_joint_density(kind);
+    if !has_elementwise_density(kind) && !joint {
         return Err(invalid(format!(
             "the {} distribution does not have one value per element with an element-wise density, so it has no \
              element-wise log density",
@@ -96,6 +110,17 @@ pub(crate) fn output_type(
             kind.name()
         )));
     }
+    if joint {
+        let shape = DistributionOp::value_shape(kind, Some(value_shape), parameters)?;
+        if shape.as_slice() != *value_shape {
+            return Err(invalid(format!(
+                "the {} distribution's value has shape {:?} for these parameters, not {value_shape:?}",
+                kind.name(),
+                shape.as_slice()
+            )));
+        }
+        return Ok((DType::F64, Shape::new()));
+    }
     let mut shape = Shape::from_slice(value_shape);
     for (_, p) in parameters {
         shape = broadcast_shape(&shape, p)?;
@@ -115,6 +140,11 @@ fn shape_of(inputs: &[&Value]) -> Result<Shape> {
 /// The log density of each element of the value (`inputs[0]`) given the parameters (`inputs[1..]`).
 pub(crate) fn eval(kind: &DistributionKind, inputs: &[&Value]) -> Result<Value> {
     let (value, parameters) = split(kind, inputs)?;
+    if has_joint_density(kind) {
+        return Ok(Value::F64(DoubleTensor::scalar(
+            kind.log_prob(value, parameters)?,
+        )));
+    }
     let shape = shape_of(inputs)?;
     let (densities, _) = density(kind, value, parameters, false)?;
     Ok(Value::F64(DoubleTensor::new(
@@ -168,6 +198,9 @@ pub(crate) fn jvp(
     if t.iter().all(Option::is_none) {
         return Ok(None);
     }
+    if has_joint_density(kind) {
+        return joint_jvp(kind, inputs, t, b);
+    }
     let mut total: Option<DoubleTensor> = None;
     for (d, t) in derivatives(kind, inputs, out_shape)?.into_iter().zip(t) {
         let (Some(d), Some(t)) = (d, t) else { continue };
@@ -188,6 +221,9 @@ pub(crate) fn vjp(
     g: &DoubleTensor,
     out_shape: &[usize],
 ) -> Result<Vec<Option<DoubleTensor>>> {
+    if has_joint_density(kind) {
+        return joint_vjp(kind, inputs, g);
+    }
     derivatives(kind, inputs, out_shape)?
         .into_iter()
         .zip(inputs)
@@ -207,6 +243,9 @@ pub(crate) fn vjp_tangent(
     out_shape: &[usize],
 ) -> Result<Vec<Option<DoubleTensor>>> {
     let (value, parameters) = split(kind, inputs)?;
+    if has_joint_density(kind) {
+        return joint_vjp_tangent(kind, value, parameters, g, t, b);
+    }
     let tangents: Vec<Option<Vec<f64>>> = t
         .iter()
         .map(|t| spread_tangent(*t, b, out_shape))
@@ -231,5 +270,85 @@ pub(crate) fn vjp_tangent(
             }
             _ => Ok(None),
         })
+        .collect()
+}
+
+/// A joint density's gradient with respect to each input (the value, then each parameter), each shaped like the
+/// input; None for inputs it has none with respect to.
+fn joint_derivatives(
+    kind: &DistributionKind,
+    inputs: &[&Value],
+) -> Result<Vec<Option<DoubleTensor>>> {
+    let (value, parameters) = split(kind, inputs)?;
+    let (value_gradient, parameter_gradients) = kind.log_prob_gradient(value, parameters)?;
+    Ok(std::iter::once(value_gradient)
+        .chain(parameter_gradients)
+        .zip(inputs)
+        .map(|(g, input)| g.filter(|_| input.dtype() == DType::F64))
+        .collect())
+}
+
+/// Forward mode for a joint density: Σᵢ ⟨∂ log p / ∂ inputᵢ, ṫᵢ⟩ for each of the `b` directions, `[b]`.
+fn joint_jvp(
+    kind: &DistributionKind,
+    inputs: &[&Value],
+    t: &[Option<&DoubleTensor>],
+    b: usize,
+) -> Result<Option<DoubleTensor>> {
+    let mut total = vec![0.0; b];
+    for ((d, t), input) in joint_derivatives(kind, inputs)?
+        .into_iter()
+        .zip(t)
+        .zip(inputs)
+    {
+        let (Some(d), Some(t)) = (d, t) else { continue };
+        let t = fit((*t).clone(), b, input.shape())?;
+        let n = d.len();
+        for (k, direction) in t.as_slice().chunks(n.max(1)).enumerate().take(b) {
+            total[k] += direction
+                .iter()
+                .zip(d.as_slice())
+                .map(|(a, b)| a * b)
+                .sum::<f64>();
+        }
+    }
+    Ok(Some(DoubleTensor::new(&[b], total)?))
+}
+
+/// Reverse mode for a joint density: for each input, each cotangent of `g` (`[b]`) times the gradient,
+/// `[b, input...]`.
+fn joint_vjp(
+    kind: &DistributionKind,
+    inputs: &[&Value],
+    g: &DoubleTensor,
+) -> Result<Vec<Option<DoubleTensor>>> {
+    joint_derivatives(kind, inputs)?
+        .into_iter()
+        .map(|d| {
+            d.map(|d| -> Result<DoubleTensor> { Ok(lift(g, d.rank())?.mul(&d)?) })
+                .transpose()
+        })
+        .collect()
+}
+
+/// The derivative of [`joint_vjp`] for the cotangent `g` (`[1]`) along the inputs' tangents: `g` times the
+/// distribution's Hessian-vector products, `[b, input...]`.
+fn joint_vjp_tangent(
+    kind: &DistributionKind,
+    value: &Value,
+    parameters: &[&Value],
+    g: &DoubleTensor,
+    t: &[Option<&DoubleTensor>],
+    b: usize,
+) -> Result<Vec<Option<DoubleTensor>>> {
+    let Some((&value_tangent, parameter_tangents)) = t.split_first() else {
+        return Err(kind.wrong_parameters());
+    };
+    let weight = g.as_slice().first().copied().unwrap_or(0.0);
+    let (value_hvp, parameter_hvps) =
+        kind.log_prob_hvp(value, parameters, value_tangent, parameter_tangents, b)?;
+    std::iter::once(value_hvp)
+        .chain(parameter_hvps)
+        .map(|h| h.map(|h| Ok(h.map(|x| x * weight))).transpose())
         .collect()
 }

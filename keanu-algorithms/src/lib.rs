@@ -48,6 +48,7 @@ pub mod psis;
 pub mod regression;
 pub mod samples;
 pub mod statistics;
+pub mod sts;
 mod support;
 pub mod timeseries;
 pub mod vi;

@@ -3,7 +3,7 @@
 These live in `keanu/examples`. Run one with `cargo run --release --example <name>`. Each is also an
 integration test (`keanu/tests/examples.rs`): the examples ported from Java check the same results the Java
 examples' tests check, and the hierarchical ones check multi-chain R-hat, divergences and posterior means.
-The Gaussian process, stochastic volatility, hidden Markov model, pharmacokinetic and multi-state examples check
+The Gaussian process, stochastic volatility, hidden Markov model, CO₂ forecasting, pharmacokinetic and multi-state examples check
 their results against the functions or parameters their synthetic data were generated from.
 
 | Example | Question |
@@ -21,6 +21,7 @@ their results against the functions or parameters their synthetic data were gene
 | `gp_regression` | What smooth function produced noisy measurements? Gaussian process hyperparameters by NUTS, exactly and with an HSGP |
 | `stochastic_volatility` | How volatile are daily returns, and how persistent is the volatility? A scan over latent innovations |
 | `hmm` | When does a series switch regime, and how often? A two-state hidden Markov model |
+| `co2_forecast` | What will CO₂ be in two years, and how much of it is trend and season? A structural time series |
 | `sir` | How fast did influenza spread through a boarding school, and how long were the boys ill? An SIR ODE |
 | `pharmacokinetics` | How quickly is an oral dose absorbed and cleared? A one-compartment ODE, checked against its closed form |
 | `multi_state` | How fast do people fall ill and die, seen only at clinic visits? An illness–death model with the matrix exponential |
@@ -168,6 +169,25 @@ their simulated regime.
 
 ```rust,ignore
 {{#include ../../keanu/examples/hmm.rs}}
+```
+
+## Forecasting CO₂
+
+The monthly Mauna Loa CO₂ record is a trend, a yearly cycle and noise, and TensorFlow Probability's
+structural time-series example fits them as such. This example does the same on simulated data of the same shape
+(about 315 ppm rising 0.1 ppm a month, a cycle of ±3 ppm peaking in May), drawn from the model itself so that the
+forecast can be checked against the truth: 96 months to fit and 24 held out. The model is built with
+[`sts`](sequences.md#structural-time-series): a local linear trend plus a 12-month trigonometric seasonal component
+with two harmonics, one state-space node whose six states the Kalman filter integrates out, so NUTS samples only
+the four scales, with the builder's default priors. `StructuralPosterior` then splits the fitted months into trend and
+season and forecasts the next 24, both with intervals over the posterior draws.
+
+Its test checks R-hat below 1.02 for every scale, that the components add up to the smoothed series, that the
+seasonal cycle has the simulated amplitude, and that the 90% and 50% forecast intervals cover the held-out months at
+about their nominal rates.
+
+```rust,ignore
+{{#include ../../keanu/examples/co2_forecast.rs}}
 ```
 
 ## An SIR epidemic

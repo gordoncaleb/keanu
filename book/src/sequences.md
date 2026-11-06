@@ -101,6 +101,59 @@ The same methods exist at fixed parameter values on `keanu_distributions::Linear
 each step's emission log probabilities under each state, which `DistributionKind::hidden_markov_chain` computes for a
 node's value and parameters. The [HMM example](examples.md) decodes its regimes this way.
 
+## Structural time series
+
+A structural time series models a series as a sum of interpretable parts, each a small state-space model, plus
+observation noise, as TensorFlow Probability's `tfp.sts` does. `keanu_graph::sts::StructuralModel` assembles the
+components into one linear-Gaussian state-space node (their states stacked into one state vector, with
+block-diagonal transition and noise matrices), so the Kalman filter integrates every component's states out and a
+sampler draws only the scales and coefficients. `keanu_algorithms::sts::StructuralPosterior` then decomposes the
+series into its components and forecasts it over the posterior draws.
+
+```rust,ignore
+{{#include ../../keanu/tests/book.rs:sts}}
+```
+
+The components (`Component::...`), each named for the decomposition:
+
+| Component | State | Parameters |
+|---|---|---|
+| `local_level()` | a random-walk level | `level_scale` |
+| `local_linear_trend()` | a level whose slope is a random walk | `level_scale`, `slope_scale` |
+| `seasonal(S)` | the last S − 1 seasonal effects; S consecutive effects sum to zero apart from drift | `drift_scale` |
+| `trigonometric_seasonal(P, J)` | J harmonics of period P steps (P need not be whole), a rotating pair each | `drift_scale` |
+| `autoregressive(p)` | the last p values of an AR(p) process | `coefficients` [p], `scale` |
+| `regression(X)` | none: an offset X β of the observations, X of shape [T, k] | `weights` [k] |
+
+- **Parameters** are graph variables. Supply your own with `with_scale`, `with_slope_scale`, `with_coefficients`
+  and `StructuralModel::with_observation_noise_scale` (a latent with your prior, or a constant to fix it), or let
+  the builder create latents with default priors scaled by the series' standard deviation s: LogNormal(ln(0.05 s), 2)
+  for each component scale, LogNormal(ln(0.1 s), 2) for the observation noise, N(0, 1) for AR coefficients and
+  N(0, 10 s / max |x_j|) for regression weights. The created latents are labelled `"<component>.<parameter>"`;
+  `StructuralTimeSeries::parameters` lists every parameter's node, which is what to record when sampling.
+- **The initial state** is fixed: the level starts near the first observation, N(y₀, s²), and every other state at
+  N(0, s²).
+- **Seasons are one step long**, because the state-space node is time-invariant. TFP's `num_steps_per_season`
+  is the trigonometric form with the period in steps (52.18 for weekly data with a yearly cycle, or 7 × 24 for
+  hourly data with a weekly one).
+- **A regression** makes the likelihood a [factor](building-models.md#factors) of the state-space log density of the series minus
+  X β (`log_density` accepts the `linear_gaussian_state_space` kind, giving the scalar Kalman log likelihood of a
+  whole series), since an observed node can't have its observations shifted by a latent. Its gradients and second
+  derivatives are exact as for the node.
+
+`StructuralPosterior::new(&model, &state, &sts, &samples)` (or `from_chains`) evaluates the parameters at each draw:
+
+- `decompose(level)`: each component's contribution to every observed step (its observation row times its smoothed
+  states, or X β), and their sum `total`, the smoothed mean of the series. Means are averaged over the draws and the
+  intervals of probability `level` are central quantiles of the mixture over draws of each draw's exact Gaussian,
+  so they include the parameters' and the states' uncertainty. The components' means sum to the total's.
+- `forecast(h, &future_covariates, level)`: the next h steps of the series (with the observation noise) and of
+  each component, with one future design matrix [h, k] per regression component; `sample_forecast` draws one
+  joint future path per draw.
+
+The [CO₂ forecasting example](examples.md) fits a trend and a 12-month seasonal component with NUTS and checks a
+two-year forecast against held-out months.
+
 ## Random walks, autoregressions and GARCH
 
 Three processes defined by a recursion have distributions of their own, so a whole series is one node with an exact

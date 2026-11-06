@@ -489,9 +489,10 @@ pub enum Op {
     /// PyMC's `Potential` or Stan's `target +=`). See [`GraphBuilder::factor`](crate::GraphBuilder::factor).
     Factor,
     /// Parents: `value`, then the distribution's parameters -> f64: the log density of each element of `value`
-    /// under the distribution, broadcast with the parameters. Defined for the element-wise kinds only (a
-    /// distribution of one value per element with an element-wise density, or a truncated or censored one, and the
-    /// Bernoulli); the value has the kind's value type (f64, i64, or bool for the Bernoulli). Differentiable, to
+    /// under the distribution, broadcast with the parameters. Defined for the element-wise kinds (a distribution of
+    /// one value per element with an element-wise density, or a truncated or censored one, and the Bernoulli), and
+    /// for the linear Gaussian state space model, whose log density is the scalar log likelihood of the whole series;
+    /// the value has the kind's value type (f64, i64, or bool for the Bernoulli). Differentiable, to
     /// second order, in its f64 parents. See
     /// [`GraphBuilder::log_density`](crate::GraphBuilder::log_density).
     LogDensity(DistributionKind),

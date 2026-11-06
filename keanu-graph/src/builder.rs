@@ -587,8 +587,11 @@ impl GraphBuilder {
     ///
     /// `kind` must be element-wise: a distribution of one value per element with an element-wise density (the
     /// continuous and count distributions other than `dirichlet`, `multivariate_gaussian`, `lkj_cholesky`,
-    /// `zero_sum_normal`, `kde`, `categorical`, `multinomial` and `ordered_logistic`, and the `bernoulli`), or a truncated or censored one;
-    /// anything else is an error, as is a value or parameter of the wrong type. The value has the kind's value type
+    /// `zero_sum_normal`, `kde`, `categorical`, `multinomial` and `ordered_logistic`, and the `bernoulli`), or a truncated or censored one,
+    /// or the `linear_gaussian_state_space` kind, whose log density node is a scalar: the Kalman filter's log
+    /// likelihood of the whole series `value` ([T, m]), for observations that are a deterministic function of latents
+    /// (such as a series minus a regression, see [`sts`](crate::sts)). Anything else is an error, as is a value or
+    /// parameter of the wrong type or (for the state space model) shape. The value has the kind's value type
     /// (f64, i64 for a count distribution, or bool for the Bernoulli). The node is differentiable, to second order,
     /// in its f64 parents, by the same rules as the distribution.
     ///

@@ -11,6 +11,7 @@
 
 use keanu_distributions::KeanuRng;
 use keanu_graph::op::{DistributionKind, Op};
+use keanu_graph::sts::{Component, StructuralModel};
 use keanu_graph::transform::{
     Bijector, Circular, CorrelationCholesky, Identity, Interval, LowerBound, Ordered, Simplex,
     SumToZero, UpperBound,
@@ -522,6 +523,22 @@ fn general_cases() -> Vec<Case> {
                 let rates = (x * m).exp();
                 let poisson = b.log_density(DistributionKind::Poisson, counts, &[rates.id()]);
                 observe(b, gaussian + poisson);
+            },
+            Expect::Matches,
+        ),
+        (
+            "a structural time series with a regression (a state space log density in a factor)",
+            |b| {
+                let y = [1.0, 1.6, 0.7, 1.9, 2.4, 1.2, 2.8, 3.1];
+                let design =
+                    DoubleTensor::new(&[8, 1], vec![0.2, -0.4, 0.9, 0.1, -0.3, 0.5, 0.0, 0.8])
+                        .unwrap();
+                StructuralModel::new(b, &y)
+                    .with(Component::local_linear_trend())
+                    .with(Component::seasonal(3))
+                    .with(Component::regression(design))
+                    .build()
+                    .unwrap();
             },
             Expect::Matches,
         ),

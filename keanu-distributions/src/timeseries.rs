@@ -1393,11 +1393,42 @@ impl<'a> LinearGaussianStateSpace<'a> {
     /// density is -∞ there).
     pub fn d_log_prob(&self, x: &DoubleTensor) -> Result<LinearGaussianStateSpaceGradient> {
         let (t_len, d, obs) = self.steps(x.shape())?;
-        let matrices = self.matrices(d)?;
         let forward = self.forward(x, false)?;
         if forward.steps.len() < t_len {
             return not_positive_definite();
         }
+        self.gradient_of(&forward, t_len, d, obs)
+    }
+
+    /// [`Self::log_prob`] and [`Self::d_log_prob`] from one pass of the filter: the gradient is None where the
+    /// filter stopped early (an innovation covariance not positive definite, or a NaN log likelihood), whose log
+    /// density is -∞ or NaN.
+    ///
+    /// # Errors
+    ///
+    /// An error if the shapes are invalid.
+    pub fn log_prob_and_d_log_prob(
+        &self,
+        x: &DoubleTensor,
+    ) -> Result<(f64, Option<LinearGaussianStateSpaceGradient>)> {
+        let (t_len, d, obs) = self.steps(x.shape())?;
+        let forward = self.forward(x, false)?;
+        if forward.steps.len() < t_len {
+            return Ok((forward.log_likelihood, None));
+        }
+        let gradient = self.gradient_of(&forward, t_len, d, obs)?;
+        Ok((forward.log_likelihood, Some(gradient)))
+    }
+
+    /// The gradient from a complete forward pass.
+    fn gradient_of(
+        &self,
+        forward: &Forward<DoubleTensor>,
+        t_len: usize,
+        d: usize,
+        obs: usize,
+    ) -> Result<LinearGaussianStateSpaceGradient> {
+        let matrices = self.matrices(d)?;
         let adjoints = kalman_reverse(&matrices, &forward.steps)?;
         let dx: Vec<f64> = adjoints
             .x

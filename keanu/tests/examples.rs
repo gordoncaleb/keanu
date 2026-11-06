@@ -21,6 +21,8 @@ mod ab_testing;
 mod challenger_disaster;
 #[path = "../examples/cheating_students.rs"]
 mod cheating_students;
+#[path = "../examples/co2_forecast.rs"]
+mod co2_forecast;
 #[path = "../examples/coal_mining_disasters.rs"]
 mod coal_mining_disasters;
 #[path = "../examples/custom_distribution.rs"]
@@ -609,6 +611,55 @@ fn stochastic_volatility_recovers_the_simulated_parameters() {
         let s = summary.get(node, &[]).unwrap();
         assert_close(s.mean, truth, 4.0 * s.sd + 4.0 * s.mcse_mean, what);
     }
+}
+
+#[test]
+fn co2_forecast_covers_the_held_out_months() {
+    // 4 chains of 250 draws after 250 adaptation steps each, on 96 simulated months. Over data seeds 1 to 12 (4
+    // chains of 150 draws each), the 90% intervals covered 18 to 24 of the 24 held-out months (94% of them
+    // altogether) and the 50% intervals 3 to 19 (56%): calibrated, with the spread of one series whose months are
+    // correlated. The bundled seed (3) covered 21 and 14; over chain seeds 1 to 5 with 250 draws the largest R-hat
+    // was 1.006 to 1.010, with no divergences.
+    let draws = 250;
+    let (r, held_out) = co2_forecast::run(1, draws).unwrap();
+    assert!(
+        r.divergences * 100 < co2_forecast::CHAINS * draws,
+        "{} divergences",
+        r.divergences
+    );
+    let summary = r.samples.summary().unwrap();
+    for row in summary.rows() {
+        assert!(
+            row.stats.r_hat < 1.02,
+            "R-hat of {:?} is {}",
+            row.node,
+            row.stats.r_hat
+        );
+    }
+    // the decomposition adds up, and the seasonal cycle has the simulated amplitude of about 3 to 4 ppm
+    let parts = &r.decomposition;
+    let seasonal = parts.component("seasonal").unwrap();
+    for t in 0..co2_forecast::TRAINING_MONTHS {
+        let sum: f64 = parts.components.iter().map(|(_, b)| b.mean[t]).sum();
+        assert_close(sum, parts.total.mean[t], 1e-9, "trend + seasonal");
+    }
+    let last_year = &seasonal.mean[co2_forecast::TRAINING_MONTHS - 12..];
+    let range = last_year.iter().cloned().fold(f64::NEG_INFINITY, f64::max)
+        - last_year.iter().cloned().fold(f64::INFINITY, f64::min);
+    assert!((5.0..9.0).contains(&range), "seasonal range {range}");
+    // the 24 held-out months: a calibrated forecast's 90% intervals miss about 2.4 of them and its 50% intervals
+    // about 12, but the months of one series are correlated, so the bounds are loose
+    let covered_90 = co2_forecast::covered(&r.forecast, &held_out);
+    assert!(covered_90 >= 18, "{covered_90} of 24 in the 90% intervals");
+    let half = r
+        .posterior
+        .forecast(co2_forecast::HORIZON, &[], 0.5)
+        .unwrap();
+    let covered_50 = co2_forecast::covered(&half, &held_out);
+    assert!(
+        (6..=21).contains(&covered_50),
+        "{covered_50} of 24 in the 50% intervals"
+    );
 }
 
 #[test]

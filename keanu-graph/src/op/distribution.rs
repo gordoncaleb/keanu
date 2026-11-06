@@ -896,7 +896,7 @@ distributions! {
             initial_mean, initial_covariance, transition_matrix, transition_covariance, observation_matrix,
             observation_covariance
         ),
-        support = Support::Real;
+        support = Support::Real, fused = linear_gaussian_state_space_log_prob_and_gradient;
     GaussianRandomWalk "gaussian_random_walk" (mu: F64, sigma: F64, init_mu: F64, init_sigma: F64) -> F64 =>
         d::GaussianRandomWalk::new(mu, sigma, init_mu, init_sigma),
         support = Support::Real;
@@ -1028,6 +1028,30 @@ fn gaussian_log_prob_and_gradient(
         log_prob.sum(),
         (Some(g.x), smallvec::smallvec![Some(g.mu), Some(g.sigma)]),
     ))
+}
+
+/// The linear Gaussian state space model's log density and gradient from one pass of the Kalman filter (the
+/// gradient's parts are empty where the observations are impossible, which the caller discards).
+fn linear_gaussian_state_space_log_prob_and_gradient(
+    model: &d::LinearGaussianStateSpace<'_>,
+    x: &DoubleTensor,
+) -> Result<(f64, LogProbGradientParts)> {
+    let (log_prob, gradient) = model.log_prob_and_d_log_prob(x)?;
+    let parts = match gradient {
+        Some(g) => (
+            Some(g.x),
+            smallvec::smallvec![
+                Some(g.initial_mean),
+                Some(g.initial_covariance),
+                Some(g.transition_matrix),
+                Some(g.transition_covariance),
+                Some(g.observation_matrix),
+                Some(g.observation_covariance),
+            ],
+        ),
+        None => (None, smallvec::smallvec![]),
+    };
+    Ok((log_prob, parts))
 }
 
 /// As UniformVertex: zero inside the support, -inf above x_max and +inf at or below x_min, and no gradient with

@@ -46,6 +46,7 @@ pub mod op;
 pub mod parameterisation;
 pub mod sequence;
 mod state;
+pub mod sts;
 pub mod transform;
 mod value;
 mod vars;

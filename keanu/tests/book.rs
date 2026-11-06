@@ -1035,6 +1035,50 @@ fn smoothing_and_forecasting() -> keanu::Result<()> {
 }
 
 #[test]
+fn structural_time_series() -> keanu::Result<()> {
+    // ANCHOR: sts
+    use keanu::algorithms::sts::StructuralPosterior;
+    use keanu::graph::sts::{Component, StructuralModel};
+
+    // four years of quarterly sales: a trend, a seasonal cycle and a promotion covariate
+    let promotion: Vec<f64> = (0..20).map(|t| f64::from(u8::from(t % 5 == 2))).collect();
+    let sales: Vec<f64> = (0..20)
+        .map(|t| 10.0 + 0.3 * t as f64 + [1.5, -0.5, -2.0, 1.0][t % 4] + 2.0 * promotion[t])
+        .collect();
+    let b = GraphBuilder::new();
+    let sts = StructuralModel::new(&b, &sales[..16])
+        .with(Component::local_linear_trend())
+        .with(Component::seasonal(4))
+        .with(Component::regression(DoubleTensor::new(
+            &[16, 1],
+            promotion[..16].to_vec(),
+        )?))
+        .build()?;
+    let nodes: Vec<NodeId> = sts.parameters().into_iter().map(|(_, id)| id).collect();
+    let (graph, mut state) = b.build()?;
+    let model = Model::new(graph, &state)?;
+    let samples = Nuts::default().sample(
+        &model,
+        &mut state,
+        &nodes,
+        300,
+        &mut KeanuRng::seed_from_u64(1),
+    )?;
+
+    let posterior = StructuralPosterior::new(&model, &state, &sts, &samples)?;
+    // each component's part of the 16 observed quarters, with 90% intervals
+    let parts = posterior.decompose(0.9)?;
+    let seasonal = parts.component("seasonal").unwrap();
+    // the next 4 quarters, given the promotion's future values
+    let future = DoubleTensor::new(&[4, 1], promotion[16..].to_vec())?;
+    let forecast = posterior.forecast(4, &[future], 0.9)?;
+    assert_eq!(seasonal.mean.len(), 16);
+    assert_eq!(forecast.observations.upper.len(), 4);
+    // ANCHOR_END: sts
+    Ok(())
+}
+
+#[test]
 fn time_series_processes() -> keanu::Result<()> {
     // ANCHOR: processes
     use keanu::distributions::Garch11;

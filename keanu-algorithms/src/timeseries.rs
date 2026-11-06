@@ -77,7 +77,31 @@ fn node_draws(
 ) -> Result<Vec<(Vec<Value>, Value)>> {
     let graph = model.graph();
     check_nodes(graph, &[node])?;
-    let parents = graph[node].parents().to_vec();
+    let mut targets = graph[node].parents().to_vec();
+    targets.push(node);
+    Ok(
+        values_at_draws(model, state, &targets, &graph.describe(node), samples)?
+            .into_iter()
+            .map(|mut values| {
+                let value = values.pop().expect("the node is a target");
+                (values, value)
+            })
+            .collect(),
+    )
+}
+
+/// The values of `targets` at each draw of each of `samples`, in order: each draw is set in a copy of `state` and
+/// the targets evaluated from it, so every latent they depend on (a latent target itself among them) must be
+/// recorded; an error naming `what` and the missing latents otherwise.
+pub(crate) fn values_at_draws(
+    model: &Model,
+    state: &State,
+    targets: &[NodeId],
+    what: &str,
+    samples: &[&NetworkSamples],
+) -> Result<Vec<Vec<Value>>> {
+    let graph = model.graph();
+    check_nodes(graph, targets)?;
     let mut sampled = vec![false; graph.len()];
     for s in samples {
         check_nodes(graph, s.nodes())?;
@@ -85,24 +109,19 @@ fn node_draws(
             sampled[id.index()] = true;
         }
     }
-    let mut needed = latent_ancestors(graph, state, &parents);
-    if !state.is_observed(node) {
-        needed.push(node);
-    }
-    let missing: Vec<String> = needed
+    let missing: Vec<String> = latent_ancestors(graph, state, targets)
         .into_iter()
         .filter(|id| !sampled[id.index()])
         .map(|id| graph.describe(id))
         .collect();
     if !missing.is_empty() {
         return Err(AlgorithmError::InvalidArgument(format!(
-            "{} depends on latents without samples: {}",
-            graph.describe(node),
+            "{what} depends on latents without samples: {}",
             missing.join(", ")
         )));
     }
     let mut work = state.clone();
-    // every latent the parents need has a value from the samples, so evaluating them samples nothing
+    // every latent the targets need has a value from the samples, so evaluating them samples nothing
     let mut rng = KeanuRng::seed_from_u64(0);
     let mut draws = Vec::new();
     for s in samples {
@@ -112,8 +131,8 @@ fn node_draws(
                     work.set(graph, id, value)?;
                 }
             }
-            work.eval(graph, &parents, &mut rng)?;
-            let values = parents
+            work.eval(graph, targets, &mut rng)?;
+            let values = targets
                 .iter()
                 .map(|&id| {
                     work.value(id).cloned().ok_or_else(|| {
@@ -124,10 +143,7 @@ fn node_draws(
                     })
                 })
                 .collect::<Result<Vec<Value>>>()?;
-            let value = work.value(node).cloned().ok_or_else(|| {
-                AlgorithmError::InvalidArgument(format!("{} has no value", graph.describe(node)))
-            })?;
-            draws.push((values, value));
+            draws.push(values);
         }
     }
     Ok(draws)
@@ -152,7 +168,7 @@ fn kind_of<'m>(
 }
 
 /// A value's f64 tensor, an error for another type.
-fn f64_value(value: &Value) -> Result<&DoubleTensor> {
+pub(crate) fn f64_value(value: &Value) -> Result<&DoubleTensor> {
     value.as_f64().ok_or_else(|| {
         AlgorithmError::InvalidArgument(format!(
             "expected an f64 value, not a {:?} one",
@@ -162,7 +178,7 @@ fn f64_value(value: &Value) -> Result<&DoubleTensor> {
 }
 
 /// Every chain's samples, in order.
-fn chains(samples: &ChainSamples) -> Vec<&NetworkSamples> {
+pub(crate) fn chains(samples: &ChainSamples) -> Vec<&NetworkSamples> {
     samples.chains().iter().collect()
 }
 

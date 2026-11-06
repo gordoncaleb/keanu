@@ -351,6 +351,28 @@ Work from `docs/plans/2026-11-05-001-feat-applied-modelling-gaps-plan.md`.
   `gaussian_random_walk`, `autoregressive` and `garch11` and their `_with_shape` forms; the save schema gained
   `DISTRIBUTION_KIND_GAUSSIAN_RANDOM_WALK`, `_AUTOREGRESSIVE` and `_GARCH11`, and the guide's sequences chapter a
   section on them.
+- keanu-graph, keanu-algorithms and keanu: **structural time series**. `keanu_graph::sts::StructuralModel` builds a
+  model of an observed series from `Component`s (`local_level`, `local_linear_trend`, `seasonal` in the
+  dummy-variable form whose S consecutive effects sum to zero apart from drift, `trigonometric_seasonal` with any
+  period and 1 to ⌊period / 2⌋ harmonics, `autoregressive` of order p, and `regression` on known covariates) into
+  one linear Gaussian state space node, with the components' states stacked and their transition and noise matrices
+  block-diagonal, so the Kalman filter integrates the states out. Scales and coefficients are graph variables given
+  with `with_scale`, `with_slope_scale`, `with_coefficients` and `with_observation_noise_scale`, or latents the
+  builder creates with priors scaled by the series' standard deviation s (LogNormal(ln(0.05 s), 2) for component
+  scales, LogNormal(ln(0.1 s), 2) for the noise, N(0, 1) for AR coefficients, N(0, 10 s / max |x_j|) for regression
+  weights); the initial state is fixed at N(y₀, s²) for the level and N(0, s²) otherwise. A regression is an offset
+  of the observations, so its likelihood is a factor of the state-space log density of the series minus X β:
+  `Op::LogDensity` and `GraphBuilder::log_density` now accept the `LinearGaussianStateSpace` kind, as a scalar
+  node with the distribution's gradient and Hessian-vector products. `build` returns a `StructuralTimeSeries`
+  (each component's `ComponentLayout`, the parameters' nodes and the likelihood). `keanu_algorithms::sts::StructuralPosterior`
+  evaluates it at each draw of `NetworkSamples` or `ChainSamples` and gives `decompose` (each component's
+  smoothed contribution and their sum, `Decomposition`) and `forecast` (the series and each component h steps
+  ahead, with future covariates for the regressions, `Forecast`), whose means are averaged over the draws and whose
+  central intervals are quantiles of the mixture of each draw's Gaussian, and `sample_forecast` (one joint path per
+  draw). `LinearGaussianStateSpace` gained `log_prob_and_d_log_prob`, one filter pass for both, which the graph now
+  uses for the node's log probability and gradient together. The new `co2_forecast` example fits a local linear
+  trend and a two-harmonic 12-month cycle to simulated monthly CO₂ with NUTS, decomposes it and forecasts 24 held-out
+  months, and the guide's sequences chapter has a section on structural time series.
 
 ### Code review fixes
 
