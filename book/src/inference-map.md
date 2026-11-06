@@ -12,7 +12,7 @@ latents; for models with discrete latents, use [sampling](inference-sampling.md)
 
 ## Choosing an algorithm
 
-Three gradient algorithms are available:
+Four gradient algorithms are available:
 
 - **`Lbfgs`** (the default) is limited-memory BFGS with Stan's settings: a history of 5 steps
   (`history_size`) and a line search for the strong Wolfe conditions. It stops, converged, when the log
@@ -24,6 +24,8 @@ Three gradient algorithms are available:
 - **`ConjugateGradient`** is nonlinear conjugate gradient, Polak–Ribière+ with a line search.
   Settings: `max_evaluations`, `relative_threshold` and `absolute_threshold` (both 1e-8 by default; the optimizer
   stops when the change in log probability is below either), and `formula`.
+- **`TrustRegion`** is Newton's method with a trust region (Nocedal and Wright, Algorithm 4.1), described
+  [below](#trust-region-newton).
 - **`Adam`**, with its usual settings: `alpha` (the step size), `beta1`, `beta2`, `epsilon`, `max_evaluations`, and
   `convergence` (a relative or absolute checker on the change in position).
 
@@ -37,6 +39,41 @@ stops with `converged: false` if no step along the gradient improves the log pro
 with `converged: false`, at the best point found, if the log probability becomes impossible or the gradient NaN or
 infinite. Unless the initial-condition check is turned off, an impossible start or a NaN or infinite starting
 gradient is an error; for L-BFGS an impossible start is an error either way.
+
+## Trust-region Newton
+
+`TrustRegion` uses second derivatives. At each iteration it approximately minimises the quadratic model of the
+negated log probability within a ball of radius Δ around the current point, by Steihaug–Toint conjugate gradient
+on Hessian-vector products: the conjugate gradient iterations stop at the ball's edge, when the model's residual
+is small enough (min(0.5, √‖g‖)·‖g‖), or on meeting a direction of negative curvature, which they follow to the
+edge. So an indefinite Hessian, at a saddle or far from the optimum, is handled: the step leaves along the
+direction in which the log probability rises fastest rather than heading for a minimum. A step is accepted if the
+log probability rises by more than `eta` (1e-4) times what the model predicted; the radius is quartered after a
+poor prediction and doubled, up to `max_radius` (1e3), after a good one that reached the edge. It starts at
+`initial_radius` (1). It converges when the gradient's norm is below `tol_grad` (1e-8), when an accepted step
+changes the log probability by less than `tol_rel_obj` (1e4) machine epsilons relative to its size or moves the
+latents less than `tol_param` (1e-8), or when the radius shrinks below `tol_param`; and stops, without converging,
+after `max_iterations` (1000).
+
+The Hessian-vector products are those of the log probability (or, for maximum likelihood, the log likelihood) in
+unconstrained space, without the Jacobian, as for the other optimizers. `hessian_method` (default
+`HessianMethod::Auto`) computes them exactly by automatic differentiation, or, for models with a lambda, a custom
+distribution or an ODE, which have no second-order rules, by central differences of the gradient, so ODE models
+work too. `OptimizedResult::hessian_vector_products` counts them, separately from `evaluations` (a fitness and a
+gradient per trial point).
+
+```rust,ignore
+{{#include ../../keanu/tests/book.rs:trust_region}}
+```
+
+Is it cheaper than L-BFGS? It takes far fewer iterations, so far fewer gradient evaluations, but each conjugate
+gradient iteration costs a Hessian-vector product, which costs about as much as two gradient evaluations (a
+finite-difference one is exactly two). On the radon model's MAP (89 coordinates, in the non-centred form), from the
+default values, L-BFGS used 130 gradient evaluations; trust-region Newton used 28 gradient evaluations and 173
+Hessian-vector products, about 374 gradient evaluations' worth, and took about 2.5 times as long, but it reached a
+tighter optimum (a gradient norm of 7·10⁻⁶ against 3·10⁻²). L-BFGS remains the default; use `TrustRegion` when a
+precise optimum matters, or on badly scaled or indefinite problems where a line search along quasi-Newton
+directions struggles.
 
 ## Constrained latents
 

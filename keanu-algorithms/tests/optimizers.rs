@@ -4,7 +4,7 @@ use keanu_algorithms::AlgorithmError;
 use keanu_algorithms::Space;
 use keanu_algorithms::optimizer::{
     Adam, Algorithm, ConjugateGradient, ConvergenceChecker, GradientOptimizer, Lbfgs,
-    NonGradientOptimizer, Norm, OptimizerBounds, UpdateFormula,
+    NonGradientOptimizer, Norm, OptimizerBounds, TrustRegion, UpdateFormula,
 };
 use keanu_graph::{GraphBuilder, Model, State};
 use keanu_tensor::{DoubleTensor, IntTensor};
@@ -327,6 +327,7 @@ fn both_algorithms() -> Vec<keanu_algorithms::optimizer::Algorithm> {
         Adam::default().with_max_evaluations(100_000).into(),
         ConjugateGradient::default().into(),
         Lbfgs::default().into(),
+        TrustRegion::default().into(),
     ]
 }
 
@@ -703,5 +704,73 @@ fn an_interior_optimum_far_from_one_is_not_a_boundary() {
                 "{theta} {algorithm:?}: {mode}"
             );
         }
+    }
+}
+
+/// Trust-region Newton maximizes the Rosenbrock log likelihood (its Hessian is the log probability's with the
+/// latents' priors weighed 0), including from (0, 1), where the Hessian is indefinite and the first step follows
+/// the direction of negative curvature to the edge of the trust region.
+#[test]
+fn trust_region_minimises_rosenbrock_from_an_indefinite_start() {
+    let mut ten = [-1.2, 1.0].repeat(5);
+    ten[9] = 1.0;
+    for start in [vec![-1.2, 1.0], ten, vec![0.0, 1.0]] {
+        let (model, mut state, x) = rosenbrock(&start);
+        let result = GradientOptimizer::new(&model)
+            .algorithm(TrustRegion::default())
+            .max_likelihood(&mut state)
+            .unwrap();
+        assert!(result.converged, "from {start:?}");
+        for &id in &x {
+            let v = result.get(id).unwrap().to_scalar().unwrap();
+            assert!((v - 1.0).abs() < 1e-6, "from {start:?}: {v}");
+        }
+        assert!(result.hessian_vector_products > 0);
+        assert!(result.evaluations < 400, "{}", result.evaluations);
+    }
+    // the exact Hessian is used where the rules exist; forcing finite differences reaches the same optimum
+    let (model, mut state, x) = rosenbrock(&[-1.2, 1.0]);
+    let result = GradientOptimizer::new(&model)
+        .algorithm(
+            TrustRegion::default()
+                .with_hessian_method(keanu_algorithms::HessianMethod::FiniteDifference),
+        )
+        .max_likelihood(&mut state)
+        .unwrap();
+    assert!(result.converged);
+    for &id in &x {
+        let v = result.get(id).unwrap().to_scalar().unwrap();
+        assert!((v - 1.0).abs() < 1e-6, "{v}");
+    }
+}
+
+#[test]
+fn trust_region_stops_at_its_iteration_limit_and_checks_its_settings() {
+    let (model, mut state, _) = rosenbrock(&[-1.2, 1.0]);
+    let result = GradientOptimizer::new(&model)
+        .algorithm(TrustRegion::default().with_max_iterations(2))
+        .max_likelihood(&mut state)
+        .unwrap();
+    assert!(!result.converged);
+    // one starting evaluation (fitness and gradient) and one per iteration
+    assert_eq!(result.evaluations, 6);
+    for invalid in [
+        TrustRegion::default().with_initial_radius(0.0),
+        TrustRegion::default().with_max_radius(f64::INFINITY),
+        TrustRegion::default().with_initial_radius(2e3),
+        TrustRegion::default().with_eta(0.3),
+        TrustRegion::default().with_max_iterations(0),
+        TrustRegion::default().with_tol_grad(f64::NAN),
+    ] {
+        let (model, mut state, _) = rosenbrock(&[-1.2, 1.0]);
+        assert!(
+            matches!(
+                GradientOptimizer::new(&model)
+                    .algorithm(invalid)
+                    .max_likelihood(&mut state),
+                Err(AlgorithmError::InvalidSetting(_))
+            ),
+            "{invalid:?}"
+        );
     }
 }

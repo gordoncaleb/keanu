@@ -293,6 +293,7 @@ impl<'m> NonGradientOptimizer<'m> {
                     prima::ExitStatus::SmallTrustRegionRadius | prima::ExitStatus::TargetReached
                 ),
             evaluations: objective.evaluations(),
+            hessian_vector_products: 0,
             boundary: None,
         })
     }

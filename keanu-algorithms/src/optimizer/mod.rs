@@ -19,6 +19,11 @@
 //! out (at ±31, or twice its distance beyond ±30): if the fitness there is no worse, the result is the same boundary
 //! result.
 //!
+//! [`TrustRegion`] uses second derivatives, by Hessian-vector products in the same unconstrained space (without the
+//! Jacobian), exact or by finite differences of the gradient (see [`HessianMethod`](keanu_graph::HessianMethod)).
+//! Its steps are kept inside a trust region rather than found by a line search, and it handles boundaries as the
+//! others do.
+//!
 //! [`GradientOptimizer::with_space`]`(Space::Constrained)` optimizes the latents' own values instead, as Keanu did before
 //! transforms existed. [`NonGradientOptimizer`] always works on the constrained values, bounded by the supports.
 
@@ -28,12 +33,14 @@ mod conjugate_gradient;
 mod convergence;
 pub(crate) mod lbfgs;
 mod line_search;
+mod trust_region;
 
 pub use adam::Adam;
 pub use bobyqa::{Bobyqa, NonGradientOptimizer, OptimizerBounds};
 pub use conjugate_gradient::{ConjugateGradient, UpdateFormula};
 pub use convergence::{ConvergenceChecker, Norm};
 pub use lbfgs::Lbfgs;
+pub use trust_region::TrustRegion;
 
 use crate::error::{AlgorithmError, Result};
 use crate::support::{
@@ -62,6 +69,8 @@ pub enum Algorithm {
     ConjugateGradient(ConjugateGradient),
     /// Limited-memory BFGS.
     Lbfgs(Lbfgs),
+    /// Trust-region Newton with Hessian-vector products.
+    TrustRegion(TrustRegion),
 }
 
 /// L-BFGS, the default.
@@ -83,6 +92,12 @@ impl From<Adam> for Algorithm {
     }
 }
 
+impl From<TrustRegion> for Algorithm {
+    fn from(t: TrustRegion) -> Self {
+        Self::TrustRegion(t)
+    }
+}
+
 impl From<ConjugateGradient> for Algorithm {
     fn from(c: ConjugateGradient) -> Self {
         Self::ConjugateGradient(c)
@@ -100,8 +115,12 @@ pub struct OptimizedResult {
     /// Whether the algorithm's convergence criterion was met (rather than running out of evaluations, or stopping
     /// at a [`boundary`](Self::boundary)).
     pub converged: bool,
-    /// The number of fitness and gradient evaluations used.
+    /// The number of fitness and gradient evaluations used (each counted once).
     pub evaluations: usize,
+    /// The number of Hessian-vector products used: by [`TrustRegion`] only, 0 for the other optimizers. An exact
+    /// product costs about as much as two gradient evaluations, a finite-difference one exactly two (which are not
+    /// in [`evaluations`](Self::evaluations)).
+    pub hessian_vector_products: usize,
     /// The latent whose optimum is on the boundary of its support, if the optimizer stopped because of one (see the
     /// [module documentation](self)). Its value is then close to the boundary rather than an interior optimum, and
     /// `converged` is false. Always `None` in [`Space::Constrained`] and for the [`NonGradientOptimizer`].
@@ -116,7 +135,8 @@ impl OptimizedResult {
 }
 
 /// Finds the latent values that maximize the log probability or log likelihood of a model by gradient ascent.
-/// The default algorithm is [`Lbfgs`], in unconstrained space (see the [module documentation](self)).
+/// The default algorithm is [`Lbfgs`], in unconstrained space (see the [module documentation](self));
+/// [`TrustRegion`] is Newton's method, with second derivatives.
 #[derive(Debug, Clone)]
 pub struct GradientOptimizer<'m> {
     model: &'m Model,
@@ -214,6 +234,7 @@ impl<'m> GradientOptimizer<'m> {
             None
         };
 
+        let mut hessian_vector_products = 0;
         let (point, fitness, converged) = match &self.algorithm {
             Algorithm::Adam(adam) => {
                 let initial_gradient = known_start.map(|(_, g)| objective.unflatten(&g));
@@ -238,6 +259,24 @@ impl<'m> GradientOptimizer<'m> {
                 objective.apply_flat(state, &x)?;
                 (x, fitness, converged)
             }
+            Algorithm::TrustRegion(trust_region) => {
+                // the log likelihood's Hessian is the log probability's with the latents' prior terms weighed 0
+                let likelihood = match fitness {
+                    Fitness::LogProb => None,
+                    Fitness::LogLikelihood => Some(
+                        Parameterisation::with_space(model, state, self.space)?
+                            .with_weights(model.latents().iter().map(|&id| (id, 0.0)))?,
+                    ),
+                };
+                let curvature = likelihood
+                    .as_ref()
+                    .unwrap_or_else(|| objective.parameterisation());
+                let minimum =
+                    trust_region.maximize(&objective, curvature, state, start, known_start)?;
+                hessian_vector_products = minimum.hessian_vector_products;
+                objective.apply_flat(state, &minimum.point)?;
+                (minimum.point, minimum.value, minimum.converged)
+            }
         };
         let (point, fitness, boundary) = objective.probe_boundary(state, point, fitness)?;
         Ok(OptimizedResult {
@@ -245,6 +284,7 @@ impl<'m> GradientOptimizer<'m> {
             fitness,
             converged: converged && boundary.is_none(),
             evaluations: objective.evaluations(),
+            hessian_vector_products,
             boundary,
         })
     }

@@ -575,6 +575,31 @@ fn map_in_unconstrained_space() -> keanu::Result<()> {
 }
 
 #[test]
+fn trust_region_newton() -> keanu::Result<()> {
+    // ANCHOR: trust_region
+    // sigma ~ Gamma(theta = 0.5, k = 2) with y ~ N(0, sigma) observed at 1.2
+    let b = GraphBuilder::new();
+    let sigma = b.gamma(0.5, 2.0).label("sigma");
+    b.set_value(sigma, DoubleTensor::scalar(3.0));
+    let y = b.gaussian(0.0, sigma);
+    b.observe(y, DoubleTensor::scalar(1.2));
+    let sigma = sigma.id();
+    let (graph, mut state) = b.build()?;
+    let model = Model::new(graph, &state)?;
+
+    let result = GradientOptimizer::new(&model)
+        .algorithm(TrustRegion::default())
+        .max_a_posteriori(&mut state)?;
+    assert!(result.converged);
+    // log p = ln σ − 2σ − ln σ − 0.72 / σ² + const, so the MAP solves 2σ³ = 1.44: σ = 0.72^(1/3)
+    let mode = result.get(sigma).unwrap().to_scalar().unwrap();
+    assert!((mode - 0.72f64.cbrt()).abs() < 1e-6);
+    assert!(result.hessian_vector_products > 0);
+    // ANCHOR_END: trust_region
+    Ok(())
+}
+
+#[test]
 fn laplace_approximation() -> keanu::Result<()> {
     // ANCHOR: laplace
     // mu ~ N(1, 2), observed four times through y ~ N(mu, 1.5): the posterior of mu is Gaussian

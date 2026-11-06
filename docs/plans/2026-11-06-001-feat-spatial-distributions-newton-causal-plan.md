@@ -429,6 +429,19 @@ Execution order: U1, U2, U3, U4, U5, U6, U7, U8, U9, U11, U10, U12, U13, then a 
   - an indefinite-start case exits the trust region correctly;
   - boundary modes are reported like the other optimizers;
   - an ODE model works through the finite-difference fallback.
+- **Implementation notes:**
+  - Named `TrustRegion` (`Algorithm::TrustRegion`). `OptimizedResult` gained `hessian_vector_products`. Maximum
+    likelihood takes Hessian-vector products of a parameterisation with the latents' prior terms weighed 0. Besides
+    the gradient tolerance, it converges on a relative fitness change below 1e4 ε or a step or radius below 1e-8
+    (with an inexact gradient, such as through an ODE, the gradient tolerance can be out of reach). `Auto` is
+    resolved once per run, as in `Laplace`.
+  - AE6: the centred radon model has no MAP (its joint density grows without bound as σₐ → 0 with the intercepts
+    pooled; L-BFGS runs into that funnel without converging), so AE6 uses the non-centred form, added to the
+    example as `non_centred_model`. There both reach the same optimum (Newton's fitness 2e-5 higher, gradient norm
+    7e-6 against 3e-2), and Newton uses 28 gradient evaluations against L-BFGS's 130 — but also 173 exact
+    Hessian-vector products, at about two gradient evaluations each, so about 374 gradient evaluations' worth, and
+    about 2.5 times the wall time. AE6's "fewer gradient evaluations" holds only counting Hessian-vector products
+    separately; the test asserts that, the same optimum, and that Newton's fair cost is higher, and the book says so.
 
 ### U11. Finite-difference Hessians and Laplace on ODE models
 - **Requirements:** R11.

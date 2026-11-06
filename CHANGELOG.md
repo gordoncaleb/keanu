@@ -680,6 +680,19 @@ Work from `docs/plans/2026-11-05-001-feat-applied-modelling-gaps-plan.md`.
   `NoSecondOrderRule` (which `HessianMethod::Exact` still gives). The SIR example gained `laplace`; its test checks
   that the approximation's means and standard deviations of β, γ, R₀ and the recovery time are within 20% of NUTS's
   (φ, whose posterior is strongly skewed, within 25%).
+- keanu-algorithms, keanu: **trust-region Newton**. `optimizer::TrustRegion` (`Algorithm::TrustRegion`) is Nocedal
+  and Wright's Algorithm 4.1 with Steihaug–Toint truncated conjugate gradient steps on Hessian-vector products, in
+  the gradient optimizers' unconstrained space without the Jacobian: initial radius 1, maximum radius 1e3,
+  η = 1e-4, conjugate gradient tolerance min(0.5, √‖g‖)·‖g‖, a direction of negative curvature followed to the
+  edge of the trust region, and convergence on a gradient norm below 1e-8, a relative change in the fitness below
+  1e4 ε, or a step or radius below 1e-8. It uses `HessianMethod::Auto` by default, so ODE, lambda and
+  custom-distribution models work through finite differences; maximum likelihood takes the products of the log
+  likelihood (the latents' prior terms weighed 0). Boundary optima are detected and reported as by the other
+  optimizers. `OptimizedResult` gained `hessian_vector_products` (0 for the other optimizers). The radon example
+  gained `non_centred_model`, whose MAP exists (the centred form's density is unbounded as σₐ → 0); on it, trust-region
+  Newton reaches the same optimum as L-BFGS, more tightly, in 28 gradient evaluations against 130, but with 173
+  Hessian-vector products, about 374 gradient evaluations' worth, so it is not cheaper overall there; the test
+  asserts both facts.
 
 ### Code review fixes
 

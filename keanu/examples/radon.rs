@@ -21,6 +21,9 @@
 //! subset of the EPA's National Radon Survey distributed with Gelman & Hill's book (`srrs2.dat` and `cty.dat`).
 //! Log radon is ln(activity), with an activity of 0 taken as 0.1, as in the book.
 //!
+//! [`non_centred_model`] writes the intercepts as a = mu_a + sigma_a·η with η ~ N(0, 1), which has a MAP (the
+//! centred form's joint density grows without bound as sigma_a → 0).
+//!
 //! [`run_from_pathfinder`] starts the chains from multi-path Pathfinder draws instead of the default values, which
 //! converges with a 150-step warm-up.
 //!
@@ -99,7 +102,7 @@ pub struct RadonModel {
     pub b: NodeId,
     /// The residual spread of log radon within a county.
     pub sigma_y: NodeId,
-    /// The 85 county intercepts.
+    /// The 85 county intercepts (deterministic in the non-centred form).
     pub a: NodeId,
 }
 
@@ -112,6 +115,18 @@ impl RadonModel {
 
 /// Builds the model on the bundled data, with every latent at a default starting value (0, or 1 for the scales).
 pub fn model() -> keanu::Result<RadonModel> {
+    build(false)
+}
+
+/// The same model with non-centred intercepts, a = mu_a + sigma_a·η with η ~ N(0, 1), every latent at its default
+/// starting value (η at 0). Unlike the centred form, whose joint density grows without bound as sigma_a → 0 with
+/// every intercept at mu_a (so it has no MAP), this form has a maximum a posteriori in the interior, which the test
+/// of the trust-region optimizer finds.
+pub fn non_centred_model() -> keanu::Result<RadonModel> {
+    build(true)
+}
+
+fn build(non_centred: bool) -> keanu::Result<RadonModel> {
     let houses = data();
     let n = houses.log_radon.len();
 
@@ -120,12 +135,19 @@ pub fn model() -> keanu::Result<RadonModel> {
     let sigma_a = b.exponential(1.0);
     let beta = b.gaussian(0.0, 10.0);
     let sigma_y = b.exponential(1.0);
-    let a = b.gaussian_with_shape(&[COUNTIES], mu_a, sigma_a);
+    let a = if non_centred {
+        let eta = b.gaussian_with_shape(&[COUNTIES], 0.0, 1.0);
+        b.set_value(eta, DoubleTensor::vector(vec![0.0; COUNTIES]));
+        mu_a + sigma_a * eta
+    } else {
+        let a = b.gaussian_with_shape(&[COUNTIES], mu_a, sigma_a);
+        b.set_value(a, DoubleTensor::vector(vec![0.0; COUNTIES]));
+        a
+    };
     b.set_value(mu_a, DoubleTensor::scalar(0.0));
     b.set_value(sigma_a, DoubleTensor::scalar(1.0));
     b.set_value(beta, DoubleTensor::scalar(0.0));
     b.set_value(sigma_y, DoubleTensor::scalar(1.0));
-    b.set_value(a, DoubleTensor::vector(vec![0.0; COUNTIES]));
     let county = b.int_constant(IntTensor::vector(houses.county));
     let floor = b.constant(DoubleTensor::vector(houses.floor));
     // a[county[i]] for each house i
@@ -135,7 +157,10 @@ pub fn model() -> keanu::Result<RadonModel> {
     let (mu_a, sigma_a, beta, sigma_y, a) =
         (mu_a.id(), sigma_a.id(), beta.id(), sigma_y.id(), a.id());
 
-    let (graph, state) = b.build()?;
+    let (graph, mut state) = b.build()?;
+    if non_centred {
+        state.lazy_eval(&graph, &[a], &mut KeanuRng::seed_from_u64(0))?;
+    }
     let model = Model::new(graph, &state)?;
     Ok(RadonModel {
         model,

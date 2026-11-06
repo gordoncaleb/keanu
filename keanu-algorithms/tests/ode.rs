@@ -9,7 +9,7 @@ use keanu_algorithms::laplace::Laplace;
 use keanu_algorithms::mcmc::SamplingOptions;
 use keanu_algorithms::mcmc::metropolis::MetropolisHastings;
 use keanu_algorithms::mcmc::nuts::Nuts;
-use keanu_algorithms::optimizer::{GradientOptimizer, Lbfgs};
+use keanu_algorithms::optimizer::{GradientOptimizer, Lbfgs, TrustRegion};
 use keanu_algorithms::vi::Advi;
 use keanu_algorithms::{AlgorithmError, HessianMethod};
 use keanu_graph::ode::OdeOptions;
@@ -102,6 +102,32 @@ fn an_optimizer_rejects_steps_into_a_failed_solve() {
         assert!((found - 0.5).abs() < 1e-3, "from {start}: {found}");
         assert!(result.fitness.is_finite());
     }
+}
+
+/// Trust-region Newton on an ODE model: the ODE has no second-order rule, so the Hessian-vector products are finite
+/// differences of the gradient, and steps past the cut-off are rejected as impossible.
+#[test]
+fn trust_region_newton_maximizes_an_ode_model_by_finite_differences() {
+    for start in [0.02, 0.95] {
+        let (model, mut state, k) = blow_up(0.5, start);
+        let result = GradientOptimizer::new(&model)
+            .algorithm(TrustRegion::default())
+            .max_a_posteriori(&mut state)
+            .unwrap();
+        let found = result.get(k).unwrap().to_scalar().unwrap();
+        assert!(result.converged, "from {start}");
+        assert!((found - 0.5).abs() < 1e-3, "from {start}: {found}");
+        assert!(result.hessian_vector_products > 0);
+    }
+    // with exact products only, there is no rule for the ODE
+    let (model, mut state, _) = blow_up(0.5, 0.4);
+    let exact = GradientOptimizer::new(&model)
+        .algorithm(TrustRegion::default().with_hessian_method(HessianMethod::Exact))
+        .max_a_posteriori(&mut state);
+    assert!(matches!(
+        exact,
+        Err(AlgorithmError::Graph(GraphError::NoSecondOrderRule(_)))
+    ));
 }
 
 #[test]

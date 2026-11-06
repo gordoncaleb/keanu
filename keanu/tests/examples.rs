@@ -1028,6 +1028,63 @@ fn occupancy_formulations_recover_psi_and_p_and_agree() {
 /// starting points work, not that they shorten radon's warm-up. Pathfinder's own approximation is poor here (k̂ of
 /// 1.7 to 2.1: the centred model's unconstrained density grows without bound as sigma_a shrinks with the intercepts
 /// together, which the L-BFGS path heads for), which is why its draws start the chains rather than replace them.
+/// AE6: trust-region Newton and L-BFGS reach the same MAP of the radon model, in its non-centred form (89
+/// coordinates, from the default values; the centred form has no MAP, see [`radon::non_centred_model`]).
+///
+/// Newton needs far fewer gradient evaluations, and its optimum is tighter (the gradient's norm there is about 7e-6
+/// against L-BFGS's 3e-2, and its fitness 2e-5 higher), but it is not cheaper overall: each conjugate gradient iteration costs a Hessian-vector product,
+/// about two gradient evaluations. Measured from the defaults: L-BFGS used 130 gradient evaluations; Newton 28
+/// gradient evaluations and 173 exact Hessian-vector products, about 374 gradient evaluations' worth (17 ms against
+/// 44 ms, in release). Newton pays off when gradients are expensive relative to second-order sweeps, or when a
+/// tight optimum is needed; L-BFGS remains the default.
+#[test]
+fn radon_map_by_trust_region_newton_and_lbfgs() {
+    use keanu::algorithms::optimizer::{GradientOptimizer, Lbfgs, OptimizedResult, TrustRegion};
+    let radon = radon::non_centred_model().unwrap();
+    let nodes = [radon.mu_a, radon.sigma_a, radon.b, radon.sigma_y, radon.a];
+    let run = |algorithm: keanu::algorithms::optimizer::Algorithm| {
+        let mut state = radon.state.clone();
+        let result = GradientOptimizer::new(&radon.model)
+            .algorithm(algorithm)
+            .max_a_posteriori(&mut state)
+            .unwrap();
+        let param = keanu::graph::Parameterisation::new(&radon.model, &state).unwrap();
+        let z = param.from_state(&state).unwrap();
+        let (_, gradient) = param.log_prob_and_gradient(&z, false, &mut state).unwrap();
+        let gradient_norm = gradient.unwrap().iter().map(|g| g * g).sum::<f64>().sqrt();
+        // the state is left at the optimum, with the intercepts computed from it
+        let values: Vec<f64> = nodes
+            .iter()
+            .flat_map(|&id| state.f64(id).unwrap().as_slice().to_vec())
+            .collect();
+        (result, gradient_norm, values)
+    };
+    let (lbfgs, lbfgs_gradient, lbfgs_values): (OptimizedResult, f64, Vec<f64>) =
+        run(Lbfgs::default().into());
+    let (newton, newton_gradient, newton_values) = run(TrustRegion::default().into());
+    assert!(lbfgs.converged && newton.converged);
+    assert_eq!(lbfgs.hessian_vector_products, 0);
+    // the same optimum, which Newton resolves more tightly
+    assert!((newton.fitness - lbfgs.fitness).abs() < 1e-6 * lbfgs.fitness.abs());
+    assert!(newton.fitness >= lbfgs.fitness);
+    assert!(newton_gradient < 1e-4 && newton_gradient * 100.0 < lbfgs_gradient);
+    for (x, y) in lbfgs_values.iter().zip(&newton_values) {
+        assert!((x - y).abs() < 1e-2 * y.abs().max(1.0), "{x} vs {y}");
+    }
+    // each trial point costs one fitness and one gradient evaluation
+    let (lbfgs_gradients, newton_gradients) = (lbfgs.evaluations / 2, newton.evaluations / 2);
+    assert!(
+        newton_gradients * 3 < lbfgs_gradients,
+        "{newton_gradients} vs {lbfgs_gradients} gradient evaluations"
+    );
+    // counting an exact Hessian-vector product as two gradient evaluations, Newton costs more here
+    let newton_cost = newton_gradients + 2 * newton.hessian_vector_products;
+    assert!(
+        newton_cost > lbfgs_gradients,
+        "{newton_cost} vs {lbfgs_gradients} gradient evaluations' worth"
+    );
+}
+
 #[test]
 fn radon_from_pathfinder_converges_with_a_short_warm_up() {
     let (r, pareto_k) = radon::run_from_pathfinder(2, 150, 1000).unwrap();
