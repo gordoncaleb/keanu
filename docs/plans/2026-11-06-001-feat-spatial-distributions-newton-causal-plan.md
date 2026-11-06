@@ -353,6 +353,30 @@ Execution order: U1, U2, U3, U4, U5, U6, U7, U8, U9, U11, U10, U12, U13, then a 
   - KTD6, with a simulator for draws (random-walk discretisation is not acceptable; use the exact rejection algorithm of Tuerlinckx et al. 2001 or Drugowitsch 2016).
   - Example: hierarchical DDM on simulated response times for a few subjects and two conditions.
 - **Tests:** AE3; sampler matches the density (KS) and the boundary probabilities; NUTS recovers simulated parameters.
+- **Implementation note:** `keanu-distributions/src/wiener.rs`. The boundary is the last parameter of
+  `DistributionKind::Wiener` (a, t0, w, v, sv, boundary), an i64 (0 lower, 1 upper) that is normally observed data,
+  as Stan has a density per boundary; sv is always a parameter (0.0 for the four-parameter model). The standard
+  density uses whichever series needs fewer terms (counts at an absolute 1e-15), each summed in logs relative to its
+  leading term until Gondan et al.'s alternating-series bound (small time, written in pairs of images with
+  e^{−4kw/u} − 1 so nothing cancels) or Navarro and Fuss's tail bound (large time) is below 1e-17 of the sum, plus one
+  term. Rather than Henrich et al.'s derivative series, the gradient is hand-written through Blurton et al.'s
+  closed-form factor with the series differentiated on first-order dual numbers in (u, w), and the Hessian is the
+  whole formula on U5's second-order jets (Jet<6>), so the kind has second-order rules (no `NoSecondOrderRule`).
+  Accuracy: 2e-15 relative against 1,792 50-digit mpmath values (`tests/fixtures/wiener.{py,json}`; the sv cases by
+  quadrature over the drift, independently of the closed form). Sampler: neither Tuerlinckx et al.'s nor Drugowitsch's
+  envelope but an exact rejection of the same kind: given the boundary (reflected to the lower), the proposal is the
+  inverse Gaussian time to reach that boundary alone (Lévy for zero drift), and the acceptance ratio is the
+  method-of-images sum f(u|w)/(leading image) <= 1, in which the drift cancels; acceptance is at least the driftless
+  probability of that boundary. `sample_wiener` draws the drift, the boundary (closed form) and then the time;
+  `Wiener::sample` (the node's sampler) draws the time given the boundary, with sv > 0 first the drift given the
+  boundary by rejection from a two-piece truncated normal envelope. Proposals are capped at 1e7 per draw (an
+  error). Checked by the score at the truth over 200,000 simulated trials (z-scores within ±2.4). The example uses
+  the centred form: non-centred, NUTS diverged in the funnel of the population scales (4 subjects; tree sizes ~80);
+  centred, there are no divergences and trees of ~15 leapfrog steps (about 20 s for 4 chains of 2,000 steps,
+  sequentially). The test checks 11 intervals (population drifts, w, each subject's a and t0) rather than also the 8
+  subject drifts: over data seeds 1 to 30 no seed covered all 19 quantities (about 2.1 misses per seed against
+  1.9 expected at 90%, the misses within a subject correlated), so the subject drifts are checked for convergence
+  only; data seed 15 covers the 11 (as do 13, 22, 26 and 27).
 
 ### U8. Heterogeneous mixtures and transformed distributions
 - **Requirements:** R8, R9.

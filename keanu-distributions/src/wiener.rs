@@ -143,10 +143,31 @@ impl<'a> Wiener<'a> {
                 &*self.sv,
                 &*self.boundary,
             ),
-            |(x, a, t0, w, v, sv, boundary)| {
-                log_density(Jet::<0>::constant(x), jets([a, t0, w, v, sv]), boundary).v
-            },
+            |(x, a, t0, w, v, sv, boundary)| evaluate::<0>(x, [a, t0, w, v, sv], boundary).0,
         )
+    }
+
+    /// [`Self::log_prob`] and [`Self::d_log_prob`] in one pass, each exactly as the separate method computes it.
+    pub fn log_prob_and_d_log_prob(
+        &self,
+        x: &DoubleTensor,
+    ) -> Result<(DoubleTensor, WienerGradient)> {
+        let [value, x, a, t0, w, v, sv] = map_n(
+            (
+                x,
+                &*self.a,
+                &*self.t0,
+                &*self.w,
+                &*self.v,
+                &*self.sv,
+                &*self.boundary,
+            ),
+            |(x, a, t0, w, v, sv, boundary)| {
+                let (value, g) = evaluate::<2>(x, [a, t0, w, v, sv], boundary);
+                [value, g[0], g[1], g[2], g[3], g[4], g[5]]
+            },
+        )?;
+        Ok((value, WienerGradient { x, a, t0, w, v, sv }))
     }
 
     /// The element-wise derivatives of [`Self::log_prob`] with respect to x and each f64 parameter.
@@ -161,7 +182,7 @@ impl<'a> Wiener<'a> {
                 &*self.sv,
                 &*self.boundary,
             ),
-            |(x, a, t0, w, v, sv, boundary)| gradient(x, [a, t0, w, v, sv], boundary).1,
+            |(x, a, t0, w, v, sv, boundary)| evaluate::<2>(x, [a, t0, w, v, sv], boundary).1,
         )?;
         Ok(WienerGradient { x, a, t0, w, v, sv })
     }
@@ -169,7 +190,7 @@ impl<'a> Wiener<'a> {
     /// The log density of one response time `x` with its gradient, as [`Self::d_log_prob`] computes it, with
     /// respect to x (index 0) and the parameters `[a, t0, w, v, sv]` (indices 1 to 5).
     pub fn log_prob_and_gradient(x: f64, parameters: [f64; 5], boundary: i64) -> (f64, [f64; 6]) {
-        gradient(x, parameters, boundary)
+        evaluate::<2>(x, parameters, boundary)
     }
 
     /// The log density of one response time `x` with its gradient and Hessian with respect to x (index 0) and the
@@ -401,11 +422,6 @@ fn inverse_gaussian(mean: f64, shape: f64, rng: &mut KeanuRng) -> f64 {
     }
 }
 
-/// Jets of the five f64 parameters, as constants.
-fn jets<const K: usize>(p: [f64; 5]) -> [Jet<K>; 5] {
-    p.map(Jet::constant)
-}
-
 /// The log density at the lower boundary after the reflection for the upper one, with t the decision time:
 /// −2 ln a − ½ ln(1 + sv²t) + (sv²a²w² − 2avw − v²t)/(2(1 + sv²t)) + ln f(t/a² | w), over jets of any order.
 fn log_density<const K: usize>(x: Jet<K>, [a, t0, w, v, sv]: [Jet<K>; 5], boundary: i64) -> Jet<K> {
@@ -431,9 +447,10 @@ fn log_density<const K: usize>(x: Jet<K>, [a, t0, w, v, sv]: [Jet<K>; 5], bounda
         + series
 }
 
-/// The log density and its gradient in [x, a, t0, w, v, sv], by hand through the closed-form factor, with the
-/// series and its derivatives in (u, w) from first-order jets.
-fn gradient(x: f64, [a, t0, w, v, sv]: [f64; 5], boundary: i64) -> (f64, [f64; 6]) {
+/// The log density and, for M = 2, its gradient in [x, a, t0, w, v, sv] (zero for M = 0), by hand through the
+/// closed-form factor, with the series and its derivatives in (u, w) from jets. The value is the same arithmetic
+/// either way, so [`Wiener::log_prob`] and [`Wiener::d_log_prob`] agree exactly.
+fn evaluate<const M: usize>(x: f64, [a, t0, w, v, sv]: [f64; 5], boundary: i64) -> (f64, [f64; 6]) {
     if !valid(a, t0, w, v, sv) || !(boundary == 0 || boundary == 1) || x.is_nan() {
         return (f64::NAN, [f64::NAN; 6]);
     }
@@ -449,12 +466,14 @@ fn gradient(x: f64, [a, t0, w, v, sv]: [f64; 5], boundary: i64) -> (f64, [f64; 6
     };
     let a2 = a * a;
     let u = t / a2;
-    let f = log_standard_density(Jet::<2>::var(u, 0), Jet::var(wl, 1));
-    let (f_u, f_w) = (f.g[0], f.g[1]);
+    let f = log_standard_density(Jet::<M>::var(u, 0), Jet::var(wl, 1));
     let s2 = sv * sv;
     let q = 1.0 + s2 * t;
     let n = s2 * a2 * wl * wl - 2.0 * a * vl * wl - vl * vl * t;
     let value = -2.0 * a.ln() - 0.5 * q.ln() + n / (2.0 * q) + f.v;
+    let &[f_u, f_w] = f.g.as_slice() else {
+        return (value, [0.0; 6]);
+    };
     let d_t = -0.5 * s2 / q - vl * vl / (2.0 * q) - n * s2 / (2.0 * q * q) + f_u / a2;
     let d_a = -2.0 / a + (s2 * a * wl * wl - vl * wl) / q - 2.0 * f_u * u / a;
     let d_w = (s2 * a2 * wl - a * vl) / q + f_w;
@@ -497,9 +516,9 @@ fn small_time<const M: usize>(u: Jet<M>, w: Jet<M>) -> Jet<M> {
     let mut extra = false;
     for k in 1..10_000 {
         let k = k as f64;
-        let y = 4.0 * k * w / u;
-        let term =
-            (-2.0 * k * (k - w) / u).exp() * (1.0 + (-y).exp() + 2.0 * k * (-y).exp_m1() / w);
+        // with m = e^{−4kw/u} − 1: 1 + e^{−4kw/u} = 2 + m
+        let m = (-4.0 * k * w / u).exp_m1();
+        let term = (-2.0 * k * (k - w) / u).exp() * (2.0 + m + 2.0 * k * m / w);
         sum = sum + term;
         if extra {
             break;

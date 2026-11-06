@@ -33,6 +33,8 @@ mod coal_mining_disasters;
 mod custom_distribution;
 #[path = "../examples/disease_mapping.rs"]
 mod disease_mapping;
+#[path = "../examples/drift_diffusion.rs"]
+mod drift_diffusion;
 #[path = "../examples/eight_schools.rs"]
 mod eight_schools;
 #[path = "../examples/gaussian_mixture.rs"]
@@ -1072,5 +1074,54 @@ fn disease_mapping_recovers_the_bym2_parameters_and_the_covariate_effect() {
     assert!(
         correlation > 0.9,
         "the effects' correlation with the truth is {correlation}"
+    );
+}
+
+#[test]
+fn drift_diffusion_recovers_the_condition_drifts_and_each_subjects_parameters() {
+    // response times of four subjects in two conditions simulated from known values: the 90% intervals cover both
+    // population drifts, the starting point and every subject's boundary separation and non-decision time; every
+    // parameter (each subject's drifts included) converges, with no divergences; and the easy condition's drift is
+    // clearly the larger
+    use drift_diffusion::{SUBJECTS, TRUE_A, TRUE_DRIFT, TRUE_T0, TRUE_W};
+    let trials = drift_diffusion::data(drift_diffusion::DATA_SEED).unwrap();
+    let fit = drift_diffusion::run(&trials, 4, 1000, 2).unwrap();
+    assert_eq!(fit.divergences, 0);
+    let mut checks = vec![
+        (fit.drift, vec![0], TRUE_DRIFT[0], "hard drift".to_owned()),
+        (fit.drift, vec![1], TRUE_DRIFT[1], "easy drift".to_owned()),
+        (fit.w, vec![], TRUE_W, "w".to_owned()),
+    ];
+    for s in 0..SUBJECTS {
+        checks.push((fit.a, vec![s], TRUE_A[s], format!("a[{s}]")));
+        checks.push((fit.t0, vec![s], TRUE_T0[s], format!("t0[{s}]")));
+    }
+    for (node, index, truth, what) in checks {
+        let summary = fit.chains.summarize(node, &index).unwrap();
+        assert!(summary.r_hat < 1.01, "{what}: R-hat {}", summary.r_hat);
+        assert!(
+            summary.q5 < truth && truth < summary.q95,
+            "{what}: {truth} outside [{}, {}]",
+            summary.q5,
+            summary.q95
+        );
+    }
+    for s in 0..SUBJECTS {
+        for c in 0..2 {
+            let summary = fit.chains.summarize(fit.subject_drift, &[s, c]).unwrap();
+            assert!(
+                summary.r_hat < 1.01,
+                "drift[{s}, {c}]: R-hat {}",
+                summary.r_hat
+            );
+        }
+    }
+    let hard = fit.chains.summarize(fit.drift, &[0]).unwrap();
+    let easy = fit.chains.summarize(fit.drift, &[1]).unwrap();
+    assert!(
+        easy.q5 > hard.q95,
+        "easy {:?}, hard {:?}",
+        (easy.q5, easy.q95),
+        (hard.q5, hard.q95)
     );
 }

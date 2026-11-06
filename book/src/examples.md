@@ -20,6 +20,7 @@ from, and the SMC model comparison checks its evidence against the closed form.
 | `gaussian_mixture` | Which of two groups does each measurement come from, and what are the groups like? |
 | `occupancy` | Which sites does a species occupy, when surveys sometimes miss it? Occupancy latents sampled, marginalised and written as a zero-inflated binomial |
 | `disease_mapping` | Where is a disease more common than expected? A BYM2 spatial model of counts on a lattice |
+| `drift_diffusion` | How fast do people take in evidence, and does an easier task speed it up? A hierarchical drift-diffusion model of response times |
 | `gp_regression` | What smooth function produced noisy measurements? Gaussian process hyperparameters by NUTS, exactly and with an HSGP |
 | `stochastic_volatility` | How volatile are daily returns, and how persistent is the volatility? A scan over latent innovations |
 | `hmm` | When does a series switch regime, and how often? A two-state hidden Markov model |
@@ -119,6 +120,21 @@ of 2,000 draws) and that the posterior mean area effects correlate with the true
 
 ```rust,ignore
 {{#include ../../keanu/examples/disease_mapping.rs}}
+```
+
+## Drift diffusion
+
+Two-choice response times of four subjects, each doing 100 trials in a hard and an easy condition, are modelled with
+the drift-diffusion model: the Wiener first-passage time density (`GraphBuilder::wiener`) of each response time at
+the boundary the response reached, observed as an integer parameter. Each subject has a boundary separation (how
+cautious they are), a non-decision time and a drift in each condition, drawn around population values, and they
+share a starting point. The data are simulated exactly with `keanu_distributions::sample_wiener` from known values;
+the test checks that the 90% intervals of both conditions' population drifts, the starting point and every subject's
+boundary separation and non-decision time cover the truth, that every parameter converges (R-hat below 1.01 over 4
+chains of 1,000 draws) with no divergences, and that the easy condition's drift is clearly the larger.
+
+```rust,ignore
+{{#include ../../keanu/examples/drift_diffusion.rs}}
 ```
 
 ## Gaussian process regression

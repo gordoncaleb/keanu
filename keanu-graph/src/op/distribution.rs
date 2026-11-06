@@ -1144,7 +1144,8 @@ distributions! {
     Wiener "wiener" (a: F64, t0: F64, w: F64, v: F64, sv: F64, boundary: I64) -> F64 =>
         d::Wiener::new(a, t0, w, v, sv, boundary),
         support = Support::GreaterThan(t0.clone()),
-        cdf = none;
+        cdf = none,
+        fused = wiener_log_prob_and_gradient;
     MultivariateStudentT "multivariate_student_t" (nu: F64, mu: F64, scale: F64) -> F64 =>
         d::MultivariateStudentT::new(nu, mu, scale),
         support = Support::Real;
@@ -1345,6 +1346,28 @@ fn gaussian_log_prob_and_gradient(
     Ok((
         log_prob.sum(),
         (Some(g.x), smallvec::smallvec![Some(g.mu), Some(g.sigma)]),
+    ))
+}
+
+/// The Wiener log density and gradient from one pass over the series.
+fn wiener_log_prob_and_gradient(
+    wiener: &d::Wiener<'_>,
+    x: &DoubleTensor,
+) -> Result<(f64, LogProbGradientParts)> {
+    let (log_prob, g) = wiener.log_prob_and_d_log_prob(x)?;
+    Ok((
+        log_prob.sum(),
+        (
+            Some(g.x),
+            smallvec::smallvec![
+                Some(g.a),
+                Some(g.t0),
+                Some(g.w),
+                Some(g.v),
+                Some(g.sv),
+                None
+            ],
+        ),
     ))
 }
 

@@ -632,6 +632,13 @@ Work from `docs/plans/2026-11-05-001-feat-applied-modelling-gaps-plan.md`.
   (with sv > 0, the drift first from its distribution given the boundary, also by rejection).
   `DistributionKind::Wiener` with `GraphBuilder::wiener` (and `_with_shape`) has support greater than t0, is
   element-wise (mixtures, `log_density`, pointwise log likelihoods) and is saved as kind 76.
+- keanu: **a drift-diffusion example**. `drift_diffusion` fits a hierarchical drift-diffusion model to response
+  times of four subjects in a hard and an easy condition, simulated exactly with `sample_wiener`: subject boundary
+  separations, non-decision times (each below the subject's fastest response) and condition drifts around population
+  values, with a shared starting point, by NUTS on the centred form. Its test checks that the 90% intervals of both
+  population drifts, the starting point and every subject's boundary separation and non-decision time cover the true
+  values, that R-hat is below 1.01 with no divergences, and that the easy condition's drift is clearly the larger.
+  `Wiener::log_prob_and_d_log_prob` gives the log density and gradient in one pass, which the graph uses.
 
 ### Code review fixes
 
