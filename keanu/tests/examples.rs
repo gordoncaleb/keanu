@@ -806,13 +806,20 @@ fn sir_recovers_simulated_transmission_and_recovery_rates() {
     }
 }
 
+/// The NUTS fit of the SIR model to the boarding school data (4 chains of 300 draws after 300 adaptation steps),
+/// shared by the tests that check it.
+fn sir_boarding_school() -> &'static sir::Sir {
+    static FIT: std::sync::OnceLock<sir::Sir> = std::sync::OnceLock::new();
+    FIT.get_or_init(|| sir::run(1, 300).unwrap())
+}
+
 #[test]
 fn sir_fits_the_boarding_school_outbreak_as_the_stan_case_study() {
     // 4 chains of 300 draws after 300 adaptation steps. The Stan case study (Grinsztajn et al., 2021) reports
     // posterior means of about 1.73 for beta, 0.54 for gamma, 3.2 for R0 and 1.85 days to recover. Over seeds 1 to
     // 8 the largest R-hat was 1.017, nothing diverged, and the means were 1.734 to 1.739, 0.539 to 0.545, 3.20 to
     // 3.24 and 1.85 to 1.87.
-    let r = sir::run(1, 300).unwrap();
+    let r = sir_boarding_school();
     assert_r_hat(&r.samples, 1.02, "SIR on the boarding school data");
     assert!(r.divergences <= 4, "{} divergences", r.divergences);
     let n = r.nodes;
@@ -824,6 +831,41 @@ fn sir_fits_the_boarding_school_outbreak_as_the_stan_case_study() {
     ] {
         let s = r.samples.summarize(node, &[]).unwrap();
         assert_close(s.mean, expected, within, what);
+    }
+}
+
+/// AE5: the Laplace approximation of the SIR posterior, with its Hessian by finite differences through the ODE,
+/// has means and standard deviations within 20% of NUTS's for β, γ, R₀ and the recovery time. With 2000 draws
+/// (seed 1) the largest difference was 15%, in β's standard deviation (0.045 against 0.053); the means were within
+/// 2%. The dispersion φ's posterior is strongly right-skewed (φ = 1 / φ⁻¹, which the data inform little), which a
+/// Gaussian in log φ⁻¹ represents only roughly: its mean was 19% above NUTS's (11.4 against 9.5) and its standard
+/// deviation 15% (5.9 against 5.1), so φ is checked to 25%. The fit takes about 60 ms and the draws (each solving
+/// the ODE) about 1 s.
+#[test]
+fn sir_laplace_approximation_agrees_with_nuts() {
+    let (laplace, l) = sir::laplace(&sir::BOARDING_SCHOOL, 2000, 1).unwrap();
+    let r = sir_boarding_school();
+    for (node, laplace_node, within, what) in [
+        (r.nodes.beta, l.beta, 0.2, "beta"),
+        (r.nodes.gamma, l.gamma, 0.2, "gamma"),
+        (r.nodes.r0, l.r0, 0.2, "R0"),
+        (r.nodes.recovery_time, l.recovery_time, 0.2, "recovery time"),
+        (r.nodes.phi, l.phi, 0.25, "phi"),
+    ] {
+        let nuts = r.samples.summarize(node, &[]).unwrap();
+        let draws = laplace.f64(laplace_node).unwrap();
+        let mean = draws.mean().unwrap().as_slice()[0];
+        let sd = draws.variance().unwrap().as_slice()[0].sqrt();
+        assert!(
+            (mean / nuts.mean - 1.0).abs() < within,
+            "{what}: Laplace mean {mean}, NUTS {}",
+            nuts.mean
+        );
+        assert!(
+            (sd / nuts.sd - 1.0).abs() < within,
+            "{what}: Laplace sd {sd}, NUTS {}",
+            nuts.sd
+        );
     }
 }
 

@@ -5,13 +5,13 @@
 
 mod mcmc_common;
 
-use keanu_algorithms::AlgorithmError;
 use keanu_algorithms::laplace::Laplace;
 use keanu_algorithms::mcmc::SamplingOptions;
 use keanu_algorithms::mcmc::metropolis::MetropolisHastings;
 use keanu_algorithms::mcmc::nuts::Nuts;
 use keanu_algorithms::optimizer::{GradientOptimizer, Lbfgs};
 use keanu_algorithms::vi::Advi;
+use keanu_algorithms::{AlgorithmError, HessianMethod};
 use keanu_graph::ode::OdeOptions;
 use keanu_graph::{GraphBuilder, GraphError, Model, NodeId, State};
 use keanu_tensor::DoubleTensor;
@@ -117,10 +117,45 @@ fn advi_reports_draws_where_the_solve_fails_as_a_non_finite_elbo() {
     );
 }
 
+/// The ODE has no second-order rule, so the Laplace approximation takes its Hessian by finite differences of the
+/// gradient, and agrees with the same model written with the closed-form solution y(1) = 1 / (1 − k), whose Hessian
+/// is exact.
 #[test]
-fn the_laplace_approximation_has_no_second_order_rule_for_an_ode() {
+fn the_laplace_approximation_of_an_ode_model_uses_finite_differences() {
+    let (model, mut state, k) = blow_up(0.5, 0.4);
+    let ode = Laplace::new().fit(&model, &mut state).unwrap();
+    assert_eq!(ode.hessian_method(), HessianMethod::FiniteDifference);
+
+    let b = GraphBuilder::new();
+    let closed_k = b.uniform(0.0, 1.5);
+    b.set_value(closed_k, DoubleTensor::scalar(0.4));
+    let y = (b.scalar(1.0) - closed_k).reciprocal();
+    b.observe(b.gaussian(y, 0.5), DoubleTensor::scalar(2.0));
+    let closed_k = closed_k.id();
+    let (graph, mut closed_state) = b.build().unwrap();
+    let closed_model = Model::new(graph, &closed_state).unwrap();
+    let closed = Laplace::new()
+        .fit(&closed_model, &mut closed_state)
+        .unwrap();
+    assert_eq!(closed.hessian_method(), HessianMethod::Exact);
+
+    let (a, c) = (
+        ode.get(k).unwrap().to_scalar().unwrap(),
+        closed.get(closed_k).unwrap().to_scalar().unwrap(),
+    );
+    assert!((a - c).abs() < 1e-5, "mode {a} vs {c}");
+    let (a, c) = (
+        ode.covariance().as_slice()[0],
+        closed.covariance().as_slice()[0],
+    );
+    assert!((a / c - 1.0).abs() < 1e-3, "variance {a} vs {c}");
+
+    // the exact Hessian has no rule for the ODE
     let (model, mut state, _) = blow_up(0.5, 0.4);
-    match Laplace::new().fit(&model, &mut state) {
+    match Laplace::new()
+        .with_hessian_method(HessianMethod::Exact)
+        .fit(&model, &mut state)
+    {
         Err(AlgorithmError::Graph(GraphError::NoSecondOrderRule(message))) => {
             assert!(message.contains("ODE"), "{message}");
         }

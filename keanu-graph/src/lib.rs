@@ -66,7 +66,7 @@ pub use logprob::{
 pub use marginalize::{MAX_MARGINALIZED_VALUES, Marginalized, MarginalizedLatent, marginalize};
 pub use model::{LambdaSection, Model, downstream_lambda_section, upstream_lambda_section};
 pub use op::{CustomDistribution, CustomGradient, Support};
-pub use parameterisation::{Parameterisation, Space};
+pub use parameterisation::{HessianMethod, Parameterisation, Space};
 pub use spatial::Bym2;
 pub use state::State;
 pub use value::{DType, Value};

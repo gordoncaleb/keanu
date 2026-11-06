@@ -666,6 +666,20 @@ Work from `docs/plans/2026-11-05-001-feat-applied-modelling-gaps-plan.md`.
   uniform on [c, c + 1] censored at c (survival exactly 1 at c, density 0 before it), so the likelihood is exactly
   (1 − π) f(t) for a relapse and π + (1 − π) S(c) for a censored patient; its test checks that the 90% intervals of
   all five coefficients cover the truth, with R-hat below 1.01 and no divergences.
+- keanu-graph, keanu-algorithms, keanu: **finite-difference Hessians, and the Laplace approximation on ODE, lambda
+  and custom-distribution models**. `HessianMethod` (`Exact`, `FiniteDifference`, `Auto`, the default) chooses how
+  `Parameterisation::hvp_with` and `hessian_with` compute second derivatives; `hvp` and `hessian` are unchanged and
+  exact. A finite-difference product is (∇f(z + hv) − ∇f(z − hv)) / 2h of the exact gradient with
+  h = ∛ε · max(1, ‖z‖) / ‖v‖; the step is shrunk eightfold, up to six times, while either point is impossible, and
+  then the product fails with `GraphError::NotDifferentiable`. A finite-difference Hessian is n such products along
+  the axes, symmetrised. `Auto` uses the exact rules and falls back to differences only on
+  `GraphError::NoSecondOrderRule`, per call. On every op and distribution of the Hessian tests the
+  finite-difference product agrees with the exact one to 1e-6 relative. `Laplace::with_hessian_method` sets the
+  method (default `Auto`, resolved once per fit), and `LaplaceResult::hessian_method` reports the one used, so the
+  Laplace approximation now works on models with lambdas, custom distributions or ODEs instead of failing with
+  `NoSecondOrderRule` (which `HessianMethod::Exact` still gives). The SIR example gained `laplace`; its test checks
+  that the approximation's means and standard deviations of β, γ, R₀ and the recovery time are within 20% of NUTS's
+  (φ, whose posterior is strongly skewed, within 25%).
 
 ### Code review fixes
 

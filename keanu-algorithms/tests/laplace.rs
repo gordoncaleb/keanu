@@ -1,7 +1,7 @@
 //! The Laplace approximation against exact Gaussian posteriors, on a positive latent, and its errors.
 
 use keanu_algorithms::optimizer::Lbfgs;
-use keanu_algorithms::{AlgorithmError, Laplace};
+use keanu_algorithms::{AlgorithmError, HessianMethod, Laplace};
 use keanu_distributions::KeanuRng;
 use keanu_graph::{CustomDistribution, CustomGradient, GraphBuilder, GraphError, Model, Value};
 use keanu_tensor::DoubleTensor;
@@ -202,22 +202,75 @@ impl CustomDistribution for NoRule {
     }
 }
 
+/// The posterior of x ~ N(0, 1) observed once through y ~ N(x, 1) at 1 is N(1/2, 1/2): checks a fit against it,
+/// with the Hessian by finite differences.
+fn assert_half_normal_posterior(result: &keanu_algorithms::LaplaceResult<'_>) {
+    assert_eq!(result.hessian_method(), HessianMethod::FiniteDifference);
+    assert!((result.mode()[0] - 0.5).abs() < 1e-6, "{:?}", result.mode());
+    // finite differences of the exact gradient of a quadratic log density are exact up to rounding
+    assert!(
+        (result.covariance().as_slice()[0] - 0.5).abs() < 1e-8,
+        "{:?}",
+        result.covariance()
+    );
+}
+
 #[test]
-fn a_distribution_without_a_second_order_rule_is_an_error() {
-    let b = GraphBuilder::new();
-    let x: keanu_graph::DoubleVar = b.custom(NoRule, &[], &[]);
-    let x = x.label("custom_x");
-    b.set_value(x, DoubleTensor::scalar(0.5));
-    let y = b.gaussian(x, 1.0);
-    b.observe(y, DoubleTensor::scalar(1.0));
-    let (graph, mut state) = b.build().unwrap();
-    let model = Model::new(graph, &state).unwrap();
-    match Laplace::new().fit(&model, &mut state) {
+fn a_custom_distribution_without_a_second_order_rule_uses_finite_differences() {
+    let build = || {
+        let b = GraphBuilder::new();
+        let x: keanu_graph::DoubleVar = b.custom(NoRule, &[], &[]);
+        let x = x.label("custom_x");
+        b.set_value(x, DoubleTensor::scalar(0.2));
+        let y = b.gaussian(x, 1.0);
+        b.observe(y, DoubleTensor::scalar(1.0));
+        let (graph, state) = b.build().unwrap();
+        (Model::new(graph, &state).unwrap(), state)
+    };
+    // the default, Auto, falls back to finite differences
+    let (model, mut state) = build();
+    assert_half_normal_posterior(&Laplace::new().fit(&model, &mut state).unwrap());
+    let (model, mut state) = build();
+    let forced = Laplace::new()
+        .with_hessian_method(HessianMethod::FiniteDifference)
+        .fit(&model, &mut state)
+        .unwrap();
+    assert_half_normal_posterior(&forced);
+    // the exact Hessian has no rule for it
+    let (model, mut state) = build();
+    match Laplace::new()
+        .with_hessian_method(HessianMethod::Exact)
+        .fit(&model, &mut state)
+    {
         Err(AlgorithmError::Graph(GraphError::NoSecondOrderRule(message))) => {
             assert!(message.contains("custom_x"), "{message}");
         }
         other => panic!("expected no second-order rule, got {other:?}"),
     }
+}
+
+#[test]
+fn a_lambda_without_a_second_order_rule_uses_finite_differences() {
+    // x ~ N(0, 1) observed through y ~ N(f(x), 1) at 1, where f is the identity written as a lambda
+    let b = GraphBuilder::new();
+    let x = b.gaussian(0.0, 1.0);
+    b.set_value(x, DoubleTensor::scalar(0.2));
+    let f = b.lambda_with_jacobian(
+        "identity",
+        &[x.id()],
+        &[],
+        |v| Ok(v[0].clone()),
+        |_| Ok(vec![Some(DoubleTensor::scalar(1.0))]),
+    );
+    let y = b.gaussian(b.double_var(f), 1.0);
+    b.observe(y, DoubleTensor::scalar(1.0));
+    let (graph, mut state) = b.build().unwrap();
+    let model = Model::new(graph, &state).unwrap();
+    assert_half_normal_posterior(&Laplace::new().fit(&model, &mut state).unwrap());
+    // and a model with every rule uses the exact Hessian
+    let (model, mut state, _) = conjugate_gaussian();
+    let result = Laplace::new().fit(&model, &mut state).unwrap();
+    assert_eq!(result.hessian_method(), HessianMethod::Exact);
 }
 
 #[test]

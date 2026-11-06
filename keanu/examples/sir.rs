@@ -29,6 +29,11 @@
 //! example's test also fits data simulated from the model with known β and γ ([`simulate`]) and checks that their
 //! 90% posterior intervals cover them.
 //!
+//! [`laplace`] fits the Laplace approximation instead: the ODE has no second-order rule, so its Hessian is taken by
+//! finite differences of the gradient (see [`HessianMethod`](keanu::graph::HessianMethod)). Its means and standard
+//! deviations of β, γ, R₀ and the recovery time are within 20% of NUTS's (the means within 2%), in a fraction of
+//! the time; the dispersion φ, whose posterior is strongly right-skewed, is about 20% too high.
+//!
 //! Run with `cargo run --release --example sir`.
 
 use keanu::algorithms::ChainSamples;
@@ -201,6 +206,28 @@ pub fn fit(cases: &[i64], chains: usize, seed: u64, draws: usize) -> keanu::Resu
     })
 }
 
+/// The quantities' draws from the Laplace approximation of the posterior given daily `cases`: `count` draws, from a
+/// generator seeded with `seed`. The Hessian is by finite differences of the gradient; at the solver's default
+/// tolerances its covariance agrees with one through a solver at 10⁻¹⁰ to about 10⁻⁵ relative.
+pub fn laplace(cases: &[i64], count: usize, seed: u64) -> keanu::Result<(NetworkSamples, Nodes)> {
+    let (model, mut state, nodes) = model(cases, OdeOptions::default())?;
+    let fit = Laplace::new().fit(&model, &mut state)?;
+    let recorded = [
+        nodes.beta,
+        nodes.gamma,
+        nodes.r0,
+        nodes.recovery_time,
+        nodes.phi,
+    ];
+    let samples = fit.sample(
+        &mut state,
+        &recorded,
+        count,
+        &mut KeanuRng::seed_from_u64(seed),
+    )?;
+    Ok((samples, nodes))
+}
+
 /// Fits the model to the boarding school counts with `CHAINS` chains of `draws` draws each.
 pub fn run(seed: u64, draws: usize) -> keanu::Result<Sir> {
     fit(&BOARDING_SCHOOL, CHAINS, seed, draws)
@@ -225,6 +252,23 @@ fn main() -> keanu::Result<()> {
         println!(
             "{name:<14} mean {:>6.3}  90% interval [{:.3}, {:.3}]  R-hat {:.3}",
             s.mean, s.q5, s.q95, s.r_hat
+        );
+    }
+    let (laplace, l) = laplace(&BOARDING_SCHOOL, 2000, 1)?;
+    println!("\nthe Laplace approximation (2000 draws):");
+    for (name, node) in [
+        ("beta", l.beta),
+        ("gamma", l.gamma),
+        ("R0", l.r0),
+        ("recovery time", l.recovery_time),
+        ("phi", l.phi),
+    ] {
+        let draws = laplace.f64(node).unwrap();
+        let (mean, variance) = (draws.mean()?, draws.variance()?);
+        println!(
+            "{name:<14} mean {:>6.3}  sd {:.3}",
+            mean.as_slice()[0],
+            variance.as_slice()[0].sqrt()
         );
     }
     println!("\nday  in bed  infected (posterior mean)");

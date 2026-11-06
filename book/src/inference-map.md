@@ -72,9 +72,8 @@ value outside its support, or on its boundary, is an impossible start even with 
 
 A MAP estimate is a single point. The **Laplace approximation** adds an estimate of the uncertainty around it: a
 Gaussian centred on the posterior mode, whose covariance is the inverse of the negated Hessian (the matrix of
-second derivatives) of the log density there. `Laplace` finds the mode with L-BFGS, computes the exact Hessian by
-automatic differentiation, and returns a `LaplaceResult` with the mode, the covariance, and draws from the
-Gaussian as `NetworkSamples`:
+second derivatives) of the log density there. `Laplace` finds the mode with L-BFGS, computes the Hessian, and
+returns a `LaplaceResult` with the mode, the covariance, and draws from the Gaussian as `NetworkSamples`:
 
 ```rust,ignore
 {{#include ../../keanu/tests/book.rs:laplace}}
@@ -84,8 +83,22 @@ Unlike MAP, the approximation lives in unconstrained space *with* the log-Jacobi
 mode is that of the density of the transformed latents, so for a positive latent x ~ Gamma(θ, k) it is
 log x = log(kθ) rather than the Gamma's own mode (k − 1)θ, and every draw, mapped back through the transform, is
 inside the support. `mode()` and `covariance()` are in unconstrained space; `get` and `values()` give the
-latents' own values at the mode. After L-BFGS, up to five Newton steps on the exact Hessian polish the mode, so a
+latents' own values at the mode. After L-BFGS, up to five Newton steps on the Hessian polish the mode, so a
 Gaussian posterior is reproduced to rounding. `with_lbfgs(...)` configures the L-BFGS search.
+
+`with_hessian_method(...)` chooses how the Hessian is computed:
+
+- `HessianMethod::Auto` (the default) computes it exactly, by forward-over-reverse automatic differentiation,
+  unless the model has an op or distribution without a second-order rule (a lambda, a custom distribution or an
+  ODE), and then by finite differences;
+- `HessianMethod::Exact` always computes it exactly, failing with `GraphError::NoSecondOrderRule`, naming the node,
+  where a rule is missing;
+- `HessianMethod::FiniteDifference` always takes central differences of the exact gradient, column by column,
+  (∇f(z + h eⱼ) − ∇f(z − h eⱼ)) / 2h with h = ∛ε · max(1, ‖z‖), and symmetrises the result. For a smooth model
+  that is accurate to about 10⁻¹⁰ relative; through an ODE, to about the solver's tolerance divided by 6·10⁻⁶.
+
+`LaplaceResult::hessian_method()` says which was used. `Parameterisation::hvp_with` and `hessian_with` take the
+same methods.
 
 The approximation fails with an error rather than returning something meaningless:
 
@@ -93,8 +106,8 @@ The approximation fails with an error rather than returning something meaningles
   saddle, or the posterior is flat along some direction (for instance two latents of which the data identify only
   the sum). The message names the latents along the offending direction.
 - `AlgorithmError::ModeOnBoundary` if the mode is on the boundary of a latent's support.
-- `GraphError::NoSecondOrderRule`, naming the node, if the model contains an op or distribution without a
-  second-order derivative rule, such as a lambda or a custom distribution.
+- With `HessianMethod::Exact`, `GraphError::NoSecondOrderRule`, naming the node, if the model contains an op or
+  distribution without a second-order derivative rule, such as a lambda, a custom distribution or an ODE.
 
 The approximation is exact for Gaussian posteriors and good for posteriors close to Gaussian in unconstrained
 space; it cannot represent skewed or multimodal ones, so check important results with

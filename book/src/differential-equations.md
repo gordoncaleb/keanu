@@ -72,8 +72,13 @@ that are constants (`b.constant`, `b.scalar`) are skipped. The value itself is s
 log probability and gradient costs one plain solve and one with sensitivities. For large systems with many
 parameters the cost grows like n·p per step; adjoint sensitivities, which would scale better, are not implemented.
 
-There is no second-order rule: Hessian-vector products through an ODE fail with `GraphError::NoSecondOrderRule`, so
-the [Laplace approximation](inference-map.md#the-laplace-approximation) and exact-Hessian methods don't apply to ODE models. NUTS, the gradient
+There is no second-order rule: exact Hessian-vector products through an ODE fail with
+`GraphError::NoSecondOrderRule`. The [Laplace approximation](inference-map.md#the-laplace-approximation) and the
+trust-region optimizer use `HessianMethod::Auto` by default, which then takes the Hessian by central differences of
+the exact gradient (two gradient evaluations per Hessian-vector product), so they work on ODE models too. The
+differences resolve the Hessian to about the solver's tolerance divided by 6·10⁻⁶ relative: on the SIR example the
+covariance at the default tolerances agrees with one at 10⁻¹⁰ to about 10⁻⁵, and its Laplace approximation has
+means and standard deviations within 20% of NUTS's for β, γ, R₀ and the recovery time. NUTS, the other gradient
 optimizers and ADVI need first derivatives only.
 
 ## When the solver fails
@@ -121,7 +126,7 @@ exp(Q t).
 {{#include ../../keanu/tests/book.rs:matrix_exp}}
 ```
 
-Unlike the ODE node it has a second-order rule, so it works with the Laplace approximation too.
+Unlike the ODE node it has a second-order rule, so the Laplace approximation's Hessian through it is exact.
 
 ## Solvers outside graphs
 

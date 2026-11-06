@@ -17,8 +17,8 @@ use keanu_graph::transform::{
     Interval, LowerBound, Ordered, Simplex, SumToZero, SumToZeroComponents, UnitVector, UpperBound,
 };
 use keanu_graph::{
-    DoubleVar, GraphBuilder, GraphError, IntVar, Model, NodeId, Parameterisation, Space, State,
-    Value,
+    DoubleVar, GraphBuilder, GraphError, HessianMethod, IntVar, Model, NodeId, Parameterisation,
+    Space, State, Value,
 };
 use keanu_tensor::{DoubleTensor, IntTensor};
 use std::collections::BTreeSet;
@@ -136,6 +136,34 @@ fn check_hessian(name: &str, model: &Model, state: &mut State, space: Space, jac
             "{name}: (Hv)[{i}] = {actual}, H·v = {expected}"
         );
     }
+    check_finite_difference_product(name, &param, &z, &v, &hv, jacobian, state);
+}
+
+/// Checks the finite-difference Hessian-vector product along `v` against the exact one, `exact`, to 1e-6 relative
+/// to the exact product's largest element, and that `Auto` gives the exact product where the rules exist.
+fn check_finite_difference_product(
+    name: &str,
+    param: &Parameterisation<'_>,
+    z: &[f64],
+    v: &[f64],
+    exact: &[f64],
+    jacobian: bool,
+    state: &mut State,
+) {
+    let fd = param
+        .hvp_with(z, v, jacobian, HessianMethod::FiniteDifference, state)
+        .unwrap_or_else(|e| panic!("{name}: {e}"));
+    let scale = exact.iter().fold(1.0f64, |m, x| m.max(x.abs()));
+    for (i, (&d, &e)) in fd.iter().zip(exact).enumerate() {
+        assert!(
+            (d - e).abs() <= 1e-6 * scale,
+            "{name}: finite-difference (Hv)[{i}] = {d}, exact {e}"
+        );
+    }
+    let auto = param
+        .hvp_with(z, v, jacobian, HessianMethod::Auto, state)
+        .unwrap();
+    assert_eq!(auto, exact, "{name}: Auto uses the exact rules");
 }
 
 /// What a case expects of the Hessian.
@@ -168,8 +196,49 @@ fn run(case: &Case, covered: &mut BTreeSet<&'static str>) {
                 ),
                 other => panic!("{name}: expected a no-second-order-rule error, got {other:?}"),
             }
+            check_fallback(name, &model, &mut state, Space::Constrained, false);
         }
     }
+}
+
+/// For a model without a second-order rule: `Auto` falls back to finite differences, giving exactly the
+/// finite-difference Hessian, which is symmetric and agrees with this file's own differences of the gradient.
+fn check_fallback(name: &str, model: &Model, state: &mut State, space: Space, jacobian: bool) {
+    let param = Parameterisation::with_space(model, state, space).unwrap();
+    let z = param.from_state(state).unwrap();
+    let n = z.len();
+    let auto = param
+        .hessian_with(&z, jacobian, HessianMethod::Auto, state)
+        .unwrap_or_else(|e| panic!("{name}: {e}"));
+    let fd = param
+        .hessian_with(&z, jacobian, HessianMethod::FiniteDifference, state)
+        .unwrap();
+    assert_eq!(auto, fd, "{name}: Auto falls back to finite differences");
+    let h = fd.as_slice();
+    let reference = fd_hessian(&param, &z, jacobian, state);
+    for i in 0..n {
+        for j in 0..n {
+            assert_eq!(h[i * n + j], h[j * n + i], "{name}: symmetrised");
+            let expected = 0.5 * (reference[j][i] + reference[i][j]);
+            assert!(
+                (h[i * n + j] - expected).abs() <= 1e-5 * expected.abs().max(1.0),
+                "{name}: H[{i}][{j}] = {}, differences with a larger step give {expected}",
+                h[i * n + j]
+            );
+        }
+    }
+    let v: Vec<f64> = (0..n).map(|i| ((i as f64) * 0.7 + 0.3).sin()).collect();
+    assert!(matches!(
+        param.hvp_with(&z, &v, jacobian, HessianMethod::Exact, state),
+        Err(GraphError::NoSecondOrderRule(_))
+    ));
+    let auto = param
+        .hvp_with(&z, &v, jacobian, HessianMethod::Auto, state)
+        .unwrap();
+    let fd = param
+        .hvp_with(&z, &v, jacobian, HessianMethod::FiniteDifference, state)
+        .unwrap();
+    assert_eq!(auto, fd, "{name}");
 }
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -847,6 +916,150 @@ fn a_distribution_needs_a_rule_only_where_it_depends_on_the_latents() {
         Space::Unconstrained,
         true,
     );
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// finite differences
+
+#[test]
+fn the_finite_difference_hessian_matches_the_exact_one_and_is_symmetric() {
+    let (model, mut state) = mixed_model();
+    for (space, jacobian) in [(Space::Unconstrained, true), (Space::Constrained, false)] {
+        let param = Parameterisation::with_space(&model, &state, space).unwrap();
+        let z = param.from_state(&state).unwrap();
+        let n = z.len();
+        let exact = param.hessian(&z, jacobian, &mut state).unwrap();
+        let fd = param
+            .hessian_with(&z, jacobian, HessianMethod::FiniteDifference, &mut state)
+            .unwrap();
+        let scale = exact.as_slice().iter().fold(1.0f64, |m, x| m.max(x.abs()));
+        let (e, f) = (exact.as_slice(), fd.as_slice());
+        for i in 0..n {
+            for j in 0..n {
+                assert_eq!(f[i * n + j], f[j * n + i]);
+                assert!(
+                    (f[i * n + j] - e[i * n + j]).abs() <= 1e-6 * scale,
+                    "{space:?}: H[{i}][{j}] = {} by differences, {} exactly",
+                    f[i * n + j],
+                    e[i * n + j]
+                );
+            }
+        }
+        // the state is left at z
+        let (log_prob, _) = param
+            .log_prob_and_gradient(&z, jacobian, &mut state)
+            .unwrap();
+        param
+            .hessian_with(&z, jacobian, HessianMethod::FiniteDifference, &mut state)
+            .unwrap();
+        assert_eq!(param.log_prob(&z, jacobian, &mut state).unwrap(), log_prob);
+        assert_eq!(param.from_state(&state).unwrap(), z);
+        // Exact and Auto are the exact Hessian, and a zero direction has a zero product
+        for method in [HessianMethod::Exact, HessianMethod::Auto] {
+            assert_eq!(
+                param
+                    .hessian_with(&z, jacobian, method, &mut state)
+                    .unwrap(),
+                exact
+            );
+        }
+        assert_eq!(
+            param
+                .hvp_with(
+                    &z,
+                    &vec![0.0; n],
+                    jacobian,
+                    HessianMethod::FiniteDifference,
+                    &mut state
+                )
+                .unwrap(),
+            vec![0.0; n]
+        );
+    }
+}
+
+#[test]
+fn auto_falls_back_only_on_a_missing_second_order_rule() {
+    // a custom distribution's parameter depends on the latent: no exact rule, so Auto differences
+    let (model, mut state) = model_of(|b| {
+        let x = latent(b, DoubleTensor::scalar(0.3));
+        let y: DoubleVar<'_> = b.custom(UnitGaussian, &[], &[x.exp().id()]);
+        b.observe(y, DoubleTensor::scalar(0.4));
+    });
+    let param = Parameterisation::new(&model, &state).unwrap();
+    let z = param.from_state(&state).unwrap();
+    // log p = −x²/2 − (0.4 − eˣ)²/2 with x = z (identity), so d²/dz² = −1 + 0.4 eˣ − 2 e²ˣ
+    let x = 0.3f64;
+    let expected = -1.0 + 0.4 * x.exp() - 2.0 * (2.0 * x).exp();
+    for method in [HessianMethod::Auto, HessianMethod::FiniteDifference] {
+        let h = param
+            .hvp_with(&z, &[1.0], true, method, &mut state)
+            .unwrap();
+        assert!(
+            (h[0] - expected).abs() < 1e-8,
+            "{method:?}: {} vs {expected}",
+            h[0]
+        );
+    }
+    assert!(matches!(
+        param.hvp_with(&z, &[1.0], true, HessianMethod::Exact, &mut state),
+        Err(GraphError::NoSecondOrderRule(_))
+    ));
+    // any other error is returned, not differenced: a direction of the wrong length, or a point of the wrong length
+    for method in [
+        HessianMethod::Exact,
+        HessianMethod::FiniteDifference,
+        HessianMethod::Auto,
+    ] {
+        assert!(matches!(
+            param.hvp_with(&z, &[1.0, 2.0], true, method, &mut state),
+            Err(GraphError::InvalidValue(_))
+        ));
+        assert!(matches!(
+            param.hessian_with(&[1.0, 2.0], true, method, &mut state),
+            Err(GraphError::InvalidValue(_))
+        ));
+    }
+}
+
+#[test]
+fn a_finite_difference_step_shrinks_away_from_an_impossible_point() {
+    // x ~ Gamma(θ = 1, k = 3) in constrained space: log p = 2 ln x − x, so H = −2 / x²; near 0 the first step
+    // reaches negative x, where the log probability is impossible, and is shrunk
+    let (model, mut state) = model_of(|b| {
+        let x = b.gamma(1.0, 3.0);
+        b.set_value(x, DoubleTensor::scalar(4e-6));
+    });
+    let param = Parameterisation::with_space(&model, &state, Space::Constrained).unwrap();
+    let h = param
+        .hvp_with(
+            &[4e-6],
+            &[1.0],
+            false,
+            HessianMethod::FiniteDifference,
+            &mut state,
+        )
+        .unwrap();
+    // the step shrinks from 6e-6 to 7.5e-7, where the central difference is −2 / (x² − h²), 4% from −2 / x²
+    let expected = -2.0 / 16e-12;
+    assert!(
+        (h[0] / expected - 1.0).abs() < 0.05,
+        "{} vs {expected}",
+        h[0]
+    );
+    // at 0 every step down reaches an impossible point
+    match param.hvp_with(
+        &[0.0],
+        &[1.0],
+        false,
+        HessianMethod::FiniteDifference,
+        &mut state,
+    ) {
+        Err(GraphError::NotDifferentiable(message)) => {
+            assert!(message.contains("impossible"), "{message}");
+        }
+        other => panic!("expected a not-differentiable error, got {other:?}"),
+    }
 }
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -2635,6 +2848,7 @@ fn every_distribution_kind_matches_finite_differences_of_the_gradient() {
                         case.name
                     ),
                 }
+                check_fallback(case.name, &model, &mut state, case.space, jacobian);
             }
         }
     }

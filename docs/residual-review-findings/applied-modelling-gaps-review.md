@@ -14,7 +14,7 @@ What remains is behaviour that is by design or documented, recorded here so foll
 
 ## Scope limits (documented)
 
-- ODE models have no second-order rule (`NoSecondOrderRule`), so the Laplace approximation doesn't support them. Partials with respect to constant parents of an ODE aren't computed.
+- ODE models have no exact second-order rule (`NoSecondOrderRule`). Since U11 of the 2026-11-06 plan, the Laplace approximation and the trust-region optimizer fall back to finite differences of the gradient (`HessianMethod::Auto`), so they support ODE models, with a Hessian accurate to about the solver's tolerance divided by 6·10⁻⁶. Partials with respect to constant parents of an ODE aren't computed.
 - `PredictiveSampler::posterior` returns `SolverFailed` when a posterior draw's solve fails. Prior and forward sampling, and approximation draws, redraw instead, so their draws come from the distribution restricted to where the model solves. Pathfinder can return fewer draws than requested.
 - Marginalisation supports the dependency patterns listed in the `marginalize` docs only. Latents that share observations can't be marginalised jointly.
 - ABC supports continuous latents only, and its evidence only compares models with the same kernel, ε and statistics.

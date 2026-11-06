@@ -59,6 +59,9 @@ pub use abc::{Abc, AbcKernel, SummaryStatistics};
 pub use error::{AlgorithmError, Result};
 pub use export::CmdStanCsv;
 pub use forward::ForwardSampler;
+/// How the Laplace approximation and the trust-region optimizer compute Hessians (exact, finite differences, or
+/// exact where possible); see [`Laplace::with_hessian_method`].
+pub use keanu_graph::HessianMethod;
 /// The space NUTS and the gradient optimizers move in (unconstrained by default); see [`mcmc::nuts`] and
 /// [`optimizer`].
 pub use keanu_graph::Space;

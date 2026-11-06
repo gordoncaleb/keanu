@@ -2,8 +2,9 @@
 //!
 //! [`Laplace::fit`] maps each continuous latent to the real line through the transform of its support (see
 //! [`Parameterisation`]) and finds the mode ẑ of the density of that unconstrained point, the model's log
-//! probability *plus* the log-Jacobian of the transforms, with [`Lbfgs`]. It then computes the exact Hessian H of
-//! that log density (by forward-over-reverse automatic differentiation, [`Parameterisation::hessian`]), polishes
+//! probability *plus* the log-Jacobian of the transforms, with [`Lbfgs`]. It then computes the Hessian H of that log
+//! density ([`Parameterisation::hessian_with`], by the [`HessianMethod`] of
+//! [`with_hessian_method`](Laplace::with_hessian_method)), polishes
 //! the mode with up to five Newton steps on it (L-BFGS stops on relative tolerances a little short of the mode; a
 //! Gaussian posterior needs a single step), and approximates the posterior by the Gaussian N(ẑ, (−H)⁻¹), with H at
 //! the final ẑ. A Newton step is taken only if it does not lower the log density. Draws z = ẑ + L⁻ᵀε, with L the lower Cholesky factor
@@ -16,6 +17,12 @@
 //! The approximation is exact for a Gaussian posterior over unbounded latents, and good when the posterior is
 //! close to Gaussian in unconstrained space, as it is for many models with plenty of data. It cannot represent
 //! skewed or multimodal posteriors there; check important results with NUTS.
+//!
+//! By default ([`HessianMethod::Auto`]) the Hessian is exact, by forward-over-reverse automatic differentiation,
+//! unless the model has an op or distribution without a second-order rule (a lambda, a custom distribution or an
+//! ODE), when it is taken by central differences of the exact gradient instead: about 10⁻¹⁰ relative error for a
+//! smooth model, and roughly the solver's tolerance divided by 6·10⁻⁶ for an ODE model (so a tight solver tolerance
+//! gives a more accurate covariance). [`LaplaceResult::hessian_method`] says which was used.
 //!
 //! Circular and unit-vector latents (such as a von Mises angle or a von Mises–Fisher direction) are not supported:
 //! their transform's auxiliary radial density is largest at the origin, where the direction is undefined, so there
@@ -52,14 +59,17 @@ use crate::support::{
     Unevaluable, check_latents, compute_deterministic, node_name, norm, sample_approximation,
 };
 use keanu_distributions::KeanuRng;
-use keanu_graph::{Model, NodeId, Parameterisation, State, Support, node_support};
+use keanu_graph::{
+    GraphError, HessianMethod, Model, NodeId, Parameterisation, State, Support, node_support,
+};
 use keanu_tensor::{DoubleTensor, TensorError};
 
-/// Laplace approximation settings: the [`Lbfgs`] configuration that finds the mode. The configuration holds no
-/// state, so it can be reused for any number of fits.
+/// Laplace approximation settings: the [`Lbfgs`] configuration that finds the mode and the [`HessianMethod`]
+/// (default [`HessianMethod::Auto`]). The configuration holds no state, so it can be reused for any number of fits.
 #[derive(Debug, Clone, Copy, Default, PartialEq)]
 pub struct Laplace {
     lbfgs: Lbfgs,
+    hessian_method: HessianMethod,
 }
 
 impl Laplace {
@@ -72,6 +82,16 @@ impl Laplace {
     #[must_use]
     pub fn with_lbfgs(mut self, lbfgs: Lbfgs) -> Self {
         self.lbfgs = lbfgs;
+        self
+    }
+
+    /// Sets how the Hessian is computed (default [`HessianMethod::Auto`]: exactly where every second-order rule
+    /// exists, otherwise by finite differences of the gradient; see the [module documentation](self)).
+    /// [`HessianMethod::Exact`] fails for a model without second-order rules; [`HessianMethod::FiniteDifference`]
+    /// always differences.
+    #[must_use]
+    pub fn with_hessian_method(mut self, method: HessianMethod) -> Self {
+        self.hessian_method = method;
         self
     }
 
@@ -88,8 +108,10 @@ impl Laplace {
     /// [`AlgorithmError::ImpossibleStart`] if a latent's value is outside its support (or on its boundary), or the
     /// log probability at the start is not finite; an error from [`Parameterisation::new`] if a latent's support has
     /// no transform; [`AlgorithmError::ModeOnBoundary`] if L-BFGS heads for the boundary of a latent's support;
-    /// [`keanu_graph::GraphError::NoSecondOrderRule`], naming the node, if the model has a distribution or op on the
-    /// path from a latent to the log probability without a second-order rule; and
+    /// with [`HessianMethod::Exact`], [`keanu_graph::GraphError::NoSecondOrderRule`], naming the node, if the model
+    /// has a distribution or op on the path from a latent to the log probability without a second-order rule; by
+    /// finite differences, [`keanu_graph::GraphError::NotDifferentiable`] if the points around the mode are
+    /// impossible; and
     /// [`AlgorithmError::IndefiniteHessian`] if −H at the mode is not positive definite, as at a saddle point or
     /// along a direction in which the posterior is flat.
     pub fn fit<'m>(&self, model: &'m Model, state: &mut State) -> Result<LaplaceResult<'m>> {
@@ -134,9 +156,10 @@ impl Laplace {
                     |id| model.graph().describe(id),
                 )
         };
-        let mut hessian = objective.parameterisation().hessian(&mode, true, state)?;
+        let mut method = self.hessian_method;
+        let mut hessian = hessian_at(objective.parameterisation(), &mode, &mut method, state)?;
         let mut factor = negated_cholesky(&hessian, name)?;
-        // polish the mode with Newton steps on the exact Hessian: L-BFGS stops on its relative tolerances, a little
+        // polish the mode with Newton steps on the Hessian: L-BFGS stops on its relative tolerances, a little
         // short of the mode, and a quadratic log density (a Gaussian posterior) takes one step
         let (_, mut gradient) = objective.value_and_gradient_flat(state, &mode)?;
         for _ in 0..NEWTON_STEPS {
@@ -158,7 +181,7 @@ impl Laplace {
                 break;
             }
             (mode, log_density, gradient) = (trial, value, trial_gradient);
-            hessian = objective.parameterisation().hessian(&mode, true, state)?;
+            hessian = hessian_at(objective.parameterisation(), &mode, &mut method, state)?;
             factor = negated_cholesky(&hessian, name)?;
         }
         let evaluations = objective.evaluations();
@@ -181,8 +204,30 @@ impl Laplace {
             covariance,
             converged,
             evaluations,
+            hessian_method: method,
         })
     }
+}
+
+/// The Hessian of the Jacobian-adjusted log density at `z` by `method`, leaving the state at `z`.
+/// [`HessianMethod::Auto`] is resolved on the first call, to [`HessianMethod::Exact`] or, if a second-order rule is
+/// missing, [`HessianMethod::FiniteDifference`], so later calls don't retry the exact rules.
+fn hessian_at(
+    param: &Parameterisation<'_>,
+    z: &[f64],
+    method: &mut HessianMethod,
+    state: &mut State,
+) -> Result<DoubleTensor> {
+    if *method == HessianMethod::Auto {
+        match param.hessian_with(z, true, HessianMethod::Exact, state) {
+            Err(GraphError::NoSecondOrderRule(_)) => *method = HessianMethod::FiniteDifference,
+            other => {
+                *method = HessianMethod::Exact;
+                return Ok(other?);
+            }
+        }
+    }
+    Ok(param.hessian_with(z, true, *method, state)?)
 }
 
 /// The most Newton steps taken to polish the mode L-BFGS finds.
@@ -270,6 +315,7 @@ pub struct LaplaceResult<'m> {
     covariance: DoubleTensor,
     converged: bool,
     evaluations: usize,
+    hessian_method: HessianMethod,
 }
 
 impl LaplaceResult<'_> {
@@ -301,7 +347,8 @@ impl LaplaceResult<'_> {
         self.log_density
     }
 
-    /// The exact Hessian H of the log density at the mode, as a d × d matrix (symmetric up to rounding).
+    /// The Hessian H of the log density at the mode, as a d × d matrix (symmetric up to rounding when exact, and
+    /// symmetrised when by finite differences; see [`hessian_method`](Self::hessian_method)).
     pub fn hessian(&self) -> &DoubleTensor {
         &self.hessian
     }
@@ -323,10 +370,16 @@ impl LaplaceResult<'_> {
         self.converged
     }
 
-    /// The number of log density and gradient evaluations L-BFGS and the Newton polish used (Hessians are not
-    /// counted).
+    /// The number of log density and gradient evaluations L-BFGS and the Newton polish used (Hessians, including
+    /// the gradients of finite-difference ones, are not counted).
     pub fn evaluations(&self) -> usize {
         self.evaluations
+    }
+
+    /// How the Hessian was computed: [`HessianMethod::Exact`] or [`HessianMethod::FiniteDifference`] (never
+    /// [`HessianMethod::Auto`], which resolves to one of them).
+    pub fn hessian_method(&self) -> HessianMethod {
+        self.hessian_method
     }
 
     /// One draw z = ẑ + L⁻ᵀε from the approximation, in unconstrained space, where ε is standard normal and L is

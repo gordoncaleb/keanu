@@ -58,6 +58,24 @@
 //! [`Bijector::forward_vjp_jvp`] of the constrained gradient, and with the Jacobian
 //! [`Bijector::log_det_jacobian_hvp`]. Nothing is approximated by finite differences.
 //!
+//! # Finite-difference second derivatives
+//!
+//! [`Parameterisation::hvp_with`] and [`Parameterisation::hessian_with`] take a [`HessianMethod`]. With
+//! [`HessianMethod::FiniteDifference`] the product H v is the central difference of the exact gradient,
+//! (∇f(z + hv) − ∇f(z − hv)) / 2h with h = ∛ε · max(1, ‖z‖) / ‖v‖ (ε being machine epsilon, so h is about 6·10⁻⁶
+//! along a unit direction near the origin), as Stan's Laplace approximation does. It costs two gradient evaluations
+//! and needs only first derivatives, so it works for models with lambdas, custom distributions or ODEs, whose exact
+//! products fail with [`GraphError::NoSecondOrderRule`]. Its error is of order h² in the third derivatives and
+//! ε/h in the gradient's rounding, about 10⁻¹⁰ relative for smooth models; a gradient with less accuracy, such as an
+//! ODE solved to a tolerance of 10⁻⁶, gives products with correspondingly less (about tolerance / h). The Hessian
+//! is n such products along the coordinate axes, symmetrised as (H + Hᵀ) / 2. If a point z ± hv is impossible (its
+//! log probability is −∞, as past the point where an ODE solve fails), h is shrunk eightfold, up to six times,
+//! before the product fails with [`GraphError::NotDifferentiable`].
+//!
+//! [`HessianMethod::Auto`] uses the exact rules and falls back to finite differences only when they fail with
+//! [`GraphError::NoSecondOrderRule`]; any other error is returned. The fallback is decided per call, for the whole
+//! product: nothing is mixed within one.
+//!
 //! ```
 //! use keanu_graph::{GraphBuilder, Model, Parameterisation};
 //! use keanu_tensor::DoubleTensor;
@@ -82,8 +100,9 @@
 //! distributions. (A truncated or censored gamma, beta or negative binomial whose shape depends on the latents has
 //! one: its CDF's second shape derivatives come from those of the regularised incomplete gamma and beta functions
 //! in [`keanu_tensor::special`]; the linear Gaussian state space model differentiates its Kalman filter.) A model
-//! whose log probability depends on the latents through a lambda or a custom distribution fails with
-//! [`GraphError::NoSecondOrderRule`] naming the node. Second derivatives follow the
+//! whose log probability depends on the latents through a lambda, a custom distribution or an ODE fails with
+//! [`GraphError::NoSecondOrderRule`] naming the node (use [`HessianMethod::Auto`] or
+//! [`HessianMethod::FiniteDifference`] for it; see below). Second derivatives follow the
 //! first-order gradients' conventions (the uniform has none with respect to its bounds, and the Laplace density
 //! takes the almost-everywhere value at its kink).
 //! Eigenvector derivatives assume distinct eigenvalues, as their first derivatives do.
@@ -110,6 +129,36 @@ pub enum Space {
     /// Latents are used as they are (the identity everywhere): points can leave the support, where the log
     /// probability is −∞.
     Constrained,
+}
+
+/// How second derivatives of the log probability are computed by [`Parameterisation::hvp_with`] and
+/// [`Parameterisation::hessian_with`] (see the [module documentation](self#finite-difference-second-derivatives)).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
+#[non_exhaustive]
+pub enum HessianMethod {
+    /// Exact, by forward-over-reverse automatic differentiation: fails with [`GraphError::NoSecondOrderRule`] for a
+    /// model with an op, distribution or bijector without a second-order rule.
+    Exact,
+    /// Central differences of the exact gradient.
+    FiniteDifference,
+    /// Exact where every rule exists, otherwise finite differences. The default.
+    #[default]
+    Auto,
+}
+
+/// ∛ε, the relative step of a finite-difference Hessian-vector product.
+fn finite_difference_step() -> f64 {
+    f64::EPSILON.cbrt()
+}
+
+/// The step of a finite-difference product is shrunk by this factor when a point it reaches is impossible ...
+const STEP_SHRINK: f64 = 0.125;
+
+/// ... at most this many times.
+const STEP_SHRINKS: usize = 6;
+
+fn norm(x: &[f64]) -> f64 {
+    x.iter().map(|v| v * v).sum::<f64>().sqrt()
 }
 
 /// One latent's place in the flat layout.
@@ -589,15 +638,147 @@ impl<'m> Parameterisation<'m> {
     /// any error evaluating the model.
     pub fn hvp(&self, z: &[f64], v: &[f64], jacobian: bool, state: &mut State) -> Result<Vec<f64>> {
         self.check_len(z)?;
-        if v.len() != self.dimension {
-            return Err(GraphError::InvalidValue(format!(
+        self.check_direction(v)?;
+        let mut products = self.hessian_products(z, v, 1, jacobian, state)?;
+        Ok(products.pop().unwrap_or_default())
+    }
+
+    /// [`hvp`](Self::hvp) by the given [`HessianMethod`]: exactly ([`HessianMethod::Exact`], which is
+    /// [`hvp`](Self::hvp)), by central differences of the exact gradient ([`HessianMethod::FiniteDifference`]), or
+    /// exactly unless a second-order rule is missing ([`HessianMethod::Auto`]). See the
+    /// [module documentation](self#finite-difference-second-derivatives). Leaves the latents at their values at `z`.
+    ///
+    /// # Errors
+    ///
+    /// As [`hvp`](Self::hvp), except that [`GraphError::NoSecondOrderRule`] comes only with
+    /// [`HessianMethod::Exact`]. By finite differences, [`GraphError::NotDifferentiable`] if the log probability
+    /// stays impossible within the shrunk steps around `z`, and [`GraphError::SolverFailed`] if `z` itself can't be
+    /// evaluated.
+    pub fn hvp_with(
+        &self,
+        z: &[f64],
+        v: &[f64],
+        jacobian: bool,
+        method: HessianMethod,
+        state: &mut State,
+    ) -> Result<Vec<f64>> {
+        let finite_difference = |state: &mut State| {
+            self.check_len(z)?;
+            self.check_direction(v)?;
+            let product = self.finite_difference_product(z, v, jacobian, state)?;
+            self.to_state(z, state)?;
+            Ok(product)
+        };
+        match method {
+            HessianMethod::Exact => self.hvp(z, v, jacobian, state),
+            HessianMethod::FiniteDifference => finite_difference(state),
+            HessianMethod::Auto => match self.hvp(z, v, jacobian, state) {
+                Err(GraphError::NoSecondOrderRule(_)) => finite_difference(state),
+                other => other,
+            },
+        }
+    }
+
+    /// [`hessian`](Self::hessian) by the given [`HessianMethod`], as [`hvp_with`](Self::hvp_with). By finite
+    /// differences it is n products along the coordinate axes (2n gradient evaluations), symmetrised as
+    /// (H + Hᵀ) / 2. Leaves the latents at their values at `z`.
+    ///
+    /// # Errors
+    ///
+    /// As [`hvp_with`](Self::hvp_with).
+    pub fn hessian_with(
+        &self,
+        z: &[f64],
+        jacobian: bool,
+        method: HessianMethod,
+        state: &mut State,
+    ) -> Result<DoubleTensor> {
+        match method {
+            HessianMethod::Exact => self.hessian(z, jacobian, state),
+            HessianMethod::FiniteDifference => self.finite_difference_hessian(z, jacobian, state),
+            HessianMethod::Auto => match self.hessian(z, jacobian, state) {
+                Err(GraphError::NoSecondOrderRule(_)) => {
+                    self.finite_difference_hessian(z, jacobian, state)
+                }
+                other => other,
+            },
+        }
+    }
+
+    /// The symmetrised Hessian by central differences of the gradient, leaving the latents at `z`.
+    fn finite_difference_hessian(
+        &self,
+        z: &[f64],
+        jacobian: bool,
+        state: &mut State,
+    ) -> Result<DoubleTensor> {
+        self.check_len(z)?;
+        let n = self.dimension;
+        let mut columns = Vec::with_capacity(n);
+        let mut axis = vec![0.0; n];
+        for k in 0..n {
+            axis[k] = 1.0;
+            columns.push(self.finite_difference_product(z, &axis, jacobian, state)?);
+            axis[k] = 0.0;
+        }
+        self.to_state(z, state)?;
+        let mut data = vec![0.0; n * n];
+        for i in 0..n {
+            for k in 0..n {
+                data[i * n + k] = 0.5 * (columns[k][i] + columns[i][k]);
+            }
+        }
+        Ok(DoubleTensor::new(&[n, n], data)?)
+    }
+
+    /// (∇f(z + hv) − ∇f(z − hv)) / 2h, shrinking h while either point is impossible. Leaves the state at the last
+    /// point evaluated.
+    fn finite_difference_product(
+        &self,
+        z: &[f64],
+        v: &[f64],
+        jacobian: bool,
+        state: &mut State,
+    ) -> Result<Vec<f64>> {
+        let size = norm(v);
+        if size == 0.0 {
+            return Ok(vec![0.0; z.len()]);
+        }
+        let mut h = finite_difference_step() * norm(z).max(1.0) / size;
+        let gradient_at = |sign: f64, h: f64, state: &mut State| -> Result<Option<Vec<f64>>> {
+            let point: Vec<f64> = z.iter().zip(v).map(|(zi, vi)| zi + sign * h * vi).collect();
+            let (log_prob, gradient) = self.log_prob_and_gradient(&point, jacobian, state)?;
+            Ok(gradient.filter(|g| log_prob.is_finite() && g.iter().all(|x| x.is_finite())))
+        };
+        for _ in 0..=STEP_SHRINKS {
+            if let Some(plus) = gradient_at(1.0, h, state)? {
+                if let Some(minus) = gradient_at(-1.0, h, state)? {
+                    return Ok(plus
+                        .iter()
+                        .zip(&minus)
+                        .map(|(p, m)| (p - m) / (2.0 * h))
+                        .collect());
+                }
+            }
+            h *= STEP_SHRINK;
+        }
+        Err(GraphError::NotDifferentiable(format!(
+            "no finite-difference Hessian-vector product: the log probability or its gradient is impossible or not \
+             finite on one side of the point at every step down to {:e} along the direction",
+            h / STEP_SHRINK
+        )))
+    }
+
+    fn check_direction(&self, v: &[f64]) -> Result<()> {
+        if v.len() == self.dimension {
+            Ok(())
+        } else {
+            Err(GraphError::InvalidValue(format!(
                 "a direction has {} coordinates, expected the parameterisation's {}",
                 v.len(),
                 self.dimension
-            )));
+            )))
         }
-        let mut products = self.hessian_products(z, v, 1, jacobian, state)?;
-        Ok(products.pop().unwrap_or_default())
     }
 
     /// Sets the latents to their values at `z` and returns the exact Hessian of the log probability at `z` (with or

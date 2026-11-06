@@ -888,8 +888,10 @@ impl GraphBuilder {
     ///
     /// The node is differentiable to first order in `y0`, `times`, `t0` and `parameters`, by forward sensitivities:
     /// a gradient integrates n·(1 + p) equations, for p the number of elements of the parents (other than the times
-    /// and constants) it is taken through. It has no second-order rule, so Hessian-vector products (and the Laplace
-    /// approximation) fail with [`GraphError::NoSecondOrderRule`].
+    /// and constants) it is taken through. It has no second-order rule, so exact Hessian-vector products fail with
+    /// [`GraphError::NoSecondOrderRule`]; the Laplace approximation and the trust-region optimizer fall back to
+    /// finite differences of the gradient
+    /// ([`HessianMethod::Auto`](crate::HessianMethod::Auto)).
     ///
     /// ```
     /// use keanu_graph::GraphBuilder;

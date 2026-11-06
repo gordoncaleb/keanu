@@ -438,6 +438,16 @@ Execution order: U1, U2, U3, U4, U5, U6, U7, U8, U9, U11, U10, U12, U13, then a 
   - `Auto` falls back only on `NoSecondOrderRule`;
   - AE5 on the SIR example;
   - lambdas and custom distributions now work with Laplace.
+- **Implementation notes:**
+  - `hvp` and `hessian` keep their signatures and stay exact; the method is chosen through the companion methods
+    `hvp_with` and `hessian_with`. `Auto` falls back per call; `Laplace` resolves it once per fit (exact on the
+    first Hessian, or finite differences for the rest of the fit if a rule is missing) and reports the result in
+    `LaplaceResult::hessian_method`.
+  - Impossible neighbours: the step is shrunk eightfold up to six times, then `GraphError::NotDifferentiable`.
+  - AE5: β, γ, R₀ and the recovery time are within 20% of NUTS (largest gap 15%, β's sd). The dispersion φ's
+    posterior is strongly right-skewed, and the Gaussian in log φ⁻¹ puts its mean 19% and sd 15% above NUTS's; the
+    test checks φ to 25% and records the numbers. At the solver's default tolerances the finite-difference
+    covariance agrees with one at 10⁻¹⁰ to about 10⁻⁵, so the example uses the defaults.
 
 ### U12. `intervene` and a causal example
 - **Requirements:** R12.
