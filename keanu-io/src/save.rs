@@ -179,6 +179,7 @@ fn save_op(graph: &Graph, id: NodeId) -> Result<P> {
                 shape: dims(&distribution.shape),
                 kde: saved.kde,
                 base: saved.base.map(|base| *base),
+                adjacency: saved.adjacency,
             })
         }
         Op::Scan(body) => P::Scan(proto::Scan {

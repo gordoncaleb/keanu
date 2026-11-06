@@ -468,6 +468,9 @@ message Distribution {
   // `DISTRIBUTION_KIND_HURDLE` only, for which it is required). The node's parents are the base's parameters
   // followed by the nested kind's own.
   DistributionType base = 4;
+  // The neighbourhood of a spatial distribution (`DISTRIBUTION_KIND_ICAR` and `DISTRIBUTION_KIND_CAR` only, for
+  // which it is required).
+  Adjacency adjacency = 5;
 }
 
 // The element-wise log density of the node's first parent under a distribution whose parameters are its other
@@ -484,6 +487,8 @@ message DistributionType {
   Kde kde = 2;
   // As `Distribution.base`.
   DistributionType base = 3;
+  // As `Distribution.adjacency`.
+  Adjacency adjacency = 4;
 }
 
 enum DistributionKind {
@@ -549,6 +554,17 @@ enum DistributionKind {
   DISTRIBUTION_KIND_AUTOREGRESSIVE = 46;
   // Parameters: `omega`, `alpha`, `beta`, `initial_vol`.
   DISTRIBUTION_KIND_GARCH11 = 47;
+  // Parameters: `sigma`.
+  DISTRIBUTION_KIND_ICAR = 48;
+  // Parameters: `tau`, `alpha`.
+  DISTRIBUTION_KIND_CAR = 49;
+}
+
+// The neighbourhood of a spatial distribution: the number of areas and the edges between them, as pairs of area
+// indices (`edges[2k]` and `edges[2k + 1]` are neighbours).
+message Adjacency {
+  uint64 areas = 1;
+  repeated uint64 edges = 2;
 }
 
 // A kernel density estimate's fixed samples and bandwidth.

@@ -477,6 +477,10 @@ pub struct Distribution {
     /// followed by the nested kind's own.
     #[prost(message, optional, tag = "4")]
     pub base: ::core::option::Option<DistributionType>,
+    /// The neighbourhood of a spatial distribution (`DISTRIBUTION_KIND_ICAR` and `DISTRIBUTION_KIND_CAR` only, for
+    /// which it is required).
+    #[prost(message, optional, tag = "5")]
+    pub adjacency: ::core::option::Option<Adjacency>,
 }
 /// The element-wise log density of the node's first parent under a distribution whose parameters are its other
 /// parents.
@@ -497,6 +501,18 @@ pub struct DistributionType {
     /// As `Distribution.base`.
     #[prost(message, optional, boxed, tag = "3")]
     pub base: ::core::option::Option<::prost::alloc::boxed::Box<DistributionType>>,
+    /// As `Distribution.adjacency`.
+    #[prost(message, optional, tag = "4")]
+    pub adjacency: ::core::option::Option<Adjacency>,
+}
+/// The neighbourhood of a spatial distribution: the number of areas and the edges between them, as pairs of area
+/// indices (`edges\[2k\]` and `edges\[2k + 1\]` are neighbours).
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct Adjacency {
+    #[prost(uint64, tag = "1")]
+    pub areas: u64,
+    #[prost(uint64, repeated, tag = "2")]
+    pub edges: ::prost::alloc::vec::Vec<u64>,
 }
 /// A kernel density estimate's fixed samples and bandwidth.
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -1065,6 +1081,10 @@ pub enum DistributionKind {
     Autoregressive = 46,
     /// Parameters: `omega`, `alpha`, `beta`, `initial_vol`.
     Garch11 = 47,
+    /// Parameters: `sigma`.
+    Icar = 48,
+    /// Parameters: `tau`, `alpha`.
+    Car = 49,
 }
 impl DistributionKind {
     /// String value of the enum field names used in the ProtoBuf definition.
@@ -1123,6 +1143,8 @@ impl DistributionKind {
             Self::GaussianRandomWalk => "DISTRIBUTION_KIND_GAUSSIAN_RANDOM_WALK",
             Self::Autoregressive => "DISTRIBUTION_KIND_AUTOREGRESSIVE",
             Self::Garch11 => "DISTRIBUTION_KIND_GARCH11",
+            Self::Icar => "DISTRIBUTION_KIND_ICAR",
+            Self::Car => "DISTRIBUTION_KIND_CAR",
         }
     }
     /// Creates an enum from field names used in the ProtoBuf definition.
@@ -1178,6 +1200,8 @@ impl DistributionKind {
             "DISTRIBUTION_KIND_GAUSSIAN_RANDOM_WALK" => Some(Self::GaussianRandomWalk),
             "DISTRIBUTION_KIND_AUTOREGRESSIVE" => Some(Self::Autoregressive),
             "DISTRIBUTION_KIND_GARCH11" => Some(Self::Garch11),
+            "DISTRIBUTION_KIND_ICAR" => Some(Self::Icar),
+            "DISTRIBUTION_KIND_CAR" => Some(Self::Car),
             _ => None,
         }
     }

@@ -106,10 +106,10 @@ pub mod prelude {
         VariationalFamily,
     };
     pub use crate::algorithms::{NetworkSample, NetworkSamples, Samples};
-    pub use crate::distributions::KeanuRng;
+    pub use crate::distributions::{Adjacency, KeanuRng};
     pub use crate::graph::{
-        BoolVar, CustomDistribution, CustomGradient, DType, DoubleVar, Graph, GraphBuilder, IntVar,
-        Marginalized, Model, NodeId, Parameterisation, Space, State, Support, Value, Var,
+        BoolVar, Bym2, CustomDistribution, CustomGradient, DType, DoubleVar, Graph, GraphBuilder,
+        IntVar, Marginalized, Model, NodeId, Parameterisation, Space, State, Support, Value, Var,
         marginalize,
     };
     pub use crate::tensor::{BoolTensor, DoubleTensor, IntTensor, SparseMatrix, Tensor};

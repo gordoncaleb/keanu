@@ -123,6 +123,22 @@ fn every_built_in_reports_its_documented_support() {
             Support::SumToZero,
         ),
         (
+            "icar",
+            |b| {
+                let a = keanu_distributions::Adjacency::from_edges(5, &[(0, 1), (3, 2)]).unwrap();
+                b.icar(a, 1.0).id()
+            },
+            Support::SumToZeroComponents(vec![vec![0, 1], vec![2, 3]].into()),
+        ),
+        (
+            "car",
+            |b| {
+                let a = keanu_distributions::Adjacency::lattice(2, 2).unwrap();
+                b.car(a, 1.0, 0.5).unwrap().id()
+            },
+            Support::Real,
+        ),
+        (
             "uniform_int",
             |b| b.uniform_int(0, 5).id(),
             Support::Discrete,

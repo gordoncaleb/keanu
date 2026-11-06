@@ -45,6 +45,7 @@ pub mod ode;
 pub mod op;
 pub mod parameterisation;
 pub mod sequence;
+pub mod spatial;
 mod state;
 pub mod sts;
 pub mod transform;
@@ -66,6 +67,7 @@ pub use marginalize::{MAX_MARGINALIZED_VALUES, Marginalized, MarginalizedLatent,
 pub use model::{LambdaSection, Model, downstream_lambda_section, upstream_lambda_section};
 pub use op::{CustomDistribution, CustomGradient, Support};
 pub use parameterisation::{Parameterisation, Space};
+pub use spatial::Bym2;
 pub use state::State;
 pub use value::{DType, Value};
 pub use vars::{BoolVar, DoubleVar, IntVar, IntoBoolVar, IntoDoubleVar, IntoIntVar, Var};

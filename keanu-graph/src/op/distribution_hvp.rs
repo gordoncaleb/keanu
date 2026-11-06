@@ -11,8 +11,8 @@
 //!   the wrappers module), a mixture those of a logsumexp of its components (see the mixture module), and a
 //!   hidden Markov model those of the forward-backward algorithm (see the hmm module), all on top of the
 //!   element-wise contraction of their base, component or emission;
-//! - the multivariate kinds (multivariate Gaussian, Dirichlet, LKJ Cholesky, zero-sum normal, multinomial,
-//!   ordered logistic, KDE)
+//! - the multivariate kinds (multivariate Gaussian, Dirichlet, LKJ Cholesky, zero-sum normal, ICAR, proper CAR,
+//!   multinomial, ordered logistic, KDE)
 //!   have closed forms of their own here;
 //! - the linear Gaussian state space model differentiates the Kalman filter's reverse pass in forward mode (see
 //!   [`keanu_distributions::LinearGaussianStateSpace::hvp`]), and the Gaussian random walk, AR(p) and GARCH(1,1)
@@ -173,6 +173,29 @@ impl DistributionKind {
                     b,
                 )
             }
+            K::Icar(adjacency) => {
+                let &[sigma] = parameters else {
+                    return Err(self.wrong_parameters());
+                };
+                icar_hvp(
+                    self,
+                    adjacency,
+                    value.f64()?,
+                    sigma.f64()?,
+                    value_tangent,
+                    parameter_tangents[0],
+                    b,
+                )
+            }
+            K::Car(adjacency) => car_hvp(
+                self,
+                adjacency,
+                value.f64()?,
+                parameters,
+                value_tangent,
+                parameter_tangents,
+                b,
+            ),
             K::Kde(kde) => Ok((
                 value_tangent
                     .map(|t| kde_hvp(kde, value.f64()?, t, b))
@@ -992,4 +1015,146 @@ fn multivariate_gaussian_hvp(
     }
     let hc = reduce_to(hc * 0.5, covariance.shape())?;
     Ok((Some(hx), smallvec::smallvec![Some(hm), Some(hc)]))
+}
+
+/// Pv for the ICAR's precision P: the graph Laplacian plus 1 on the diagonal of each island.
+fn icar_precision_times(a: &keanu_distributions::Adjacency, v: &[f64]) -> Vec<f64> {
+    let mut out = vec![0.0; v.len()];
+    for &(i, j) in a.edges() {
+        let d = v[i] - v[j];
+        out[i] += d;
+        out[j] -= d;
+    }
+    for (i, &d) in a.degrees().iter().enumerate() {
+        if d == 0.0 {
+            out[i] += v[i];
+        }
+    }
+    out
+}
+
+/// The ICAR density −½ xᵀPx/σ² − r ln σ: the gradient is (−Px/σ², xᵀPx/σ³ − r/σ), so the products are
+/// −Pẋ/σ² + 2Px σ̇/σ³ for x and 2 (Px)·ẋ/σ³ + (r/σ² − 3 xᵀPx/σ⁴) σ̇ for σ.
+fn icar_hvp(
+    kind: &DistributionKind,
+    a: &keanu_distributions::Adjacency,
+    x: &DoubleTensor,
+    sigma: &DoubleTensor,
+    x_tangent: Option<&DoubleTensor>,
+    sigma_tangent: Option<&DoubleTensor>,
+    b: usize,
+) -> Result<LogProbHvpParts> {
+    let n = a.len();
+    let &[s] = sigma.as_slice() else {
+        return Err(kind.wrong_parameters());
+    };
+    let xs = x.as_slice();
+    let px = icar_precision_times(a, xs);
+    let quadratic: f64 = px.iter().zip(xs).map(|(p, x)| p * x).sum();
+    let rank = a.icar_rank() as f64;
+    let tx = spread_tangent(x_tangent, b, x.shape())?;
+    let ts = spread_tangent(sigma_tangent, b, sigma.shape())?;
+    let (s2, s3) = (s * s, s * s * s);
+    let mut hx = vec![0.0; b * n];
+    let mut hs = vec![0.0; b];
+    for k in 0..b {
+        let ds = ts.as_ref().map_or(0.0, |t| t[k]);
+        let mut cross = 0.0;
+        let p_dx = tx
+            .as_ref()
+            .map(|t| icar_precision_times(a, &t[k * n..(k + 1) * n]));
+        for i in 0..n {
+            let pdx = p_dx.as_ref().map_or(0.0, |p| p[i]);
+            hx[k * n + i] = -pdx / s2 + 2.0 * px[i] * ds / s3;
+            cross += tx.as_ref().map_or(0.0, |t| t[k * n + i]) * px[i];
+        }
+        hs[k] = 2.0 * cross / s3 + (rank / s2 - 3.0 * quadratic / (s2 * s2)) * ds;
+    }
+    Ok((
+        reduce(Some(hx), b, x.shape(), x.shape())?,
+        smallvec::smallvec![reduce(Some(hs), b, sigma.shape(), sigma.shape())?],
+    ))
+}
+
+/// Dv and Wv for a proper CAR.
+fn car_parts(a: &keanu_distributions::Adjacency, v: &[f64]) -> (Vec<f64>, Vec<f64>) {
+    let dv = a.degrees().iter().zip(v).map(|(d, v)| d * v).collect();
+    let mut wv = vec![0.0; v.len()];
+    for &(i, j) in a.edges() {
+        wv[i] += v[j];
+        wv[j] += v[i];
+    }
+    (dv, wv)
+}
+
+/// The proper CAR density ½ Σ ln(1 − αλ) + ½ n ln τ − ½ τ xᵀ(D − αW)x (+ constants), with M = D − αW: the
+/// gradient is (−τMx, n/(2τ) − ½ xᵀMx, −½ Σ λ/(1 − αλ) + ½ τ xᵀWx), so with second derivatives
+/// H_xx = −τM, H_xτ = −Mx, H_xα = τWx, H_ττ = −n/(2τ²), H_τα = ½ xᵀWx and H_αα = −½ Σ λ²/(1 − αλ)².
+fn car_hvp(
+    kind: &DistributionKind,
+    a: &keanu_distributions::Adjacency,
+    x: &DoubleTensor,
+    parameters: &[&Value],
+    x_tangent: Option<&DoubleTensor>,
+    parameter_tangents: &[Option<&DoubleTensor>],
+    b: usize,
+) -> Result<LogProbHvpParts> {
+    let &[tau, alpha] = parameters else {
+        return Err(kind.wrong_parameters());
+    };
+    let (tau, alpha) = (tau.f64()?, alpha.f64()?);
+    let n = a.len();
+    let (&[t], &[al]) = (tau.as_slice(), alpha.as_slice()) else {
+        return Err(kind.wrong_parameters());
+    };
+    let lambda = a.car_eigenvalues()?;
+    let xs = x.as_slice();
+    let (dx, wx) = car_parts(a, xs);
+    let mx: Vec<f64> = dx.iter().zip(&wx).map(|(d, w)| d - al * w).collect();
+    let xwx: f64 = wx.iter().zip(xs).map(|(w, x)| w * x).sum();
+    let h_tt = -0.5 * n as f64 / (t * t);
+    let h_ta = 0.5 * xwx;
+    let h_aa = -0.5
+        * lambda
+            .iter()
+            .map(|l| (l / (1.0 - al * l)).powi(2))
+            .sum::<f64>();
+    let tx = spread_tangent(x_tangent, b, x.shape())?;
+    let tt = spread_tangent(parameter_tangents[0], b, tau.shape())?;
+    let ta = spread_tangent(
+        parameter_tangents.get(1).copied().flatten(),
+        b,
+        alpha.shape(),
+    )?;
+    let mut hx = vec![0.0; b * n];
+    let mut h_tau = vec![0.0; b];
+    let mut h_alpha = vec![0.0; b];
+    for k in 0..b {
+        let d_tau = tt.as_ref().map_or(0.0, |v| v[k]);
+        let d_alpha = ta.as_ref().map_or(0.0, |v| v[k]);
+        let (m_dx, from_x_tau, from_x_alpha) = match &tx {
+            Some(v) => {
+                let v = &v[k * n..(k + 1) * n];
+                let (dv, wv) = car_parts(a, v);
+                let m_dx: Vec<f64> = dv.iter().zip(&wv).map(|(d, w)| d - al * w).collect();
+                let from_tau: f64 = mx.iter().zip(v).map(|(m, v)| m * v).sum();
+                let from_alpha: f64 = wx.iter().zip(v).map(|(w, v)| w * v).sum();
+                (Some(m_dx), -from_tau, t * from_alpha)
+            }
+            None => (None, 0.0, 0.0),
+        };
+        for i in 0..n {
+            let curvature = m_dx.as_ref().map_or(0.0, |m| -t * m[i]);
+            hx[k * n + i] = curvature - mx[i] * d_tau + t * wx[i] * d_alpha;
+        }
+        h_tau[k] = from_x_tau + h_tt * d_tau + h_ta * d_alpha;
+        h_alpha[k] = from_x_alpha + h_ta * d_tau + h_aa * d_alpha;
+    }
+    Ok((
+        reduce(Some(hx), b, x.shape(), x.shape())?,
+        smallvec::smallvec![
+            reduce(Some(h_tau), b, tau.shape(), tau.shape())?,
+            reduce(Some(h_alpha), b, alpha.shape(), alpha.shape())?,
+        ],
+    ))
 }

@@ -426,6 +426,7 @@ fn add_node(
                 kind: p.kind,
                 kde: p.kde.clone(),
                 base: p.base.clone().map(Box::new),
+                adjacency: p.adjacency.clone(),
             })?;
             return Ok(builder.add_distribution(kind, Some(&shape_of(&p.shape)?), parents)?);
         }

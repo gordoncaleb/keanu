@@ -531,6 +531,24 @@ Work from `docs/plans/2026-11-05-001-feat-applied-modelling-gaps-plan.md`.
   multiplies a constant sparse m × n matrix by a vector [n] or a matrix [n, k]; its Jacobian-vector product is A·ẋ,
   its vector-Jacobian product Aᵀ·ḡ and its second-order rule zero. The save schema gained a `SparseMatrix` message
   (shape and triplets) and the `sparse_matmul` operation (67).
+- keanu-distributions, keanu-graph, keanu-io: **ICAR, proper CAR and BYM2 spatial random effects**.
+  `keanu_distributions::Adjacency` is the neighbourhood of n areas, from an edge list (either orientation, repeats
+  merged), a symmetric 0/1 matrix or a rook lattice (`Adjacency::lattice`), with its degrees, sparse adjacency and
+  Laplacian, connected components, the eigenvalues of D^{-1/2} W D^{-1/2} and the BYM2 scaling factors, the
+  decompositions computed densely once and cached. `Icar` (`DistributionKind::Icar`, `GraphBuilder::icar`) is
+  Morris et al.'s pairwise-difference ICAR, −½ Σ_{i~j} (φᵢ − φⱼ)²/σ² − (n − c) ln σ with c the number of components
+  of two or more areas, an independent N(0, σ²) for each island and no normalising constant; its support is the new
+  `Support::SumToZeroComponents` (sum to zero on each such component), mapped to n − c unconstrained coordinates by
+  `transform::SumToZeroComponents`, the sum-to-zero transform on each component, and it is sampled exactly from each
+  component's Laplacian eigendecomposition. `Car` (`DistributionKind::Car`, `GraphBuilder::car`) is the zero-mean
+  normal with precision τ(D − αW), its log determinant Σ ln(1 − αλᵢ) + Σ ln Dᵢᵢ + n ln τ from the cached
+  eigenvalues and its quadratic form from the edges, sampled by a dense Cholesky factor; every area needs a
+  neighbour. Both have gradients and Hessian-vector products in the value and the parameters.
+  `GraphBuilder::bym2` builds Riebler et al.'s b = σ(√(ρ/s) φ + √(1 − ρ) θ) from a unit-scale ICAR φ and
+  independent normals θ, s each area's scaling factor (the geometric mean of the diagonal of the Laplacian's
+  generalised inverse over its component, as INLA's `scale.model`; 1 for an island), and returns the three nodes as
+  `Bym2`. The save schema gained an `Adjacency` message (the number of areas and the edges) and the ICAR (48) and
+  CAR (49) kinds.
 
 ### Code review fixes
 

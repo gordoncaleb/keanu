@@ -14,7 +14,7 @@ use keanu_graph::op::{DistributionKind, Op};
 use keanu_graph::sts::{Component, StructuralModel};
 use keanu_graph::transform::{
     Bijector, Circular, CorrelationCholesky, Identity, Interval, LowerBound, Ordered, Simplex,
-    SumToZero, UpperBound,
+    SumToZero, SumToZeroComponents, UpperBound,
 };
 use keanu_graph::{
     DoubleVar, GraphBuilder, GraphError, IntVar, Model, NodeId, Parameterisation, Space, State,
@@ -878,6 +878,10 @@ fn bijectors() -> Vec<(Box<dyn Bijector>, Vec<f64>)> {
         (Box::new(Simplex::new(&[4]).unwrap()), vec![0.3, -0.8, 0.6]),
         (
             Box::new(SumToZero::new(&[2, 3]).unwrap()),
+            vec![0.3, -0.8, 1.1, 0.4],
+        ),
+        (
+            Box::new(SumToZeroComponents::new(&[vec![0, 3], vec![1, 2, 4]], &[6]).unwrap()),
             vec![0.3, -0.8, 0.6, 1.4],
         ),
         (
@@ -1315,6 +1319,32 @@ fn distribution_cases() -> Vec<DistributionCase> {
             let scales = positive_vector(b, &[0.7, 2.0]);
             let y = b.zero_sum_normal_with_shape(&[2, 3], scales);
             b.observe(y, t(&[2, 3], &[0.3, -0.5, 0.2, 1.5, -2.0, 0.5]));
+        }),
+        unconstrained("icar", |b| {
+            // a path 0 - 1 - 2, a pair 3 - 4 and an island 5
+            let adjacency = std::sync::Arc::new(
+                keanu_distributions::Adjacency::from_edges(6, &[(0, 1), (1, 2), (3, 4)]).unwrap(),
+            );
+            let sigma = positive(b, 1.3);
+            let x = b.icar(adjacency.clone(), sigma);
+            b.set_value(x, v(&[0.4, -0.1, -0.3, 0.6, -0.6, 0.9]));
+            let y = b.icar(adjacency, sigma * 0.5);
+            b.observe(y, v(&[1.0, -0.4, -0.6, -0.2, 0.2, 0.1]));
+        }),
+        case("car", |b| {
+            let adjacency = std::sync::Arc::new(
+                keanu_distributions::Adjacency::from_edges(
+                    5,
+                    &[(0, 1), (1, 2), (2, 3), (3, 4), (4, 0), (0, 2)],
+                )
+                .unwrap(),
+            );
+            let tau = positive(b, 1.7);
+            let alpha = scalar_latent(b, 0.6);
+            let x = b.car(adjacency.clone(), tau, alpha).unwrap();
+            b.set_value(x, v(&[0.4, -0.1, -0.3, 0.6, -0.5]));
+            let y = b.car(adjacency, tau * 2.0, alpha * 0.5).unwrap();
+            b.observe(y, v(&[1.0, -0.4, 0.6, -0.2, 0.2]));
         }),
         case("kde", |b| {
             let kde = keanu_distributions::Kde::new(vec![-0.5, 0.2, 0.4, 1.5], 0.6).unwrap();

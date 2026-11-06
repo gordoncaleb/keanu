@@ -618,6 +618,8 @@ const DISTRIBUTIONS: &[&str] = &[
     "GaussianRandomWalk",
     "Autoregressive",
     "Garch11",
+    "Icar",
+    "Car",
 ];
 
 fn distribution_kinds() -> Vec<DistributionKind> {
@@ -676,6 +678,17 @@ fn distribution_kinds() -> Vec<DistributionKind> {
         GaussianRandomWalk,
         Autoregressive,
         Garch11,
+        // a path, a pair and an island
+        Icar(Arc::new(
+            keanu_distributions::Adjacency::from_edges(6, &[(0, 1), (1, 2), (3, 4)]).unwrap(),
+        )),
+        Car(Arc::new(
+            keanu_distributions::Adjacency::from_edges(
+                4,
+                &[(0, 1), (1, 2), (2, 3), (3, 0), (0, 2)],
+            )
+            .unwrap(),
+        )),
     ]
 }
 
@@ -688,6 +701,8 @@ fn distribution_cases() -> Vec<(String, Graph, State)> {
             // a KDE by its name alone (its debug form lists its samples)
             let name = match kind {
                 DistributionKind::Kde(_) => "Kde".to_owned(),
+                DistributionKind::Icar(_) => "Icar".to_owned(),
+                DistributionKind::Car(_) => "Car".to_owned(),
                 _ => format!("{kind:?}"),
             };
             let b = GraphBuilder::new();

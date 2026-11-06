@@ -35,6 +35,10 @@ pub enum Support {
     Ordered,
     /// Vectors whose elements sum to zero, over the value's last dimension.
     SumToZero,
+    /// Values whose elements sum to zero within each listed group of flat indices (disjoint), the elements in no
+    /// group being unconstrained: an [ICAR](DistributionKind::Icar)'s support, a group per connected component of
+    /// two or more areas.
+    SumToZeroComponents(Arc<[Vec<usize>]>),
     /// Lower triangular Cholesky factors of correlation matrices, over the value's last two dimensions: a positive
     /// diagonal and rows of unit length.
     CorrelationCholesky,
@@ -118,6 +122,16 @@ pub enum DistributionKind {
     VonMises,
     /// No parameters: a kernel density estimate from fixed samples. Support: real.
     Kde(Arc<d::Kde>),
+    /// Parameters: `sigma` (a scalar); the value has one element per area of the neighbourhood, shape `[n]`: the
+    /// intrinsic conditional autoregressive distribution, −½ Σ_{i~j} (φᵢ − φⱼ)² / σ² − (n − c) ln σ. Support:
+    /// sum to zero on each connected component of two or more areas. See [`keanu_distributions::Icar`] and
+    /// [`GraphBuilder::icar`](crate::GraphBuilder::icar).
+    Icar(Arc<d::Adjacency>),
+    /// Parameters: `tau`, `alpha` (scalars); the value has one element per area, shape `[n]`: the proper
+    /// conditional autoregressive distribution, a zero-mean multivariate normal with precision τ(D − αW). Every
+    /// area must have a neighbour. Support: real. See [`keanu_distributions::Car`] and
+    /// [`GraphBuilder::car`](crate::GraphBuilder::car).
+    Car(Arc<d::Adjacency>),
     /// Parameters: `probability of true` -> bool. Support: discrete.
     Bernoulli,
     /// Parameters: `p`, `n (i64)` -> i64. Support: discrete.
@@ -355,6 +369,8 @@ macro_rules! distributions {
                 match self {
                     $(DistributionKind::$kind => Some(Cow::Borrowed(&[$(DType::$ptype),+])),)+
                     DistributionKind::Kde(_) => Some(Cow::Borrowed(&[])),
+                    DistributionKind::Icar(_) => Some(Cow::Borrowed(&[DType::F64])),
+                    DistributionKind::Car(_) => Some(Cow::Borrowed(&[DType::F64, DType::F64])),
                     DistributionKind::Categorical
                     | DistributionKind::CategoricalLogit
                     | DistributionKind::Custom(_)
@@ -375,6 +391,8 @@ macro_rules! distributions {
                 match self {
                     $(DistributionKind::$kind => Some(Cow::Borrowed(&[$(stringify!($param)),+])),)+
                     DistributionKind::Kde(_) => Some(Cow::Borrowed(&[])),
+                    DistributionKind::Icar(_) => Some(Cow::Borrowed(&["sigma"])),
+                    DistributionKind::Car(_) => Some(Cow::Borrowed(&["tau", "alpha"])),
                     DistributionKind::Categorical
                     | DistributionKind::CategoricalLogit
                     | DistributionKind::Custom(_)
@@ -451,7 +469,7 @@ macro_rules! distributions {
             pub fn value_type(&self) -> DType {
                 match self {
                     $(DistributionKind::$kind => DType::$vtype,)+
-                    DistributionKind::Kde(_) => DType::F64,
+                    DistributionKind::Kde(_) | DistributionKind::Icar(_) | DistributionKind::Car(_) => DType::F64,
                     DistributionKind::Categorical | DistributionKind::CategoricalLogit => DType::I64,
                     DistributionKind::Custom(c) => c.value_type(),
                     DistributionKind::Simulator(s) => s.value_type(),
@@ -463,6 +481,8 @@ macro_rules! distributions {
             pub const NAMES: &'static [&'static str] = &[
                 $($name,)+
                 "kde",
+                "icar",
+                "car",
                 "categorical",
                 "categorical_logit",
                 "custom",
@@ -509,6 +529,8 @@ macro_rules! distributions {
                 match self {
                     $(DistributionKind::$kind => $name,)+
                     DistributionKind::Kde(_) => "kde",
+                    DistributionKind::Icar(_) => "icar",
+                    DistributionKind::Car(_) => "car",
                     DistributionKind::Categorical => "categorical",
                     DistributionKind::CategoricalLogit => "categorical_logit",
                     DistributionKind::Custom(_) => "custom",
@@ -527,7 +549,10 @@ macro_rules! distributions {
                         let _ = ($($param,)+);
                         $support
                     })+
-                    DistributionKind::Kde(_) => Support::Real,
+                    DistributionKind::Kde(_) | DistributionKind::Car(_) => Support::Real,
+                    DistributionKind::Icar(a) => {
+                        Support::SumToZeroComponents(a.connected_groups().cloned().collect())
+                    }
                     DistributionKind::Categorical | DistributionKind::CategoricalLogit => Support::Discrete,
                     DistributionKind::Custom(c) => c.support(parameters).map_err(GraphError::Custom)?,
                     DistributionKind::Simulator(s) => match s.value_type() {
@@ -560,6 +585,14 @@ macro_rules! distributions {
                         let count: usize = shape.iter().product();
                         let signed: Vec<isize> = shape.iter().map(|&s| s as isize).collect();
                         Value::F64(kde.sample(count, rng).reshape(&signed)?)
+                    }
+                    DistributionKind::Icar(a) => {
+                        let &[sigma] = parameters else { return Err(self.wrong_parameters()) };
+                        Value::F64(d::Icar::new(a, sigma.f64()?).sample(shape, rng)?)
+                    }
+                    DistributionKind::Car(a) => {
+                        let &[tau, alpha] = parameters else { return Err(self.wrong_parameters()) };
+                        Value::F64(d::Car::new(a, tau.f64()?, alpha.f64()?).sample(shape, rng)?)
                     }
                     DistributionKind::Categorical => {
                         Value::I64(d::Categorical::new(f64_tensors(parameters)?)?.sample(shape, rng)?)
@@ -598,6 +631,7 @@ macro_rules! distributions {
                         $build.log_prob(tensor!($vtype, value))?.total()
                     })+
                     DistributionKind::Kde(kde) => kde.log_prob(value.f64()?).sum(),
+                    DistributionKind::Icar(_) | DistributionKind::Car(_) => self.spatial_log_prob(value, parameters)?,
                     DistributionKind::Categorical => {
                         d::Categorical::new(f64_tensors(parameters)?)?.log_prob(value.i64()?)?.sum()
                     }
@@ -625,6 +659,9 @@ macro_rules! distributions {
                         $build.log_prob(tensor!($vtype, value))?.terms()
                     })+
                     DistributionKind::Kde(kde) => kde.log_prob(value.f64()?),
+                    DistributionKind::Icar(_) | DistributionKind::Car(_) => {
+                        DoubleTensor::scalar(self.spatial_log_prob(value, parameters)?)
+                    }
                     DistributionKind::Categorical => {
                         d::Categorical::new(f64_tensors(parameters)?)?.log_prob(value.i64()?)?
                     }
@@ -657,6 +694,16 @@ macro_rules! distributions {
                         distribution_gradient!(dist, x, $vtype, [$($param: $ptype),+], [$($gradient)?])
                     })+
                     DistributionKind::Kde(kde) => (Some(kde.d_log_prob(value.f64()?)?.x), smallvec::smallvec![]),
+                    DistributionKind::Icar(a) => {
+                        let &[sigma] = parameters else { return Err(self.wrong_parameters()) };
+                        let g = d::Icar::new(a, sigma.f64()?).d_log_prob(value.f64()?)?;
+                        (Some(g.x), smallvec::smallvec![Some(g.sigma)])
+                    }
+                    DistributionKind::Car(a) => {
+                        let &[tau, alpha] = parameters else { return Err(self.wrong_parameters()) };
+                        let g = d::Car::new(a, tau.f64()?, alpha.f64()?).d_log_prob(value.f64()?)?;
+                        (Some(g.x), smallvec::smallvec![Some(g.tau), Some(g.alpha)])
+                    }
                     DistributionKind::Categorical => {
                         super::distribution_hvp::categorical_gradient(value.i64()?, parameters)?
                     }
@@ -716,6 +763,8 @@ macro_rules! distributions {
                         )
                     })+
                     DistributionKind::Kde(_)
+                    | DistributionKind::Icar(_)
+                    | DistributionKind::Car(_)
                     | DistributionKind::Categorical
                     | DistributionKind::CategoricalLogit
                     | DistributionKind::Custom(_)
@@ -991,6 +1040,19 @@ distributions! {
 }
 
 impl DistributionKind {
+    /// The log density of an ICAR or proper CAR.
+    fn spatial_log_prob(&self, value: &Value, parameters: &[&Value]) -> Result<f64> {
+        Ok(match (self, parameters) {
+            (DistributionKind::Icar(a), &[sigma]) => {
+                d::Icar::new(a, sigma.f64()?).log_prob(value.f64()?)?
+            }
+            (DistributionKind::Car(a), &[tau, alpha]) => {
+                d::Car::new(a, tau.f64()?, alpha.f64()?).log_prob(value.f64()?)?
+            }
+            _ => return Err(self.wrong_parameters()),
+        })
+    }
+
     /// True for a [simulator](Self::Simulator), which has no likelihood.
     pub fn is_simulator(&self) -> bool {
         matches!(self, Self::Simulator(_))
@@ -1252,6 +1314,24 @@ impl DistributionOp {
                 Ok(Shape::from_slice(shape))
             }
             DistributionKind::Kde(_) => Ok(Shape::from_slice(requested.unwrap_or(&[]))),
+            DistributionKind::Icar(a) | DistributionKind::Car(a) => {
+                let n = a.len();
+                if requested.is_some_and(|r| r != [n]) {
+                    return Err(invalid(format!(
+                        "has one value per area, shape [{n}], not {:?}",
+                        requested.unwrap_or_default()
+                    )));
+                }
+                let names = kind.parameter_names().unwrap_or_default();
+                for (name, (_, p)) in names.iter().zip(parameters) {
+                    if p.iter().product::<usize>() != 1 {
+                        return Err(invalid(format!(
+                            "{name} must be a scalar, not of shape {p:?}"
+                        )));
+                    }
+                }
+                Ok(Shape::from_slice(&[n]))
+            }
             DistributionKind::Mixture(_) => {
                 mixture::value_shape(requested, parameters).map_err(invalid)
             }

@@ -17,6 +17,7 @@
 //! | [`Support::Ordered`] | [`Ordered`] | `x₁ = y₁`, `xₖ = xₖ₋₁ + exp(yₖ)` | `Σₖ₌₂ yₖ` |
 //! | [`Support::Simplex`] | [`Simplex`] | inverse isometric log-ratio, then softmax | `Σ log xᵢ + ½ log K` |
 //! | [`Support::SumToZero`] | [`SumToZero`] | `x = V y`, an orthonormal basis of the zero-sum subspace | 0 (isometric) |
+//! | [`Support::SumToZeroComponents`] | [`SumToZeroComponents`] | [`SumToZero`]'s map on each group of elements, the others free | 0 (isometric) |
 //! | [`Support::CorrelationCholesky`] | [`CorrelationCholesky`] | tanh canonical partial correlations | see the type |
 //! | [`Support::Circular`] | [`Circular`] | `θ = atan2(v, u)` | `−½(u² + v²)` (not a Jacobian, see the type) |
 //!
@@ -67,6 +68,7 @@ mod identity;
 mod ordered;
 mod simplex;
 mod sum_to_zero;
+mod sum_to_zero_components;
 
 pub use bounded::{Interval, LowerBound, UpperBound};
 pub use circular::Circular;
@@ -75,6 +77,7 @@ pub use identity::Identity;
 pub use ordered::Ordered;
 pub use simplex::Simplex;
 pub use sum_to_zero::SumToZero;
+pub use sum_to_zero_components::SumToZeroComponents;
 
 /// A smooth invertible map from unconstrained flat vectors to constrained values of a fixed shape.
 ///
@@ -170,6 +173,7 @@ pub fn bijector_for(support: &Support, shape: &[usize]) -> Result<Box<dyn Biject
         Support::Interval(lower, upper) => Box::new(Interval::new(lower, upper, shape)?),
         Support::Simplex => Box::new(Simplex::new(shape)?),
         Support::SumToZero => Box::new(SumToZero::new(shape)?),
+        Support::SumToZeroComponents(groups) => Box::new(SumToZeroComponents::new(groups, shape)?),
         Support::Ordered => Box::new(Ordered::new(shape)?),
         Support::CorrelationCholesky => Box::new(CorrelationCholesky::new(shape)?),
         Support::Circular => Box::new(Circular::new(shape)),

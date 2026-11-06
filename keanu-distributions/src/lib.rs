@@ -35,6 +35,7 @@ pub mod multivariate;
 mod param;
 pub mod processes;
 mod rng;
+pub mod spatial;
 pub mod timeseries;
 mod util;
 
@@ -50,6 +51,7 @@ pub use processes::{
     GaussianRandomWalkGradient,
 };
 pub use rng::KeanuRng;
+pub use spatial::{Adjacency, Car, CarGradient, Icar, IcarGradient};
 pub use timeseries::{
     FutureStep, HiddenMarkovChain, HiddenMarkovChainGradient, KalmanFilter, KalmanSmoother,
     LinearGaussianStateSpace, LinearGaussianStateSpaceGradient, StateSpaceForecast, StateSpacePath,

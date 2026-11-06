@@ -4,7 +4,7 @@
 
 use crate::error::{IoError, Result};
 use crate::proto;
-use keanu_distributions::Kde;
+use keanu_distributions::{Adjacency, Kde};
 use keanu_graph::DType;
 use keanu_graph::ode::OdeSolver;
 use keanu_graph::op::{
@@ -118,8 +118,8 @@ macro_rules! distribution_codes {
         /// The saved type of a distribution: its schema kind, a KDE's samples and a nested kind's base (saved the
         /// same way, recursively). None for a custom distribution, or a kind built around one.
         pub(crate) fn distribution_type(kind: &DistributionKind) -> Option<proto::DistributionType> {
-            let (code, kde, base) = match kind {
-                $(DistributionKind::$kind => (proto::DistributionKind::$kind, None, None),)+
+            let (code, kde, base, adjacency) = match kind {
+                $(DistributionKind::$kind => (proto::DistributionKind::$kind, None, None, None),)+
                 DistributionKind::Kde(kde) => (
                     proto::DistributionKind::Kde,
                     Some(proto::Kde {
@@ -127,10 +127,13 @@ macro_rules! distribution_codes {
                         bandwidth: kde.bandwidth,
                     }),
                     None,
+                    None,
                 ),
+                DistributionKind::Icar(a) => (proto::DistributionKind::Icar, None, None, Some(adjacency(a))),
+                DistributionKind::Car(a) => (proto::DistributionKind::Car, None, None, Some(adjacency(a))),
                 _ => {
                     let (nested, base) = kind.nested()?;
-                    (nested_code(nested)?, None, Some(base))
+                    (nested_code(nested)?, None, Some(base), None)
                 }
             };
             let base = match base {
@@ -141,6 +144,7 @@ macro_rules! distribution_codes {
                 kind: code as i32,
                 kde,
                 base,
+                adjacency,
             })
         }
 
@@ -154,6 +158,14 @@ macro_rules! distribution_codes {
                 return Err(IoError::Decode(format!(
                     "a {} distribution has KDE samples",
                     kind.as_str_name()
+                )));
+            }
+            let spatial = matches!(kind, proto::DistributionKind::Icar | proto::DistributionKind::Car);
+            if saved.adjacency.is_some() != spatial {
+                return Err(IoError::Decode(format!(
+                    "a {} distribution {} a neighbourhood",
+                    kind.as_str_name(),
+                    if spatial { "needs" } else { "has" }
                 )));
             }
             let nested = nested_of_code(kind);
@@ -181,6 +193,12 @@ macro_rules! distribution_codes {
                         .map_err(|e| IoError::Decode(format!("invalid KDE: {e}")))?;
                     DistributionKind::Kde(Arc::new(kde))
                 }
+                (proto::DistributionKind::Icar, _) => {
+                    DistributionKind::Icar(Arc::new(adjacency_of(saved.adjacency.as_ref())?))
+                }
+                (proto::DistributionKind::Car, _) => {
+                    DistributionKind::Car(Arc::new(adjacency_of(saved.adjacency.as_ref())?))
+                }
                 (_, base) => match (nested, base) {
                     (Some(nested), Some(base)) => nested.wrap(base),
                     _ => return Err(unknown()),
@@ -188,6 +206,40 @@ macro_rules! distribution_codes {
             })
         }
     };
+}
+
+/// The saved form of a neighbourhood.
+fn adjacency(a: &Adjacency) -> proto::Adjacency {
+    proto::Adjacency {
+        areas: a.len() as u64,
+        edges: a
+            .edges()
+            .iter()
+            .flat_map(|&(i, j)| [i as u64, j as u64])
+            .collect(),
+    }
+}
+
+/// A neighbourhood from its saved form.
+fn adjacency_of(saved: Option<&proto::Adjacency>) -> Result<Adjacency> {
+    let saved = saved
+        .ok_or_else(|| IoError::Decode("a spatial distribution has no neighbourhood".into()))?;
+    let index = |v: u64| {
+        usize::try_from(v).map_err(|_| IoError::Decode(format!("the area index {v} is too large")))
+    };
+    if saved.edges.len() % 2 != 0 {
+        return Err(IoError::Decode(format!(
+            "a neighbourhood's edges are pairs of areas, but it has {} indices",
+            saved.edges.len()
+        )));
+    }
+    let edges = saved
+        .edges
+        .chunks_exact(2)
+        .map(|pair| Ok((index(pair[0])?, index(pair[1])?)))
+        .collect::<Result<Vec<_>>>()?;
+    Adjacency::from_edges(index(saved.areas)?, &edges)
+        .map_err(|e| IoError::Decode(format!("invalid neighbourhood: {e}")))
 }
 
 distribution_codes!(
@@ -248,7 +300,7 @@ mod tests {
     }
 
     /// The number of distribution kinds in the schema.
-    const DISTRIBUTION_KINDS: i32 = 47;
+    const DISTRIBUTION_KINDS: i32 = 49;
 
     #[test]
     fn every_schema_value_has_a_variant() {
@@ -266,6 +318,7 @@ mod tests {
                 kind,
                 kde,
                 base: base.map(Box::new),
+                adjacency: None,
             }
         };
         let gaussian = || saved(proto::DistributionKind::Gaussian as i32, None, None);
@@ -276,7 +329,15 @@ mod tests {
                 bandwidth: 1.0,
             });
             let base = nested.contains(&code).then(gaussian);
-            let original = saved(code, kde, base);
+            let mut original = saved(code, kde, base);
+            if code == proto::DistributionKind::Icar as i32
+                || code == proto::DistributionKind::Car as i32
+            {
+                original.adjacency = Some(proto::Adjacency {
+                    areas: 3,
+                    edges: vec![0, 1, 1, 2],
+                });
+            }
             let kind = distribution_of_type(&original).unwrap();
             assert_eq!(distribution_type(&kind), Some(original));
         }

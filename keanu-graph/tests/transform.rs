@@ -600,6 +600,9 @@ fn supports_map_to_bijectors_of_the_right_size() {
         (Support::Simplex, vec![1], 0),
         (Support::SumToZero, vec![2, 3], 4),
         (Support::SumToZero, vec![1], 0),
+        (groups(&[&[0, 2, 3], &[1, 4]]), vec![6], 4),
+        (groups(&[&[0, 1, 2, 3, 4, 5]]), vec![2, 3], 5),
+        (groups(&[]), vec![3], 3),
         (Support::CorrelationCholesky, vec![3, 3], 3),
         (Support::CorrelationCholesky, vec![2, 4, 4], 12),
         (Support::Circular, vec![3], 6),
@@ -723,6 +726,8 @@ fn inverse_of_values_outside_or_on_the_boundary_errors() {
             t(&[2, 2], &[1.0, 0.1, 0.6, 0.8]),
         ),
         (Support::Circular, DoubleTensor::scalar(f64::INFINITY)),
+        (groups(&[&[0, 2]]), t(&[3], &[1.0, 5.0, -0.9])),
+        (groups(&[&[0, 2]]), t(&[3], &[1.0, f64::NAN, -1.0])),
         (Support::SumToZero, t(&[3], &[1.0, -0.5, -0.4])),
         (Support::SumToZero, t(&[2, 2], &[1.0, -1.0, 0.0, 1e-6])),
         (Support::SumToZero, t(&[2], &[f64::NAN, 0.0])),
@@ -751,4 +756,59 @@ fn wrong_sizes_are_rejected() {
         b.forward_vjp(&[0.0; 2], &DoubleTensor::scalar(1.0))
     ));
     assert!(is_transform_error(b.inverse(&t(&[2], &[0.5, 0.5]))));
+}
+
+/// The support of values summing to zero on each group of flat indices.
+fn groups(groups: &[&[usize]]) -> Support {
+    Support::SumToZeroComponents(groups.iter().map(|g| g.to_vec()).collect())
+}
+
+#[test]
+fn sum_to_zero_components_round_trip_preserve_lengths_and_sum_to_zero_per_group() {
+    // two groups and two free elements, in a scrambled order
+    let support = groups(&[&[4, 0, 6], &[2, 5]]);
+    let b = bijector(&support, &[7]);
+    assert_eq!(b.unconstrained_len(), 5);
+    let mut rng = KeanuRng::seed_from_u64(4);
+    for _ in 0..20 {
+        let y: Vec<f64> = (0..5).map(|_| 3.0 * rng.next_gaussian()).collect();
+        let x = b.forward(&y).unwrap();
+        let xs = x.as_slice();
+        assert!((xs[4] + xs[0] + xs[6]).abs() < 1e-12);
+        assert!((xs[2] + xs[5]).abs() < 1e-12);
+        // isometric
+        let norm = |v: &[f64]| v.iter().map(|v| v * v).sum::<f64>();
+        assert!((norm(xs) - norm(&y)).abs() < 1e-10);
+        assert_all_close_1p(&b.inverse(&x).unwrap(), &y, 1e-12, "round trip");
+        assert_eq!(b.log_det_jacobian(&y).unwrap(), 0.0);
+        // the vector-Jacobian product is the Jacobian-vector product's transpose
+        let tangent: Vec<f64> = (0..5).map(|_| rng.next_gaussian()).collect();
+        let cotangent = DoubleTensor::from_fn(&[7], |i| (i as f64 * 0.7).sin());
+        let jvp = b.forward_jvp(&y, &tangent).unwrap();
+        let vjp = b.forward_vjp(&y, &cotangent).unwrap();
+        let left: f64 = jvp
+            .as_slice()
+            .iter()
+            .zip(cotangent.as_slice())
+            .map(|(a, b)| a * b)
+            .sum();
+        let right: f64 = vjp.iter().zip(&tangent).map(|(a, b)| a * b).sum();
+        assert!((left - right).abs() < 1e-12);
+        assert_eq!(
+            b.forward_vjp_jvp(&y, &tangent, &cotangent).unwrap(),
+            vec![0.0; 5]
+        );
+        assert_eq!(b.log_det_jacobian_hvp(&y, &tangent).unwrap(), vec![0.0; 5]);
+    }
+    // the free elements are their own coordinates; a one-element group is fixed at zero
+    let b = bijector(&groups(&[&[1]]), &[2]);
+    assert_eq!(b.forward(&[2.5]).unwrap().as_slice(), &[2.5, 0.0]);
+    // invalid groups
+    for bad in [
+        groups(&[&[0, 3]]),
+        groups(&[&[0, 1], &[1, 2]]),
+        groups(&[&[]]),
+    ] {
+        assert!(transform::bijector_for(&bad, &[3]).is_err(), "{bad:?}");
+    }
 }
