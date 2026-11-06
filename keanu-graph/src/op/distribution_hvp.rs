@@ -12,8 +12,10 @@
 //!   hidden Markov model those of the forward-backward algorithm (see the hmm module), all on top of the
 //!   element-wise contraction of their base, component or emission;
 //! - the multivariate kinds (multivariate Gaussian, Dirichlet, LKJ Cholesky, zero-sum normal, ICAR, proper CAR,
-//!   multinomial, ordered logistic, KDE)
-//!   have closed forms of their own here;
+//!   multinomial, ordered logistic and probit, KDE) have closed forms of their own here, and the multivariate
+//!   Student-t, Wishart and inverse Wishart (and their Cholesky forms), matrix normal, von Mises–Fisher,
+//!   Dirichlet-multinomial and Plackett–Luce differentiate their hand-written gradients in forward mode (see
+//!   [`keanu_distributions::Wishart::hvp`]);
 //! - the linear Gaussian state space model differentiates the Kalman filter's reverse pass in forward mode (see
 //!   [`keanu_distributions::LinearGaussianStateSpace::hvp`]), and the Gaussian random walk, AR(p) and GARCH(1,1)
 //!   their hand-written reverse passes, on dual numbers (see [`keanu_distributions::processes`]).
@@ -107,7 +109,9 @@ impl DistributionKind {
             | K::BetaBinomial
             | K::BernoulliLogit
             | K::BinomialLogit
-            | K::PoissonLog => elementwise_hvp(
+            | K::PoissonLog
+            | K::HyperGeometric
+            | K::Skellam => elementwise_hvp(
                 self,
                 value,
                 parameters,
@@ -186,6 +190,35 @@ impl DistributionKind {
                     b,
                 )
             }
+            K::OrderedProbit => {
+                let &[eta, cutpoints] = parameters else {
+                    return Err(self.wrong_parameters());
+                };
+                ordered_probit_hvp(
+                    value.i64()?,
+                    eta.f64()?,
+                    cutpoints.f64()?,
+                    parameter_tangents,
+                    b,
+                )
+            }
+            K::MultivariateStudentT
+            | K::MultivariateStudentTCholesky
+            | K::Wishart
+            | K::WishartCholesky
+            | K::InverseWishart
+            | K::InverseWishartCholesky
+            | K::MatrixNormal
+            | K::VonMisesFisher
+            | K::DirichletMultinomial
+            | K::PlackettLuce => event_hvp(
+                self,
+                value,
+                parameters,
+                value_tangent,
+                parameter_tangents,
+                b,
+            ),
             K::Icar(adjacency) => {
                 let &[sigma] = parameters else {
                     return Err(self.wrong_parameters());
@@ -681,6 +714,168 @@ fn ordered_logistic_hvp(
             reduce(Some(hc), b, &cut_shape, cutpoints.shape())?,
         ],
     ))
+}
+
+/// The ordered probit: each element's log probability depends on η and the cutpoints either side of its category,
+/// with the Hessian in (η, c_(k−1), c_k) from [`keanu_distributions::OrderedProbit::category_derivatives`],
+/// contracted with the tangents.
+fn ordered_probit_hvp(
+    k: &keanu_tensor::IntTensor,
+    eta: &DoubleTensor,
+    cutpoints: &DoubleTensor,
+    tangents: &[Option<&DoubleTensor>],
+    b: usize,
+) -> Result<LogProbHvpParts> {
+    let Some((&count, leading)) = cutpoints.shape().split_last() else {
+        return Err(DistributionKind::OrderedProbit.wrong_parameters());
+    };
+    let batch = broadcast_shape(&broadcast_shape(k.shape(), eta.shape())?, leading)?;
+    let mut cut_shape = batch.to_vec();
+    cut_shape.push(count);
+    let ks = k.broadcast_to(&batch)?.into_vec();
+    let etas = spread(eta, &batch)?;
+    let cuts = spread(cutpoints, &cut_shape)?;
+    let te = spread_tangent(tangents[0], b, &batch)?;
+    let tc = spread_tangent(tangents[1], b, &cut_shape)?;
+    let len = ks.len();
+    let mut he = vec![0.0; b * len];
+    let mut hc = vec![0.0; b * len * count];
+    for i in 0..len {
+        let c = &cuts[i * count..(i + 1) * count];
+        let d = keanu_distributions::OrderedProbit::category_derivatives(ks[i], etas[i], c);
+        if d.value == f64::NEG_INFINITY || !c.windows(2).all(|w| w[0] < w[1]) {
+            continue;
+        }
+        let category = ks[i] as usize;
+        // the cutpoint index of each input (none for η, and none for a missing cutpoint at the ends)
+        let index = [
+            None,
+            category.checked_sub(1),
+            (category < count).then_some(category),
+        ];
+        for s in 0..b {
+            let tangent = |input: usize| match (input, index[input]) {
+                (0, _) => te.as_ref().map_or(0.0, |t| t[s * len + i]),
+                (_, Some(j)) => tc.as_ref().map_or(0.0, |t| t[(s * len + i) * count + j]),
+                (_, None) => 0.0,
+            };
+            let moved = [tangent(0), tangent(1), tangent(2)];
+            for (input, row) in d.hessian.iter().enumerate() {
+                let out: f64 = row.iter().zip(&moved).map(|(h, t)| h * t).sum();
+                match (input, index[input]) {
+                    (0, _) => he[s * len + i] = out,
+                    (_, Some(j)) => hc[(s * len + i) * count + j] = out,
+                    (_, None) => {}
+                }
+            }
+        }
+    }
+    Ok((
+        None,
+        smallvec::smallvec![
+            reduce(Some(he), b, &batch, eta.shape())?,
+            reduce(Some(hc), b, &cut_shape, cutpoints.shape())?,
+        ],
+    ))
+}
+
+/// The kinds over batches of events whose hand-written gradients are differentiated in forward mode by
+/// `keanu_distributions` (see [`keanu_distributions::Wishart::hvp`]).
+fn event_hvp(
+    kind: &DistributionKind,
+    value: &Value,
+    parameters: &[&Value],
+    x_tangent: Option<&DoubleTensor>,
+    tangents: &[Option<&DoubleTensor>],
+    b: usize,
+) -> Result<LogProbHvpParts> {
+    use DistributionKind as K;
+    use keanu_distributions as d;
+    // each tangent as [b, input shape]
+    let x_tangent = match value {
+        Value::F64(x) => x_tangent
+            .map(|t| fit(t.clone(), b, x.shape()))
+            .transpose()?,
+        _ => None,
+    };
+    let fitted: Vec<Option<DoubleTensor>> = tangents
+        .iter()
+        .zip(parameters)
+        .map(|(t, p)| match p {
+            Value::F64(p) => t.map(|t| fit(t.clone(), b, p.shape())).transpose(),
+            _ => Ok(None),
+        })
+        .collect::<Result<_>>()?;
+    let t: Vec<Option<&DoubleTensor>> = fitted.iter().map(Option::as_ref).collect();
+    let xt = x_tangent.as_ref();
+    let all = |parts: (DoubleTensor, Vec<DoubleTensor>)| -> LogProbHvpParts {
+        (Some(parts.0), parts.1.into_iter().map(Some).collect())
+    };
+    Ok(match (kind, parameters) {
+        (K::MultivariateStudentT, &[nu, mu, scale]) => {
+            let h = d::MultivariateStudentT::new(nu.f64()?, mu.f64()?, scale.f64()?).hvp(
+                value.f64()?,
+                xt,
+                &t,
+                b,
+            )?;
+            all((h.x, vec![h.nu, h.mu, h.scale]))
+        }
+        (K::MultivariateStudentTCholesky, &[nu, mu, scale]) => {
+            let h = d::MultivariateStudentTCholesky::new(nu.f64()?, mu.f64()?, scale.f64()?).hvp(
+                value.f64()?,
+                xt,
+                &t,
+                b,
+            )?;
+            all((h.x, vec![h.nu, h.mu, h.scale_cholesky]))
+        }
+        (K::Wishart, &[nu, scale]) => {
+            let h = d::Wishart::new(nu.f64()?, scale.f64()?).hvp(value.f64()?, xt, &t, b)?;
+            all((h.x, vec![h.nu, h.scale]))
+        }
+        (K::WishartCholesky, &[nu, scale]) => {
+            let h =
+                d::WishartCholesky::new(nu.f64()?, scale.f64()?).hvp(value.f64()?, xt, &t, b)?;
+            all((h.x, vec![h.nu, h.scale_cholesky]))
+        }
+        (K::InverseWishart, &[nu, scale]) => {
+            let h = d::InverseWishart::new(nu.f64()?, scale.f64()?).hvp(value.f64()?, xt, &t, b)?;
+            all((h.x, vec![h.nu, h.scale]))
+        }
+        (K::InverseWishartCholesky, &[nu, scale]) => {
+            let h = d::InverseWishartCholesky::new(nu.f64()?, scale.f64()?).hvp(
+                value.f64()?,
+                xt,
+                &t,
+                b,
+            )?;
+            all((h.x, vec![h.nu, h.scale_cholesky]))
+        }
+        (K::MatrixNormal, &[mu, row, column]) => {
+            let h = d::MatrixNormal::new(mu.f64()?, row.f64()?, column.f64()?).hvp(
+                value.f64()?,
+                xt,
+                &t,
+                b,
+            )?;
+            all((h.x, vec![h.mu, h.row_covariance, h.column_covariance]))
+        }
+        (K::VonMisesFisher, &[mu, kappa]) => {
+            let h = d::VonMisesFisher::new(mu.f64()?, kappa.f64()?).hvp(value.f64()?, xt, &t, b)?;
+            all((h.x, vec![h.mu, h.kappa]))
+        }
+        (K::DirichletMultinomial, &[n, alpha]) => {
+            let h =
+                d::DirichletMultinomial::new(n.i64()?, alpha.f64()?).hvp(value.i64()?, t[1], b)?;
+            (None, smallvec::smallvec![None, Some(h.alpha)])
+        }
+        (K::PlackettLuce, &[worths]) => {
+            let h = d::PlackettLuce::new(worths.f64()?).hvp(value.i64()?, t[0], b)?;
+            (None, smallvec::smallvec![Some(h.worths)])
+        }
+        _ => return Err(kind.wrong_parameters()),
+    })
 }
 
 /// A categorical distribution's broadcast shape, its probabilities spread to that shape (one flat vector per

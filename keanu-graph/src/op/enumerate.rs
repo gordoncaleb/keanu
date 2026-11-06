@@ -9,18 +9,21 @@ use std::ops::RangeInclusive;
 impl DistributionKind {
     /// Whether every element of the distribution's value has finitely many possible values whatever its
     /// parameters, and the elements can be changed one at a time: the Bernoulli, binomial, beta-binomial,
-    /// categorical, ordered logistic and discrete uniform (and their logit forms), and a truncated, zero-inflated or
-    /// hurdle form of one of these. A truncated Poisson or negative binomial can have finitely many values too, when
+    /// categorical, ordered logistic and probit, hypergeometric and discrete uniform (and their logit forms), and a
+    /// truncated, zero-inflated or hurdle form of one of these. A truncated Poisson or negative binomial can have finitely many values too, when
     /// its upper bound is finite, which only [`finite_support`](Self::finite_support) can tell.
     ///
-    /// The elements of a multinomial draw must sum to its count, so they can't be changed one at a time, and it is
-    /// not counted.
+    /// The elements of a multinomial or Dirichlet-multinomial draw must sum to its count, and those of a
+    /// Plackett–Luce ranking must be a permutation, so they can't be changed one at a time, and they are not
+    /// counted.
     pub fn has_finite_support(&self) -> bool {
         match self {
             DistributionKind::Bernoulli
             | DistributionKind::Binomial
             | DistributionKind::Categorical
             | DistributionKind::OrderedLogistic
+            | DistributionKind::OrderedProbit
+            | DistributionKind::HyperGeometric
             | DistributionKind::UniformInt
             | DistributionKind::BetaBinomial
             | DistributionKind::BernoulliLogit
@@ -58,7 +61,7 @@ impl DistributionKind {
             DistributionKind::Categorical | DistributionKind::CategoricalLogit => {
                 fixed(0, parameters.len() as i64 - 1)
             }
-            DistributionKind::OrderedLogistic => {
+            DistributionKind::OrderedLogistic | DistributionKind::OrderedProbit => {
                 let &[_, cutpoints] = parameters else {
                     return Err(self.wrong_parameters());
                 };
@@ -77,6 +80,21 @@ impl DistributionKind {
                     broadcast_int(n.i64()?, shape)?
                         .into_iter()
                         .map(|n| 0..=n)
+                        .collect(),
+                )
+            }
+            DistributionKind::HyperGeometric => {
+                let &[population, successes, draws] = parameters else {
+                    return Err(self.wrong_parameters());
+                };
+                let n = broadcast_int(population.i64()?, shape)?;
+                let k = broadcast_int(successes.i64()?, shape)?;
+                let d = broadcast_int(draws.i64()?, shape)?;
+                Some(
+                    n.into_iter()
+                        .zip(k)
+                        .zip(d)
+                        .map(|((n, k), d)| keanu_distributions::HyperGeometric::range(n, k, d))
                         .collect(),
                 )
             }
@@ -140,11 +158,11 @@ impl DistributionKind {
 impl DistributionKind {
     /// Of a node of this kind with `count` parameters, which parameters [`finite_support`](Self::finite_support)
     /// reads the values of: the count of a binomial (or its logit form) and a beta-binomial, the bounds of a
-    /// discrete uniform and of a truncation, and for a truncated, zero-inflated or hurdle kind the inner kind's own
-    /// (so nested kinds are followed: in a zero-inflated truncated Poisson, whose parameters are the rate, the
-    /// bounds and ψ, the bounds). The values set by the other parameters, or by the number of parameters (a
-    /// categorical's categories, an ordered logistic's cutpoints' shape), can't change. Everything false for a kind
-    /// without finitely many values.
+    /// discrete uniform and of a truncation, every parameter of a hypergeometric, and for a truncated,
+    /// zero-inflated or hurdle kind the inner kind's own (so nested kinds are followed: in a zero-inflated truncated
+    /// Poisson, whose parameters are the rate, the bounds and ψ, the bounds). The values set by the other
+    /// parameters, or by the number of parameters (a categorical's categories, an ordered logistic's or probit's
+    /// cutpoints' shape), can't change. Everything false for a kind without finitely many values.
     pub(crate) fn support_parameters(&self, count: usize) -> Vec<bool> {
         let mut reads = vec![false; count];
         match self {
@@ -152,7 +170,7 @@ impl DistributionKind {
                 reads[1] = true;
             }
             DistributionKind::BetaBinomial if count == 3 => reads[0] = true,
-            DistributionKind::UniformInt => reads.fill(true),
+            DistributionKind::UniformInt | DistributionKind::HyperGeometric => reads.fill(true),
             DistributionKind::Truncated(base) if count >= 2 => {
                 reads[..count - 2].copy_from_slice(&base.support_parameters(count - 2));
                 reads[count - 2..].fill(true);

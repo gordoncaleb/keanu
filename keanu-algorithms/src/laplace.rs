@@ -17,8 +17,9 @@
 //! close to Gaussian in unconstrained space, as it is for many models with plenty of data. It cannot represent
 //! skewed or multimodal posteriors there; check important results with NUTS.
 //!
-//! Circular latents (such as a von Mises angle) are not supported: their transform's auxiliary radial density is
-//! largest at the origin of the plane, where the angle is undefined, so there is no mode to approximate around.
+//! Circular and unit-vector latents (such as a von Mises angle or a von Mises–Fisher direction) are not supported:
+//! their transform's auxiliary radial density is largest at the origin, where the direction is undefined, so there
+//! is no mode to approximate around.
 //!
 //! ```
 //! use keanu_algorithms::Laplace;
@@ -81,7 +82,8 @@ impl Laplace {
     ///
     /// [`AlgorithmError::InvalidSetting`] for an out-of-range L-BFGS setting; [`AlgorithmError::NoLatents`] or
     /// [`AlgorithmError::DiscreteLatents`] if the model has no latents or discrete ones;
-    /// [`AlgorithmError::InvalidArgument`], naming the latent, for a latent with a [`Support::Circular`] support
+    /// [`AlgorithmError::InvalidArgument`], naming the latent, for a latent with a [`Support::Circular`] or
+    /// [`Support::UnitVector`] support
     /// (see the [module documentation](self));
     /// [`AlgorithmError::ImpossibleStart`] if a latent's value is outside its support (or on its boundary), or the
     /// log probability at the start is not finite; an error from [`Parameterisation::new`] if a latent's support has
@@ -94,11 +96,17 @@ impl Laplace {
         check_latents(model)?;
         compute_deterministic(model.graph(), state)?;
         for &id in model.latents() {
-            if node_support(model.graph(), state, id)? == Support::Circular {
+            let support = node_support(model.graph(), state, id)?;
+            if matches!(support, Support::Circular | Support::UnitVector) {
                 return Err(AlgorithmError::InvalidArgument(format!(
-                    "the Laplace approximation does not support the circular latent {}: its transform's \
-                     auxiliary density has its mode at the origin, where the angle is undefined (sample the \
-                     posterior with NUTS instead)",
+                    "the Laplace approximation does not support the {} latent {}: its transform's auxiliary \
+                     density has its mode at the origin, where the direction is undefined (sample the posterior \
+                     with NUTS instead)",
+                    if support == Support::Circular {
+                        "circular"
+                    } else {
+                        "unit-vector"
+                    },
                     model.graph().describe(id)
                 )));
             }

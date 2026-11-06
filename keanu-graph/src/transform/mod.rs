@@ -19,6 +19,9 @@
 //! | [`Support::SumToZero`] | [`SumToZero`] | `x = V y`, an orthonormal basis of the zero-sum subspace | 0 (isometric) |
 //! | [`Support::SumToZeroComponents`] | [`SumToZeroComponents`] | [`SumToZero`]'s map on each group of elements, the others free | 0 (isometric) |
 //! | [`Support::CorrelationCholesky`] | [`CorrelationCholesky`] | tanh canonical partial correlations | see the type |
+//! | [`Support::CovarianceMatrix`] | [`CovarianceMatrix`] | `Σ = L Lᵀ`, `L` lower triangular with `Lᵢᵢ = exp(yᵢᵢ)` | `K ln 2 + Σᵢ (K − i + 1) yᵢᵢ` |
+//! | [`Support::CovarianceCholesky`] | [`CovarianceCholesky`] | `L` lower triangular with `Lᵢᵢ = exp(yᵢᵢ)` | `Σᵢ yᵢᵢ` |
+//! | [`Support::UnitVector`] | [`UnitVector`] | `x = y / ‖y‖` | `−½‖y‖²` (not a Jacobian, see the type) |
 //! | [`Support::Circular`] | [`Circular`] | `θ = atan2(v, u)` | `−½(u² + v²)` (not a Jacobian, see the type) |
 //!
 //! The bounds of the three bounded supports apply element-wise and may be infinite on their own side, so one value
@@ -29,10 +32,12 @@
 //! vector of a batch is the concatenation of the unconstrained vectors of its members.
 //!
 //! The unconstrained length can differ from the constrained value's size: a simplex or a zero-sum vector of K
-//! elements has K − 1 free coordinates, a K × K correlation Cholesky factor has K(K − 1)/2, and an angle has 2. For the simplex and the
-//! correlation Cholesky factor the Jacobian, and so the log-determinant, is taken with respect to the free
-//! constrained coordinates: the first K − 1 elements of a simplex, and the strictly lower triangle (row by row) of a
-//! Cholesky factor, which is what the Dirichlet and LKJ densities are densities of.
+//! elements has K − 1 free coordinates, a K × K correlation Cholesky factor has K(K − 1)/2, a K × K covariance
+//! matrix or its Cholesky factor K(K + 1)/2, and an angle has 2. For the simplex, the correlation Cholesky factor,
+//! the covariance matrix and the covariance Cholesky factor the Jacobian, and so the log-determinant, is taken with
+//! respect to the free constrained coordinates: the first K − 1 elements of a simplex, the strictly lower triangle
+//! (row by row) of a correlation Cholesky factor and the lower triangle of a covariance matrix or its factor, which
+//! is what the Dirichlet, LKJ and Wishart densities are densities of.
 //!
 //! [`bijector_for`] chooses the bijector for a support and a value shape:
 //!
@@ -64,20 +69,24 @@ use std::fmt;
 mod bounded;
 mod circular;
 mod correlation_cholesky;
+mod covariance;
 mod identity;
 mod ordered;
 mod simplex;
 mod sum_to_zero;
 mod sum_to_zero_components;
+mod unit_vector;
 
 pub use bounded::{Interval, LowerBound, UpperBound};
 pub use circular::Circular;
 pub use correlation_cholesky::CorrelationCholesky;
+pub use covariance::{CovarianceCholesky, CovarianceMatrix};
 pub use identity::Identity;
 pub use ordered::Ordered;
 pub use simplex::Simplex;
 pub use sum_to_zero::SumToZero;
 pub use sum_to_zero_components::SumToZeroComponents;
+pub use unit_vector::UnitVector;
 
 /// A smooth invertible map from unconstrained flat vectors to constrained values of a fixed shape.
 ///
@@ -156,8 +165,9 @@ fn check_second_order(y: &[f64], tangent: &[f64], len: usize) -> Result<()> {
 /// each lower bound must be less than its upper bound. A bound may be infinite on its own side (−∞ below, +∞ above),
 /// leaving that element unbounded there, so the elements of one value may differ in kind: each is transformed by
 /// the identity, `a + exp(y)`, `b − exp(y)` or the scaled logistic as its own bounds require. [`Support::Ordered`],
-/// [`Support::Simplex`] and [`Support::SumToZero`] act on the last axis and [`Support::CorrelationCholesky`] on the last two (which must be
-/// equal), with any leading axes as a batch.
+/// [`Support::Simplex`], [`Support::SumToZero`] and [`Support::UnitVector`] act on the last axis and
+/// [`Support::CorrelationCholesky`], [`Support::CovarianceMatrix`] and [`Support::CovarianceCholesky`] on the last two
+/// (which must be equal), with any leading axes as a batch.
 ///
 /// # Errors
 ///
@@ -176,6 +186,9 @@ pub fn bijector_for(support: &Support, shape: &[usize]) -> Result<Box<dyn Biject
         Support::SumToZeroComponents(groups) => Box::new(SumToZeroComponents::new(groups, shape)?),
         Support::Ordered => Box::new(Ordered::new(shape)?),
         Support::CorrelationCholesky => Box::new(CorrelationCholesky::new(shape)?),
+        Support::CovarianceMatrix => Box::new(CovarianceMatrix::new(shape)?),
+        Support::CovarianceCholesky => Box::new(CovarianceCholesky::new(shape)?),
+        Support::UnitVector => Box::new(UnitVector::new(shape)?),
         Support::Circular => Box::new(Circular::new(shape)),
         Support::Discrete => {
             return Err(transform_error(

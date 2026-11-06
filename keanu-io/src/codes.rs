@@ -297,6 +297,19 @@ distribution_codes!(
     LogLogistic,
     Rice,
     GeneralizedGamma,
+    OrderedProbit,
+    HyperGeometric,
+    Skellam,
+    DirichletMultinomial,
+    PlackettLuce,
+    MultivariateStudentT,
+    MultivariateStudentTCholesky,
+    Wishart,
+    WishartCholesky,
+    InverseWishart,
+    InverseWishartCholesky,
+    MatrixNormal,
+    VonMisesFisher,
 );
 
 #[cfg(test)]
@@ -314,7 +327,7 @@ mod tests {
     }
 
     /// The number of distribution kinds in the schema.
-    const DISTRIBUTION_KINDS: i32 = 62;
+    const DISTRIBUTION_KINDS: i32 = 75;
 
     #[test]
     fn every_schema_value_has_a_variant() {

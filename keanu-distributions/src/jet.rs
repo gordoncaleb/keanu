@@ -245,6 +245,19 @@ impl<const K: usize> Jet<K> {
         self.chain(value, a, 1.0 - a_over_z - a * a)
     }
 
+    /// ln I_ν(self) for a constant order ν >= 0 and self > 0: with A = I_{ν+1}/I_ν, the derivatives are A + ν/self
+    /// and A' − ν/self², where A' = 1 − A² − (2ν + 1)A/self.
+    pub(crate) fn log_bessel_i(self, nu: f64) -> Self {
+        let z = self.v;
+        let value = keanu_tensor::special::log_bessel_i(nu, z);
+        if !Self::DIFFERENTIATED {
+            return Self::constant(value);
+        }
+        let a = bessel_i_ratio(nu, z);
+        let da = crate::real::bessel_i_ratio_dx(nu, z, a);
+        self.chain(value, a + nu / z, da - nu / (z * z))
+    }
+
     /// ln(1 + self) / self, continued smoothly through 0 (where it is 1), with its derivatives from its power
     /// series Σ (−u)ᵏ/(k + 1) near 0, where the closed forms cancel.
     pub(crate) fn log1p_over(self) -> Self {

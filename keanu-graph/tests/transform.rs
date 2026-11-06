@@ -46,6 +46,18 @@ fn lower_free(shape: &[usize], x: &DoubleTensor) -> Vec<f64> {
     out
 }
 
+/// The lower triangle of each matrix with its diagonal, row by row.
+fn lower_with_diagonal_free(shape: &[usize], x: &DoubleTensor) -> Vec<f64> {
+    let k = *shape.last().unwrap();
+    let mut out = Vec::new();
+    for m in x.as_slice().chunks_exact(k * k) {
+        for i in 0..k {
+            out.extend_from_slice(&m[i * k..=i * k + i]);
+        }
+    }
+    out
+}
+
 /// Column i (zero-based, i < n − 1) of Stan's orthonormal basis of the zero-sum subspace of ℝⁿ: 1/√(m(m+1)) in its
 /// first m = i + 1 entries and −m/√(m(m+1)) in entry m.
 fn helmert_column(n: usize, i: usize) -> Vec<f64> {
@@ -169,6 +181,26 @@ fn square_cases() -> Vec<Case> {
             name: format!("correlation_cholesky {shape:?}"),
             bijector: bijector(&Support::CorrelationCholesky, &shape),
             free: lower_free,
+        });
+    }
+    // the covariance transform's log-Jacobian is with respect to the lower triangle of Σ (Stan's), and the
+    // Cholesky factor's with respect to its lower triangle
+    for shape in [
+        vec![1, 1],
+        vec![2, 2],
+        vec![3, 3],
+        vec![4, 4],
+        vec![2, 3, 3],
+    ] {
+        cases.push(Case {
+            name: format!("covariance_matrix {shape:?}"),
+            bijector: bijector(&Support::CovarianceMatrix, &shape),
+            free: lower_with_diagonal_free,
+        });
+        cases.push(Case {
+            name: format!("covariance_cholesky {shape:?}"),
+            bijector: bijector(&Support::CovarianceCholesky, &shape),
+            free: lower_with_diagonal_free,
         });
     }
     cases
@@ -491,6 +523,103 @@ fn correlation_cholesky_has_unit_rows_and_positive_diagonal() {
             assert!(b.log_det_jacobian(&y).unwrap().is_finite());
         }
     }
+}
+
+#[test]
+fn covariance_values_are_symmetric_positive_definite_and_factors_lower_triangular() {
+    let mut rng = KeanuRng::seed_from_u64(21);
+    let covariance = bijector(&Support::CovarianceMatrix, &[4, 4]);
+    let factor = bijector(&Support::CovarianceCholesky, &[4, 4]);
+    assert_eq!(covariance.unconstrained_len(), 10);
+    for _ in 0..20 {
+        let y = random_y(&mut rng, 10, 2.0);
+        let sigma = covariance.forward(&y).unwrap();
+        let l = factor.forward(&y).unwrap();
+        let s = sigma.as_slice();
+        for i in 0..4 {
+            for j in 0..4 {
+                assert_eq!(s[i * 4 + j], s[j * 4 + i]);
+                if j > i {
+                    assert_eq!(l.as_slice()[i * 4 + j], 0.0);
+                }
+            }
+            assert!(l.as_slice()[i * 5] > 0.0);
+        }
+        // Σ = L Lᵀ for the same coordinates
+        let product = l.matmul_transposed(&l, false, true).unwrap();
+        assert_all_close_1p(product.as_slice(), s, 1e-12, "L Lᵀ");
+        assert!(sigma.cholesky().is_ok());
+    }
+    // the identity's coordinates are zero
+    let eye = t(&[2, 2], &[1.0, 0.0, 0.0, 1.0]);
+    let two = bijector(&Support::CovarianceMatrix, &[2, 2]);
+    assert_all_close_1p(&two.inverse(&eye).unwrap(), &[0.0; 3], 0.0, "identity");
+    // not symmetric, not positive definite, an upper triangle or a non-positive diagonal: errors
+    for (support, bad) in [
+        (Support::CovarianceMatrix, t(&[2, 2], &[1.0, 0.5, 0.4, 1.0])),
+        (Support::CovarianceMatrix, t(&[2, 2], &[1.0, 2.0, 2.0, 1.0])),
+        (
+            Support::CovarianceCholesky,
+            t(&[2, 2], &[1.0, 0.5, 0.0, 1.0]),
+        ),
+        (
+            Support::CovarianceCholesky,
+            t(&[2, 2], &[1.0, 0.0, 0.5, -1.0]),
+        ),
+    ] {
+        assert!(is_transform_error(
+            bijector(&support, &[2, 2]).inverse(&bad)
+        ));
+    }
+}
+
+#[test]
+fn unit_vector_transform() {
+    let b = bijector(&Support::UnitVector, &[2, 3]);
+    assert_eq!(b.unconstrained_len(), 6);
+    let y = [3.0, 0.0, 4.0, 0.0, -2.0, 0.0];
+    let x = b.forward(&y).unwrap();
+    assert_all_close_1p(
+        x.as_slice(),
+        &[0.6, 0.0, 0.8, 0.0, -1.0, 0.0],
+        1e-15,
+        "forward",
+    );
+    // not a bijection: the inverse is the point on the sphere, and forward recovers it
+    assert_all_close_1p(&b.inverse(&x).unwrap(), x.as_slice(), 0.0, "inverse");
+    let r2: f64 = y.iter().map(|v| v * v).sum();
+    assert!((b.log_det_jacobian(&y).unwrap() + 0.5 * r2).abs() < 1e-15);
+    // products against finite differences, and each other
+    let mut rng = KeanuRng::seed_from_u64(22);
+    let y = random_y(&mut rng, 6, 1.0);
+    let tangent = random_y(&mut rng, 6, 1.0);
+    let jvp = b.forward_jvp(&y, &tangent).unwrap();
+    let h = 1e-6;
+    let at = |s: f64| -> Vec<f64> {
+        let moved: Vec<f64> = y.iter().zip(&tangent).map(|(y, t)| y + s * h * t).collect();
+        b.forward(&moved).unwrap().into_vec()
+    };
+    let fd: Vec<f64> = at(1.0)
+        .iter()
+        .zip(at(-1.0))
+        .map(|(p, m)| (p - m) / (2.0 * h))
+        .collect();
+    assert_all_close_1p(jvp.as_slice(), &fd, 1e-6, "unit vector jvp");
+    let cotangent = t(&[2, 3], &[0.5, -1.0, 2.0, 0.3, 0.1, -0.7]);
+    let vjp = b.forward_vjp(&y, &cotangent).unwrap();
+    let left: f64 = vjp.iter().zip(&tangent).map(|(a, b)| a * b).sum();
+    let right: f64 = cotangent
+        .as_slice()
+        .iter()
+        .zip(jvp.as_slice())
+        .map(|(a, b)| a * b)
+        .sum();
+    assert!((left - right).abs() < 1e-12);
+    // off the sphere, and at the origin, are errors
+    assert!(is_transform_error(
+        b.inverse(&t(&[2, 3], &[1.0, 0.0, 0.1, 0.0, 1.0, 0.0]))
+    ));
+    assert!(is_transform_error(b.forward(&[0.0; 6])));
 }
 
 #[test]

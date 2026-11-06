@@ -276,8 +276,9 @@ fn further_out(z: f64) -> f64 {
 }
 
 /// The coordinates of the flat vector that go to ±∞ as their latent approaches the boundary of its support: every
-/// coordinate of a bounded latent except those of an identity (a real support, an angle, or the first element of an
-/// ordered vector). None in constrained space.
+/// coordinate of a bounded latent except those of an identity (a real support, an angle, a unit vector, the first
+/// element of an ordered vector, or an element below the diagonal of a covariance matrix or its Cholesky factor).
+/// None in constrained space.
 fn boundary_coordinates(param: &Parameterisation<'_>, state: &State) -> Result<Vec<usize>> {
     if param.space() == Space::Constrained {
         return Ok(Vec::new());
@@ -289,12 +290,24 @@ fn boundary_coordinates(param: &Parameterisation<'_>, state: &State) -> Result<V
         match node_support(graph, state, id)? {
             Support::Real
             | Support::Circular
+            | Support::UnitVector
             | Support::SumToZero
             | Support::SumToZeroComponents(_)
             | Support::Discrete => {}
             Support::Ordered => {
                 let row = graph[id].shape().last().copied().unwrap_or(1).max(1);
                 coordinates.extend(range.clone().filter(|i| (i - range.start) % row != 0));
+            }
+            Support::CovarianceMatrix | Support::CovarianceCholesky => {
+                // each matrix's coordinates are its lower triangle row by row, the diagonal (a logarithm) last
+                let k = graph[id].shape().last().copied().unwrap_or(0);
+                let diagonal: Vec<usize> = (0..k).map(|i| i * (i + 1) / 2 + i).collect();
+                let per = (k * (k + 1) / 2).max(1);
+                coordinates.extend(
+                    range
+                        .clone()
+                        .filter(|i| diagonal.contains(&((i - range.start) % per))),
+                );
             }
             _ => coordinates.extend(range),
         }

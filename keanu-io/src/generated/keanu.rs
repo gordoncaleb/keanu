@@ -1171,6 +1171,32 @@ pub enum DistributionKind {
     Rice = 61,
     /// Parameters: `theta`, `k`, `p`.
     GeneralizedGamma = 62,
+    /// Parameters: `eta`, `cutpoints`.
+    OrderedProbit = 63,
+    /// Parameters: `population`, `successes`, `draws` (all integers).
+    HyperGeometric = 64,
+    /// Parameters: `mu1`, `mu2`.
+    Skellam = 65,
+    /// Parameters: `n` (an integer), `alpha`.
+    DirichletMultinomial = 66,
+    /// Parameters: `worths`.
+    PlackettLuce = 67,
+    /// Parameters: `nu`, `mu`, `scale`.
+    MultivariateStudentT = 68,
+    /// Parameters: `nu`, `mu`, `scale_cholesky`.
+    MultivariateStudentTCholesky = 69,
+    /// Parameters: `nu`, `scale`.
+    Wishart = 70,
+    /// Parameters: `nu`, `scale_cholesky`.
+    WishartCholesky = 71,
+    /// Parameters: `nu`, `scale`.
+    InverseWishart = 72,
+    /// Parameters: `nu`, `scale_cholesky`.
+    InverseWishartCholesky = 73,
+    /// Parameters: `mu`, `row_covariance`, `column_covariance`.
+    MatrixNormal = 74,
+    /// Parameters: `mu`, `kappa`.
+    VonMisesFisher = 75,
 }
 impl DistributionKind {
     /// String value of the enum field names used in the ProtoBuf definition.
@@ -1246,6 +1272,21 @@ impl DistributionKind {
             Self::LogLogistic => "DISTRIBUTION_KIND_LOG_LOGISTIC",
             Self::Rice => "DISTRIBUTION_KIND_RICE",
             Self::GeneralizedGamma => "DISTRIBUTION_KIND_GENERALIZED_GAMMA",
+            Self::OrderedProbit => "DISTRIBUTION_KIND_ORDERED_PROBIT",
+            Self::HyperGeometric => "DISTRIBUTION_KIND_HYPER_GEOMETRIC",
+            Self::Skellam => "DISTRIBUTION_KIND_SKELLAM",
+            Self::DirichletMultinomial => "DISTRIBUTION_KIND_DIRICHLET_MULTINOMIAL",
+            Self::PlackettLuce => "DISTRIBUTION_KIND_PLACKETT_LUCE",
+            Self::MultivariateStudentT => "DISTRIBUTION_KIND_MULTIVARIATE_STUDENT_T",
+            Self::MultivariateStudentTCholesky => {
+                "DISTRIBUTION_KIND_MULTIVARIATE_STUDENT_T_CHOLESKY"
+            }
+            Self::Wishart => "DISTRIBUTION_KIND_WISHART",
+            Self::WishartCholesky => "DISTRIBUTION_KIND_WISHART_CHOLESKY",
+            Self::InverseWishart => "DISTRIBUTION_KIND_INVERSE_WISHART",
+            Self::InverseWishartCholesky => "DISTRIBUTION_KIND_INVERSE_WISHART_CHOLESKY",
+            Self::MatrixNormal => "DISTRIBUTION_KIND_MATRIX_NORMAL",
+            Self::VonMisesFisher => "DISTRIBUTION_KIND_VON_MISES_FISHER",
         }
     }
     /// Creates an enum from field names used in the ProtoBuf definition.
@@ -1318,6 +1359,25 @@ impl DistributionKind {
             "DISTRIBUTION_KIND_LOG_LOGISTIC" => Some(Self::LogLogistic),
             "DISTRIBUTION_KIND_RICE" => Some(Self::Rice),
             "DISTRIBUTION_KIND_GENERALIZED_GAMMA" => Some(Self::GeneralizedGamma),
+            "DISTRIBUTION_KIND_ORDERED_PROBIT" => Some(Self::OrderedProbit),
+            "DISTRIBUTION_KIND_HYPER_GEOMETRIC" => Some(Self::HyperGeometric),
+            "DISTRIBUTION_KIND_SKELLAM" => Some(Self::Skellam),
+            "DISTRIBUTION_KIND_DIRICHLET_MULTINOMIAL" => Some(Self::DirichletMultinomial),
+            "DISTRIBUTION_KIND_PLACKETT_LUCE" => Some(Self::PlackettLuce),
+            "DISTRIBUTION_KIND_MULTIVARIATE_STUDENT_T" => {
+                Some(Self::MultivariateStudentT)
+            }
+            "DISTRIBUTION_KIND_MULTIVARIATE_STUDENT_T_CHOLESKY" => {
+                Some(Self::MultivariateStudentTCholesky)
+            }
+            "DISTRIBUTION_KIND_WISHART" => Some(Self::Wishart),
+            "DISTRIBUTION_KIND_WISHART_CHOLESKY" => Some(Self::WishartCholesky),
+            "DISTRIBUTION_KIND_INVERSE_WISHART" => Some(Self::InverseWishart),
+            "DISTRIBUTION_KIND_INVERSE_WISHART_CHOLESKY" => {
+                Some(Self::InverseWishartCholesky)
+            }
+            "DISTRIBUTION_KIND_MATRIX_NORMAL" => Some(Self::MatrixNormal),
+            "DISTRIBUTION_KIND_VON_MISES_FISHER" => Some(Self::VonMisesFisher),
             _ => None,
         }
     }

@@ -531,6 +531,29 @@ fn distribution_parameters(kind: &DistributionKind) -> Vec<Value> {
             parameters.push(f64s(&[2, 2], &[0.9, 0.1, 0.2, 0.8]));
             parameters
         }
+        HyperGeometric => vec![int(10), int(4), int(3)],
+        DirichletMultinomial => vec![int(5), f64s(&[3], &[1.0, 2.0, 3.0])],
+        PlackettLuce => vec![f64s(&[3], &[1.0, 2.0, 3.0])],
+        MultivariateStudentT => vec![
+            scalar(4.0),
+            f64s(&[2], &[0.0, 1.0]),
+            f64s(&[2, 2], &[1.0, 0.2, 0.2, 2.0]),
+        ],
+        MultivariateStudentTCholesky => vec![
+            scalar(4.0),
+            f64s(&[2], &[0.0, 1.0]),
+            f64s(&[2, 2], &[1.0, 0.0, 0.2, 1.4]),
+        ],
+        Wishart | InverseWishart => vec![scalar(4.0), f64s(&[2, 2], &[1.0, 0.2, 0.2, 2.0])],
+        WishartCholesky | InverseWishartCholesky => {
+            vec![scalar(4.0), f64s(&[2, 2], &[1.0, 0.0, 0.2, 1.4])]
+        }
+        MatrixNormal => vec![
+            f64s(&[2, 3], &[0.0, 1.0, 2.0, -1.0, 0.5, 0.0]),
+            f64s(&[2, 2], &[1.0, 0.2, 0.2, 2.0]),
+            f64s(&[3, 3], &[1.0, 0.0, 0.3, 0.0, 1.0, 0.0, 0.3, 0.0, 1.5]),
+        ],
+        VonMisesFisher => vec![f64s(&[3], &[0.0, 0.6, 0.8]), scalar(2.0)],
         LinearGaussianStateSpace => vec![
             f64s(&[2], &[0.0, 1.0]),
             f64s(&[2, 2], &[1.0, 0.2, 0.2, 2.0]),
@@ -644,6 +667,19 @@ const DISTRIBUTIONS: &[&str] = &[
     "LogLogistic",
     "Rice",
     "GeneralizedGamma",
+    "OrderedProbit",
+    "HyperGeometric",
+    "Skellam",
+    "DirichletMultinomial",
+    "PlackettLuce",
+    "MultivariateStudentT",
+    "MultivariateStudentTCholesky",
+    "Wishart",
+    "WishartCholesky",
+    "InverseWishart",
+    "InverseWishartCholesky",
+    "MatrixNormal",
+    "VonMisesFisher",
 ];
 
 fn distribution_kinds() -> Vec<DistributionKind> {
@@ -726,6 +762,19 @@ fn distribution_kinds() -> Vec<DistributionKind> {
         LogLogistic,
         Rice,
         GeneralizedGamma,
+        OrderedProbit,
+        HyperGeometric,
+        Skellam,
+        DirichletMultinomial,
+        PlackettLuce,
+        MultivariateStudentT,
+        MultivariateStudentTCholesky,
+        Wishart,
+        WishartCholesky,
+        InverseWishart,
+        InverseWishartCholesky,
+        MatrixNormal,
+        VonMisesFisher,
     ]
 }
 

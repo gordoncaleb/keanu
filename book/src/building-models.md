@@ -16,7 +16,8 @@ Each distribution has a builder method taking its parameters, which can be other
 | Zero-sum vectors | `zero_sum_normal(n, sigma)`: n elements summing to zero, N(0, σ² I) restricted to that subspace (`zero_sum_normal_with_shape(&[.., n], sigma)` for a batch); see [Sum-to-zero group effects](#sum-to-zero-group-effects) |
 | Spatial (areal) effects | `icar(adjacency, sigma)`, `car(adjacency, tau, alpha)` and `bym2(adjacency, sigma, rho)` over the areas of an `Adjacency`; see [Spatial models](spatial-models.md) |
 | Correlation matrices | `lkj_cholesky(k, eta)`: the k × k lower triangular Cholesky factor `L` of a correlation matrix `L Lᵀ` under the LKJ(η) prior (`lkj_cholesky_with_shape(&[.., k, k], eta)` for a batch) |
-| Discrete | `bernoulli` (bool), `binomial`, `beta_binomial`, `categorical`, `geometric`, `multinomial`, `negative_binomial` (mean μ, dispersion α), `ordered_logistic`, `poisson`, `uniform_int` |
+| Vectors, matrices and directions | `multivariate_student_t`, `multivariate_student_t_cholesky`, `wishart`, `wishart_cholesky`, `inverse_wishart`, `inverse_wishart_cholesky`, `matrix_normal`, `von_mises_fisher` (a unit vector); see [Multivariate, ranking and other discrete families](#multivariate-ranking-and-other-discrete-families) |
+| Discrete | `bernoulli` (bool), `binomial`, `beta_binomial`, `categorical`, `geometric`, `multinomial`, `negative_binomial` (mean μ, dispersion α), `ordered_logistic`, `poisson`, `uniform_int`, and `ordered_probit`, `hyper_geometric`, `skellam`, `dirichlet_multinomial`, `plackett_luce` (a ranking) |
 | Logit and log forms | `bernoulli_logit` (bool), `binomial_logit`, `categorical_logit`, `poisson_log`; see [Zero-inflated, hurdle and logit counts](#zero-inflated-hurdle-and-logit-counts) |
 | Extra zeros | `zero_inflated` and `hurdle` around a count distribution (or, for `hurdle`, a positive continuous one) |
 | Your own | `custom` (see [Custom distributions](custom-distributions.md)) |
@@ -65,6 +66,45 @@ censored](#truncated-and-censored-distributions); "inverse" means a truncation i
 The generalized extreme value and generalized Pareto supports depend on the parameters (like a uniform's on its
 bounds), so a latent of either moves inside the support the current parameters give. Their densities, CDFs and
 derivatives are continuous as ξ passes through 0, where they are the Gumbel and the (shifted) exponential.
+
+### Multivariate, ranking and other discrete families
+
+These follow Stan's parameterisation where Stan has the family and PyMC's otherwise; the rustdoc of each
+`keanu_distributions` type gives its density. All have gradients and second derivatives in the value and every
+parameter. The multivariate ones are distributions over the value's last axis (vectors) or last two axes
+(matrices), with any leading axes a batch that the parameters' leading axes broadcast to; `_with_shape` sets the
+whole value shape.
+
+| Builder method | Parameters | Value and support | Following |
+|---|---|---|---|
+| `multivariate_student_t` | degrees of freedom ν (real), location μ [K], scale matrix Σ [K, K] | real [K] | Stan `multi_student_t` |
+| `multivariate_student_t_cholesky` | ν, μ, the Cholesky factor L of Σ | real [K] | Stan `multi_student_t_cholesky` |
+| `wishart` | ν > K − 1, scale S [K, K] (mean νS) | covariance matrix [K, K] | Stan `wishart` |
+| `wishart_cholesky` | ν, the Cholesky factor of S | the Cholesky factor of a Wishart matrix | Stan `wishart_cholesky` |
+| `inverse_wishart` | ν > K − 1, scale S (mean S/(ν − K − 1)) | covariance matrix [K, K] | Stan `inv_wishart` |
+| `inverse_wishart_cholesky` | ν, the Cholesky factor of S | the Cholesky factor of an inverse Wishart matrix | Stan `inv_wishart_cholesky` |
+| `matrix_normal` | mean M [n, p], row covariance U [n, n], column covariance V [p, p] | real [n, p] | PyMC `MatrixNormal` |
+| `von_mises_fisher` | mean direction μ (a unit vector [p], p ≥ 2), concentration κ ≥ 0 | unit vector [p] | SciPy `vonmises_fisher` |
+| `ordered_probit` | location η, increasing cutpoints | category in 0..K | Stan `ordered_probit` |
+| `hyper_geometric` | population N, successes K, draws n (integers) | successes among the draws | PyMC `HyperGeometric` |
+| `skellam` | means μ₁, μ₂ | the difference of two Poisson counts | the usual form |
+| `dirichlet_multinomial` | count n, concentrations α [K] | counts [K] summing to n | PyMC `DirichletMultinomial` |
+| `plackett_luce` | positive worths w [K] | a ranking [K]: the item indices from first to last | the usual form |
+
+A covariance matrix latent (a Wishart or inverse Wishart) has the support `Support::CovarianceMatrix`, which NUTS
+and the other gradient based algorithms move through with Stan's transform: K(K + 1)/2 unconstrained coordinates
+fill a lower triangular factor L (its diagonal as logarithms) and the value is L Lᵀ, with the Jacobian from the Stan
+reference manual. A Cholesky-factor latent (`wishart_cholesky`, `inverse_wishart_cholesky`) has
+`Support::CovarianceCholesky`, the same factor without the product. A von Mises–Fisher latent has
+`Support::UnitVector`, mapped as Stan's `unit_vector`: an unconstrained vector y normalised, with a standard normal
+density on y. That map is not a bijection (every point on a ray from the origin gives the same direction), so, as
+for angles, the Laplace approximation refuses such latents; NUTS samples them well.
+
+The ordered probit and the hypergeometric have finitely many values per element, so as latents they are updated by
+Gibbs steps and can be marginalised; the Skellam and the hypergeometric have one value per element, so they can be
+mixture components and `log_density` kinds. The elements of a Dirichlet-multinomial draw must sum to n and those of
+a ranking must be a permutation, so neither can be changed one element at a time: as latents they need a sampler
+that proposes whole values.
 
 ### Zero-inflated, hurdle and logit counts
 

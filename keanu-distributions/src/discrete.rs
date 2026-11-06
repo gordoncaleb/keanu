@@ -12,6 +12,12 @@ use crate::util::{
 use keanu_tensor::special::{log_beta, log_sum_exp, log1mexp};
 use keanu_tensor::{BoolTensor, DoubleTensor, IntTensor, Shape};
 
+mod counts;
+mod ordinal;
+
+pub use counts::{HyperGeometric, Skellam, SkellamGradient};
+pub use ordinal::{OrderedProbit, OrderedProbitGradient};
+
 /// Bernoulli distribution: true with probability `prob_true`.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Bernoulli<'a> {
@@ -329,7 +335,7 @@ impl<'a> Poisson<'a> {
 /// From this mean, Poisson draws use PTRS.
 const PTRS_MIN_MU: f64 = 10.0;
 
-fn sample_poisson(mu: f64, rng: &mut KeanuRng) -> Result<i64> {
+pub(crate) fn sample_poisson(mu: f64, rng: &mut KeanuRng) -> Result<i64> {
     // `!(..)` also rejects NaN
     if !(mu > 0.0 && mu.is_finite()) {
         return invalid_parameter(format!("mu must be positive and finite, got {mu}"));
@@ -527,7 +533,7 @@ impl<'a> Categorical<'a> {
 
 /// The first category whose cumulative probability exceeds `u`; if rounding leaves the cumulative sum at or
 /// below `u`, the last category with non-zero probability (the last category if none is positive).
-fn select_category(u: f64, probabilities: impl Iterator<Item = f64>) -> usize {
+pub(crate) fn select_category(u: f64, probabilities: impl Iterator<Item = f64>) -> usize {
     let mut cumulative = 0.0;
     let mut last_possible = None;
     let mut count = 0;
@@ -663,7 +669,7 @@ pub struct OrderedLogisticGradient {
 }
 
 /// Whether a set of cutpoints is strictly increasing (and has no NaN).
-fn increasing(cutpoints: &[f64]) -> bool {
+pub(crate) fn increasing(cutpoints: &[f64]) -> bool {
     cutpoints.windows(2).all(|w| w[0] < w[1]) && cutpoints.iter().all(|c| !c.is_nan())
 }
 

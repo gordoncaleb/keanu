@@ -42,6 +42,16 @@ pub enum Support {
     /// Lower triangular Cholesky factors of correlation matrices, over the value's last two dimensions: a positive
     /// diagonal and rows of unit length.
     CorrelationCholesky,
+    /// Symmetric positive definite matrices over the value's last two dimensions (covariance matrices, such as a
+    /// Wishart's values).
+    CovarianceMatrix,
+    /// Lower triangular matrices with a positive diagonal over the value's last two dimensions: Cholesky factors of
+    /// covariance matrices.
+    CovarianceCholesky,
+    /// Vectors of unit length over the value's last dimension, for distributions of directions such as the von
+    /// Mises–Fisher. The transform is Stan's: an unconstrained vector normalised, with a standard normal density on
+    /// it (not a bijection).
+    UnitVector,
     /// Angles, for distributions of directions such as the von Mises: a value and the same value plus any multiple
     /// of 2π are the same point, so the value is mapped to unconstrained space with a circular transform.
     Circular,
@@ -157,6 +167,31 @@ pub enum DistributionKind {
     /// Parameters: `theta` (scale), `k` (shape), `p` (power). Support: greater than 0. See
     /// [`keanu_distributions::GeneralizedGamma`].
     GeneralizedGamma,
+    /// Parameters: `nu` (degrees of freedom, real), `mu` [..., K], `scale` (the scale matrix Σ, [..., K, K]); the
+    /// value's last axis is the event (K elements), with any leading axes a batch that the parameters' leading axes
+    /// broadcast to. Support: real. See [`keanu_distributions::MultivariateStudentT`].
+    MultivariateStudentT,
+    /// Parameters: `nu`, `mu` [..., K], `scale_cholesky` (the lower triangular Cholesky factor L of the scale
+    /// matrix, [..., K, K]). Support: real. See [`keanu_distributions::MultivariateStudentTCholesky`].
+    MultivariateStudentTCholesky,
+    /// Parameters: `nu` (degrees of freedom, > K − 1), `scale` [..., K, K]; the value is a symmetric positive definite
+    /// matrix [..., K, K]. Support: covariance matrices. See [`keanu_distributions::Wishart`].
+    Wishart,
+    /// Parameters: `nu`, `scale_cholesky` [..., K, K]; the value is the Cholesky factor of a Wishart matrix,
+    /// [..., K, K]. Support: covariance Cholesky factors. See [`keanu_distributions::WishartCholesky`].
+    WishartCholesky,
+    /// Parameters: `nu` (> K − 1), `scale` [..., K, K]; the value is a symmetric positive definite matrix
+    /// [..., K, K]. Support: covariance matrices. See [`keanu_distributions::InverseWishart`].
+    InverseWishart,
+    /// Parameters: `nu`, `scale_cholesky` [..., K, K]; the value is the Cholesky factor of an inverse Wishart matrix.
+    /// Support: covariance Cholesky factors. See [`keanu_distributions::InverseWishartCholesky`].
+    InverseWishartCholesky,
+    /// Parameters: `mu` [..., n, p], `row_covariance` [..., n, n], `column_covariance` [..., p, p]; the value is an
+    /// n × p matrix [..., n, p]. Support: real. See [`keanu_distributions::MatrixNormal`].
+    MatrixNormal,
+    /// Parameters: `mu` (the mean direction, a unit vector [..., p], p >= 2), `kappa` (the concentration); the value
+    /// is a unit vector [..., p]. Support: unit vectors. See [`keanu_distributions::VonMisesFisher`].
+    VonMisesFisher,
     /// No parameters: a kernel density estimate from fixed samples. Support: real.
     Kde(Arc<d::Kde>),
     /// Parameters: `sigma` (a scalar); the value has one element per area of the neighbourhood, shape `[n]`: the
@@ -189,6 +224,22 @@ pub enum DistributionKind {
     OrderedLogistic,
     /// Parameters: `x_min (i64)`, `x_max (i64)` -> i64 in [x_min, x_max). Support: discrete.
     UniformInt,
+    /// Parameters: `eta`, `cutpoints` (strictly increasing along the last axis, K - 1 of them) -> i64 category index
+    /// in 0..K, as [`OrderedLogistic`](Self::OrderedLogistic) with the standard normal CDF for the logistic one.
+    /// Support: discrete. See [`keanu_distributions::OrderedProbit`].
+    OrderedProbit,
+    /// Parameters: `population (i64)` N, `successes (i64)` K, `draws (i64)` n -> i64, the successes among n draws
+    /// without replacement. Support: discrete. See [`keanu_distributions::HyperGeometric`].
+    HyperGeometric,
+    /// Parameters: `mu1`, `mu2` -> i64, the difference of Poisson(mu1) and Poisson(mu2) counts. Support: discrete.
+    /// See [`keanu_distributions::Skellam`].
+    Skellam,
+    /// Parameters: `n (i64)`, `alpha` (the concentrations, [..., K]) -> i64 counts [..., K] summing to n. Support:
+    /// discrete. See [`keanu_distributions::DirichletMultinomial`].
+    DirichletMultinomial,
+    /// Parameters: `worths` (positive, [..., K]) -> i64 ranking [..., K], a permutation of 0..K listing the items
+    /// from first to last. Support: discrete. See [`keanu_distributions::PlackettLuce`].
+    PlackettLuce,
     /// Parameters: `n (i64)`, `alpha`, `beta` -> i64 in 0..=n: a binomial count whose success probability is
     /// Beta(alpha, beta) distributed. Support: discrete. See [`keanu_distributions::BetaBinomial`].
     BetaBinomial,
@@ -1083,6 +1134,27 @@ distributions! {
         d::GeneralizedGamma::new(theta, k, p),
         support = Support::greater_than(0.0),
         cdf = rejection;
+    MultivariateStudentT "multivariate_student_t" (nu: F64, mu: F64, scale: F64) -> F64 =>
+        d::MultivariateStudentT::new(nu, mu, scale),
+        support = Support::Real;
+    MultivariateStudentTCholesky "multivariate_student_t_cholesky" (nu: F64, mu: F64, scale_cholesky: F64) -> F64 =>
+        d::MultivariateStudentTCholesky::new(nu, mu, scale_cholesky),
+        support = Support::Real;
+    Wishart "wishart" (nu: F64, scale: F64) -> F64 => d::Wishart::new(nu, scale),
+        support = Support::CovarianceMatrix;
+    WishartCholesky "wishart_cholesky" (nu: F64, scale_cholesky: F64) -> F64 =>
+        d::WishartCholesky::new(nu, scale_cholesky),
+        support = Support::CovarianceCholesky;
+    InverseWishart "inverse_wishart" (nu: F64, scale: F64) -> F64 => d::InverseWishart::new(nu, scale),
+        support = Support::CovarianceMatrix;
+    InverseWishartCholesky "inverse_wishart_cholesky" (nu: F64, scale_cholesky: F64) -> F64 =>
+        d::InverseWishartCholesky::new(nu, scale_cholesky),
+        support = Support::CovarianceCholesky;
+    MatrixNormal "matrix_normal" (mu: F64, row_covariance: F64, column_covariance: F64) -> F64 =>
+        d::MatrixNormal::new(mu, row_covariance, column_covariance),
+        support = Support::Real;
+    VonMisesFisher "von_mises_fisher" (mu: F64, kappa: F64) -> F64 => d::VonMisesFisher::new(mu, kappa),
+        support = Support::UnitVector;
     Bernoulli "bernoulli" (prob_true: F64) -> Bool => d::Bernoulli::new(prob_true),
         support = Support::Discrete;
     Binomial "binomial" (p: F64, n: I64) -> I64 => d::Binomial::new(p, n),
@@ -1101,6 +1173,20 @@ distributions! {
         cdf = rejection;
     OrderedLogistic "ordered_logistic" (eta: F64, cutpoints: F64) -> I64 =>
         d::OrderedLogistic::new(eta, cutpoints),
+        support = Support::Discrete;
+    OrderedProbit "ordered_probit" (eta: F64, cutpoints: F64) -> I64 => d::OrderedProbit::new(eta, cutpoints),
+        support = Support::Discrete;
+    HyperGeometric "hyper_geometric" (population: I64, successes: I64, draws: I64) -> I64 =>
+        d::HyperGeometric::new(population, successes, draws),
+        support = Support::Discrete,
+        cdf = none,
+        gradient = |_, _| Ok(no_gradient(3));
+    Skellam "skellam" (mu1: F64, mu2: F64) -> I64 => d::Skellam::new(mu1, mu2),
+        support = Support::Discrete,
+        cdf = none;
+    DirichletMultinomial "dirichlet_multinomial" (n: I64, alpha: F64) -> I64 => d::DirichletMultinomial::new(n, alpha),
+        support = Support::Discrete;
+    PlackettLuce "plackett_luce" (worths: F64) -> I64 => d::PlackettLuce::new(worths),
         support = Support::Discrete;
     UniformInt "uniform_int" (x_min: I64, x_max: I64) -> I64 => d::UniformInt::new(x_min, x_max),
         support = Support::Discrete,
@@ -1286,6 +1372,85 @@ fn uniform_gradient(uniform: &d::Uniform<'_>, x: &DoubleTensor) -> Result<LogPro
             if below { f64::INFINITY } else { d }
         })?;
     Ok((Some(dx), smallvec::smallvec![None, None]))
+}
+
+/// The value shape of a kind whose value is a batch of events ([`DistributionKind::MultivariateStudentT`], the
+/// Wishart forms, ...): the event shape from the parameters, every parameter's trailing axes checked against its
+/// event shape and its leading axes broadcast into the batch, with the requested shape (if any) broadcast in too.
+fn event_value_shape(
+    kind: &DistributionKind,
+    requested: Option<&[usize]>,
+    shapes: &[&[usize]],
+) -> std::result::Result<Shape, String> {
+    use DistributionKind as K;
+    let last = |name: &str, s: &[usize], minimum: usize| match s.last() {
+        Some(&k) if k >= minimum => Ok(k),
+        _ => Err(format!(
+            "{name} must have a last axis of at least {minimum}, not shape {s:?}"
+        )),
+    };
+    let square = |name: &str, s: &[usize]| match s {
+        [.., rows, cols] if rows == cols && *rows > 0 => Ok(*rows),
+        _ => Err(format!(
+            "{name} must end in two equal, non-zero axes, not shape {s:?}"
+        )),
+    };
+    let (event, expected): (Vec<usize>, Vec<Vec<usize>>) = match kind {
+        K::DirichletMultinomial => {
+            let k = last("alpha", shapes[1], 1)?;
+            (vec![k], vec![vec![], vec![k]])
+        }
+        K::PlackettLuce => {
+            let k = last("worths", shapes[0], 1)?;
+            (vec![k], vec![vec![k]])
+        }
+        K::MultivariateStudentT | K::MultivariateStudentTCholesky => {
+            let k = last("mu", shapes[1], 1)?;
+            (vec![k], vec![vec![], vec![k], vec![k, k]])
+        }
+        K::Wishart | K::WishartCholesky | K::InverseWishart | K::InverseWishartCholesky => {
+            let k = square("the scale", shapes[1])?;
+            (vec![k, k], vec![vec![], vec![k, k]])
+        }
+        K::MatrixNormal => {
+            let [.., n, p] = shapes[0] else {
+                return Err(format!(
+                    "mu must be a matrix [..., n, p], not shape {:?}",
+                    shapes[0]
+                ));
+            };
+            (vec![*n, *p], vec![vec![*n, *p], vec![*n, *n], vec![*p, *p]])
+        }
+        K::VonMisesFisher => {
+            let p = last("mu", shapes[0], 2)?;
+            (vec![p], vec![vec![p], vec![]])
+        }
+        _ => unreachable!("only called for kinds over events"),
+    };
+    let names = kind.parameter_names().unwrap_or_default();
+    let mut batch = Shape::new();
+    for ((name, shape), expected) in names.iter().zip(shapes).zip(&expected) {
+        let r = expected.len();
+        if shape.len() < r || shape[shape.len() - r..] != expected[..] {
+            return Err(format!(
+                "{name} of shape {shape:?} must end in {expected:?} for a value with events of shape {event:?}"
+            ));
+        }
+        batch = keanu_tensor::broadcast_shape(&batch, &shape[..shape.len() - r])
+            .map_err(|e| e.to_string())?;
+    }
+    if let Some(requested) = requested {
+        let r = event.len();
+        if requested.len() < r || requested[requested.len() - r..] != event[..] {
+            return Err(format!(
+                "the requested shape {requested:?} must end in the event shape {event:?}"
+            ));
+        }
+        batch = keanu_tensor::broadcast_shape(&batch, &requested[..requested.len() - r])
+            .map_err(|e| e.to_string())?;
+    }
+    batch.extend_from_slice(&event);
+    Ok(batch)
 }
 
 /// A probabilistic node's distribution and the shape of its value.
@@ -1495,7 +1660,20 @@ impl DistributionOp {
                     ))),
                 }
             }
-            DistributionKind::OrderedLogistic => {
+            DistributionKind::MultivariateStudentT
+            | DistributionKind::MultivariateStudentTCholesky
+            | DistributionKind::Wishart
+            | DistributionKind::WishartCholesky
+            | DistributionKind::InverseWishart
+            | DistributionKind::InverseWishartCholesky
+            | DistributionKind::MatrixNormal
+            | DistributionKind::VonMisesFisher
+            | DistributionKind::DirichletMultinomial
+            | DistributionKind::PlackettLuce => {
+                let shapes: Vec<&[usize]> = parameters.iter().map(|(_, s)| *s).collect();
+                event_value_shape(kind, requested, &shapes).map_err(invalid)
+            }
+            DistributionKind::OrderedLogistic | DistributionKind::OrderedProbit => {
                 let (eta, cutpoints) = (parameters[0].1, parameters[1].1);
                 let Some((&count, leading)) = cutpoints.split_last() else {
                     return Err(invalid("the cutpoints must have at least one axis".into()));

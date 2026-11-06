@@ -212,8 +212,8 @@ pub(crate) fn density_rule(kind: &DistributionKind) -> Option<DensityRule> {
         },
         K::Triangular => triangular,
         // the log density is constant inside the support and, as in first order, has no derivative with respect
-        // to the bounds
-        K::Uniform | K::UniformInt => |_, _, _| {},
+        // to the bounds (and the hypergeometric's parameters are all integers)
+        K::Uniform | K::UniformInt | K::HyperGeometric => |_, _, _| {},
         K::Weibull => weibull,
         K::VonMises => von_mises,
         K::Bernoulli => |x, p, h| {
@@ -282,6 +282,7 @@ pub(crate) fn density_rule(kind: &DistributionKind) -> Option<DensityRule> {
         K::GeneralizedGamma => {
             |x, p, h| derived(h, d::GeneralizedGamma::log_prob_derivatives(x, at(p)))
         }
+        K::Skellam => |x, p, h| derived(h, d::Skellam::log_prob_derivatives(x, at(p))),
         _ => return None,
     };
     Some(rule)

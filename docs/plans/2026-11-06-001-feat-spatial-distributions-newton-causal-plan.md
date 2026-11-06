@@ -321,6 +321,31 @@ Execution order: U1, U2, U3, U4, U5, U6, U7, U8, U9, U11, U10, U12, U13, then a 
   - the covariance transform round-trips with the right Jacobian (finite-difference log-det);
   - NUTS on a Wishart latent recovers a known covariance;
   - von Mises–Fisher sampling (Wood 1994) moments.
+- **Implementation note:** the multivariate and vector-valued families share a batched-event layer
+  (`keanu-distributions/src/event.rs`): each family writes one event's log density and gradient over a generic
+  number type (`real.rs`, f64 or a one-tangent dual number, with small dense Cholesky and triangular-solve routines),
+  so the Hessian-vector products are that gradient code run on dual numbers rather than U5's jets (whose fixed
+  input count doesn't fit matrix parameters); the gradient of a symmetric matrix is with respect to each entry, as
+  for the multivariate Gaussian, and the gradient of a Cholesky factor is zero above the diagonal (the upper
+  triangle of a factor parameter is ignored, as in Stan). Files: `matrix.rs` (multivariate Student-t, the four
+  Wishart forms, matrix normal), `directional.rs` (von Mises–Fisher), `multivariate_discrete.rs`
+  (Dirichlet-multinomial, Plackett–Luce) and `discrete/{ordinal,counts}.rs` (ordered probit, hypergeometric,
+  Skellam, the last a jet formula). Parameterisations: PyMC's hypergeometric (N, K, n), Dirichlet-multinomial
+  (n, α) and matrix normal (M, U, V); Stan's for the rest; the von Mises–Fisher's κ = 0 is the uniform
+  distribution, with ln C_p(κ) taken at its limit. Deviations: no family here has a CDF (the hypergeometric and
+  Skellam can't be truncated or censored); the Dirichlet-multinomial and Plackett–Luce have no finite support for
+  Gibbs (their elements can't change one at a time, like the multinomial's); for very large ν (around 1e9) the
+  multivariate Student-t's ln Γ difference loses about 1e-6 absolute. Supports: `CovarianceMatrix`,
+  `CovarianceCholesky` and `UnitVector` (the last refused by the Laplace approximation, like `Circular`); the
+  optimizers treat only the log-diagonal coordinates of the covariance transforms as boundary coordinates. Tests:
+  `keanu-distributions/tests/discrete_multivariate_families.rs` (pmfs summing to 1, dense formulas, the Cholesky
+  forms against the matrix forms plus the Jacobian, that Jacobian against finite differences, gradients and HVPs
+  against finite differences, sampler moments), `keanu-graph/tests/{discrete_multivariate_families,transform,
+  hessian}.rs` (terms, mixtures, supports, finite supports, shapes, unconstrained gradients, the transforms'
+  round trips and log-Jacobians against finite differences, every new kind's and bijector's second derivatives),
+  `keanu-algorithms/tests/discrete_multivariate_families.rs` (NUTS recovers an inverse Wishart covariance and a von
+  Mises–Fisher mean direction; Gibbs matches enumeration for hypergeometric and ordered probit latents) and
+  keanu-io's round trip.
 
 ### U7. Wiener first-passage time and DDM example
 - **Requirements:** R7.

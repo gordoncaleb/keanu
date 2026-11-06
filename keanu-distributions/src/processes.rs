@@ -14,103 +14,10 @@
 use crate::error::{DistributionError, Result, invalid_parameter};
 use crate::multivariate::sum_over_batch;
 use crate::param::{IntoParam, Param};
+use crate::real::{Dual, Real};
 use crate::rng::KeanuRng;
 use keanu_tensor::{DoubleTensor, broadcast_shape};
 use std::f64::consts::PI;
-use std::ops::{Add, Div, Mul, Neg, Sub};
-
-/// The arithmetic the log densities' gradients are written in: plain numbers for the gradient, and dual numbers
-/// (a value and one tangent) for its directional derivatives.
-trait Real:
-    Copy
-    + Add<Output = Self>
-    + Sub<Output = Self>
-    + Mul<Output = Self>
-    + Div<Output = Self>
-    + Neg<Output = Self>
-{
-    fn constant(v: f64) -> Self;
-    fn ln(self) -> Self;
-}
-
-impl Real for f64 {
-    fn constant(v: f64) -> Self {
-        v
-    }
-    fn ln(self) -> Self {
-        f64::ln(self)
-    }
-}
-
-/// A number with one tangent.
-#[derive(Debug, Clone, Copy)]
-struct Dual {
-    v: f64,
-    d: f64,
-}
-
-impl Add for Dual {
-    type Output = Self;
-    fn add(self, o: Self) -> Self {
-        Self {
-            v: self.v + o.v,
-            d: self.d + o.d,
-        }
-    }
-}
-
-impl Sub for Dual {
-    type Output = Self;
-    fn sub(self, o: Self) -> Self {
-        Self {
-            v: self.v - o.v,
-            d: self.d - o.d,
-        }
-    }
-}
-
-impl Mul for Dual {
-    type Output = Self;
-    fn mul(self, o: Self) -> Self {
-        Self {
-            v: self.v * o.v,
-            d: self.d * o.v + self.v * o.d,
-        }
-    }
-}
-
-impl Div for Dual {
-    type Output = Self;
-    fn div(self, o: Self) -> Self {
-        let v = self.v / o.v;
-        Self {
-            v,
-            d: (self.d - v * o.d) / o.v,
-        }
-    }
-}
-
-impl Neg for Dual {
-    type Output = Self;
-    fn neg(self) -> Self {
-        Self {
-            v: -self.v,
-            d: -self.d,
-        }
-    }
-}
-
-impl Real for Dual {
-    fn constant(v: f64) -> Self {
-        Self { v, d: 0.0 }
-    }
-    fn ln(self) -> Self {
-        Self {
-            v: self.v.ln(),
-            d: self.d / self.v,
-        }
-    }
-}
 
 /// One series' log density and its gradient with respect to the series and each parameter (each parameter a slice:
 /// one number, or the AR coefficients).

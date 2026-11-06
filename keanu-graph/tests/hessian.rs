@@ -13,8 +13,8 @@ use keanu_distributions::KeanuRng;
 use keanu_graph::op::{DistributionKind, Op};
 use keanu_graph::sts::{Component, StructuralModel};
 use keanu_graph::transform::{
-    Bijector, Circular, CorrelationCholesky, Identity, Interval, LowerBound, Ordered, Simplex,
-    SumToZero, SumToZeroComponents, UpperBound,
+    Bijector, Circular, CorrelationCholesky, CovarianceCholesky, CovarianceMatrix, Identity,
+    Interval, LowerBound, Ordered, Simplex, SumToZero, SumToZeroComponents, UnitVector, UpperBound,
 };
 use keanu_graph::{
     DoubleVar, GraphBuilder, GraphError, IntVar, Model, NodeId, Parameterisation, Space, State,
@@ -916,6 +916,20 @@ fn bijectors() -> Vec<(Box<dyn Bijector>, Vec<f64>)> {
             vec![0.3, -0.8, 0.6],
         ),
         (Box::new(Circular::new(&[2])), vec![0.3, -0.8, 1.1, 0.4]),
+        (
+            Box::new(CovarianceMatrix::new(&[2, 3, 3]).unwrap()),
+            vec![
+                0.3, -0.8, 0.6, 1.1, 0.4, -0.2, 0.1, 0.5, -0.4, 0.9, -1.0, 0.2,
+            ],
+        ),
+        (
+            Box::new(CovarianceCholesky::new(&[3, 3]).unwrap()),
+            vec![0.3, -0.8, 0.6, 1.1, 0.4, -0.2],
+        ),
+        (
+            Box::new(UnitVector::new(&[2, 3]).unwrap()),
+            vec![0.3, -0.8, 0.6, 1.1, 0.4, -0.2],
+        ),
     ]
 }
 
@@ -1125,6 +1139,44 @@ fn bounds(b: &GraphBuilder, lower: f64, width: f64) -> (DoubleVar<'_>, DoubleVar
 fn positive_bounds(b: &GraphBuilder, lower: f64, width: f64) -> (DoubleVar<'_>, DoubleVar<'_>) {
     let l = positive(b, lower);
     (l, l + positive(b, width))
+}
+
+/// A K × K symmetric positive definite matrix that depends on latents: R Rᵀ + 0.5 for a latent R.
+fn spd_latent(b: &GraphBuilder, k: usize) -> DoubleVar<'_> {
+    let data: Vec<f64> = (0..k * k)
+        .map(|i| {
+            if i % (k + 1) == 0 {
+                1.0
+            } else {
+                0.2 * ((i as f64) * 1.7).sin()
+            }
+        })
+        .collect();
+    let raw = latent(b, t(&[k, k], &data));
+    raw.matmul_transposed(raw, false, true) + 0.5
+}
+
+/// A fixed K × K symmetric positive definite matrix.
+fn spd_value(k: usize) -> DoubleTensor {
+    let l = lower_factor(k);
+    l.matmul_transposed(&l, false, true).unwrap()
+}
+
+/// A fixed K × K lower triangular matrix with a positive diagonal.
+fn lower_factor(k: usize) -> DoubleTensor {
+    let data: Vec<f64> = (0..k * k)
+        .map(|i| {
+            let (r, c) = (i / k, i % k);
+            if r == c {
+                1.0 + 0.1 * r as f64
+            } else if c < r {
+                0.3 * ((i as f64) * 1.3).cos()
+            } else {
+                0.0
+            }
+        })
+        .collect();
+    t(&[k, k], &data)
 }
 
 /// A distribution case: a model, the space its Hessian is checked in, and what is expected.
@@ -2163,6 +2215,101 @@ fn distribution_cases() -> Vec<DistributionCase> {
             b.set_value(x, DoubleTensor::scalar(1.2));
             let y = b.generalized_gamma_with_shape(&[2], theta, k, p);
             b.observe(y, v(&[0.5, 2.4]));
+        }),
+        case("ordered_probit", |b| {
+            let eta = latent_vector(b, &[0.2, -0.5, 1.0, 0.4]);
+            let raw = latent_vector(b, &[-0.5, 0.8f64.ln(), 1.2f64.ln()]);
+            let cutpoints = b
+                .concat(0, &[raw.slice("0:1"), raw.slice("1:").exp()])
+                .cumsum(0);
+            // the first category, the two in the middle and the last
+            let y = b.ordered_probit(eta, cutpoints);
+            b.observe(y, ints(&[0, 1, 2, 3]));
+        }),
+        case("hyper_geometric", |b| {
+            // integer parameters only: a latent elsewhere, so the model has one
+            let m = scalar_latent(b, 0.3);
+            observe(b, m);
+            let y = b.hyper_geometric_with_shape(&[3], 20, 7, 5);
+            b.observe(y, ints(&[0, 2, 5]));
+        }),
+        case("skellam", |b| {
+            let (mu1, mu2) = (positive(b, 1.4), positive(b, 0.6));
+            let y = b.skellam_with_shape(&[4], mu1, mu2);
+            b.observe(y, ints(&[-2, 0, 1, 3]));
+        }),
+        case("dirichlet_multinomial", |b| {
+            let alpha = positive_vector(b, &[0.7, 2.0, 1.3]);
+            let y = b.dirichlet_multinomial(6, alpha);
+            b.observe(y, ints(&[1, 2, 3]));
+        }),
+        case("plackett_luce", |b| {
+            let worths = positive_vector(b, &[0.5, 2.0, 1.0, 3.5]);
+            let y = b.plackett_luce(worths);
+            b.observe(y, ints(&[2, 0, 3, 1]));
+        }),
+        case("multivariate_student_t", |b| {
+            let nu = positive(b, 4.5);
+            let mu = latent_vector(b, &[0.1, -0.5, 1.0]);
+            let scale = spd_latent(b, 3);
+            let x = b.multivariate_student_t(nu, mu, scale);
+            b.set_value(x, v(&[0.4, 0.3, -0.2]));
+            let y = b.multivariate_student_t(nu * 2.0, mu, scale);
+            b.observe(y, v(&[2.0, -1.0, 0.5]));
+        }),
+        case("multivariate_student_t_cholesky", |b| {
+            let nu = positive(b, 4.5);
+            let mu = latent_vector(b, &[0.1, -0.5, 1.0]);
+            let factor = latent(b, lower_factor(3));
+            let x = b.multivariate_student_t_cholesky(nu, mu, factor);
+            b.set_value(x, v(&[0.4, 0.3, -0.2]));
+        }),
+        unconstrained("wishart", |b| {
+            let nu = positive(b, 2.5) + 2.0;
+            let scale = spd_latent(b, 3);
+            let x = b.wishart(nu, scale);
+            b.set_value(x, spd_value(3));
+            let y = b.wishart(nu * 1.5, scale);
+            b.observe(y, spd_value(3) * 2.0);
+        }),
+        unconstrained("inverse_wishart", |b| {
+            let nu = positive(b, 2.5) + 2.0;
+            let scale = spd_latent(b, 3);
+            let x = b.inverse_wishart(nu, scale);
+            b.set_value(x, spd_value(3));
+            let y = b.inverse_wishart(nu * 1.5, scale);
+            b.observe(y, spd_value(3) * 0.5);
+        }),
+        unconstrained("wishart_cholesky", |b| {
+            let nu = positive(b, 2.5) + 2.0;
+            let factor = latent(b, lower_factor(3));
+            let x = b.wishart_cholesky(nu, factor);
+            b.set_value(x, lower_factor(3) * 1.3);
+            let y = b.wishart_cholesky(nu * 1.5, factor);
+            b.observe(y, lower_factor(3));
+        }),
+        unconstrained("inverse_wishart_cholesky", |b| {
+            let nu = positive(b, 2.5) + 2.0;
+            let factor = latent(b, lower_factor(3));
+            let x = b.inverse_wishart_cholesky(nu, factor);
+            b.set_value(x, lower_factor(3) * 0.8);
+            let y = b.inverse_wishart_cholesky(nu * 1.5, factor);
+            b.observe(y, lower_factor(3));
+        }),
+        case("matrix_normal", |b| {
+            let mu = latent(b, t(&[2, 3], &[0.1, 0.2, -0.3, 0.4, 0.5, -0.6]));
+            let (rows, columns) = (spd_latent(b, 2), spd_latent(b, 3));
+            let x = b.matrix_normal(mu, rows, columns);
+            b.set_value(x, t(&[2, 3], &[0.4, -0.1, 0.0, 1.2, -0.7, 0.3]));
+        }),
+        unconstrained("von_mises_fisher", |b| {
+            let raw = latent_vector(b, &[0.3, -0.2, 0.9]);
+            let mu = raw / (raw * raw).sum().sqrt();
+            let kappa = positive(b, 2.0);
+            let x = b.von_mises_fisher(mu, kappa);
+            b.set_value(x, v(&[0.6, 0.0, 0.8]));
+            let y = b.von_mises_fisher_with_shape(&[2, 3], mu, kappa * 3.0);
+            b.observe(y, t(&[2, 3], &[0.0, 1.0, 0.0, -0.36, 0.48, 0.8]));
         }),
         case("truncated skew_normal", |b| {
             truncated_family(

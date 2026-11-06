@@ -28,13 +28,18 @@
 
 mod cdf;
 pub mod continuous;
+pub mod directional;
 pub mod discrete;
 mod error;
+mod event;
 mod jet;
 pub mod kde;
+pub mod matrix;
 pub mod multivariate;
+pub mod multivariate_discrete;
 mod param;
 pub mod processes;
+mod real;
 mod rng;
 pub mod spatial;
 pub mod timeseries;
@@ -42,11 +47,14 @@ mod util;
 
 pub use cdf::BetaBinomialTail;
 pub use continuous::*;
+pub use directional::*;
 pub use discrete::*;
 pub use error::{DistributionError, Result};
 pub use jet::ElementDerivatives;
 pub use kde::{Kde, KdeGradient};
+pub use matrix::*;
 pub use multivariate::*;
+pub use multivariate_discrete::*;
 pub use param::{IntoParam, Param};
 pub use processes::{
     Autoregressive, AutoregressiveGradient, Garch11, Garch11Gradient, GaussianRandomWalk,

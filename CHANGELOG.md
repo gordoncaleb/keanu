@@ -593,6 +593,26 @@ Work from `docs/plans/2026-11-05-001-feat-applied-modelling-gaps-plan.md`.
   parameters (`Support::GreaterThan`, `LessThan` or `Interval` element-wise). Each is a `DistributionKind` with a
   builder method (and `_with_shape`), can be a mixture component, and, with a CDF, truncated or censored; the
   save schema gained their kinds (50 to 62).
+- keanu-distributions, keanu-graph, keanu-algorithms, keanu-io: **discrete and multivariate families, and covariance
+  and unit-vector supports**. Discrete: `OrderedProbit` (η, cutpoints; Stan's `ordered_probit`, with
+  Φ(a) − Φ(b) taken in logs from the side where it doesn't cancel, and `category_derivatives` giving the exact
+  Hessian), `HyperGeometric` (population N, successes K, draws n; PyMC's `HyperGeometric`), `Skellam` (μ₁, μ₂,
+  through ln I_|k|), `DirichletMultinomial` (n, α; PyMC's) and `PlackettLuce` (positive worths; the value a
+  zero-based ranking, the item indices from first to last). Multivariate: `MultivariateStudentT` (ν, μ, Σ) and
+  `MultivariateStudentTCholesky` (ν, μ, L), `Wishart` (ν, S), `WishartCholesky` (ν, L_S), `InverseWishart` and
+  `InverseWishartCholesky` (Stan's `multi_student_t`, `multi_student_t_cholesky`, `wishart`, `wishart_cholesky`,
+  `inv_wishart` and `inv_wishart_cholesky`, the Cholesky forms being densities over the factor with the Jacobian
+  2^K Π L_kk^(K − k + 1)), `MatrixNormal` (M, U, V; PyMC's) and `VonMisesFisher` (μ, κ, sampled by Wood's 1994
+  algorithm). The multivariate and vector-valued families are batches of events whose gradients are written by
+  hand over a generic number type and whose Hessian-vector products run the same code on dual numbers; the
+  Skellam is a jet formula. Each is a `DistributionKind` with builder methods (and `_with_shape`), a sampler, exact
+  gradients and second-order rules, and a saved kind (63 to 75). New supports and transforms:
+  `Support::CovarianceMatrix` (`transform::CovarianceMatrix`, Stan's Cholesky-factor transform with log-Jacobian
+  K ln 2 + Σᵢ (K − i + 1) yᵢᵢ), `Support::CovarianceCholesky` (`transform::CovarianceCholesky`, log-diagonal) and
+  `Support::UnitVector` (`transform::UnitVector`, Stan's `unit_vector`: an unconstrained vector normalised with a
+  N(0, I) term on it, not a bijection, so the Laplace approximation refuses such latents as it does angles). The
+  ordered probit and hypergeometric have finite supports for Gibbs steps and marginalisation; the Skellam and
+  hypergeometric are element-wise (mixtures, `log_density`, pointwise log likelihoods).
 
 ### Code review fixes
 

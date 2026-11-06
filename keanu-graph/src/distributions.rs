@@ -1194,3 +1194,89 @@ fn broadcast_pair(
     let shape = keanu_tensor::broadcast_shape(a.shape(), b.shape())?;
     Ok((a.broadcast_to(&shape)?, b.broadcast_to(&shape)?))
 }
+
+/// Builder methods `$name(params...)` and `$with_shape(shape, params...)` for a kind, each parameter converted with
+/// its `Into...Var` trait, returning the given handle type.
+macro_rules! builders {
+    ($($(#[$doc:meta])* $name:ident, $with_shape:ident => $kind:ident ($($p:ident: $into:ident),+) -> $var:ident;)*) => {
+        impl GraphBuilder {
+            $(
+                $(#[$doc])*
+                pub fn $name<'b>(&'b self, $($p: impl $into<'b>),+) -> $var<'b> {
+                    let ids = [$($p.into_var(self).id()),+];
+                    $var::new(self, self.distribution(DistributionKind::$kind, None, &ids))
+                }
+
+                #[doc = concat!(
+                    "Like [`Self::", stringify!($name), "`], with a value of the given shape: its last axes are ",
+                    "the event (or, for a distribution of one value per element, it is broadcast with the ",
+                    "parameters' shapes) and its leading axes a batch that the parameters broadcast to."
+                )]
+                pub fn $with_shape<'b>(&'b self, shape: &[usize], $($p: impl $into<'b>),+) -> $var<'b> {
+                    let ids = [$($p.into_var(self).id()),+];
+                    $var::new(self, self.distribution(DistributionKind::$kind, Some(shape), &ids))
+                }
+            )*
+        }
+    };
+}
+
+builders! {
+    /// An ordered probit node (Stan's `ordered_probit`): a category index in 0..K from a location eta and K − 1
+    /// strictly increasing cutpoints along the cutpoints' last axis, P(k) = Φ(η − c_k) − Φ(η − c_(k+1)). Shapes and
+    /// conventions are those of [`Self::ordered_logistic`]; see [`keanu_distributions::OrderedProbit`].
+    ordered_probit, ordered_probit_with_shape => OrderedProbit(eta: IntoDoubleVar, cutpoints: IntoDoubleVar) -> IntVar;
+    /// A hypergeometric node (PyMC's `HyperGeometric(N, k, n)`): the number of successes among `draws` draws without
+    /// replacement from `population` items of which `successes` are successes. See
+    /// [`keanu_distributions::HyperGeometric`].
+    hyper_geometric, hyper_geometric_with_shape =>
+        HyperGeometric(population: IntoIntVar, successes: IntoIntVar, draws: IntoIntVar) -> IntVar;
+    /// A Skellam node: the difference of independent Poisson(mu1) and Poisson(mu2) counts. See
+    /// [`keanu_distributions::Skellam`].
+    skellam, skellam_with_shape => Skellam(mu1: IntoDoubleVar, mu2: IntoDoubleVar) -> IntVar;
+    /// A Dirichlet-multinomial node (PyMC's `DirichletMultinomial(n, a)`): counts over the K categories of `alpha`'s
+    /// last axis summing to `n`, a multinomial whose probabilities are Dirichlet(alpha). See
+    /// [`keanu_distributions::DirichletMultinomial`].
+    dirichlet_multinomial, dirichlet_multinomial_with_shape =>
+        DirichletMultinomial(n: IntoIntVar, alpha: IntoDoubleVar) -> IntVar;
+    /// A Plackett–Luce node: a ranking of the K items of `worths`' last axis, the zero-based indices of the items from
+    /// first to last, each chosen in proportion to its (positive) worth among those left. See
+    /// [`keanu_distributions::PlackettLuce`].
+    plackett_luce, plackett_luce_with_shape => PlackettLuce(worths: IntoDoubleVar) -> IntVar;
+    /// A multivariate Student-t node (Stan's `multi_student_t`) with `nu` degrees of freedom, location `mu` [..., K]
+    /// and scale matrix `scale` [..., K, K]. See [`keanu_distributions::MultivariateStudentT`].
+    multivariate_student_t, multivariate_student_t_with_shape =>
+        MultivariateStudentT(nu: IntoDoubleVar, mu: IntoDoubleVar, scale: IntoDoubleVar) -> DoubleVar;
+    /// A multivariate Student-t node given the lower triangular Cholesky factor of its scale matrix (Stan's
+    /// `multi_student_t_cholesky`). See [`keanu_distributions::MultivariateStudentTCholesky`].
+    multivariate_student_t_cholesky, multivariate_student_t_cholesky_with_shape =>
+        MultivariateStudentTCholesky(nu: IntoDoubleVar, mu: IntoDoubleVar, scale_cholesky: IntoDoubleVar) -> DoubleVar;
+    /// A Wishart node (Stan's `wishart`): a symmetric positive definite K × K matrix with `nu` (> K − 1) degrees of
+    /// freedom and scale matrix `scale`, mean ν·scale. Its support is
+    /// [`Support::CovarianceMatrix`](crate::Support::CovarianceMatrix), which the gradient based algorithms map to
+    /// K(K + 1)/2 unconstrained coordinates. See [`keanu_distributions::Wishart`].
+    wishart, wishart_with_shape => Wishart(nu: IntoDoubleVar, scale: IntoDoubleVar) -> DoubleVar;
+    /// A Wishart node over the Cholesky factor of the matrix, given the scale's Cholesky factor (Stan's
+    /// `wishart_cholesky`). Its support is [`Support::CovarianceCholesky`](crate::Support::CovarianceCholesky). See
+    /// [`keanu_distributions::WishartCholesky`].
+    wishart_cholesky, wishart_cholesky_with_shape =>
+        WishartCholesky(nu: IntoDoubleVar, scale_cholesky: IntoDoubleVar) -> DoubleVar;
+    /// An inverse Wishart node (Stan's `inv_wishart`), a conjugate prior for a covariance matrix: mean
+    /// scale/(ν − K − 1). Its support is [`Support::CovarianceMatrix`](crate::Support::CovarianceMatrix). See
+    /// [`keanu_distributions::InverseWishart`].
+    inverse_wishart, inverse_wishart_with_shape => InverseWishart(nu: IntoDoubleVar, scale: IntoDoubleVar) -> DoubleVar;
+    /// An inverse Wishart node over the Cholesky factor of the matrix, given the scale's Cholesky factor (Stan's
+    /// `inv_wishart_cholesky`). Its support is [`Support::CovarianceCholesky`](crate::Support::CovarianceCholesky).
+    /// See [`keanu_distributions::InverseWishartCholesky`].
+    inverse_wishart_cholesky, inverse_wishart_cholesky_with_shape =>
+        InverseWishartCholesky(nu: IntoDoubleVar, scale_cholesky: IntoDoubleVar) -> DoubleVar;
+    /// A matrix normal node (PyMC's `MatrixNormal`): an n × p matrix with mean `mu`, row covariance
+    /// `row_covariance` (n × n) and column covariance `column_covariance` (p × p). See
+    /// [`keanu_distributions::MatrixNormal`].
+    matrix_normal, matrix_normal_with_shape =>
+        MatrixNormal(mu: IntoDoubleVar, row_covariance: IntoDoubleVar, column_covariance: IntoDoubleVar) -> DoubleVar;
+    /// A von Mises–Fisher node: a unit vector in p >= 2 dimensions with mean direction `mu` (a unit vector) and
+    /// concentration `kappa`. Its support is [`Support::UnitVector`](crate::Support::UnitVector), which the gradient
+    /// based algorithms map with Stan's `unit_vector` transform. See [`keanu_distributions::VonMisesFisher`].
+    von_mises_fisher, von_mises_fisher_with_shape => VonMisesFisher(mu: IntoDoubleVar, kappa: IntoDoubleVar) -> DoubleVar;
+}
