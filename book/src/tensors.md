@@ -36,4 +36,4 @@ Some details worth knowing:
 - `SparseMatrix` holds a constant matrix with mostly zero entries in compressed sparse row form, built from
   `(row, column, value)` triplets or a dense matrix. `matvec`, `matmat` and their transposed forms cost time
   proportional to the stored entries; in a model, `x.sparse_matmul(a)` multiplies a node by it, with exact first and
-  second derivatives.
+  second derivatives (see [Spatial models](spatial-models.md)).

@@ -2020,3 +2020,82 @@ fn simulation_based_inference() -> keanu::Result<()> {
     // ANCHOR_END: abc
     Ok(())
 }
+
+#[test]
+fn spatial_models() -> keanu::Result<()> {
+    // ANCHOR: adjacency
+    use std::sync::Arc;
+
+    // five areas: a chain 0 - 1 - 2 - 3 and an island 4
+    let areas = Arc::new(Adjacency::from_edges(5, &[(0, 1), (1, 2), (3, 2)])?);
+    assert_eq!(areas.components(), &[vec![0, 1, 2, 3], vec![4]]);
+    assert_eq!(areas.degrees(), &[1.0, 2.0, 2.0, 1.0, 0.0]);
+    // the sum of each area's neighbours' values, by a sparse product with the adjacency matrix W
+    let b = GraphBuilder::new();
+    let x = b.constant(DoubleTensor::vector(vec![1.0, 2.0, 3.0, 4.0, 5.0]));
+    let neighbour_sums = x.sparse_matmul(areas.neighbours().clone()).id();
+    // an ICAR effect: its draws sum to zero on the chain, while the island is an independent N(0, σ²)
+    let phi = b.icar(areas.clone(), 0.5).id();
+    let (graph, mut state) = b.build()?;
+    state.lazy_eval(
+        &graph,
+        &[neighbour_sums, phi],
+        &mut KeanuRng::seed_from_u64(1),
+    )?;
+    assert_eq!(
+        state.f64(neighbour_sums).unwrap().as_slice(),
+        &[2.0, 4.0, 6.0, 3.0, 0.0]
+    );
+    let draw = state.f64(phi).unwrap().as_slice();
+    assert!(draw[..4].iter().sum::<f64>().abs() < 1e-12);
+    // ANCHOR_END: adjacency
+    Ok(())
+}
+
+#[test]
+fn bym2() -> keanu::Result<()> {
+    // ANCHOR: bym2
+    use std::sync::Arc;
+
+    // counts in the 16 cells of a 4 × 4 lattice, with their expected counts
+    let areas = Arc::new(Adjacency::lattice(4, 4)?);
+    let expected: Vec<f64> = vec![
+        12.0, 8.5, 10.0, 14.0, 9.0, 11.0, 7.5, 13.0, 10.5, 12.5, 9.5, 8.0, 11.5, 10.0, 13.5, 9.0,
+    ];
+    let counts: Vec<i64> = vec![15, 9, 14, 20, 8, 13, 9, 18, 9, 11, 8, 6, 10, 8, 10, 6];
+
+    let b = GraphBuilder::new();
+    let intercept = b.gaussian(0.0, 1.0).label("intercept");
+    let sigma = b.half_gaussian(1.0).label("sigma");
+    let rho = b.beta(1.0, 1.0).label("rho");
+    let bym2 = b.bym2(areas, sigma, rho)?;
+    let log_expected = b.constant(DoubleTensor::vector(
+        expected.iter().map(|e| e.ln()).collect(),
+    ));
+    // log relative risk: the intercept plus the area effect
+    let log_risk = (bym2.effect + intercept).label("log_risk");
+    let y = b.poisson_log(log_expected + log_risk);
+    b.observe(y, IntTensor::vector(counts));
+    for (node, value) in [(sigma, 0.5), (rho, 0.5), (intercept, 0.0)] {
+        b.set_value(node, DoubleTensor::scalar(value));
+    }
+    b.set_value(bym2.spatial, DoubleTensor::zeros(&[16]));
+    b.set_value(bym2.unstructured, DoubleTensor::zeros(&[16]));
+    let log_risk = log_risk.id();
+    let (graph, mut state) = b.build()?;
+    let model = Model::new(graph, &state)?;
+
+    let mut rng = KeanuRng::seed_from_u64(2);
+    let samples = Nuts::default().with_adapt_count(300).sample(
+        &model,
+        &mut state,
+        &[log_risk],
+        300,
+        &mut rng,
+    )?;
+    let risk = samples.f64(log_risk).unwrap().mean()?.exp();
+    // ANCHOR_END: bym2
+    // the north-east, with more cases than expected, has the higher relative risk
+    assert!(risk.as_slice()[3] > risk.as_slice()[11], "{risk:?}");
+    Ok(())
+}

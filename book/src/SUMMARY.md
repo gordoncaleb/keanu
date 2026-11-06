@@ -18,6 +18,7 @@
 - [Custom distributions](custom-distributions.md)
 - [Regression models](regression.md)
 - [Gaussian processes](gaussian-processes.md)
+- [Spatial models](spatial-models.md)
 - [Differential equations](differential-equations.md)
 - [Simulation-based inference (SMC and ABC)](simulation-based-inference.md)
 - [Examples](examples.md)

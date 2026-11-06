@@ -31,6 +31,8 @@ mod co2_forecast;
 mod coal_mining_disasters;
 #[path = "../examples/custom_distribution.rs"]
 mod custom_distribution;
+#[path = "../examples/disease_mapping.rs"]
+mod disease_mapping;
 #[path = "../examples/eight_schools.rs"]
 mod eight_schools;
 #[path = "../examples/gaussian_mixture.rs"]
@@ -1043,4 +1045,32 @@ fn abc_recovers_the_stochastic_sir_rates() {
         );
         assert!(s.r_hat < 1.01, "{what}: R-hat {}", s.r_hat);
     }
+}
+
+#[test]
+fn disease_mapping_recovers_the_bym2_parameters_and_the_covariate_effect() {
+    // BYM2 Poisson counts on a 10 × 10 lattice simulated from known values: the 90% intervals cover σ, ρ and both
+    // coefficients, every parameter converges, and the posterior mean area effects follow the true ones
+    let areas = disease_mapping::data(6).unwrap();
+    let fit = disease_mapping::run(&areas, 4, 2000, 7).unwrap();
+    for (node, truth, what) in [
+        (fit.beta0, disease_mapping::TRUE_BETA[0], "beta0"),
+        (fit.beta1, disease_mapping::TRUE_BETA[1], "beta1"),
+        (fit.sigma, disease_mapping::TRUE_SIGMA, "sigma"),
+        (fit.rho, disease_mapping::TRUE_RHO, "rho"),
+    ] {
+        let s = fit.chains.summarize(node, &[]).unwrap();
+        assert!(s.r_hat < 1.01, "{what}: R-hat {}", s.r_hat);
+        assert!(
+            s.q5 < truth && truth < s.q95,
+            "{what}: {truth} outside [{}, {}]",
+            s.q5,
+            s.q95
+        );
+    }
+    let correlation = disease_mapping::effect_correlation(&areas, &fit).unwrap();
+    assert!(
+        correlation > 0.9,
+        "the effects' correlation with the truth is {correlation}"
+    );
 }

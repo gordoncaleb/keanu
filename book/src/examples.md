@@ -19,6 +19,7 @@ from, and the SMC model comparison checks its evidence against the closed form.
 | `radon` | How much does indoor radon vary between Minnesota counties? A varying-intercept model |
 | `gaussian_mixture` | Which of two groups does each measurement come from, and what are the groups like? |
 | `occupancy` | Which sites does a species occupy, when surveys sometimes miss it? Occupancy latents sampled, marginalised and written as a zero-inflated binomial |
+| `disease_mapping` | Where is a disease more common than expected? A BYM2 spatial model of counts on a lattice |
 | `gp_regression` | What smooth function produced noisy measurements? Gaussian process hyperparameters by NUTS, exactly and with an HSGP |
 | `stochastic_volatility` | How volatile are daily returns, and how persistent is the volatility? A scan over latent innovations |
 | `hmm` | When does a series switch regime, and how often? A two-state hidden Markov model |
@@ -106,6 +107,18 @@ agree, on ψ, p and the posterior number of occupied sites.
 
 ```rust,ignore
 {{#include ../../keanu/examples/occupancy.rs}}
+```
+
+## Disease mapping
+
+Counts of a disease in the 100 areas of a 10 × 10 lattice are Poisson, with each area's expected count as an offset,
+a covariate and a [BYM2](spatial-models.md#bym2) area effect that mixes a spatially structured ICAR with independent
+noise. The counts are simulated from a known scale σ = 0.6, spatial proportion ρ = 0.7 and coefficients, and the
+test checks that the 90% intervals of all four cover the truth, that they converge (R-hat below 1.01 over 4 chains
+of 2,000 draws) and that the posterior mean area effects correlate with the true ones above 0.9.
+
+```rust,ignore
+{{#include ../../keanu/examples/disease_mapping.rs}}
 ```
 
 ## Gaussian process regression

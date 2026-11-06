@@ -549,6 +549,11 @@ Work from `docs/plans/2026-11-05-001-feat-applied-modelling-gaps-plan.md`.
   generalised inverse over its component, as INLA's `scale.model`; 1 for an island), and returns the three nodes as
   `Bym2`. The save schema gained an `Adjacency` message (the number of areas and the edges) and the ICAR (48) and
   CAR (49) kinds.
+- keanu: **a disease-mapping example and a spatial models chapter**. `disease_mapping` fits a BYM2 Poisson model
+  with expected counts and a covariate to counts simulated on a 10 × 10 lattice; its test checks that the 90%
+  intervals of σ, ρ and both coefficients cover the true values, that R-hat is below 1.01 and that the posterior mean
+  area effects correlate with the true ones above 0.9. The guide's new chapter, "Spatial models", covers
+  neighbourhoods, sparse products, the ICAR, the proper CAR and BYM2.
 
 ### Code review fixes
 

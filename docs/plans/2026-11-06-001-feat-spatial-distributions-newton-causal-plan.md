@@ -229,6 +229,7 @@ Execution order: U1, U2, U3, U4, U5, U6, U7, U8, U9, U11, U10, U12, U13, then a 
   - Use simulated counts on a planar lattice of about 100 areas with a known spatial field. A real public dataset may be used if its adjacency and counts can be embedded with clear provenance.
   - New book chapter `spatial-models.md`.
 - **Tests:** recovers simulated ρ, σ and the covariate effect within 90% intervals; R-hat < 1.01; modest runtime.
+- **Implementation note:** the example uses ρ ~ Beta(1, 1) rather than the Beta(0.5, 0.5) of Morris et al.: with Beta(0.5, 0.5) and these data (whose posterior has mass near ρ = 1) every NUTS chain was stuck at ρ = 1.0 exactly (every parameter constant, R-hat infinite) after warm-up, a point where the logistic transform has rounded to its bound and the beta density is infinite. It was not diagnosed further; it is recorded here for the whole-change-set review rather than fixed in this unit. The covariate is i.i.d. normal: an east-west trend was confounded with the spatial effect (β₁'s interval missed the truth). The test uses data seed 6 (with 1,000 draws, seeds 1, 2, 4, 5 and 6 covered every truth and seed 3 missed β₀ by 0.01; R-hat for ρ needed 2,000 draws per chain to stay below 1.01), 4 chains of 2,000 draws after 2,000 warm-up steps, about 35 s. Two guide samples (`spatial_models`, `bym2` in `keanu/tests/book.rs`) show the neighbourhood, a sparse neighbour sum, ICAR draws and a small BYM2 fit by NUTS.
 
 ### U4. Special functions and general Matérn
 - **Requirements:** R4.

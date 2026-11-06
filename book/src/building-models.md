@@ -13,7 +13,7 @@ Each distribution has a builder method taking its parameters, which can be other
 |---|---|
 | Continuous | `gaussian`, `half_gaussian`, `cauchy`, `half_cauchy`, `beta`, `chi_squared`, `dirichlet`, `exponential` (takes a rate), `gamma` (scale θ, shape k), `inverse_gamma`, `laplace`, `logistic`, `log_normal`, `multivariate_gaussian`, `pareto`, `student_t`, `triangular`, `uniform`, `weibull` (shape α, scale β), `von_mises` (an angle), `kde` |
 | Zero-sum vectors | `zero_sum_normal(n, sigma)`: n elements summing to zero, N(0, σ² I) restricted to that subspace (`zero_sum_normal_with_shape(&[.., n], sigma)` for a batch); see [Sum-to-zero group effects](#sum-to-zero-group-effects) |
-| Spatial (areal) effects | `icar(adjacency, sigma)`, `car(adjacency, tau, alpha)` and `bym2(adjacency, sigma, rho)` over the areas of an `Adjacency` |
+| Spatial (areal) effects | `icar(adjacency, sigma)`, `car(adjacency, tau, alpha)` and `bym2(adjacency, sigma, rho)` over the areas of an `Adjacency`; see [Spatial models](spatial-models.md) |
 | Correlation matrices | `lkj_cholesky(k, eta)`: the k × k lower triangular Cholesky factor `L` of a correlation matrix `L Lᵀ` under the LKJ(η) prior (`lkj_cholesky_with_shape(&[.., k, k], eta)` for a batch) |
 | Discrete | `bernoulli` (bool), `binomial`, `beta_binomial`, `categorical`, `geometric`, `multinomial`, `negative_binomial` (mean μ, dispersion α), `ordered_logistic`, `poisson`, `uniform_int` |
 | Logit and log forms | `bernoulli_logit` (bool), `binomial_logit`, `categorical_logit`, `poisson_log`; see [Zero-inflated, hurdle and logit counts](#zero-inflated-hurdle-and-logit-counts) |
