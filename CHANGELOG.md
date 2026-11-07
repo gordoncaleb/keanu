@@ -721,6 +721,26 @@ Work from `docs/plans/2026-11-05-001-feat-applied-modelling-gaps-plan.md`.
   example fits a regression with 20% of the outcomes and 10% of a covariate missing; its test checks that the
   coefficients' 90% intervals cover the truth and that the imputed outcomes' posterior means correlate with the
   held-out values above 0.9. The guide's "Building models" chapter gained a section on missing observations.
+- Code review fixes for the above:
+  - keanu-graph, keanu-algorithms: a log density of +∞ (a Beta with a shape below 1 at a bound of its support) is
+    an impossible point. The model's log probability and its gradient, the parameterisation's and the incremental
+    `log_prob_after` give −∞ (and no gradient) for any term or total that is not finite, the samplers' impossibility
+    test (Metropolis–Hastings, Gibbs, SMC, annealing, NUTS's start) treats +∞ as impossible, and NUTS treats a
+    leapfrog step to a log probability that is not finite as a divergence, in its trajectories and its step-size
+    search. Before, the samplers accepted such a point and then rejected every move from it, so every chain under
+    a Beta(0.5, 0.5) prior stuck at 1.
+  - keanu-graph: the lower bound, upper bound and interval transforms keep their values strictly inside the bounds
+    (the nearest float inside where the exact value rounds onto a bound, for (0, 1) beyond y ≈ 37 or below
+    y ≈ −745), and an interval's vector-Jacobian product is 0 where its derivative underflows to 0, rather than NaN
+    from an overflowing log-density derivative. The disease-mapping example keeps its Beta(1, 1) prior on ρ: with
+    Beta(0.5, 0.5), which now samples correctly, ρ's R-hat exceeded 1.01 for five of eight seeds.
+  - keanu-graph, keanu-algorithms: `PredictiveSampler::interventional` draws the latents downstream of an
+    intervened node again, in dependency order, from their distributions given their parents, rather than keeping
+    their posterior draws (made given the node's old value), so a latent mediator follows the intervention.
+    `Intervened::carried` leaves out the nodes downstream of an intervention, and `Intervened::is_downstream` and
+    `Intervened::downstream` name them.
+  - keanu-graph: the documentation of `Parameterisation::hvp_with` says that its finite differences never evaluate
+    the log probability at z, and that setting the latents back to z can fail with the evaluation's error.
 
 ### Code review fixes
 

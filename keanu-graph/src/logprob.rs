@@ -376,6 +376,10 @@ pub(crate) fn log_prob_and_gradient(
             kind(graph, node)?
                 .log_prob_and_gradient(value(state, node)?, &parameters(graph, state, node)?)?
         };
+        // a term that isn't finite (-∞, NaN, or a density of +∞ at a bound) makes the point impossible
+        if !node_log_prob.is_finite() {
+            return Ok(None);
+        }
         let w = weight_of(weights, node);
         log_prob += weighted_term(w, node_log_prob);
         Ok(parts.map(|parts| scale_parts(parts, w)))

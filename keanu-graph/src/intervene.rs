@@ -5,8 +5,9 @@
 //! and so carries information back to X's causes. Intervening, do(X = x), asks what they would be if X were *set* to
 //! x whatever its causes: X becomes a constant, its distribution (and its log probability term) is gone, and its
 //! causes keep their own distributions. [`intervene`] rewrites a graph that way, and the posterior predictive of the
-//! rewritten graph, given posterior draws of the original model mapped through the [`Intervened`] record, answers
-//! interventional questions (see `PredictiveSampler::interventional` in keanu-algorithms).
+//! rewritten graph, given posterior draws of the original model mapped through the [`Intervened`] record (with the
+//! latents downstream of the intervened nodes drawn again given their new value), answers interventional questions
+//! (see `PredictiveSampler::interventional` in keanu-algorithms).
 
 use crate::error::{GraphError, Result};
 use crate::graph::{Graph, NodeId};
@@ -21,6 +22,8 @@ pub struct Intervened {
     mapping: Vec<Option<NodeId>>,
     /// The intervened nodes, by their ids in the original graph, in the order given.
     intervened: Vec<NodeId>,
+    /// For each node of the original graph, whether it depends on an intervened node (and isn't one).
+    downstream: Vec<bool>,
 }
 
 impl Intervened {
@@ -58,11 +61,33 @@ impl Intervened {
             .collect()
     }
 
+    /// Whether a node of the original graph depends, directly or through other nodes, on an intervened node (and
+    /// isn't one itself). Its posterior draws were made given the intervened node's old value, so they don't carry
+    /// over: a latent downstream must be drawn again from its distribution given its parents' new values.
+    pub fn is_downstream(&self, original: NodeId) -> bool {
+        self.downstream
+            .get(original.index())
+            .copied()
+            .unwrap_or(false)
+    }
+
+    /// The nodes of the original graph downstream of an intervened node ([`is_downstream`](Self::is_downstream)),
+    /// in id order.
+    pub fn downstream(&self) -> Vec<NodeId> {
+        self.downstream
+            .iter()
+            .enumerate()
+            .filter(|(_, downstream)| **downstream)
+            .map(|(i, _)| NodeId(i))
+            .collect()
+    }
+
     /// The node of the new graph whose values a draw of an original node carries over to: the node it became,
-    /// unless it was intervened on (its value is now fixed) or dropped. Use it to map posterior draws of the
-    /// original model onto the new graph.
+    /// unless it was intervened on (its value is now fixed), dropped, or is downstream of an intervened node (its
+    /// draws depended on the old value; [`is_downstream`](Self::is_downstream)). Use it to map posterior draws of
+    /// the original model onto the new graph.
     pub fn carried(&self, original: NodeId) -> Option<NodeId> {
-        if self.is_intervened(original) {
+        if self.is_intervened(original) || self.is_downstream(original) {
             None
         } else {
             self.node(original)
@@ -85,7 +110,9 @@ impl Intervened {
 ///   deterministic nodes downstream of an intervened node are recomputed.
 ///
 /// The new graph's posterior predictive, given posterior draws of the original model mapped onto it with
-/// [`Intervened::carried`], is the interventional distribution p(y | do(x)) averaged over the posterior.
+/// [`Intervened::carried`] (which leaves out the nodes downstream of an intervened node), with the latents
+/// downstream of the intervened nodes ([`Intervened::downstream`]) drawn again given their parents, is the
+/// interventional distribution p(y | do(x)) averaged over the posterior.
 ///
 /// ```
 /// use keanu_graph::{GraphBuilder, Model, intervene};
@@ -158,6 +185,15 @@ pub fn intervene(
                 .all(|c| value_of[c.0].is_some() || dropped[c.0]);
     }
     let changed: Vec<bool> = value_of.iter().map(Option::is_some).collect();
+    // the nodes that depend on an intervened node; parents have smaller ids
+    let mut downstream = vec![false; n];
+    for id in graph.ids() {
+        downstream[id.0] = !changed[id.0]
+            && graph[id]
+                .parents
+                .iter()
+                .any(|p| changed[p.0] || downstream[p.0]);
+    }
     let stale = stale(graph, state, &changed);
 
     let mut out = Writer::default();
@@ -191,6 +227,7 @@ pub fn intervene(
         Intervened {
             mapping,
             intervened: targets,
+            downstream,
         },
     ))
 }

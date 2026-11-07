@@ -62,6 +62,21 @@ impl PredictiveSampler {
         targets: &[NodeId],
         rng: &mut KeanuRng,
     ) -> Result<NetworkSamples> {
+        let redrawn = vec![false; model.graph().len()];
+        self.draw(model, state, samples, targets, &redrawn, rng)
+    }
+
+    /// [`posterior`](Self::posterior), with the latents marked in `redrawn` (by index) drawn again for each draw,
+    /// from their distributions given their parents, rather than taken from `samples`.
+    fn draw(
+        &self,
+        model: &Model,
+        state: &State,
+        samples: &NetworkSamples,
+        targets: &[NodeId],
+        redrawn: &[bool],
+        rng: &mut KeanuRng,
+    ) -> Result<NetworkSamples> {
         let graph = model.graph();
         check_targets(graph, state, targets)?;
         check_nodes(graph, samples.nodes())?;
@@ -77,7 +92,10 @@ impl PredictiveSampler {
         let missing: Vec<String> = ancestors
             .iter()
             .filter(|&&id| {
-                is_latent(graph, &work, id) && !is_target(targets, id) && !sampled[id.index()]
+                is_latent(graph, &work, id)
+                    && !is_target(targets, id)
+                    && !sampled[id.index()]
+                    && !redrawn[id.index()]
             })
             .map(|&id| graph.describe(id))
             .collect();
@@ -92,7 +110,10 @@ impl PredictiveSampler {
             .iter()
             .copied()
             .filter(|&id| {
-                !work.is_observed(id) && (!graph[id].is_probabilistic() || is_target(targets, id))
+                !work.is_observed(id)
+                    && (!graph[id].is_probabilistic()
+                        || is_target(targets, id)
+                        || redrawn[id.index()])
             })
             .collect();
 
@@ -119,10 +140,13 @@ impl PredictiveSampler {
     /// `model` and `state` are the intervened graph's, and `intervened` the rewrite's record. `samples` are draws of
     /// the original model's latents (from NUTS on it, say), and `targets` are nodes of the original graph; both are
     /// carried over to the intervened graph ([`Intervened::carried`], [`NetworkSamples::map_nodes`]), and the draws
-    /// are made as [`posterior`](Self::posterior) makes them. So each draw keeps the posterior's values of the
-    /// parameters and other latents, sets the intervened nodes to their values and draws the targets given them: the
-    /// interventional distribution p(targets | do(x), data). The returned samples are of the targets' nodes in the
-    /// intervened graph (`intervened.node(target)`).
+    /// are made as [`posterior`](Self::posterior) makes them, except that the latents downstream of an intervened
+    /// node ([`Intervened::downstream`]), whose posterior draws were made given its old value, are drawn again in
+    /// dependency order from their distributions given their parents. So each draw keeps the posterior's values of
+    /// the parameters and the other latents, sets the intervened nodes to their values, draws the latents they
+    /// affect (a mediator, say) given them, and then the targets: the interventional distribution
+    /// p(targets | do(x), data). The returned samples are of the targets' nodes in the intervened graph
+    /// (`intervened.node(target)`).
     ///
     /// Fails if a target was intervened on or dropped by the rewrite, and as [`posterior`](Self::posterior)
     /// otherwise.
@@ -138,7 +162,10 @@ impl PredictiveSampler {
         let targets = targets
             .iter()
             .map(|&id| {
-                intervened.carried(id).ok_or_else(|| {
+                let kept = intervened
+                    .node(id)
+                    .filter(|_| !intervened.is_intervened(id));
+                kept.ok_or_else(|| {
                     AlgorithmError::InvalidArgument(format!(
                         "target #{} was {} by the intervention, so it has no draws",
                         id.index(),
@@ -152,7 +179,16 @@ impl PredictiveSampler {
             })
             .collect::<Result<Vec<_>>>()?;
         let samples = samples.map_nodes(model.graph(), |id| intervened.carried(id))?;
-        self.posterior(model, state, &samples, &targets, rng)
+        let mut redrawn = vec![false; model.graph().len()];
+        for id in intervened.downstream() {
+            if let Some(new) = intervened
+                .node(id)
+                .filter(|&new| new.index() < redrawn.len())
+            {
+                redrawn[new.index()] = true;
+            }
+        }
+        self.draw(model, state, &samples, &targets, &redrawn, rng)
     }
 
     /// `count` draws of `targets` from the prior: each draw samples the latents the targets depend on from their

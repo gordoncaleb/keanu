@@ -252,8 +252,9 @@ impl Model {
     }
 
     /// The log probability of the given latent, observed and factor nodes only: the sum of the probabilistic nodes'
-    /// log probabilities and the factors' terms, or -∞ if any is impossible (-∞ or NaN, or a factor that is not
-    /// finite) or any observed deterministic node among them contradicts its observation. Other nodes are ignored.
+    /// log probabilities and the factors' terms, or -∞ if any is impossible (not finite: -∞, NaN, or a density of
+    /// +∞, such as a Beta's with a shape below 1 at a bound) or any observed deterministic node among them
+    /// contradicts its observation. Other nodes are ignored.
     ///
     /// With the nodes [`affected_by`](Self::affected_by) some latents, this is the part of the joint log probability
     /// that changes with them (their Markov blanket's terms), which is all a sampler updating those latents alone
@@ -277,7 +278,7 @@ impl Model {
             let node = &self.graph[id];
             if node.is_probabilistic() || node.is_factor() {
                 let lp = node_log_prob(&self.graph, state, id)?;
-                if lp == f64::NEG_INFINITY || lp.is_nan() {
+                if !lp.is_finite() {
                     return Ok(f64::NEG_INFINITY);
                 }
                 sum += weighted_term(weight_of(weights, id), lp);
@@ -285,7 +286,11 @@ impl Model {
                 return Ok(f64::NEG_INFINITY);
             }
         }
-        Ok(sum)
+        Ok(if sum.is_finite() {
+            sum
+        } else {
+            f64::NEG_INFINITY
+        })
     }
 
     /// The joint log probability of the latent and observed nodes, with the factors' terms.
@@ -353,7 +358,7 @@ impl Model {
         Ok(affected)
     }
 
-    /// If the current state is impossible (log prob of -infinity or NaN),
+    /// If the current state is impossible (log prob of -infinity),
     /// repeatedly samples every latent from its prior, in dependency order, cascading each value, until the state is
     /// possible. Gives up with an error after `attempts` tries. Values missing from the state (e.g. latents that
     /// were never set) are sampled first.
@@ -371,10 +376,8 @@ impl Model {
                 Ok(()) => Ok(true),
             }
         };
-        let impossible = |state: &State| -> Result<bool> {
-            let log_prob = self.log_prob(state)?;
-            Ok(log_prob == f64::NEG_INFINITY || log_prob.is_nan())
-        };
+        let impossible =
+            |state: &State| -> Result<bool> { Ok(self.log_prob(state)? == f64::NEG_INFINITY) };
         // sample any latent without a value from its prior, and compute the deterministic nodes
         let all: Vec<NodeId> = (0..self.graph.len()).map(NodeId::from_index).collect();
         let mut evaluated = possible(state.lazy_eval(&self.graph, &all, rng))?;
@@ -479,8 +482,8 @@ impl Model {
             joint => joint?,
         };
         Ok(match joint {
-            Some((log_prob, gradient)) => (log_prob, Some(gradient)),
-            None => (f64::NEG_INFINITY, None),
+            Some((log_prob, gradient)) if log_prob.is_finite() => (log_prob, Some(gradient)),
+            _ => (f64::NEG_INFINITY, None),
         })
     }
 

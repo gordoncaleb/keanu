@@ -596,7 +596,7 @@ fn incremental(delta: f64, log_likelihood: f64) -> f64 {
 fn possible(result: Result<f64>) -> Result<f64> {
     match result {
         Err(AlgorithmError::Graph(e)) if e.is_impossible_point() => Ok(f64::NEG_INFINITY),
-        Ok(x) if x.is_nan() => Ok(f64::NEG_INFINITY),
+        Ok(x) if !x.is_finite() => Ok(f64::NEG_INFINITY),
         result => result,
     }
 }

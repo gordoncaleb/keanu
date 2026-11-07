@@ -34,8 +34,11 @@ type and shape.
 The posterior of the original model is what we know about the parameters; the intervened graph says what happens
 under the intervention. `PredictiveSampler::interventional` combines them: it carries each posterior draw over to
 the intervened graph (`NetworkSamples::map_nodes` with `Intervened::carried`, leaving out the intervened and dropped
-nodes), sets the intervened values and draws the targets, giving draws from p(y | do(x), data). The targets are the
-original graph's observed nodes, and the draws are recorded under their new ids:
+nodes and those downstream of an intervention), sets the intervened values, draws the latents downstream of them (a
+mediator, say) afresh from their distributions given their parents, and then draws the targets, giving draws from
+p(y | do(x), data). A mediator's posterior draws were made given the observed value of the node now intervened on,
+so they don't carry over; `Intervened::downstream` lists the nodes drawn again. The targets are the original
+graph's observed nodes, and the draws are recorded under their new ids:
 
 ```rust,ignore
 {{#include ../../keanu/tests/book.rs:intervene}}
@@ -51,5 +54,6 @@ recover it.
 Interventions answer questions about populations: each predictive draw keeps the posterior's parameters and draws
 everything downstream of the intervention afresh. A counterfactual about one unit ("would this patient have
 recovered without treatment?") also needs that unit's own noise, inferred from what was observed of it (abduction);
-Keanu gives only what the posterior predictive on an intervened graph gives. Latents that stay in the intervened
-graph keep their posterior draws, which for a unit-level latent upstream of the intervention is the abducted value.
+Keanu gives only what the posterior predictive on an intervened graph gives. Latents upstream of the intervention, or
+unrelated to it, keep their posterior draws, which for a unit-level latent is the abducted value; latents downstream
+of it are drawn afresh, so a unit's own noise on the path from the intervention to the outcome is not kept.

@@ -25,15 +25,22 @@ impl ElementBounds {
         }
     }
 
+    /// The value, strictly inside the bounds: where the exact value rounds to a bound (for (0, 1), y above about
+    /// 37 or below about −745), the nearest float inside it. A density can be +∞ at a bound (a Beta's with a shape
+    /// below 1), so a value on it would be an impossible point the sampler could never leave.
     fn forward(self, y: f64) -> f64 {
         match self {
             ElementBounds::Free => y,
-            ElementBounds::Lower(a) => a + y.exp(),
-            ElementBounds::Upper(b) => b - y.exp(),
+            ElementBounds::Lower(a) => inside(a + y.exp(), next_up(a), f64::MAX),
+            ElementBounds::Upper(b) => inside(b - y.exp(), f64::MIN, next_down(b)),
             // for positive y the value is computed from the upper bound, so values near either bound keep their
             // precision
-            ElementBounds::Both(a, b) if y > 0.0 => b - (b - a) * logistic(-y),
-            ElementBounds::Both(a, b) => a + (b - a) * logistic(y),
+            ElementBounds::Both(a, b) if y > 0.0 => {
+                inside(b - (b - a) * logistic(-y), next_up(a), next_down(b))
+            }
+            ElementBounds::Both(a, b) => {
+                inside(a + (b - a) * logistic(y), next_up(a), next_down(b))
+            }
         }
     }
 
@@ -110,6 +117,27 @@ impl ElementBounds {
             }
         }
     }
+}
+
+/// The least float greater than `x` (`f64::next_up`, which needs a newer Rust than the MSRV), for finite `x`.
+fn next_up(x: f64) -> f64 {
+    if x == 0.0 {
+        f64::from_bits(1)
+    } else if x > 0.0 {
+        f64::from_bits(x.to_bits() + 1)
+    } else {
+        f64::from_bits(x.to_bits() - 1)
+    }
+}
+
+/// The greatest float less than `x`, for finite `x`.
+fn next_down(x: f64) -> f64 {
+    -next_up(-x)
+}
+
+/// `x` moved into [lo, hi] (never panicking, unlike `clamp`, when the bounds are adjacent floats and so cross).
+fn inside(x: f64, lo: f64, hi: f64) -> f64 {
+    x.max(lo).min(hi)
 }
 
 /// Values of a fixed shape between element-wise bounds, each element transformed by its [`ElementBounds`]: the
@@ -197,7 +225,9 @@ impl Bounded {
             .map(y, ElementBounds::derivative)
             .iter()
             .zip(cotangent.as_slice())
-            .map(|(d, c)| d * c)
+            // where the value is pinned next to a bound the derivative underflows to zero, and the log density's
+            // derivative there may overflow: the map is flat, so the product is zero rather than NaN
+            .map(|(&d, c)| if d == 0.0 { 0.0 } else { d * c })
             .collect())
     }
 

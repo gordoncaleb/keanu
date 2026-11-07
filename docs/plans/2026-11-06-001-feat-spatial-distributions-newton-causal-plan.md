@@ -229,7 +229,7 @@ Execution order: U1, U2, U3, U4, U5, U6, U7, U8, U9, U11, U10, U12, U13, then a 
   - Use simulated counts on a planar lattice of about 100 areas with a known spatial field. A real public dataset may be used if its adjacency and counts can be embedded with clear provenance.
   - New book chapter `spatial-models.md`.
 - **Tests:** recovers simulated ρ, σ and the covariate effect within 90% intervals; R-hat < 1.01; modest runtime.
-- **Implementation note:** the example uses ρ ~ Beta(1, 1) rather than the Beta(0.5, 0.5) of Morris et al.: with Beta(0.5, 0.5) and these data (whose posterior has mass near ρ = 1) every NUTS chain was stuck at ρ = 1.0 exactly (every parameter constant, R-hat infinite) after warm-up, a point where the logistic transform has rounded to its bound and the beta density is infinite. It was not diagnosed further; it is recorded here for the whole-change-set review rather than fixed in this unit. The covariate is i.i.d. normal: an east-west trend was confounded with the spatial effect (β₁'s interval missed the truth). The test uses data seed 6 (with 1,000 draws, seeds 1, 2, 4, 5 and 6 covered every truth and seed 3 missed β₀ by 0.01; R-hat for ρ needed 2,000 draws per chain to stay below 1.01), 4 chains of 2,000 draws after 2,000 warm-up steps, about 35 s. Two guide samples (`spatial_models`, `bym2` in `keanu/tests/book.rs`) show the neighbourhood, a sparse neighbour sum, ICAR draws and a small BYM2 fit by NUTS.
+- **Implementation note:** the example uses ρ ~ Beta(1, 1) rather than the Beta(0.5, 0.5) of Morris et al.: with Beta(0.5, 0.5) and these data (whose posterior has mass near ρ = 1) every NUTS chain was stuck at ρ = 1.0 exactly (every parameter constant, R-hat infinite) after warm-up, a point where the logistic transform has rounded to its bound and the beta density is infinite. The code review fixed the cause (a log density of +∞ is now impossible, and the bounded transforms stay strictly inside their bounds; `keanu-algorithms/tests/infinite_log_density.rs`), and with it Beta(0.5, 0.5) samples correctly, but the example keeps Beta(1, 1): over eight data and sampler seeds ρ's R-hat with Beta(0.5, 0.5) exceeded 1.01 in five (1.012 to 1.20, its posterior piling against ρ = 1 under the U-shaped prior), while Beta(1, 1) on four of the same seeds stayed at or below 1.006. The covariate is i.i.d. normal: an east-west trend was confounded with the spatial effect (β₁'s interval missed the truth). The test uses data seed 6 (with 1,000 draws, seeds 1, 2, 4, 5 and 6 covered every truth and seed 3 missed β₀ by 0.01; R-hat for ρ needed 2,000 draws per chain to stay below 1.01), 4 chains of 2,000 draws after 2,000 warm-up steps, about 35 s. Two guide samples (`spatial_models`, `bym2` in `keanu/tests/book.rs`) show the neighbourhood, a sparse neighbour sum, ICAR draws and a small BYM2 fit by NUTS.
 
 ### U4. Special functions and general Matérn
 - **Requirements:** R4.
@@ -461,6 +461,7 @@ Execution order: U1, U2, U3, U4, U5, U6, U7, U8, U9, U11, U10, U12, U13, then a 
     posterior is strongly right-skewed, and the Gaussian in log φ⁻¹ puts its mean 19% and sd 15% above NUTS's; the
     test checks φ to 25% and records the numbers. At the solver's default tolerances the finite-difference
     covariance agrees with one at 10⁻¹⁰ to about 10⁻⁵, so the example uses the defaults.
+- **Code review:** the documentation of `Parameterisation::hvp_with` now says that the finite differences never evaluate the log probability at z itself, and that setting the latents back to z fails with the evaluation's error.
 
 ### U12. `intervene` and a causal example
 - **Requirements:** R12.
@@ -479,7 +480,10 @@ Execution order: U1, U2, U3, U4, U5, U6, U7, U8, U9, U11, U10, U12, U13, then a 
     dropped. Observed nodes (data) and nodes without children are never dropped, so the intervened graph keeps every
     observation that isn't itself intervened on.
   - The posterior-predictive helper is `PredictiveSampler::interventional`, on top of a general
-    `NetworkSamples::map_nodes` and `Intervened::carried` (which leaves out intervened and dropped nodes). The
+    `NetworkSamples::map_nodes` and `Intervened::carried` (which leaves out intervened and dropped nodes, and, since
+    the code review, nodes downstream of an intervened node: `interventional` draws the latents among them again
+    from their distributions given their parents, as a latent mediator's posterior draws were made given the old
+    value; `keanu-algorithms/tests/interventional_mediator.rs`). The
     rewrites share a crate-private `rewrite` module (the node writer, value filling, id mapping) refactored out of
     `marginalize`.
   - The book home is a new chapter, `causal-inference.md` ("Interventions").

@@ -514,7 +514,12 @@ impl<'m> Parameterisation<'m> {
             .model
             .weighted_log_prob(state, self.weights.as_deref())?;
         if jacobian && log_prob.is_finite() {
-            Ok(log_prob + self.log_det_jacobian(z)?)
+            let total = log_prob + self.log_det_jacobian(z)?;
+            Ok(if total.is_finite() {
+                total
+            } else {
+                f64::NEG_INFINITY
+            })
         } else {
             Ok(log_prob)
         }
@@ -619,7 +624,11 @@ impl<'m> Parameterisation<'m> {
                 *g += j;
             }
         }
-        Ok((log_prob + log_det, Some(flat)))
+        let total = log_prob + log_det;
+        if !total.is_finite() {
+            return Ok((f64::NEG_INFINITY, None));
+        }
+        Ok((total, Some(flat)))
     }
 
     /// Sets the latents to their values at `z` (as [`to_state`](Self::to_state)) and returns the exact product of
@@ -652,8 +661,10 @@ impl<'m> Parameterisation<'m> {
     ///
     /// As [`hvp`](Self::hvp), except that [`GraphError::NoSecondOrderRule`] comes only with
     /// [`HessianMethod::Exact`]. By finite differences, [`GraphError::NotDifferentiable`] if the log probability
-    /// stays impossible within the shrunk steps around `z`, and [`GraphError::SolverFailed`] if `z` itself can't be
-    /// evaluated.
+    /// stays impossible within the shrunk steps around `z`. The differences evaluate the gradient only at points
+    /// on either side of `z`, never the log probability at `z` itself; the latents are then set back to their
+    /// values at `z`, which fails with the evaluation's error (such as [`GraphError::SolverFailed`] for a failed ODE
+    /// solve) if their deterministic descendants can't be computed there.
     pub fn hvp_with(
         &self,
         z: &[f64],

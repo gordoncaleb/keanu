@@ -94,6 +94,8 @@ pub fn run(areas: &Areas, chains: usize, draws: usize, seed: u64) -> keanu::Resu
     let beta0 = b.gaussian(0.0, 1.0).label("beta0");
     let beta1 = b.gaussian(0.0, 1.0).label("beta1");
     let sigma = b.half_gaussian(1.0).label("sigma");
+    // uniform rather than Morris et al.'s Beta(0.5, 0.5): with these data ρ's posterior reaches up to 1, and
+    // against the U-shaped prior's pole there the chains mix too slowly for ρ's R-hat to stay below 1.01
     let rho = b.beta(1.0, 1.0).label("rho");
     let bym2 = b.bym2(areas.adjacency.clone(), sigma, rho)?;
     let effect = bym2.effect.label("effect");

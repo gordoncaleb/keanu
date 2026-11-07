@@ -1079,9 +1079,10 @@ pub(crate) enum Univariate {
     Ccdf,
 }
 
-/// Whether a log probability makes the state impossible: -infinity or NaN.
+/// Whether a log probability makes the state impossible: not finite (-∞, NaN, or a density of +∞, which a
+/// distribution reaches only at a boundary of its support, such as a Beta's with a shape below 1 at a bound).
 pub(crate) fn is_impossible(log_prob: f64) -> bool {
-    log_prob == f64::NEG_INFINITY || log_prob.is_nan()
+    !log_prob.is_finite()
 }
 
 distributions! {

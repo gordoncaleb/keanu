@@ -1207,8 +1207,12 @@ impl Integrator<'_, '_> {
     ) -> Result<Tree> {
         let after = Rc::new(self.leapfrog(state, from, step_size * direction)?);
         let energy_change = after.energy - self.start_energy;
-        // as in Stan, only an increase is divergent: a large fall in energy is a very likely move, not instability
-        if energy_change > self.max_energy_change || energy_change.is_nan() {
+        // as in Stan, only an increase is divergent: a large fall in energy is a very likely move, not instability;
+        // a log probability that isn't finite (an impossible point, or a density of +∞ at a bound) is divergent too
+        if energy_change > self.max_energy_change
+            || energy_change.is_nan()
+            || !after.log_prob.is_finite()
+        {
             return Ok(Tree {
                 sum_momentum: after.momentum.clone(),
                 forward: Rc::clone(&after),
@@ -1493,7 +1497,7 @@ impl NutsSampler<'_> {
                 )?;
                 let after = integrator.leapfrog(state, &start, step_size)?;
                 let delta = start.energy - after.energy;
-                Ok(if delta.is_nan() {
+                Ok(if delta.is_nan() || !after.log_prob.is_finite() {
                     f64::NEG_INFINITY
                 } else {
                     delta

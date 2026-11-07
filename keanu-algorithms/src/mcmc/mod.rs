@@ -100,7 +100,8 @@ pub fn generate(
     Ok(samples)
 }
 
-/// True for a log probability that means "impossible": -∞ or NaN.
+/// True for a log probability that means "impossible": not finite (-∞, NaN, or a density of +∞ at a boundary of
+/// a support).
 pub(crate) fn is_impossible(log_prob: f64) -> bool {
-    log_prob == f64::NEG_INFINITY || log_prob.is_nan()
+    !log_prob.is_finite()
 }
