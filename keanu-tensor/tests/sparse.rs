@@ -210,6 +210,13 @@ fn malformed_input_is_rejected() {
         vec![1.0, 2.0]
     )));
     assert!(invalid(SparseMatrix::from_csr(
+        2,
+        2,
+        vec![0, 2, 1],
+        vec![0],
+        vec![1.0]
+    )));
+    assert!(invalid(SparseMatrix::from_csr(
         1,
         2,
         vec![0, 2],

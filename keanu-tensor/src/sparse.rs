@@ -99,7 +99,13 @@ impl SparseMatrix {
             if pair[0] > pair[1] {
                 return invalid(format!("the row offsets decrease at row {i}"));
             }
-            let row = &col_indices[pair[0]..pair[1]];
+            let Some(row) = col_indices.get(pair[0]..pair[1]) else {
+                return invalid(format!(
+                    "row {i}'s end offset {} exceeds the number of entries, {}",
+                    pair[1],
+                    values.len()
+                ));
+            };
             if let Some(&j) = row.iter().find(|&&j| j >= cols) {
                 return invalid(format!(
                     "column index {j} in row {i} is out of range for {cols} columns"

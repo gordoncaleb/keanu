@@ -22,7 +22,7 @@
 
 use super::distribution::{DistributionKind, LogProbGradientParts, ParameterGradients, Univariate};
 use super::distribution_hvp::{LogProbHvpParts, elementwise, reduce, spread, spread_tangent};
-use super::mixture::{gather, invalid_weights};
+use super::mixture::{gather, invalid_weights, log_sum_exp, scale_derivative, weighted_log_term};
 use super::{Support, broadcast, invalid_parameter, wrappers};
 use crate::autodiff::{batched_shape, fit, reduce_to};
 use crate::error::{GraphError, Result};
@@ -177,16 +177,6 @@ fn with_axis(shape: &[usize], count: usize) -> Shape {
     full
 }
 
-/// logsumexp of `terms`, −∞ for none finite (and NaN for a NaN term).
-fn log_sum_exp(terms: &[f64]) -> f64 {
-    let max = terms.iter().copied().fold(f64::NEG_INFINITY, f64::max);
-    if max == f64::NEG_INFINITY || max.is_nan() {
-        max
-    } else {
-        max + terms.iter().map(|t| (t - max).exp()).sum::<f64>().ln()
-    }
-}
-
 /// The element-wise log density over the batch shape and, with `gradient`, its gradient parts: with respect to
 /// the value and each component parameter over the batch shape, and to the weights over the batch shape with the
 /// component axis. The weights must be valid.
@@ -214,7 +204,7 @@ fn density(
     let mut terms = vec![0.0; count];
     for i in 0..n {
         for (c, t) in terms.iter_mut().enumerate() {
-            *t = weights[i * count + c].ln() + densities[c][i];
+            *t = weighted_log_term(weights[i * count + c], densities[c][i]);
         }
         let total = log_sum_exp(&terms);
         values.push(total);
@@ -233,10 +223,7 @@ fn density(
         Ok(broadcast(d, &shape)?
             .into_iter()
             .enumerate()
-            .map(|(i, d)| {
-                let r = responsibilities[i * count + c];
-                if r == 0.0 { 0.0 } else { r * d }
-            })
+            .map(|(i, d)| scale_derivative(responsibilities[i * count + c], d))
             .collect())
     };
     let mut dx: Option<Vec<f64>> = None;
@@ -453,7 +440,7 @@ fn second_order(
     let mut terms = vec![0.0; count];
     for i in 0..n {
         for (c, t) in terms.iter_mut().enumerate() {
-            *t = weights[i * count + c].ln() + parts[c].values[i];
+            *t = weighted_log_term(weights[i * count + c], parts[c].values[i]);
         }
         let total = log_sum_exp(&terms);
         if total.is_finite() {
@@ -498,7 +485,7 @@ fn second_order(
                 let dw = weight_tangent
                     .as_ref()
                     .map_or(0.0, |t| t[k * n * count + w]);
-                mean += ratios[w] * dw + responsibilities[w] * d;
+                mean += scale_derivative(dw, ratios[w]) + scale_derivative(responsibilities[w], d);
             }
             for c in 0..count {
                 let w = i * count + c;
@@ -511,11 +498,11 @@ fn second_order(
                     .as_ref()
                     .map_or(0.0, |t| t[k * n * count + w]);
                 // the derivative of r_c g_c is r_c ġ_c + g_c ṙ_c, with ṙ_c = ρ_c ẇ_c + r_c (ṗ_c / p_c − L̇)
-                let dr = ratio * dw + r * spread;
+                let dr = scale_derivative(dw, ratio) + scale_derivative(r, spread);
                 let product = |u: usize| -> Option<f64> {
                     let g = parts[c].gradients[u].as_ref()?;
                     let own = parts[c].hvps[u].as_ref().map_or(0.0, |h| h[j]);
-                    Some(r * own + g[i] * dr)
+                    Some(scale_derivative(r, own) + scale_derivative(dr, g[i]))
                 };
                 if let (Some(out), Some(p)) = (&mut value_out, product(0)) {
                     out[j] += p;
@@ -526,7 +513,7 @@ fn second_order(
                     }
                 }
                 // the derivative of ∂L/∂w_c = ρ_c is ρ_c (ṗ_c / p_c − L̇)
-                weight_out[k * n * count + w] = ratio * spread;
+                weight_out[k * n * count + w] = scale_derivative(spread, ratio);
             }
         }
     }

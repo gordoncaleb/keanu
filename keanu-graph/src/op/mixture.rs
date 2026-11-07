@@ -124,6 +124,34 @@ pub(crate) fn invalid_weights(weights: &DoubleTensor, count: usize) -> Option<St
     })
 }
 
+/// The log contribution of a component. A zero weight excludes even a singular density.
+pub(super) fn weighted_log_term(weight: f64, log_density: f64) -> f64 {
+    if weight == 0.0 {
+        f64::NEG_INFINITY
+    } else {
+        weight.ln() + log_density
+    }
+}
+
+/// logsumexp of the weighted component terms.
+pub(super) fn log_sum_exp(terms: &[f64]) -> f64 {
+    let max = terms.iter().copied().fold(f64::NEG_INFINITY, f64::max);
+    if max == f64::NEG_INFINITY || max.is_nan() {
+        max
+    } else {
+        max + terms.iter().map(|t| (t - max).exp()).sum::<f64>().ln()
+    }
+}
+
+/// A derivative with a zero coefficient contributes nothing, even at a singularity.
+pub(super) fn scale_derivative(coefficient: f64, derivative: f64) -> f64 {
+    if coefficient == 0.0 {
+        0.0
+    } else {
+        coefficient * derivative
+    }
+}
+
 /// A value with a trailing axis of length 1 added, so that it broadcasts against the component axis.
 pub(crate) fn with_component_axis(value: &Value) -> Result<Value> {
     let mut shape: Vec<isize> = value.shape().iter().map(|&d| d as isize).collect();
@@ -171,18 +199,16 @@ pub(crate) fn log_prob(
     // r_c, and p_c(x) / p(x), the derivative with respect to w_c
     let mut responsibilities = vec![0.0; densities.len()];
     let mut ratios = vec![0.0; densities.len()];
+    let mut terms = Vec::with_capacity(count);
     for row in 0..rows {
         let range = row * count..(row + 1) * count;
-        let terms: Vec<f64> = range
-            .clone()
-            .map(|i| weights[i].ln() + densities[i])
-            .collect();
-        let max = terms.iter().copied().fold(f64::NEG_INFINITY, f64::max);
-        let total = if max == f64::NEG_INFINITY || max.is_nan() {
-            max
-        } else {
-            max + terms.iter().map(|t| (t - max).exp()).sum::<f64>().ln()
-        };
+        terms.clear();
+        terms.extend(
+            range
+                .clone()
+                .map(|i| weighted_log_term(weights[i], densities[i])),
+        );
+        let total = log_sum_exp(&terms);
         log_probs.push(total);
         if !gradient || !total.is_finite() {
             continue;
@@ -201,7 +227,7 @@ pub(crate) fn log_prob(
         Ok(broadcast(d, &full)?
             .into_iter()
             .zip(&responsibilities)
-            .map(|(d, &r)| if r == 0.0 { 0.0 } else { r * d })
+            .map(|(d, &r)| scale_derivative(r, d))
             .collect())
     };
     let batch = &full[..full.len() - 1];
@@ -250,24 +276,22 @@ pub(crate) fn log_prob_terms(
     }
     let densities = broadcast(&densities, &full)?;
     let weights = broadcast(p.weights, &full)?;
-    let terms = densities
+    let mut terms = Vec::with_capacity(count);
+    let log_probs = densities
         .chunks(count)
         .zip(weights.chunks(count))
         .map(|(densities, weights)| {
-            let terms: Vec<f64> = densities
-                .iter()
-                .zip(weights)
-                .map(|(d, w)| w.ln() + d)
-                .collect();
-            let max = terms.iter().copied().fold(f64::NEG_INFINITY, f64::max);
-            if max == f64::NEG_INFINITY || max.is_nan() {
-                max
-            } else {
-                max + terms.iter().map(|t| (t - max).exp()).sum::<f64>().ln()
-            }
+            terms.clear();
+            terms.extend(
+                densities
+                    .iter()
+                    .zip(weights)
+                    .map(|(&d, &w)| weighted_log_term(w, d)),
+            );
+            log_sum_exp(&terms)
         })
         .collect();
-    Ok(DoubleTensor::new(batch, terms)?)
+    Ok(DoubleTensor::new(batch, log_probs)?)
 }
 
 /// The support of a mixture: the component kind's support with each bound reduced over the component axis (the
@@ -408,17 +432,19 @@ pub(crate) fn log_prob_hvp(
     // needs no division by it
     let mut responsibilities = vec![0.0; len];
     let mut ratios = vec![0.0; len];
+    let mut terms = Vec::with_capacity(count);
     for row in (0..len).step_by(count) {
         let range = row..row + count;
-        let terms: Vec<f64> = range
-            .clone()
-            .map(|i| weights[i].ln() + parts.values[i])
-            .collect();
-        let max = terms.iter().copied().fold(f64::NEG_INFINITY, f64::max);
-        if !max.is_finite() {
+        terms.clear();
+        terms.extend(
+            range
+                .clone()
+                .map(|i| weighted_log_term(weights[i], parts.values[i])),
+        );
+        let total = log_sum_exp(&terms);
+        if !total.is_finite() {
             continue;
         }
-        let total = max + terms.iter().map(|t| (t - max).exp()).sum::<f64>().ln();
         for (c, i) in range.enumerate() {
             responsibilities[i] = (terms[c] - total).exp();
             ratios[i] = (parts.values[i] - total).exp();
@@ -449,7 +475,7 @@ pub(crate) fn log_prob_hvp(
                     }
                 }
                 let dw = weight_tangent.as_ref().map_or(0.0, |t| t[j]);
-                mean += ratios[i] * dw + responsibilities[i] * *d;
+                mean += scale_derivative(dw, ratios[i]) + scale_derivative(responsibilities[i], *d);
             }
             for (c, &d) in directional.iter().enumerate() {
                 let i = row + c;
@@ -461,16 +487,16 @@ pub(crate) fn log_prob_hvp(
                 let spread = d - mean;
                 let dw = weight_tangent.as_ref().map_or(0.0, |t| t[j]);
                 // the derivative of r_c g_c is r_c ġ_c + g_c ṙ_c, with ṙ_c = ρ_c ẇ_c + r_c (ṗ_c / p_c − L̇)
-                let dr = ratio * dw + r * spread;
+                let dr = scale_derivative(dw, ratio) + scale_derivative(r, spread);
                 for (u, out) in outputs.iter_mut().enumerate() {
                     let (Some(out), Some(g)) = (out, &parts.gradients[u]) else {
                         continue;
                     };
                     let own = parts.hvps[u].as_ref().map_or(0.0, |h| h[j]);
-                    out[j] = r * own + g[i] * dr;
+                    out[j] = scale_derivative(r, own) + scale_derivative(dr, g[i]);
                 }
                 // the derivative of ∂L/∂w_c = ρ_c is ρ_c (ṗ_c / p_c − L̇)
-                weight_output[j] = ratio * spread;
+                weight_output[j] = scale_derivative(spread, ratio);
             }
         }
     }
