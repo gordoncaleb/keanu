@@ -57,7 +57,9 @@ use std::ops::{Add, Mul};
 pub const DEFAULT_JITTER: f64 = 1e-6;
 
 /// The Matérn distance r is computed as √max(r², this), so that the gradient through the square root stays finite
-/// (zero) where two inputs coincide; the kernel values change by less than 1e-15.
+/// (zero) where two inputs coincide, and where r² is at most this the correlation is exactly 1 (with gradient zero):
+/// at r = 1e-15 a Matérn correlation with a small smoothness ν is still well below 1 (it falls as r^{2ν}), so the
+/// clamped distance alone would put the covariance at zero distance below σ².
 const MIN_SQUARED_DISTANCE: f64 = 1e-30;
 
 const KERNEL: &str = "gaussian process kernel";
@@ -378,6 +380,11 @@ impl<'b> Kernel<'b> {
                         (a + 1.0 + r2 * (5.0 / 3.0)) * (-a).exp()
                     }
                     Form::Matern(nu) => (distance() * (2.0 * nu).sqrt()).matern_correlation(nu),
+                };
+                // exactly 1 at (clamped) zero distance
+                let correlation = match form {
+                    Form::ExpQuad => correlation,
+                    _ => b.where_(r2.le(MIN_SQUARED_DISTANCE), b.scalar(1.0), correlation),
                 };
                 correlation * (amplitude * amplitude)
             }

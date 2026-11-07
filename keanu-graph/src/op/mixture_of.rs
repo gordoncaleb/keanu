@@ -445,7 +445,11 @@ fn second_order(
         )?);
         tangents.push(these);
     }
+    // the responsibilities r_c = w_c p_c / p and the ratios ρ_c = p_c / p (so r_c = w_c ρ_c), with p the mixture's
+    // density: the derivatives are written with ρ_c rather than r_c / w_c, so a weight of 0 (or a subnormal one)
+    // needs no division by it
     let mut responsibilities = vec![0.0; n * count];
+    let mut ratios = vec![0.0; n * count];
     let mut terms = vec![0.0; count];
     for i in 0..n {
         for (c, t) in terms.iter_mut().enumerate() {
@@ -455,6 +459,7 @@ fn second_order(
         if total.is_finite() {
             for c in 0..count {
                 responsibilities[i * count + c] = (terms[c] - total).exp();
+                ratios[i * count + c] = (parts[c].values[i] - total).exp();
             }
         }
     }
@@ -474,36 +479,43 @@ fn second_order(
     for k in 0..b {
         for i in 0..n {
             let j = k * n + i;
+            // ṗ_c / p_c (the component's directional log derivative, without the weights), and L̇ = ṗ / p
             let mut mean = 0.0;
             for c in 0..count {
                 let w = i * count + c;
-                let r = responsibilities[w];
                 directional[c] = 0.0;
-                if r == 0.0 {
+                // an impossible component (ρ_c = 0) contributes nothing, and its derivatives may not be finite
+                if ratios[w] == 0.0 {
                     continue;
                 }
-                let mut d = weight_tangent
-                    .as_ref()
-                    .map_or(0.0, |t| t[k * n * count + w] / weights[w]);
+                let mut d = 0.0;
                 for (g, t) in parts[c].gradients.iter().zip(&tangents[c]) {
                     if let (Some(g), Some(t)) = (g, t) {
                         d += g[i] * t[j];
                     }
                 }
                 directional[c] = d;
-                mean += r * d;
+                let dw = weight_tangent
+                    .as_ref()
+                    .map_or(0.0, |t| t[k * n * count + w]);
+                mean += ratios[w] * dw + responsibilities[w] * d;
             }
             for c in 0..count {
                 let w = i * count + c;
-                let r = responsibilities[w];
-                if r == 0.0 {
+                let (r, ratio) = (responsibilities[w], ratios[w]);
+                if ratio == 0.0 {
                     continue;
                 }
                 let spread = directional[c] - mean;
+                let dw = weight_tangent
+                    .as_ref()
+                    .map_or(0.0, |t| t[k * n * count + w]);
+                // the derivative of r_c g_c is r_c ġ_c + g_c ṙ_c, with ṙ_c = ρ_c ẇ_c + r_c (ṗ_c / p_c − L̇)
+                let dr = ratio * dw + r * spread;
                 let product = |u: usize| -> Option<f64> {
                     let g = parts[c].gradients[u].as_ref()?;
                     let own = parts[c].hvps[u].as_ref().map_or(0.0, |h| h[j]);
-                    Some(r * (own + g[i] * spread))
+                    Some(r * own + g[i] * dr)
                 };
                 if let (Some(out), Some(p)) = (&mut value_out, product(0)) {
                     out[j] += p;
@@ -513,11 +525,8 @@ fn second_order(
                         out[j] = p;
                     }
                 }
-                let dw = weight_tangent
-                    .as_ref()
-                    .map_or(0.0, |t| t[k * n * count + w]);
-                weight_out[k * n * count + w] =
-                    r * (-dw / (weights[w] * weights[w]) + spread / weights[w]);
+                // the derivative of ∂L/∂w_c = ρ_c is ρ_c (ṗ_c / p_c − L̇)
+                weight_out[k * n * count + w] = ratio * spread;
             }
         }
     }

@@ -748,15 +748,33 @@ Work from `docs/plans/2026-11-05-001-feat-applied-modelling-gaps-plan.md`.
     each element's two Gamma draws in turn, so its draws for a seed differ from before.
   - keanu-distributions: LogitNormal and Kumaraswamy draws, and their quantiles of probabilities strictly inside
     (0, 1), and Beta draws, stay strictly inside their open supports.
+  - keanu-graph: the general Matérn kernel's correlation is exactly 1 (with gradient zero) where the squared
+    scaled distance is at most the clamp of 1e-30, so the covariance at zero distance is σ² for any smoothness (it
+    was 0.972σ² at ν = 0.05), and the Matérn correlation is never above 1 (it reached 1 + 6e-11 at ν = 3·10⁴).
+  - keanu-tensor: `hyp2f1` computes its value in double-double arithmetic (about 32 digits) except where its
+    terms are positive (0 <= z <= ½ with a, b >= 0 and c > 0), sums a polynomial directly for z < 0 and in powers of
+    1 − z (DLMF 15.8.7) for z > ½, and raises the transformations' prefactors to their powers with `powf`. It now
+    meets its documented accuracy where the series' terms change sign and cancel, as for ₂F₁(25, 25; 0.3; −1) and
+    ₂F₁(−23.8, 23.32; 5.42; 0.786), which were off by 3e-3 and 2e-3, checked on 800 more cases; the documentation
+    names the remaining exception (a polynomial within rounding of a degenerate case) and that
+    `hyp2f1_derivatives`, still in f64, loses accuracy to such cancellation.
   - keanu-distributions: the Wiener density passes the start's distance from the other boundary separately, so
     the upper boundary's density keeps its precision for a tiny w (it was −∞ at w = 1e-17), the large-time series
     writing sin(kπ(1 − ε)) as (−1)^{k+1} sin(kπε) and the small-time series pairing its images in ε; and the
     sampler's inverse Gaussian proposal no longer overflows for a tiny nonzero drift (sampling failed below
     |aν| ≈ 1e-154).
+  - keanu-graph: the Hessian-vector products of mixtures (`mixture` and `mixture_of`) with respect to their
+    weights use ρ_c = p_c/p rather than dividing by the weight, so a weight of 0 or a subnormal one gives the exact
+    second derivative −(g − l)²/p² rather than a wrong or NaN one.
   - keanu-tensor, keanu-distributions, keanu-io: `SparseMatrix::from_csr` and `from_triplets`,
     `Adjacency::from_edges` and `Adjacency::lattice` return errors rather than panicking or aborting for sizes
     whose arithmetic overflows or whose arrays can't be allocated, and loading rejects a sparse matrix with more
     rows or columns, or a neighbourhood with more areas, than `LoadOptions::max_elements` before building it.
+  - keanu-tensor: `log_bessel_k` and `log_bessel_i` use their leading terms as x → 0 below x = 1e-150, so they are
+    finite and accurate down to the least positive float (`log_bessel_k(29.5, 1e-308)` was ∞ and
+    `log_bessel_i(30, 1e-309)` −∞).
+  - keanu-graph: the second derivative of `log_bessel_i` of order 0 at x = 0 is ½ rather than NaN, and the other
+    Bessel ops' derivatives at x = 0 are their infinite limits.
   - keanu-graph: the documentation of `Parameterisation::hvp_with` says that its finite differences never evaluate
     the log probability at z, and that setting the latents back to z can fail with the evaluation's error.
 

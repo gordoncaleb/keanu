@@ -34,6 +34,9 @@ pub(crate) fn value(kind: BesselOp, nu: f64, x: f64) -> f64 {
 
 /// The first and second derivatives in x at x, with y the value there.
 pub(crate) fn derivatives(kind: BesselOp, nu: f64, x: f64, y: f64) -> (f64, f64) {
+    if x == 0.0 && kind != BesselOp::Matern {
+        return derivatives_at_zero(kind, nu);
+    }
     // from the modified Bessel equation x² w'' + x w' − (x² + ν²) w = 0, satisfied by I_ν and K_ν
     let ratio = 1.0 + nu * nu / (x * x);
     match kind {
@@ -57,7 +60,18 @@ pub(crate) fn derivatives(kind: BesselOp, nu: f64, x: f64, y: f64) -> (f64, f64)
     }
 }
 
-/// f(x) = 2^{1−ν}/Γ(ν) x^ν K_ν(x), with f(0) = 1.
+/// The limits of the derivatives as x → 0⁺, where the recurrence's ν²/x² is 0/0 for ν = 0. ln I₀(x) = x²/4 + O(x⁴),
+/// so (0, ½); for ν > 0, ln I_ν(x) = ν ln x + O(1) gives (+∞, −∞). K_ν(x) and ln K_ν(x) grow without bound as x → 0
+/// for every ν, falling ever more steeply and convexly: (−∞, +∞).
+fn derivatives_at_zero(kind: BesselOp, nu: f64) -> (f64, f64) {
+    match kind {
+        BesselOp::LogI if nu == 0.0 => (0.0, 0.5),
+        BesselOp::LogI => (f64::INFINITY, f64::NEG_INFINITY),
+        _ => (f64::NEG_INFINITY, f64::INFINITY),
+    }
+}
+
+/// f(x) = 2^{1−ν}/Γ(ν) x^ν K_ν(x), with f(0) = 1, and never above 1.
 fn matern(nu: f64, x: f64) -> f64 {
     if x.is_nan() || x < 0.0 {
         return f64::NAN;
@@ -68,7 +82,10 @@ fn matern(nu: f64, x: f64) -> f64 {
     if x.is_infinite() {
         return 0.0;
     }
-    ((1.0 - nu) * LN_2 - special::ln_gamma(nu) + nu * x.ln() + special::log_bessel_k(nu, x)).exp()
+    // at most 1, which rounding in the logs can exceed by a few ulps of their size for a very large ν
+    ((1.0 - nu) * LN_2 - special::ln_gamma(nu) + nu * x.ln() + special::log_bessel_k(nu, x))
+        .exp()
+        .min(1.0)
 }
 
 /// (f', f'') for the Matérn correlation f: f' = −2^{1−ν}/Γ(ν) x^ν K_{ν−1}(x) = −f K_{ν−1}/K_ν (DLMF 10.29.4) and

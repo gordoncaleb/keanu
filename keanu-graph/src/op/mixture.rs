@@ -403,8 +403,11 @@ pub(crate) fn log_prob_hvp(
     let weights = broadcast(p.weights, &full)?;
     let weight_tangent = spread_tangent(parameter_tangents[m], b, &full)?;
     let len = weights.len();
-    // the responsibilities r_c
+    // the responsibilities r_c = w_c p_c / p and the ratios ρ_c = p_c / p (so r_c = w_c ρ_c), with p the mixture's
+    // density: the derivatives are written with ρ_c rather than r_c / w_c, so a weight of 0 (or a subnormal one)
+    // needs no division by it
     let mut responsibilities = vec![0.0; len];
+    let mut ratios = vec![0.0; len];
     for row in (0..len).step_by(count) {
         let range = row..row + count;
         let terms: Vec<f64> = range
@@ -418,6 +421,7 @@ pub(crate) fn log_prob_hvp(
         let total = max + terms.iter().map(|t| (t - max).exp()).sum::<f64>().ln();
         for (c, i) in range.enumerate() {
             responsibilities[i] = (terms[c] - total).exp();
+            ratios[i] = (parts.values[i] - total).exp();
         }
     }
     let mut outputs: Vec<Option<Vec<f64>>> = parts
@@ -429,42 +433,44 @@ pub(crate) fn log_prob_hvp(
     let mut directional = vec![0.0; count];
     for k in 0..b {
         for row in (0..len).step_by(count) {
-            // l̇_c, and L̇
+            // ṗ_c / p_c (the component's directional log derivative, without the weights), and L̇ = ṗ / p
             let mut mean = 0.0;
             for (c, d) in directional.iter_mut().enumerate() {
                 let i = row + c;
                 let j = k * len + i;
-                let r = responsibilities[i];
                 *d = 0.0;
-                if r == 0.0 {
+                // an impossible component (ρ_c = 0) contributes nothing, and its derivatives may not be finite
+                if ratios[i] == 0.0 {
                     continue;
                 }
-                *d = weight_tangent.as_ref().map_or(0.0, |t| t[j] / weights[i]);
                 for (g, t) in parts.gradients.iter().zip(&tangents) {
                     if let (Some(g), Some(t)) = (g, t) {
                         *d += g[i] * t[j];
                     }
                 }
-                mean += r * *d;
+                let dw = weight_tangent.as_ref().map_or(0.0, |t| t[j]);
+                mean += ratios[i] * dw + responsibilities[i] * *d;
             }
             for (c, &d) in directional.iter().enumerate() {
                 let i = row + c;
                 let j = k * len + i;
-                let r = responsibilities[i];
-                if r == 0.0 {
+                let (r, ratio) = (responsibilities[i], ratios[i]);
+                if ratio == 0.0 {
                     continue;
                 }
                 let spread = d - mean;
+                let dw = weight_tangent.as_ref().map_or(0.0, |t| t[j]);
+                // the derivative of r_c g_c is r_c ġ_c + g_c ṙ_c, with ṙ_c = ρ_c ẇ_c + r_c (ṗ_c / p_c − L̇)
+                let dr = ratio * dw + r * spread;
                 for (u, out) in outputs.iter_mut().enumerate() {
                     let (Some(out), Some(g)) = (out, &parts.gradients[u]) else {
                         continue;
                     };
                     let own = parts.hvps[u].as_ref().map_or(0.0, |h| h[j]);
-                    out[j] = r * (own + g[i] * spread);
+                    out[j] = r * own + g[i] * dr;
                 }
-                let w = weights[i];
-                let dw = weight_tangent.as_ref().map_or(0.0, |t| t[j]);
-                weight_output[j] = r * (-dw / (w * w) + spread / w);
+                // the derivative of ∂L/∂w_c = ρ_c is ρ_c (ṗ_c / p_c − L̇)
+                weight_output[j] = ratio * spread;
             }
         }
     }

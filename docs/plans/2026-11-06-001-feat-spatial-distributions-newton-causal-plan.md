@@ -268,6 +268,7 @@ Execution order: U1, U2, U3, U4, U5, U6, U7, U8, U9, U11, U10, U12, U13, then a 
     x^ν K_ν(x) is formed in logs and its derivatives, −x^ν K_{ν−1} and f + (2ν − 1) f'/x, avoid the unstable
     downward recurrence. `Kernel::matern` works with `Hsgp` for any ν (the spectral density was already general).
   - Fixtures: `keanu-tensor/tests/fixtures/special_extra.{py,json}` (mpmath, 50 digits, about 8,400 cases).
+- **Code review:** `log_bessel_k` and `log_bessel_i` use their leading small-x terms below x = 1e-150 (with a series for ln Γ(1 − ν) − ln Γ(1 + ν) at small ν), so they are finite and accurate down to the least subnormal (`keanu-tensor/tests/bessel_tiny_arguments.rs`). `BesselOp::LogI`'s derivatives at x = 0 are their limits ((0, ½) for ν = 0) rather than NaN (`keanu-graph/tests/bessel_at_zero.rs`). The Matérn correlation is exactly 1 where r² is at most the distance clamp (it was 0.972 at ν = 0.05) and never above 1 (`keanu-graph/tests/matern_limits.rs`). `hyp2f1` runs in double-double arithmetic except where its terms are positive (0 <= z <= ½, a, b >= 0, c > 0), sums polynomials directly for z < 0 and in powers of 1 − z (DLMF 15.8.7) beyond ½, and is checked on 800 cancelling cases (`keanu-tensor/tests/hyp2f1_cancellation.rs`, fixture from `fixtures/hyp2f1_cancellation.py`); `hyp2f1_derivatives` stays in f64 and its documentation now says where it loses accuracy.
 
 ### U5. Continuous distributions
 - **Requirements:** R5, R9.
@@ -407,6 +408,7 @@ Execution order: U1, U2, U3, U4, U5, U6, U7, U8, U9, U11, U10, U12, U13, then a 
   gradient against central differences and its Hessian against second differences of the hand-written joint
   density; the shifted log-normal; draws, supports, counts, the log-density op, the cure-model likelihood and
   invalid nodes), new cases in `keanu-graph/tests/hessian.rs` and keanu-io's round trip.
+- **Code review:** the mixtures' Hessian-vector products are written with ρ_c = p_c/p instead of r_c/w_c, so a zero or subnormal weight gives the exact −(g − l)²/p² rather than a wrong or NaN product (`keanu-graph/tests/mixture_zero_weight.rs`).
 
 ### U9. Extreme values and cure-model examples
 - **Requirements:** R5, R8.

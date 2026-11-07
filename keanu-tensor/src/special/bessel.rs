@@ -13,7 +13,7 @@
 //!   with fourteen terms, whose truncation error is below 1e-17 there.
 
 use super::{Jet, continued_fraction, ln_gamma};
-use std::f64::consts::PI;
+use std::f64::consts::{LN_2, PI};
 
 /// At and above this order, the Debye expansions are used.
 const DEBYE_MIN_ORDER: f64 = 30.0;
@@ -544,12 +544,73 @@ fn log_i_core(nu: f64, x: f64, scaled: bool) -> f64 {
     -x.ln() - ln_k - (k_ratio + i_ratio_core(nu, x)).ln()
 }
 
+/// Below this x, ln K_ν(x) and ln I_ν(x) are given by their leading terms as x → 0, whose next terms are smaller
+/// by a factor of about x².
+const TINY_X: f64 = 1e-150;
+
+/// The Euler–Mascheroni constant γ.
+const EULER_GAMMA: f64 = 0.577_215_664_901_532_9;
+
+/// ln K_ν(x) for ν >= 0 and 0 < x < [`TINY_X`], from K₀(x) ~ −ln(x/2) − γ and, for ν > 0,
+/// K_ν(x) ~ ½Γ(ν)(x/2)^{−ν} (1 − Γ(1 − ν)/Γ(1 + ν) (x/2)^{2ν}) (the bracket's second term matters only for ν < 1).
+/// ln(x/2) is formed as ln x − ln 2, since x/2 underflows for the least subnormal x.
+fn log_bessel_k_tiny(nu: f64, x: f64) -> f64 {
+    let log_half_x = x.ln() - LN_2;
+    if nu == 0.0 {
+        return (-log_half_x - EULER_GAMMA).ln();
+    }
+    let leading = ln_gamma(nu) - LN_2 - nu * log_half_x;
+    if nu >= 1.0 {
+        return leading;
+    }
+    let exponent = ln_gamma_reflection_ratio(nu) + 2.0 * nu * log_half_x;
+    leading + (-exponent.exp_m1()).ln()
+}
+
+/// ln Γ(1 − ν) − ln Γ(1 + ν) for 0 <= ν < 1. For small ν it is about 2γν, and the bracket of
+/// [`log_bessel_k_tiny`] cancels down to about 2ν(−ln(x/2) − γ), so the difference of the two ln Γ (each with an
+/// absolute error near the rounding of 1) would lose the relative accuracy; there it is summed from the series
+/// 2(γν + Σ_{odd k >= 3} ζ(k) νᵏ / k) (from DLMF 5.7.3).
+fn ln_gamma_reflection_ratio(nu: f64) -> f64 {
+    if nu >= 0.1 {
+        return ln_gamma(1.0 - nu) - ln_gamma(1.0 + nu);
+    }
+    // ζ(3), ζ(5), …, ζ(19); beyond, ζ(k) = 1 + 2⁻ᵏ to well within the terms' size
+    const ZETA_ODD: [f64; 9] = [
+        1.202_056_903_159_594_3,
+        1.036_927_755_143_37,
+        1.008_349_277_381_922_8,
+        1.002_008_392_826_082_2,
+        1.000_494_188_604_119_5,
+        1.000_122_713_347_578_5,
+        1.000_030_588_236_307,
+        1.000_007_637_197_637_9,
+        1.000_001_908_212_716_6,
+    ];
+    let nu2 = nu * nu;
+    let mut power = nu;
+    let mut sum = EULER_GAMMA * nu;
+    for k in (3..40).step_by(2) {
+        power *= nu2;
+        let zeta = ZETA_ODD
+            .get((k - 3) / 2)
+            .copied()
+            .unwrap_or_else(|| 1.0 + 0.5f64.powi(k as i32));
+        let term = zeta * power / k as f64;
+        sum += term;
+        if term < 1e-18 * sum {
+            break;
+        }
+    }
+    2.0 * sum
+}
+
 /// ln K_ν(x), the log of the modified Bessel function of the second kind, for real ν (K_{−ν} = K_ν) and x >= 0:
 /// ∞ at x = 0, −∞ at x = ∞ and NaN for x < 0 or NaN arguments. It never overflows or underflows.
 ///
 /// Accuracy: an error within 1e-14 × max(1, |ln K_ν|) (so a relative error of about 1e-14 in K_ν where the log is
-/// moderate), checked against 50-digit values for ν from 0 to 2000 and x from 1e-300 to 1e10. It costs a few
-/// dozen operations plus, for |ν| < 30, one per unit of |ν|.
+/// moderate), checked against 50-digit values for ν from 0 to 2000 and x from the least positive float (about
+/// 5e-324) to 1e10. It costs a few dozen operations plus, for |ν| < 30, one per unit of |ν|.
 pub fn log_bessel_k(nu: f64, x: f64) -> f64 {
     if nu.is_nan() || x.is_nan() || x < 0.0 || nu.is_infinite() {
         return f64::NAN;
@@ -559,6 +620,9 @@ pub fn log_bessel_k(nu: f64, x: f64) -> f64 {
     }
     if x.is_infinite() {
         return f64::NEG_INFINITY;
+    }
+    if x < TINY_X {
+        return log_bessel_k_tiny(nu.abs(), x);
     }
     k_core(nu.abs(), x, false).0
 }
@@ -646,7 +710,8 @@ pub fn bessel_k_dx(nu: f64, x: f64) -> f64 {
 /// only for integer ν). It never overflows or underflows.
 ///
 /// Accuracy: an error within 1e-14 × max(1, |ln I_ν|), checked against 50-digit values for ν from 0 to 2000 and x
-/// from 1e-300 to 1e10. For ν < 30 and 30 < x < ν² it costs a continued fraction of about x terms.
+/// from the least positive float (about 5e-324) to 1e10. For ν < 30 and 30 < x < ν² it costs a continued fraction
+/// of about x terms.
 pub fn log_bessel_i(nu: f64, x: f64) -> f64 {
     if nu.is_nan() || x.is_nan() || x < 0.0 || nu < 0.0 || nu.is_infinite() {
         return f64::NAN;
@@ -656,6 +721,14 @@ pub fn log_bessel_i(nu: f64, x: f64) -> f64 {
     }
     if x.is_infinite() {
         return f64::INFINITY;
+    }
+    if x < TINY_X {
+        // I_ν(x) ~ (x/2)^ν / Γ(ν + 1), with ln I₀(x) ~ x²/4
+        return if nu == 0.0 {
+            0.25 * x * x
+        } else {
+            nu * (x.ln() - LN_2) - ln_gamma(nu + 1.0)
+        };
     }
     log_i_core(nu, x, false)
 }
