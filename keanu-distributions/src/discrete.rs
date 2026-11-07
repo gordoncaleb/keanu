@@ -1,6 +1,6 @@
 //! Discrete distributions. Values are integers (`IntTensor`) or booleans (`BoolTensor`).
 
-use crate::continuous::sample_gamma;
+use crate::continuous::{sample_beta_ratio, sample_gamma};
 use crate::error::{Result, invalid_parameter};
 use crate::param::{IntoParam, Param};
 use crate::rng::KeanuRng;
@@ -938,14 +938,7 @@ impl<'a> BetaBinomial<'a> {
         let n = self.n.to_double();
         sample_each(shape, &[&n, &self.alpha, &self.beta], |params| {
             let (a, b) = (params[1], params[2]);
-            let x = sample_gamma(1.0, a, rng)?;
-            let y = sample_gamma(1.0, b, rng)?;
-            // both draws can underflow to 0 for tiny shapes: the probability is then nearly 0 or 1, by the mean
-            let p = if x + y > 0.0 {
-                x / (x + y)
-            } else {
-                f64::from(u8::from(a > b))
-            };
+            let p = sample_beta_ratio(a, b, rng)?;
             Ok(sample_binomial(params[0] as i64, p, rng))
         })
     }

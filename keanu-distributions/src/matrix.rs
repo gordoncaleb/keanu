@@ -15,7 +15,7 @@
 // the negated comparisons (`!(kappa >= 0.0)`) are deliberate: they also catch NaN
 #![allow(clippy::neg_cmp_op_on_partial_ord)]
 
-use crate::continuous::sample_gamma;
+use crate::continuous::{sample_gamma, sample_student_scale};
 use crate::error::{DistributionError, Result, invalid_parameter};
 use crate::event::{EventFamily, EventGradient, event_distribution};
 use crate::param::{IntoParam, Param};
@@ -68,7 +68,9 @@ fn invalid_sampling(what: &str) -> Result<()> {
 }
 
 /// Draws a K × K Bartlett factor A: lower triangular, A_ii = √χ²(ν − i) (zero-based i) and A_ij ~ N(0, 1) below the
-/// diagonal, so that L A Aᵀ Lᵀ ~ Wishart(ν, L Lᵀ).
+/// diagonal, so that L A Aᵀ Lᵀ ~ Wishart(ν, L Lᵀ). A χ² draw below the least positive float is that float (see
+/// `sample_gamma`), so the diagonal is never zero; with ν − K + 1 far below 1, though, the last diagonal element is
+/// usually so small that the matrix is singular to working precision.
 fn bartlett(nu: f64, k: usize, rng: &mut KeanuRng) -> Result<Vec<f64>> {
     let mut a = vec![0.0; k * k];
     for i in 0..k {
@@ -198,7 +200,7 @@ fn sample_student_t(
         dense::cholesky(p[2], k)
     };
     let z: Vec<f64> = (0..k).map(|_| rng.next_gaussian()).collect();
-    let scale = (nu / sample_gamma(2.0, nu / 2.0, rng)?).sqrt();
+    let scale = sample_student_scale(nu, rng)?;
     for i in 0..k {
         let lz: f64 = (0..=i).map(|j| l[i * k + j] * z[j]).sum();
         out[i] = mu[i] + lz * scale;

@@ -40,7 +40,9 @@ pub struct Loaded {
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct LoadOptions {
-    /// The most elements any node (including the nodes of scan bodies) may have. Default 2^31 (16 GiB of `f64`).
+    /// The most elements any node (including the nodes of scan bodies) may have, and the most areas of a spatial
+    /// neighbourhood and rows or columns of a sparse matrix (each sized before its node). Default 2^31 (16 GiB of
+    /// `f64`).
     pub max_elements: usize,
     /// The most steps any scan may have. Default 2^24.
     pub max_scan_steps: usize,
@@ -369,7 +371,7 @@ fn add_node(
         P::Eigvalsh(_) => Op::Eigvalsh,
         P::EighVectors(_) => Op::EighVectors,
         P::MatrixExp(_) => Op::MatrixExp,
-        P::SparseMatmul(p) => Op::SparseMatMul(Arc::new(sparse_matrix(p)?)),
+        P::SparseMatmul(p) => Op::SparseMatMul(Arc::new(sparse_matrix(p, options)?)),
         P::Cast(code) => Op::Cast(decode(*code)?),
         P::Where(_) => Op::Where,
         P::Multiplexer(_) => Op::Multiplexer,
@@ -401,9 +403,12 @@ fn add_node(
         P::Assert(p) => Op::Assert(p.message.clone()),
         P::Factor(_) => Op::Factor,
         P::LogDensity(p) => {
-            Op::LogDensity(distribution_of_type(p.kind.as_ref().ok_or_else(|| {
-                IoError::Decode("a log density has no distribution".into())
-            })?)?)
+            let kind = p
+                .kind
+                .as_ref()
+                .ok_or_else(|| IoError::Decode("a log density has no distribution".into()))?;
+            check_neighbourhoods(kind, options)?;
+            Op::LogDensity(distribution_of_type(kind)?)
         }
         P::Proxy(p) => {
             let dtype: DType = decode(p.dtype)?;
@@ -426,23 +431,56 @@ fn add_node(
             })?))
         }
         P::Distribution(p) => {
-            let kind = distribution_of_type(&proto::DistributionType {
+            let saved = proto::DistributionType {
                 kind: p.kind,
                 kde: p.kde.clone(),
                 base: p.base.clone().map(Box::new),
                 adjacency: p.adjacency.clone(),
                 components: p.components.clone(),
                 bijector: p.bijector,
-            })?;
+            };
+            check_neighbourhoods(&saved, options)?;
+            let kind = distribution_of_type(&saved)?;
             return Ok(builder.add_distribution(kind, Some(&shape_of(&p.shape)?), parents)?);
         }
     };
     Ok(builder.add_node(op, parents)?)
 }
 
-/// A sparse matrix from its saved triplets.
-pub(crate) fn sparse_matrix(p: &proto::SparseMatrix) -> Result<keanu_tensor::SparseMatrix> {
+/// An error if a saved distribution (or one nested in it) has a neighbourhood of more areas than
+/// [`LoadOptions::max_elements`]: its node would have at least that many elements, and building the neighbourhood
+/// allocates for each area before the node's shape is checked.
+fn check_neighbourhoods(saved: &proto::DistributionType, options: &LoadOptions) -> Result<()> {
+    if let Some(adjacency) = &saved.adjacency {
+        if usize::try_from(adjacency.areas).map_or(true, |n| n > options.max_elements) {
+            return Err(IoError::Decode(format!(
+                "a neighbourhood of {} areas has more than the limit of {} elements",
+                adjacency.areas, options.max_elements
+            )));
+        }
+    }
+    saved
+        .base
+        .iter()
+        .map(|base| &**base)
+        .chain(&saved.components)
+        .try_for_each(|nested| check_neighbourhoods(nested, options))
+}
+
+/// A sparse matrix from its saved triplets. Its rows and columns are each limited to
+/// [`LoadOptions::max_elements`] (a product with it has at least that many elements), since building it
+/// allocates for each row.
+pub(crate) fn sparse_matrix(
+    p: &proto::SparseMatrix,
+    options: &LoadOptions,
+) -> Result<keanu_tensor::SparseMatrix> {
     let (rows, cols) = (usize_of(p.rows)?, usize_of(p.cols)?);
+    if rows.max(cols) > options.max_elements {
+        return Err(IoError::Decode(format!(
+            "a {rows} × {cols} sparse matrix has a dimension above the limit of {} elements",
+            options.max_elements
+        )));
+    }
     if p.row_indices.len() != p.values.len() || p.col_indices.len() != p.values.len() {
         return Err(IoError::Decode(format!(
             "a sparse matrix has {} row indices, {} column indices and {} values",

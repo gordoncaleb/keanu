@@ -4,7 +4,7 @@
 // the negated comparisons (`!(kappa >= 0.0)`) are deliberate: they also catch NaN
 #![allow(clippy::neg_cmp_op_on_partial_ord)]
 
-use crate::continuous::sample_gamma;
+use crate::continuous::sample_dirichlet;
 use crate::discrete::sample_binomial;
 use crate::error::{DistributionError, Result, invalid_parameter};
 use crate::event::{EventFamily, EventGradient, Events};
@@ -176,20 +176,24 @@ impl<'a> DirichletMultinomial<'a> {
                     "a Dirichlet-multinomial needs n >= 0 and positive concentrations",
                 );
             }
-            let gammas = alpha
-                .iter()
-                .map(|&a| sample_gamma(1.0, a, rng))
-                .collect::<Result<Vec<_>>>()?;
+            // the Dirichlet draw from the Gamma draws' logs, so it is a probability vector even when every Gamma
+            // draw would underflow (every α well below 1)
+            let probabilities = sample_dirichlet(alpha, rng)?;
             // the multinomial by conditional binomials: each count out of what is left, with its share of what is
-            // left of the probability
+            // left of the probability; the last category takes the remainder, so the counts always sum to n
             let mut remaining = n as i64;
-            let mut left: f64 = gammas.iter().sum();
-            for (o, g) in out.iter_mut().zip(&gammas) {
-                let p = if left > 0.0 { (g / left).min(1.0) } else { 0.0 };
-                let count = sample_binomial(remaining, p, rng);
+            let mut left = 1.0;
+            let last = out.len().saturating_sub(1);
+            for (i, (o, p)) in out.iter_mut().zip(&probabilities).enumerate() {
+                let count = if i == last {
+                    remaining
+                } else {
+                    let share = if left > 0.0 { (p / left).min(1.0) } else { 0.0 };
+                    sample_binomial(remaining, share, rng)
+                };
                 *o = count as f64;
                 remaining -= count;
-                left -= g;
+                left -= p;
             }
             Ok(())
         })?;

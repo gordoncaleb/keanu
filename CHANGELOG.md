@@ -739,6 +739,24 @@ Work from `docs/plans/2026-11-05-001-feat-applied-modelling-gaps-plan.md`.
     their posterior draws (made given the node's old value), so a latent mediator follows the intervention.
     `Intervened::carried` leaves out the nodes downstream of an intervention, and `Intervened::is_downstream` and
     `Intervened::downstream` name them.
+  - keanu-distributions: the samplers built on ratios of Gamma draws (Dirichlet, Dirichlet-multinomial, Beta,
+    beta-binomial, the LKJ's Beta draws, the half Student-t and multivariate Student-t scales, the generalized
+    gamma) form them from the draws' logs, drawn for shapes below 1 as ln G′ + ln U / k with G′ ~ Gamma(k + 1), so
+    they stay valid where every Gamma draw underflows: a Dirichlet-multinomial's counts always sum to n (the last
+    category takes the remainder), and a Dirichlet draw is a probability vector, for α = 0.001. A Gamma draw is
+    never 0 (the least positive float instead), so a Wishart's Bartlett diagonal is never 0. The Beta sampler draws
+    each element's two Gamma draws in turn, so its draws for a seed differ from before.
+  - keanu-distributions: LogitNormal and Kumaraswamy draws, and their quantiles of probabilities strictly inside
+    (0, 1), and Beta draws, stay strictly inside their open supports.
+  - keanu-distributions: the Wiener density passes the start's distance from the other boundary separately, so
+    the upper boundary's density keeps its precision for a tiny w (it was −∞ at w = 1e-17), the large-time series
+    writing sin(kπ(1 − ε)) as (−1)^{k+1} sin(kπε) and the small-time series pairing its images in ε; and the
+    sampler's inverse Gaussian proposal no longer overflows for a tiny nonzero drift (sampling failed below
+    |aν| ≈ 1e-154).
+  - keanu-tensor, keanu-distributions, keanu-io: `SparseMatrix::from_csr` and `from_triplets`,
+    `Adjacency::from_edges` and `Adjacency::lattice` return errors rather than panicking or aborting for sizes
+    whose arithmetic overflows or whose arrays can't be allocated, and loading rejects a sparse matrix with more
+    rows or columns, or a neighbourhood with more areas, than `LoadOptions::max_elements` before building it.
   - keanu-graph: the documentation of `Parameterisation::hvp_with` says that its finite differences never evaluate
     the log probability at z, and that setting the latents back to z can fail with the evaluation's error.
 

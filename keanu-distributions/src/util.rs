@@ -236,3 +236,25 @@ pub(crate) fn digamma(x: f64) -> f64 {
 pub(crate) fn scalar(v: f64) -> DoubleTensor {
     DoubleTensor::scalar(v)
 }
+
+/// The least float greater than `x` (`f64::next_up`, which needs a newer Rust than the MSRV), for finite `x`.
+pub(crate) fn next_up(x: f64) -> f64 {
+    if x == 0.0 {
+        f64::from_bits(1)
+    } else if x > 0.0 {
+        f64::from_bits(x.to_bits() + 1)
+    } else {
+        f64::from_bits(x.to_bits() - 1)
+    }
+}
+
+/// The greatest float less than `x`, for finite `x`.
+pub(crate) fn next_down(x: f64) -> f64 {
+    -next_up(-x)
+}
+
+/// `x` moved strictly inside (lo, hi), for a draw that rounded onto a bound of an open support: the nearest float
+/// inside. (Bounds that are adjacent floats leave nothing inside; `x` is then moved onto one of them.)
+pub(crate) fn strictly_inside(x: f64, lo: f64, hi: f64) -> f64 {
+    x.max(next_up(lo)).min(next_down(hi))
+}

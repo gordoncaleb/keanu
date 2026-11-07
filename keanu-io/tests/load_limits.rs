@@ -111,3 +111,52 @@ fn nodes_with_too_many_elements_are_rejected() {
     options.max_elements = 1 << 19;
     assert!(rejected(load_protobuf_with(&scan, &options)));
 }
+
+/// The JSON of the graph `build` makes, with `from` replaced by `to` (once).
+#[cfg(feature = "json")]
+fn tampered_json(build: impl FnOnce(&GraphBuilder), from: &str, to: &str) -> String {
+    let b = GraphBuilder::new();
+    build(&b);
+    let (graph, state) = b.build().unwrap();
+    let text = keanu_io::save_json(&graph, &state, &Metadata::new()).unwrap();
+    assert_eq!(text.matches(from).count(), 1, "{from} in {text}");
+    text.replace(from, to)
+}
+
+#[cfg(feature = "json")]
+#[test]
+fn a_huge_sparse_matrix_or_neighbourhood_is_an_error_not_an_abort() {
+    use keanu_distributions::Adjacency;
+    use keanu_tensor::{DoubleTensor, SparseMatrix};
+    use std::sync::Arc;
+    let sparse = |b: &GraphBuilder| {
+        let a = SparseMatrix::from_triplets(3, 2, &[(0, 0, 1.0), (2, 1, 2.0)]).unwrap();
+        b.constant(DoubleTensor::vector(vec![1.0, 2.0]))
+            .sparse_matmul(Arc::new(a));
+    };
+    let neighbourhood = |b: &GraphBuilder| {
+        let adjacency = Arc::new(Adjacency::from_edges(3, &[(0, 1), (1, 2)]).unwrap());
+        b.icar(adjacency, 1.0);
+    };
+    for huge in [
+        u64::MAX.to_string(),
+        (1u64 << 62).to_string(),
+        (1u64 << 40).to_string(),
+    ] {
+        for text in [
+            tampered_json(sparse, "\"rows\": \"3\"", &format!("\"rows\": \"{huge}\"")),
+            tampered_json(sparse, "\"cols\": \"2\"", &format!("\"cols\": \"{huge}\"")),
+            tampered_json(
+                neighbourhood,
+                "\"areas\": \"3\"",
+                &format!("\"areas\": \"{huge}\""),
+            ),
+        ] {
+            let result = keanu_io::load_json(&text);
+            assert!(
+                matches!(result, Err(IoError::InvalidNode { .. })),
+                "{huge}: {result:?}"
+            );
+        }
+    }
+}

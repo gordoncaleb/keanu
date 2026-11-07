@@ -70,8 +70,8 @@ impl Adjacency {
     ///
     /// # Errors
     ///
-    /// [`DistributionError::InvalidParameter`] for an area index of `n` or more, or an edge from an area to
-    /// itself.
+    /// [`DistributionError::InvalidParameter`] for an area index of `n` or more, an edge from an area to itself,
+    /// or a number of areas too large to allocate.
     pub fn from_edges(n: usize, edges: &[(usize, usize)]) -> Result<Self> {
         let mut normalised = Vec::with_capacity(edges.len());
         for &(i, j) in edges {
@@ -87,7 +87,11 @@ impl Adjacency {
         }
         normalised.sort_unstable();
         normalised.dedup();
-        let mut degrees = vec![0.0; n];
+        let mut degrees = Vec::new();
+        if degrees.try_reserve_exact(n).is_err() {
+            return invalid_parameter(format!("a neighbourhood of {n} areas can't be allocated"));
+        }
+        degrees.resize(n, 0.0);
         let mut triplets = Vec::with_capacity(2 * normalised.len());
         for &(i, j) in &normalised {
             degrees[i] += 1.0;
@@ -158,8 +162,12 @@ impl Adjacency {
     ///
     /// # Errors
     ///
-    /// Never, in practice (the edges are valid by construction).
+    /// [`DistributionError::InvalidParameter`] if the number of cells overflows or is too large to allocate (the
+    /// edges are valid by construction).
     pub fn lattice(rows: usize, cols: usize) -> Result<Self> {
+        let Some(n) = rows.checked_mul(cols) else {
+            return invalid_parameter(format!("a {rows} × {cols} lattice has too many areas"));
+        };
         let mut edges = Vec::new();
         for r in 0..rows {
             for c in 0..cols {
@@ -172,7 +180,7 @@ impl Adjacency {
                 }
             }
         }
-        Self::from_edges(rows * cols, &edges)
+        Self::from_edges(n, &edges)
     }
 
     /// The number of areas.

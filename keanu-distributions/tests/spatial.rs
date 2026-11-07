@@ -400,3 +400,10 @@ fn invalid_neighbourhoods_values_and_parameters_are_errors() {
         assert!(car.sample(&[3], &mut KeanuRng::seed_from_u64(1)).is_err());
     }
 }
+
+#[test]
+fn a_neighbourhood_too_large_to_build_is_an_error() {
+    assert!(Adjacency::from_edges(usize::MAX, &[(0, 1)]).is_err());
+    assert!(Adjacency::from_edges(1 << 62, &[]).is_err());
+    assert!(Adjacency::lattice(usize::MAX, 2).is_err());
+}

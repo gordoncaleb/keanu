@@ -7,6 +7,16 @@ use super::derived::{check_all, outside, uniform_open};
 use super::*;
 use keanu_tensor::special::ndtri;
 
+/// A quantile for the probability `p`: the bound itself for p = 0 or 1 (or NaN), otherwise moved strictly inside
+/// (0, 1) if it rounded onto a bound, as it does far into either tail.
+fn interior_quantile(x: f64, p: f64) -> f64 {
+    if p > 0.0 && p < 1.0 {
+        strictly_inside(x, 0.0, 1.0)
+    } else {
+        x
+    }
+}
+
 /// The log CDF (or survival function) outside (0, 1), or None inside.
 fn unit_outside<const K: usize>(x: f64, upper: bool) -> Option<Jet<K>> {
     if x <= 0.0 {
@@ -62,18 +72,20 @@ fn kumaraswamy_log_cdf<const K: usize>(x: Jet<K>, [a, b]: [Jet<K>; 2], upper: bo
 }
 
 impl Kumaraswamy<'_> {
-    /// The element-wise inverse CDF: the x with P(X <= x) = p, for p in [0, 1].
+    /// The element-wise inverse CDF: the x with P(X <= x) = p, for p in [0, 1]; strictly inside (0, 1) for p
+    /// strictly inside it.
     pub fn inverse_cdf(&self, p: &DoubleTensor) -> Result<DoubleTensor> {
         map((p, &*self.a, &*self.b), |(p, a, b)| {
             // 1 − x^a = (1 − p)^{1/b}
-            ((-((-p).ln_1p() / b).exp_m1()).ln() / a).exp()
+            interior_quantile(((-((-p).ln_1p() / b).exp_m1()).ln() / a).exp(), p)
         })
     }
 
-    /// The element-wise inverse survival function: the x with P(X > x) = q, for q in [0, 1].
+    /// The element-wise inverse survival function: the x with P(X > x) = q, for q in [0, 1]; strictly inside
+    /// (0, 1) for q strictly inside it.
     pub fn inverse_ccdf(&self, q: &DoubleTensor) -> Result<DoubleTensor> {
         map((q, &*self.a, &*self.b), |(q, a, b)| {
-            ((-(q.ln() / b).exp_m1()).ln() / a).exp()
+            interior_quantile(((-(q.ln() / b).exp_m1()).ln() / a).exp(), q)
         })
     }
 
@@ -138,26 +150,29 @@ fn logit_normal_log_cdf<const K: usize>(
 }
 
 impl LogitNormal<'_> {
-    /// The element-wise inverse CDF: the x with P(X <= x) = p, for p in [0, 1].
+    /// The element-wise inverse CDF: the x with P(X <= x) = p, for p in [0, 1]; strictly inside (0, 1) for p
+    /// strictly inside it.
     pub fn inverse_cdf(&self, p: &DoubleTensor) -> Result<DoubleTensor> {
         map((p, &*self.mu, &*self.sigma), |(p, mu, sigma)| {
-            sigmoid(mu + sigma * ndtri(p))
+            interior_quantile(sigmoid(mu + sigma * ndtri(p)), p)
         })
     }
 
-    /// The element-wise inverse survival function: the x with P(X > x) = q, for q in [0, 1].
+    /// The element-wise inverse survival function: the x with P(X > x) = q, for q in [0, 1]; strictly inside
+    /// (0, 1) for q strictly inside it.
     pub fn inverse_ccdf(&self, q: &DoubleTensor) -> Result<DoubleTensor> {
         map((q, &*self.mu, &*self.sigma), |(q, mu, sigma)| {
-            sigmoid(mu - sigma * ndtri(q))
+            interior_quantile(sigmoid(mu - sigma * ndtri(q)), q)
         })
     }
 
-    /// Draws a sample of the given shape (broadcast with the parameters' shapes), as the sigmoid of a normal draw.
-    /// An error unless σ is positive.
+    /// Draws a sample of the given shape (broadcast with the parameters' shapes), as the sigmoid of a normal draw,
+    /// strictly inside (0, 1) (a draw that rounded onto a bound, as one far into a tail does, is moved just inside
+    /// it). An error unless σ is positive.
     pub fn sample(&self, shape: &[usize], rng: &mut KeanuRng) -> Result<DoubleTensor> {
         require_positive("sigma", &self.sigma)?;
         let shape = sample_shape(shape, &[self.mu.shape(), self.sigma.shape()])?;
         let normal = rng.gaussian(&shape).mul(&self.sigma)?.add(&self.mu)?;
-        Ok(normal.map(sigmoid))
+        Ok(normal.map(|z| strictly_inside(sigmoid(z), 0.0, 1.0)))
     }
 }

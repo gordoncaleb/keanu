@@ -100,24 +100,20 @@ impl<'a> Beta<'a> {
                 self.x_max.shape(),
             ],
         )?;
-        let y1 = Gamma::new(scalar(1.0), &*self.alpha).sample(&shape, rng)?;
-        let y2 = Gamma::new(scalar(1.0), &*self.beta).sample(&shape, rng)?;
-        map(
-            (
-                &y1,
-                &y2,
-                &*self.alpha,
-                &*self.beta,
-                &*self.x_min,
-                &*self.x_max,
-            ),
-            |(y1, y2, alpha, beta, min, max)| {
-                // same arithmetic as Java: from the upper bound when alpha < beta, from the lower bound otherwise
-                if alpha < beta {
-                    max - y2 / (y1 + y2) * (max - min)
+        sample_each(
+            &shape,
+            &[&self.alpha, &self.beta, &self.x_min, &self.x_max],
+            |p| {
+                let (alpha, beta, min, max) = (p[0], p[1], p[2], p[3]);
+                // the share of the range from the bound the draw is likelier to be far from, from the Gamma draws'
+                // logs (which don't underflow for small shapes), so values near either bound keep their precision
+                let x = if alpha < beta {
+                    max - sample_beta_ratio(beta, alpha, rng)? * (max - min)
                 } else {
-                    min + y1 / (y1 + y2) * (max - min)
-                }
+                    min + sample_beta_ratio(alpha, beta, rng)? * (max - min)
+                };
+                // the support is open: a draw that rounded onto a bound is moved just inside it
+                Ok(strictly_inside(x, min, max))
             },
         )
     }

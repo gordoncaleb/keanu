@@ -36,6 +36,26 @@ fn invalid<T>(message: String) -> Result<T> {
     Err(TensorError::InvalidArgument(message))
 }
 
+/// `rows + 1`, the number of row offsets, or an error if it overflows.
+fn offset_count(rows: usize) -> Result<usize> {
+    rows.checked_add(1).map_or_else(
+        || invalid(format!("a sparse matrix can't have {rows} rows")),
+        Ok,
+    )
+}
+
+/// A vector of `len` zeros, or an error (not an abort) if it can't be allocated.
+fn zeros(len: usize) -> Result<Vec<usize>> {
+    let mut v = Vec::new();
+    if v.try_reserve_exact(len).is_err() {
+        return invalid(format!(
+            "a sparse matrix's {len} row offsets can't be allocated"
+        ));
+    }
+    v.resize(len, 0);
+    Ok(v)
+}
+
 impl SparseMatrix {
     /// A matrix from its CSR arrays: `row_offsets` has `rows + 1` non-decreasing entries starting at 0 and ending
     /// at the number of stored entries, and row i's entries are `col_indices[row_offsets[i]..row_offsets[i + 1]]`
@@ -43,9 +63,9 @@ impl SparseMatrix {
     ///
     /// # Errors
     ///
-    /// [`TensorError::InvalidArgument`] if the offsets are malformed, the arrays' lengths differ, a column index is
-    /// out of range, a row's column indices are not strictly increasing (sorted and unique), or a value is not
-    /// finite.
+    /// [`TensorError::InvalidArgument`] if the offsets are malformed (including `rows + 1` overflowing), the arrays'
+    /// lengths differ, a column index is out of range, a row's column indices are not strictly increasing (sorted
+    /// and unique), or a value is not finite.
     pub fn from_csr(
         rows: usize,
         cols: usize,
@@ -53,10 +73,10 @@ impl SparseMatrix {
         col_indices: Vec<usize>,
         values: Vec<f64>,
     ) -> Result<Self> {
-        if row_offsets.len() != rows + 1 {
+        let count = offset_count(rows)?;
+        if row_offsets.len() != count {
             return invalid(format!(
-                "a sparse matrix of {rows} rows needs {} row offsets, not {}",
-                rows + 1,
+                "a sparse matrix of {rows} rows needs {count} row offsets, not {}",
                 row_offsets.len()
             ));
         }
@@ -107,8 +127,8 @@ impl SparseMatrix {
     ///
     /// # Errors
     ///
-    /// [`TensorError::InvalidArgument`] if an index is out of range, a position is given twice, or a value is not
-    /// finite.
+    /// [`TensorError::InvalidArgument`] if an index is out of range, a position is given twice, a value is not
+    /// finite, or the row offsets (one per row, plus one) can't be allocated.
     pub fn from_triplets(
         rows: usize,
         cols: usize,
@@ -127,7 +147,7 @@ impl SparseMatrix {
         {
             return invalid(format!("the entry ({}, {}) is given twice", w[0].0, w[0].1));
         }
-        let mut row_offsets = vec![0; rows + 1];
+        let mut row_offsets = zeros(offset_count(rows)?)?;
         for &(i, _, _) in &sorted {
             row_offsets[i + 1] += 1;
         }

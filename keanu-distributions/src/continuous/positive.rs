@@ -156,7 +156,56 @@ impl<'a> Gamma<'a> {
     }
 }
 
+/// A Gamma(k, θ) draw (shape k, scale θ). A draw below the least positive float (likely for k well below 1, whose
+/// draws are mostly far below it) is that float rather than 0, which is outside the support. Where the draws' ratios
+/// matter, use [`sample_log_gamma`], which doesn't underflow.
 pub(crate) fn sample_gamma(theta: f64, k: f64, rng: &mut KeanuRng) -> Result<f64> {
+    Ok(sample_gamma_or_zero(theta, k, rng)?.max(f64::from_bits(1)))
+}
+
+/// The log of a Gamma(k, 1) draw, accurate where the draw itself would underflow: for k < 1, as
+/// ln G′ + ln U / k with G′ ~ Gamma(k + 1, 1) and U ~ Uniform(0, 1) (Marsaglia & Tsang 2000), which stays finite
+/// for any positive k; for k ≥ 1 the log of [`sample_gamma`]'s draw, from the same random numbers.
+pub(crate) fn sample_log_gamma(k: f64, rng: &mut KeanuRng) -> Result<f64> {
+    if k >= 1.0 {
+        return Ok(sample_gamma(1.0, k, rng)?.ln());
+    }
+    let g = sample_gamma(1.0, k + 1.0, rng)?;
+    Ok(g.ln() + rng.next_f64_non_zero().ln() / k)
+}
+
+/// A Dirichlet(α) draw, the normalised Gamma(α_i, 1) draws, formed from their logs: a probability vector (finite,
+/// summing to 1) even when every Gamma draw would underflow (every α well below 1).
+pub(crate) fn sample_dirichlet(alpha: &[f64], rng: &mut KeanuRng) -> Result<Vec<f64>> {
+    let logs = alpha
+        .iter()
+        .map(|&a| sample_log_gamma(a, rng))
+        .collect::<Result<Vec<_>>>()?;
+    let max = logs.iter().copied().fold(f64::NEG_INFINITY, f64::max);
+    let weights: Vec<f64> = logs.iter().map(|l| (l - max).exp()).collect();
+    let total: f64 = weights.iter().sum();
+    Ok(weights.iter().map(|w| w / total).collect())
+}
+
+/// A Beta(a, b) draw, G_a / (G_a + G_b), formed from the Gamma draws' logs so that it doesn't become 0/0 when both
+/// underflow (a and b well below 1). It may round to 0 or 1.
+pub(crate) fn sample_beta_ratio(a: f64, b: f64, rng: &mut KeanuRng) -> Result<f64> {
+    let x = sample_log_gamma(a, rng)?;
+    let y = sample_log_gamma(b, rng)?;
+    Ok(sigmoid(x - y))
+}
+
+/// √(ν / χ²_ν), the scale of a Student-t draw over a normal one, formed from the χ² draw's log so that it stays finite
+/// (unless the true value exceeds the largest float) when the draw underflows (ν well below 1).
+pub(crate) fn sample_student_scale(nu: f64, rng: &mut KeanuRng) -> Result<f64> {
+    if nu.is_nan() || nu <= 0.0 {
+        return invalid_parameter(format!("nu must be positive, got {nu}"));
+    }
+    let log_chi2 = std::f64::consts::LN_2 + sample_log_gamma(nu / 2.0, rng)?;
+    Ok((0.5 * (nu.ln() - log_chi2)).exp())
+}
+
+fn sample_gamma_or_zero(theta: f64, k: f64, rng: &mut KeanuRng) -> Result<f64> {
     if theta <= 0.0 || k <= 0.0 || theta.is_nan() || k.is_nan() {
         return invalid_parameter(format!(
             "theta and k must be positive, got theta {theta} and k {k}"

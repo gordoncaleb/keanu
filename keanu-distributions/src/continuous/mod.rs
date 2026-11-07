@@ -9,7 +9,7 @@ use crate::param::{IntoParam, Param};
 use crate::rng::KeanuRng;
 use crate::util::{
     digamma, ln_gamma, map, map_n, require_ordered, require_positive, safe_ln_times, sample_each,
-    sample_shape, scalar, sigmoid, softplus,
+    sample_shape, scalar, sigmoid, softplus, strictly_inside,
 };
 use keanu_tensor::DoubleTensor;
 use keanu_tensor::special::{log_bessel_i0, log_bessel_i1};

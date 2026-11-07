@@ -205,6 +205,7 @@ Execution order: U1, U2, U3, U4, U5, U6, U7, U8, U9, U11, U10, U12, U13, then a 
   - save/load round trip;
   - malformed triplets are rejected;
   - empty rows and an all-zero matrix work.
+- **Code review:** `SparseMatrix::from_csr` and `from_triplets` check `rows + 1` for overflow and allocate the row offsets fallibly, so huge sizes are errors rather than panics or aborts (`keanu-tensor/tests/sparse_sizes.rs`), and keanu-io rejects a saved sparse matrix with more rows or columns than `LoadOptions::max_elements` before building it (`keanu-io/tests/load_limits.rs`).
 
 ### U2. ICAR, proper CAR and BYM2
 - **Requirements:** R2.
@@ -221,6 +222,7 @@ Execution order: U1, U2, U3, U4, U5, U6, U7, U8, U9, U11, U10, U12, U13, then a 
   - sampler moments match the precision's generalised inverse;
   - NUTS on BYM2 with simulated data recovers ρ and σ roughly.
 - **Implementation note:** the neighbourhood is `keanu_distributions::Adjacency` (edge list in either orientation with repeats merged, a symmetric 0/1 matrix, or `Adjacency::lattice`), carried by the kinds as `DistributionKind::Icar(Arc<Adjacency>)` and `Car(Arc<Adjacency>)` like the KDE's samples, and saved as an `Adjacency` message. Its eigendecompositions (the CAR eigenvalues, each component's Laplacian for ICAR sampling, the scaling factors) are computed on first use and cached; `GraphBuilder::car` computes the eigenvalues when the node is built, so an island is an error there. The ICAR's `−(n − components)·log σ` counts only components of two or more areas: each island has its own N(0, σ²) (so contributes −log σ) and is not constrained, since a one-area sum-to-zero would pin it at 0; the support `Support::SumToZeroComponents` lists the constrained groups. The ICAR drops its normalising constant (AE1's −½ φᵀQφ), the CAR keeps it (AE2). σ, τ and α are scalar parameters, and the CAR has mean zero (add a mean node outside it). `bym2` returns the three nodes as `Bym2 { spatial, unstructured, effect }`. Tests: `keanu-distributions/tests/spatial.rs` (AE1's density and scaling factor, AE2 against the dense precision to 1e-10, components and islands, gradients, both samplers' covariances), `keanu-graph/tests/{spatial,transform,support,hessian}.rs` (nodes, the bijector, HVPs of both kinds), and `keanu-algorithms/tests/spatial.rs` (AE1's NUTS constraint on a 10 × 10 lattice plus a path and an island; BYM2 on a 12 × 12 lattice with two Gaussian observations per area recovering σ and ρ in their 90% intervals, about 15 s).
+- **Code review:** `Adjacency::from_edges` allocates its areas fallibly and `Adjacency::lattice` checks rows × cols for overflow (`keanu-distributions/tests/spatial.rs`); keanu-io rejects a saved neighbourhood of more areas than `LoadOptions::max_elements` before building it.
 
 ### U3. Disease-mapping example and book chapter
 - **Requirements:** R3.
@@ -306,6 +308,7 @@ Execution order: U1, U2, U3, U4, U5, U6, U7, U8, U9, U11, U10, U12, U13, then a 
   log-density op, mixtures, truncated and censored sampling and renormalisation, gradients through the graph),
   `keanu-graph/tests/{hessian,support}.rs` (every kind, and truncated and censored forms of every kind with a CDF)
   and keanu-io's round trip.
+- **Code review:** LogitNormal and Kumaraswamy draws and interior quantiles, and Beta draws, stay strictly inside their open supports (`keanu-distributions/tests/tiny_shape_samplers.rs`).
 
 ### U6. Discrete and multivariate distributions
 - **Requirements:** R6, R9.
@@ -346,6 +349,7 @@ Execution order: U1, U2, U3, U4, U5, U6, U7, U8, U9, U11, U10, U12, U13, then a 
   `keanu-algorithms/tests/discrete_multivariate_families.rs` (NUTS recovers an inverse Wishart covariance and a von
   Mises–Fisher mean direction; Gibbs matches enumeration for hypergeometric and ordered probit latents) and
   keanu-io's round trip.
+- **Code review:** the Gamma-ratio samplers (Dirichlet, Dirichlet-multinomial, Beta, beta-binomial, LKJ's Beta draws, Student-t scales, generalized gamma) form their draws from the Gamma draws' logs (`sample_log_gamma`: ln G′ + ln U / k for k < 1), so they stay valid when every Gamma draw would underflow; the Dirichlet-multinomial gives the last category the remainder; a Gamma draw is never 0. The Wishart's Bartlett diagonal is then never zero, but with ν − K + 1 far below 1 the draw is singular to working precision, which no rounding can avoid (`keanu-distributions/tests/tiny_shape_samplers.rs`).
 
 ### U7. Wiener first-passage time and DDM example
 - **Requirements:** R7.
@@ -377,6 +381,7 @@ Execution order: U1, U2, U3, U4, U5, U6, U7, U8, U9, U11, U10, U12, U13, then a 
   subject drifts: over data seeds 1 to 30 no seed covered all 19 quantities (about 2.1 misses per seed against
   1.9 expected at 90%, the misses within a subject correlated), so the subject drifts are checked for convergence
   only; data seed 15 covers the 11 (as do 13, 22, 26 and 27).
+- **Code review:** the density passes the start's distance from the other boundary separately, so the upper boundary's density for a tiny w keeps its precision (the large-time series uses (−1)^{k+1} sin(kπε), the small-time series pairs its images in ε where ε < u); the inverse Gaussian proposal is computed without overflow for a tiny drift and falls back to the Lévy draw where its c overflows (`keanu-distributions/tests/wiener_extremes.rs`).
 
 ### U8. Heterogeneous mixtures and transformed distributions
 - **Requirements:** R8, R9.

@@ -1,6 +1,6 @@
 //! Distributions over vectors.
 
-use crate::continuous::sample_gamma;
+use crate::continuous::{sample_beta_ratio, sample_dirichlet};
 use crate::error::{DistributionError, Result, invalid_parameter};
 use crate::param::{IntoParam, Param};
 use crate::rng::KeanuRng;
@@ -206,17 +206,11 @@ impl<'a> Dirichlet<'a> {
         })
     }
 
-    /// One probability vector, from normalised Gamma(1, concentration) draws.
+    /// One probability vector, from normalised Gamma(1, concentration) draws (normalised from their logs, so the
+    /// vector sums to 1 even for concentrations so small that every Gamma draw would underflow).
     pub fn sample(&self, rng: &mut KeanuRng) -> Result<DoubleTensor> {
-        let draws = self
-            .concentration
-            .as_slice()
-            .iter()
-            .map(|&k| sample_gamma(1.0, k, rng))
-            .collect::<Result<Vec<_>>>()?;
-        let gammas = DoubleTensor::new(self.concentration.shape(), draws)?;
-        let total = gammas.sum();
-        Ok(&gammas / total)
+        let draws = sample_dirichlet(self.concentration.as_slice(), rng)?;
+        Ok(DoubleTensor::new(self.concentration.shape(), draws)?)
     }
 }
 
@@ -412,9 +406,7 @@ fn in_correlation_cholesky_support(l: &[f64], k: usize) -> bool {
 
 /// A Beta(a, b) draw, as the ratio of Gamma draws.
 fn sample_beta(a: f64, b: f64, rng: &mut KeanuRng) -> Result<f64> {
-    let x = sample_gamma(1.0, a, rng)?;
-    let y = sample_gamma(1.0, b, rng)?;
-    Ok(x / (x + y))
+    sample_beta_ratio(a, b, rng)
 }
 
 /// The zero-sum normal distribution over the last dimension, as PyMC's `ZeroSumNormal`: a Gaussian N(0, σ² I)

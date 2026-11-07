@@ -6,7 +6,7 @@
 
 use super::derived::{check_all, log_complement, outside, uniform_open};
 use super::*;
-use crate::continuous::positive::sample_gamma;
+use crate::continuous::positive::{sample_log_gamma, sample_student_scale};
 use keanu_tensor::special::logit;
 
 derived_distribution! {
@@ -164,8 +164,7 @@ impl HalfStudentT<'_> {
                     "nu and sigma must be positive, got {nu} and {sigma}"
                 ));
             }
-            let chi2 = sample_gamma(2.0, 0.5 * nu, rng)?;
-            Ok(sigma * rng.next_gaussian().abs() / (chi2 / nu).sqrt())
+            Ok(sigma * rng.next_gaussian().abs() * sample_student_scale(nu, rng)?)
         })
     }
 }
@@ -367,7 +366,8 @@ impl GeneralizedGamma<'_> {
             || "theta, k and p must be positive".into(),
         )?;
         sample_each(shape, &[&self.theta, &self.k, &self.p], |q| {
-            Ok(q[0] * sample_gamma(1.0, q[1], rng)?.powf(1.0 / q[2]))
+            // from the Gamma draw's log, which doesn't underflow for a small k; the draw stays positive
+            Ok((q[0] * (sample_log_gamma(q[1], rng)? / q[2]).exp()).max(f64::from_bits(1)))
         })
     }
 }

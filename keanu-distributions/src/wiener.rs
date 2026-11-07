@@ -272,9 +272,9 @@ pub fn sample_wiener(
         let nu = p.a * (p.v + p.sv * rng.next_gaussian());
         let upper = rng.next_f64() < upper_probability(nu, p.w);
         let u = if upper {
-            lower_time(1.0 - p.w, -nu, rng)?
+            lower_time(1.0 - p.w, p.w, -nu, rng)?
         } else {
-            lower_time(p.w, nu, rng)?
+            lower_time(p.w, 1.0 - p.w, nu, rng)?
         };
         times.push(p.t0 + p.a * p.a * u);
         boundaries.push(i64::from(upper));
@@ -323,17 +323,18 @@ impl Parameters {
     /// lower one. Reflected so that the boundary is the lower one, the trial's drift ν (in units of a) is drawn
     /// from its distribution given the boundary (if sv > 0), then the time given ν.
     fn conditional_time(&self, upper: bool, rng: &mut KeanuRng) -> Result<f64> {
-        let (w, m) = if upper {
-            (1.0 - self.w, -self.a * self.v)
+        // the start's distance from the boundary and from the other one, each exact
+        let (w, complement, m) = if upper {
+            (1.0 - self.w, self.w, -self.a * self.v)
         } else {
-            (self.w, self.a * self.v)
+            (self.w, 1.0 - self.w, self.a * self.v)
         };
         let nu = if self.sv > 0.0 {
             drift_given_lower(w, m, self.a * self.sv, rng)?
         } else {
             m
         };
-        Ok(self.t0 + self.a * self.a * lower_time(w, nu, rng)?)
+        Ok(self.t0 + self.a * self.a * lower_time(w, complement, nu, rng)?)
     }
 }
 
@@ -380,8 +381,8 @@ fn drift_given_lower(w: f64, m: f64, s: f64, rng: &mut KeanuRng) -> Result<f64> 
 
 /// A first-passage time, in units of a², of the standard process from w with drift ν given that it ends at the
 /// lower boundary, by rejection from the inverse Gaussian time to first reach that boundary alone (see
-/// [`sample_wiener`]).
-fn lower_time(w: f64, nu: f64, rng: &mut KeanuRng) -> Result<f64> {
+/// [`sample_wiener`]). `complement` is 1 − w, given separately so that it keeps its precision when w is close to 1.
+fn lower_time(w: f64, complement: f64, nu: f64, rng: &mut KeanuRng) -> Result<f64> {
     let mean = w / nu.abs();
     let shape = w * w;
     for _ in 0..MAX_PROPOSALS {
@@ -389,7 +390,7 @@ fn lower_time(w: f64, nu: f64, rng: &mut KeanuRng) -> Result<f64> {
         if !(u > 0.0 && u.is_finite()) {
             continue;
         }
-        let standard = log_standard_density(Jet::<0>::constant(u), Jet::constant(w)).v;
+        let standard = log_standard_density(Jet::<0>::constant(u), Jet::constant(w), complement).v;
         let log_ratio = standard + LN_SQRT_2PI + 1.5 * u.ln() - w.ln() + w * w / (2.0 * u);
         if rng.next_f64_non_zero().ln() <= log_ratio {
             return Ok(u);
@@ -405,20 +406,23 @@ fn gave_up<T>() -> Result<T> {
 }
 
 /// An inverse Gaussian draw with the given mean (infinite for the Lévy distribution) and shape, by the
-/// transformation of Michael, Schucany and Haas (1976), its smaller root written as μ/(1 + c + √(c² + 2c)) with
-/// c = μy/(2λ), which doesn't cancel for a large mean.
+/// transformation of Michael, Schucany and Haas (1976), its smaller root written as μ/(1 + c + √c √(c + 2)) with
+/// c = μy/(2λ), which neither cancels nor overflows for a large mean (as from a tiny drift). Where c itself
+/// overflows the mean is so large that the draw is the Lévy distribution's, the limit of an infinite mean.
 fn inverse_gaussian(mean: f64, shape: f64, rng: &mut KeanuRng) -> f64 {
     let n = rng.next_gaussian();
     let y = n * n;
-    if mean.is_infinite() {
+    let c = mean * y / (2.0 * shape);
+    if !c.is_finite() {
         return shape / y;
     }
-    let c = mean * y / (2.0 * shape);
-    let x = mean / (1.0 + c + (c * c + 2.0 * c).sqrt());
+    // μ / x, the larger root's ratio to the mean
+    let ratio = 1.0 + c + c.sqrt() * (c + 2.0).sqrt();
+    let x = mean / ratio;
     if rng.next_f64() * (mean + x) <= mean {
         x
     } else {
-        mean * mean / x
+        mean * ratio
     }
 }
 
@@ -432,12 +436,19 @@ fn log_density<const K: usize>(x: Jet<K>, [a, t0, w, v, sv]: [Jet<K>; 5], bounda
     if !(t.v > 0.0) {
         return Jet::constant(f64::NEG_INFINITY);
     }
-    let (w, v) = if boundary == 1 { (1.0 - w, -v) } else { (w, v) };
+    // the start's distance from the boundary (reflected for the upper one), and exactly its distance from the other
+    let (w, v, complement) = if boundary == 1 {
+        (1.0 - w, -v, w.v)
+    } else {
+        (w, v, 1.0 - w.v)
+    };
     let u = t / (a * a);
     let series = if K == 0 {
-        Jet::constant(log_standard_density(Jet::<0>::constant(u.v), Jet::constant(w.v)).v)
+        Jet::constant(
+            log_standard_density(Jet::<0>::constant(u.v), Jet::constant(w.v), complement).v,
+        )
     } else {
-        let s = log_standard_density(Jet::<2>::var(u.v, 0), Jet::var(w.v, 1));
+        let s = log_standard_density(Jet::<2>::var(u.v, 0), Jet::var(w.v, 1), complement);
         Jet::compose(s.v, &[u, w], s.g, s.h)
     };
     let s2 = sv * sv;
@@ -458,15 +469,16 @@ fn evaluate<const M: usize>(x: f64, [a, t0, w, v, sv]: [f64; 5], boundary: i64) 
     if !(t > 0.0) {
         return (f64::NEG_INFINITY, [0.0; 6]);
     }
-    // reflected for the upper boundary: d/dw and d/dv change sign
-    let (wl, vl, sign) = if boundary == 1 {
-        (1.0 - w, -v, -1.0)
+    // reflected for the upper boundary: d/dw and d/dv change sign; the start's distance from the other boundary is
+    // passed exactly, as it is w itself there and 1 − w would round it away when w is tiny
+    let (wl, vl, sign, complement) = if boundary == 1 {
+        (1.0 - w, -v, -1.0, w)
     } else {
-        (w, v, 1.0)
+        (w, v, 1.0, 1.0 - w)
     };
     let a2 = a * a;
     let u = t / a2;
-    let f = log_standard_density(Jet::<M>::var(u, 0), Jet::var(wl, 1));
+    let f = log_standard_density(Jet::<M>::var(u, 0), Jet::var(wl, 1), complement);
     let s2 = sv * sv;
     let q = 1.0 + s2 * t;
     let n = s2 * a2 * wl * wl - 2.0 * a * vl * wl - vl * vl * t;
@@ -483,12 +495,28 @@ fn evaluate<const M: usize>(x: f64, [a, t0, w, v, sv]: [f64; 5], boundary: i64) 
 }
 
 /// ln f(u | w), the log density of the standard first-passage time (boundaries 0 and 1, no drift, start w) at the
-/// lower boundary, from whichever series needs fewer terms (see [`Wiener`]).
-pub(crate) fn log_standard_density<const M: usize>(u: Jet<M>, w: Jet<M>) -> Jet<M> {
+/// lower boundary, from whichever series needs fewer terms (see [`Wiener`]). `complement` is 1 − w, given
+/// separately so that a start very close to the other boundary (w = 1 − ε, as for the upper boundary's reflection
+/// of a tiny w) keeps its precision: ε is not rounded away, and the series are written in ε where w is near 1.
+pub(crate) fn log_standard_density<const M: usize>(
+    u: Jet<M>,
+    w: Jet<M>,
+    complement: f64,
+) -> Jet<M> {
+    // 1 − w with its derivatives, and its value exactly
+    let mut epsilon = 1.0 - w;
+    epsilon.v = complement;
+    let near_other = w.v > 0.5;
     if small_time_terms(u.v, w.v) <= large_time_terms(u.v) {
-        small_time(u, w)
+        // the images of a start near the other boundary nearly cancel in pairs (by e^{−2ε/u} relative to the
+        // first) unless ε is large against u
+        if near_other && complement < u.v {
+            small_time_near_other_boundary(u, epsilon)
+        } else {
+            small_time(u, w)
+        }
     } else {
-        large_time(u, w)
+        large_time(u, w, near_other.then_some(epsilon))
     }
 }
 
@@ -533,14 +561,43 @@ fn small_time<const M: usize>(u: Jet<M>, w: Jet<M>) -> Jet<M> {
     -LN_SQRT_2PI - 1.5 * u.ln() + w.ln() - w * w / (2.0 * u) + sum.ln_1p()
 }
 
-/// ln f(u | w) by the large-time series, as ln π − c + ln Σ_{k >= 1} k e^{−(k² − 1)c} sin(kπw), c = π²u/2.
-fn large_time<const M: usize>(u: Jet<M>, w: Jet<M>) -> Jet<M> {
+/// ln f(u | w) by the small-time series for a start w = 1 − ε near the other boundary, its images paired so that
+/// they don't cancel: f(u | w) = (2πu³)^{−½} Σ_{k >= 0} [(2k + w) e^{−(2k + w)²/(2u)} − (2k + 2 − w) e^{−(2k + 2 − w)²/(2u)}],
+/// and with m = 2k + 1 each pair is 2 e^{−(m² + ε²)/(2u)} (m sinh(mε/u) − ε cosh(mε/u)), so
+/// ln f = −ln √(2π) − (3/2) ln u − (1 + ε²)/(2u) + ln Σ_{k >= 0} 2 e^{−2k(k + 1)/u} (m sinh(mε/u) − ε cosh(mε/u)).
+/// For ε < u < 1 (where the small-time series is used) every pair is positive and mε/u stays moderate.
+fn small_time_near_other_boundary<const M: usize>(u: Jet<M>, epsilon: Jet<M>) -> Jet<M> {
+    let mut sum = Jet::constant(0.0);
+    for k in 0..10_000 {
+        let k = k as f64;
+        let m = 2.0 * k + 1.0;
+        let s = m * epsilon / u;
+        let (up, down) = (s.exp_m1(), (-s).exp_m1());
+        let sinh = 0.5 * (up - down);
+        let cosh = 1.0 + 0.5 * (up + down);
+        let term = 2.0 * (-2.0 * k * (k + 1.0) / u).exp() * (m * sinh - epsilon * cosh);
+        sum = sum + term;
+        if k >= 1.0 && term.v.abs() <= SERIES_TOLERANCE * sum.v.abs() {
+            break;
+        }
+    }
+    -LN_SQRT_2PI - 1.5 * u.ln() - (1.0 + epsilon.square()) / (2.0 * u) + sum.ln()
+}
+
+/// ln f(u | w) by the large-time series, as ln π − c + ln Σ_{k >= 1} k e^{−(k² − 1)c} sin(kπw), c = π²u/2. With
+/// `complement` ε = 1 − w (for w near 1), sin(kπw) is computed as (−1)^{k+1} sin(kπε), which doesn't lose ε.
+fn large_time<const M: usize>(u: Jet<M>, w: Jet<M>, complement: Option<Jet<M>>) -> Jet<M> {
     let c = PI * PI / 2.0 * u;
     let mut sum = Jet::constant(0.0);
     let mut extra = false;
     for k in 1..10_000 {
         let k = k as f64;
-        sum = sum + k * (-(k * k - 1.0) * c).exp() * (k * PI * w).sin();
+        let sine = match complement {
+            Some(epsilon) if k % 2.0 == 0.0 => -(k * PI * epsilon).sin(),
+            Some(epsilon) => (k * PI * epsilon).sin(),
+            None => (k * PI * w).sin(),
+        };
+        sum = sum + k * (-(k * k - 1.0) * c).exp() * sine;
         if extra {
             break;
         }

@@ -214,22 +214,38 @@ fn small_parameters_draw_the_same_values_as_before() {
 }
 
 #[test]
-fn beta_sample_is_unchanged() {
-    // the reference: Java's arithmetic on Gamma draws of the same stream
+fn beta_sample_is_the_ratio_of_gamma_draws_formed_from_their_logs() {
+    // the reference: each element's two Gamma draws, in logs (for a shape k < 1, ln G(k + 1) + ln U / k, which
+    // doesn't underflow), the share of the range from the bound the draw is likelier to be far from
     let (alpha, beta) = (v(&[0.5, 2.0, 3.0]), v(&[2.0, 2.0, 0.7]));
     let (min, max) = (s(-1.0), v(&[1.0, 2.0, 4.0]));
+    let log_gamma = |k: f64, rng: &mut KeanuRng| -> f64 {
+        if k >= 1.0 {
+            Gamma::new(s(1.0), s(k))
+                .sample(&[], rng)
+                .unwrap()
+                .as_slice()[0]
+                .ln()
+        } else {
+            let g = Gamma::new(s(1.0), s(k + 1.0))
+                .sample(&[], rng)
+                .unwrap()
+                .as_slice()[0];
+            g.ln() + rng.next_f64_non_zero().ln() / k
+        }
+    };
+    let logistic = |x: f64| {
+        if x >= 0.0 {
+            1.0 / (1.0 + (-x).exp())
+        } else {
+            x.exp() / (1.0 + x.exp())
+        }
+    };
     let mut reference = KeanuRng::seed_from_u64(5);
-    let y1 = Gamma::new(s(1.0), &alpha)
-        .sample(&[4, 3], &mut reference)
-        .unwrap();
-    let y2 = Gamma::new(s(1.0), &beta)
-        .sample(&[4, 3], &mut reference)
-        .unwrap();
     let samples = Beta::new(&alpha, &beta, &min, &max)
         .sample(&[4, 3], &mut KeanuRng::seed_from_u64(5))
         .unwrap();
     for i in 0..12 {
-        let (y1, y2) = (y1.as_slice()[i], y2.as_slice()[i]);
         let (a, b, hi) = (
             alpha.as_slice()[i % 3],
             beta.as_slice()[i % 3],
@@ -237,11 +253,17 @@ fn beta_sample_is_unchanged() {
         );
         let lo = -1.0;
         let expected = if a < b {
-            hi - (y2 / (y1 + y2)) * (hi - lo)
+            let (y, x) = (log_gamma(b, &mut reference), log_gamma(a, &mut reference));
+            hi - logistic(y - x) * (hi - lo)
         } else {
-            lo + (y1 / (y1 + y2)) * (hi - lo)
+            let (x, y) = (log_gamma(a, &mut reference), log_gamma(b, &mut reference));
+            lo + logistic(x - y) * (hi - lo)
         };
-        assert_eq!(samples.as_slice()[i].to_bits(), expected.to_bits());
+        assert_eq!(
+            samples.as_slice()[i].to_bits(),
+            expected.to_bits(),
+            "element {i}"
+        );
     }
 }
 
