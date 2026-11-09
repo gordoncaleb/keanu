@@ -108,6 +108,22 @@ fn infer(op: &Op, parents: &[(DType, &[usize])]) -> Result<(DType, Shape)> {
             square_batch(op, parents[0].1)?;
             Ok((DType::F64, Shape::from_slice(parents[0].1)))
         }
+        Op::ThinQr => {
+            f64_parents(1)?;
+            let [batch @ .., m, n] = parents[0].1 else {
+                return Err(invalid(op, "needs at least two axes"));
+            };
+            if m < n {
+                return Err(invalid(op, "needs at least as many rows as columns"));
+            }
+            let rows = m
+                .checked_add(*n)
+                .filter(|&rows| rows <= isize::MAX as usize)
+                .ok_or_else(|| invalid(op, "combined row count is too large"))?;
+            let mut shape = Shape::from_slice(batch);
+            shape.extend([rows, *n]);
+            Ok((DType::F64, shape))
+        }
         Op::Determinant | Op::LogAbsDeterminant | Op::DeterminantSign => {
             f64_parents(1)?;
             let s = parents[0].1;
@@ -721,6 +737,7 @@ fn check_arity(op: &Op, count: usize) -> Result<()> {
         | Op::Determinant
         | Op::Cholesky
         | Op::CholeskyInverse
+        | Op::ThinQr
         | Op::LogAbsDeterminant
         | Op::DeterminantSign
         | Op::Eigvalsh

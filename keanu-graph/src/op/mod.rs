@@ -444,6 +444,9 @@ pub enum Op {
     Cholesky,
     /// Parents: `input`, f64 (a lower Cholesky factor) -> the full symmetric inverse
     CholeskyInverse,
+    /// Parents: `input`, f64 with shape `[..., m, n]` and m >= n. Returns the thin QR factors Q and R
+    /// stacked on the row axis, with shape `[..., m + n, n]`.
+    ThinQr,
     /// Parents: `matrix` (`[..., n, n]`), `rhs` (`[..., n, k]` or `[n]`), f64 -> X solving op(T) X = rhs, where T is
     /// the triangular matrix and op(T) is T or Tᵀ, as
     /// [`DoubleTensor::solve_triangular`](keanu_tensor::DoubleTensor::solve_triangular). Only T's lower (if `lower`) or upper triangle, diagonal included, is read, and only it receives gradients.
@@ -605,6 +608,7 @@ op_names! {
     Op::Determinant => "determinant",
     Op::Cholesky => "cholesky",
     Op::CholeskyInverse => "cholesky_inverse",
+    Op::ThinQr => "thin_qr",
     Op::SolveTriangular { .. } => "solve_triangular",
     Op::Solve => "solve",
     Op::LogAbsDeterminant => "log_abs_determinant",

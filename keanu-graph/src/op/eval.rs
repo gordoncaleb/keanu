@@ -347,6 +347,10 @@ pub(crate) fn eval(op: &Op, inputs: &[&Value]) -> Result<Value> {
         Op::Determinant => Value::F64(inputs[0].f64()?.determinant()?),
         Op::Cholesky => Value::F64(inputs[0].f64()?.cholesky()?),
         Op::CholeskyInverse => Value::F64(inputs[0].f64()?.cholesky_inverse()?),
+        Op::ThinQr => {
+            let (q, r) = inputs[0].f64()?.thin_qr()?;
+            Value::F64(DoubleTensor::concat(-2, &[&q, &r])?)
+        }
         Op::SolveTriangular { lower, transpose } => Value::F64(inputs[0].f64()?.solve_triangular(
             inputs[1].f64()?,
             *lower,

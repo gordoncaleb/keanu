@@ -96,6 +96,88 @@ impl DoubleTensor {
         Ok(Tensor::from_parts(out_shape, data))
     }
 
+    /// Reduced QR factorization `A = Q R` on the last two axes. For input `[..., m, n]`,
+    /// Q has shape `[..., m, k]` and R has shape `[..., k, n]`, where `k = min(m, n)`.
+    /// Q has orthonormal columns and R is upper trapezoidal with a nonnegative diagonal.
+    /// Rank-deficient matrices are allowed. Nonfinite input or factors are errors.
+    pub fn thin_qr(&self) -> Result<(Self, Self)> {
+        let (m, n) = self.matrix_dims("thin_qr")?;
+        let k = m.min(n);
+        let mut q_shape = Shape::from_slice(self.batch_shape());
+        let mut r_shape = q_shape.clone();
+        q_shape.extend([m, k]);
+        r_shape.extend([k, n]);
+        if self.is_empty() {
+            return Ok((Self::zeros(&q_shape), Self::zeros(&r_shape)));
+        }
+        let nonfinite =
+            || TensorError::InvalidArgument("thin_qr needs finite input and factors".into());
+        let batches = self.len() / (m * n);
+        let mut q_data = Vec::with_capacity(batches * m * k);
+        let mut r_data = Vec::with_capacity(batches * k * n);
+        for input in self.as_slice().chunks_exact(m * n) {
+            if input.iter().any(|x| !x.is_finite()) {
+                return Err(nonfinite());
+            }
+            let qr = MatRef::from_row_major_slice(input, m, n).qr();
+            let q = qr.compute_thin_Q();
+            let r = qr.thin_R();
+            let signs: Scratch = (0..k)
+                .map(|i| if r[(i, i)] < 0.0 { -1.0 } else { 1.0 })
+                .collect();
+            for row in 0..m {
+                q_data.extend((0..k).map(|col| q[(row, col)] * signs[col]));
+            }
+            for row in 0..k {
+                r_data.extend((0..n).map(|col| {
+                    if col < row {
+                        0.0
+                    } else {
+                        r[(row, col)] * signs[row]
+                    }
+                }));
+            }
+        }
+        if q_data.iter().chain(&r_data).any(|x| !x.is_finite()) {
+            return Err(nonfinite());
+        }
+        Ok((
+            Tensor::from_parts(q_shape, q_data),
+            Tensor::from_parts(r_shape, r_data),
+        ))
+    }
+
+    /// Minimizes `||A X - B||₂` by reduced QR. A is `[..., m, n]` with `m >= n` and
+    /// full column rank. B is `[..., m, k]` or a vector `[m]`. Leading dimensions
+    /// broadcast. Returns `SingularMatrix` for numerically rank-deficient inputs.
+    pub fn least_squares(&self, b: &Self) -> Result<Self> {
+        let (m, n) = self.matrix_dims("least_squares")?;
+        if m < n {
+            return Err(TensorError::InvalidArgument(
+                "least_squares needs at least as many rows as columns".into(),
+            ));
+        }
+        let (q, r) = self.thin_qr()?;
+        for matrix in r.as_slice().chunks_exact(n.saturating_mul(n).max(1)) {
+            let mut diagonal = (0..n).map(|i| matrix[i * n + i].abs());
+            let scale = diagonal.clone().fold(0.0_f64, f64::max);
+            if diagonal.any(|v| v <= scale * (m as f64 * f64::EPSILON)) {
+                return Err(TensorError::SingularMatrix);
+            }
+        }
+        if b.rank() == 1 {
+            let rhs = q.matmul_transposed(&b.reshape(&[-1, 1])?, true, false)?;
+            let solved = r.solve_triangular(&rhs, false, false)?;
+            let shape = solved.shape()[..solved.rank() - 1]
+                .iter()
+                .map(|&d| d as isize)
+                .collect::<Vec<_>>();
+            solved.reshape(&shape)
+        } else {
+            r.solve_triangular(&q.matmul_transposed(b, true, false)?, false, false)
+        }
+    }
+
     /// Lower triangular Cholesky factor L (A = L Lᵀ) of each symmetric positive definite matrix. Only the lower
     /// triangle of the input is read.
     pub fn cholesky(&self) -> Result<Self> {

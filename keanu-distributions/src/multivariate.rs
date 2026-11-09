@@ -55,6 +55,37 @@ pub(crate) fn sum_over_batch(
     Ok(batched.sum_axes(&axes)?.reshape(&target)?)
 }
 
+fn gaussian_event_shape(
+    mu: &[usize],
+    cov: &[usize],
+    x_shape: &[usize],
+    matrix_name: &str,
+) -> Result<Vec<usize>> {
+    let invalid = |m: &str| Err(DistributionError::InvalidValue(m.to_string()));
+    if x_shape.is_empty() {
+        return invalid("x must be at least a vector; use a Gaussian for scalar x");
+    }
+    if mu.is_empty() {
+        return invalid("mu must be at least a vector");
+    }
+    if cov.len() < 2 {
+        return invalid(&format!(
+            "{matrix_name} must be a matrix or a batch of matrices"
+        ));
+    }
+    let n = x_shape[x_shape.len() - 1];
+    if mu[mu.len() - 1] != n || cov[cov.len() - 1] != n || cov[cov.len() - 2] != n {
+        return invalid(&format!(
+            "x, mu and {matrix_name} must have the same event size and {matrix_name} must be square"
+        ));
+    }
+    let batch_shape = broadcast_shape(
+        &broadcast_shape(batch(x_shape, 1), batch(mu, 1))?,
+        batch(cov, 2),
+    )?;
+    Ok(batch_shape.iter().copied().chain([n]).collect())
+}
+
 impl<'a> MultivariateGaussian<'a> {
     /// Creates the distribution from its parameters.
     pub fn new(mu: impl IntoParam<'a, f64>, covariance: impl IntoParam<'a, f64>) -> Self {
@@ -66,40 +97,36 @@ impl<'a> MultivariateGaussian<'a> {
 
     /// Checks the shapes and returns the broadcast shape of a sample.
     fn validate(&self, x_shape: &[usize]) -> Result<Vec<usize>> {
-        let (mu, cov) = (self.mu.shape(), self.covariance.shape());
-        let invalid = |m: &str| Err(DistributionError::InvalidValue(m.to_string()));
-        if x_shape.is_empty() {
-            return invalid("x must be at least a vector; use a Gaussian for scalar x");
-        }
-        if mu.is_empty() {
-            return invalid("mu must be at least a vector");
-        }
-        if cov.len() < 2 {
-            return invalid("covariance must be a matrix or a batch of matrices");
-        }
-        let n = x_shape[x_shape.len() - 1];
-        if mu[mu.len() - 1] != n || cov[cov.len() - 1] != n || cov[cov.len() - 2] != n {
-            return invalid(
-                "x, mu and covariance must have the same event size and covariance must be square",
-            );
-        }
-        let batch_shape = broadcast_shape(
-            &broadcast_shape(batch(x_shape, 1), batch(mu, 1))?,
-            batch(cov, 2),
-        )?;
-        Ok(batch_shape.iter().copied().chain([n]).collect())
+        gaussian_event_shape(
+            self.mu.shape(),
+            self.covariance.shape(),
+            x_shape,
+            "covariance",
+        )
     }
 
     /// Total log density of every vector in x (summed over batch dimensions). -infinity if the covariance is not
     /// positive definite.
     pub fn log_prob(&self, x: &DoubleTensor) -> Result<f64> {
+        match self.log_prob_summands(x) {
+            Ok(terms) => Ok(terms.sum() * -0.5),
+            Err(DistributionError::Tensor(TensorError::NotPositiveDefinite)) => {
+                Ok(f64::NEG_INFINITY)
+            }
+            Err(e) => Err(e),
+        }
+    }
+
+    /// One log density per vector, shaped like the broadcast batch dimensions. An error if any covariance
+    /// matrix is not positive definite.
+    pub fn log_prob_terms(&self, x: &DoubleTensor) -> Result<DoubleTensor> {
+        Ok(self.log_prob_summands(x)? * -0.5)
+    }
+
+    fn log_prob_summands(&self, x: &DoubleTensor) -> Result<DoubleTensor> {
         self.validate(x.shape())?;
         let n = x.shape()[x.rank() - 1];
-        let cholesky = match self.covariance.cholesky() {
-            Ok(l) => l,
-            Err(TensorError::NotPositiveDefinite) => return Ok(f64::NEG_INFINITY),
-            Err(e) => return Err(e.into()),
-        };
+        let cholesky = self.covariance.cholesky()?;
         let log_cov_det = &cholesky.diag_part()?.ln().sum_axes(&[-1])? * 2.0;
         // (x - mu)ᵀ Σ⁻¹ (x - mu) = ‖z‖² where L z = x - mu: one triangular solve, no inverse
         let x_minus_mu = x.sub(&self.mu)?;
@@ -107,7 +134,7 @@ impl<'a> MultivariateGaussian<'a> {
         let z = cholesky.solve_triangular(&column, true, false)?;
         let quadratic = z.mul(&z)?.sum_axes(&[-2, -1])?;
         let k_log_2pi = n as f64 * (2.0 * PI).ln();
-        Ok(quadratic.add(&(&log_cov_det + k_log_2pi))?.sum() * -0.5)
+        Ok(quadratic.add(&(&log_cov_det + k_log_2pi))?)
     }
 
     /// The element-wise derivatives of [`Self::log_prob`] with respect to x and each parameter.
@@ -151,6 +178,150 @@ impl<'a> MultivariateGaussian<'a> {
             .matmul(&variates)?
             .reshape(&x_shape_signed)?
             .add(&self.mu)?)
+    }
+}
+
+/// Multivariate Gaussian parameterized by a positive definite precision matrix P.
+/// Leading dimensions broadcast. The lower triangle of P specifies its symmetric entries.
+#[derive(Debug, Clone, PartialEq)]
+pub struct MultivariateGaussianPrecision<'a> {
+    /// Mean vector or batch of mean vectors.
+    pub mu: Param<'a>,
+    /// Precision matrix or batch of precision matrices.
+    pub precision: Param<'a>,
+}
+
+/// Derivatives of the precision-form Gaussian log density, reduced to each input's shape.
+#[derive(Debug, Clone, PartialEq)]
+pub struct MultivariateGaussianPrecisionGradient {
+    /// Derivative with respect to the value.
+    pub x: DoubleTensor,
+    /// Derivative with respect to the mean.
+    pub mu: DoubleTensor,
+    /// Derivative with respect to the lower triangle of the precision.
+    pub precision: DoubleTensor,
+}
+
+impl<'a> MultivariateGaussianPrecision<'a> {
+    /// Creates the distribution from a mean and precision.
+    pub fn new(mu: impl IntoParam<'a, f64>, precision: impl IntoParam<'a, f64>) -> Self {
+        Self {
+            mu: mu.into_param(),
+            precision: precision.into_param(),
+        }
+    }
+
+    fn factor(&self, shape: &[usize]) -> Result<(Vec<usize>, DoubleTensor)> {
+        let shape =
+            gaussian_event_shape(self.mu.shape(), self.precision.shape(), shape, "precision")?;
+        if shape.last() == Some(&0) {
+            return invalid_parameter("the precision Gaussian needs a nonempty event");
+        }
+        let l = self.precision.cholesky()?;
+        if l.diag_part()?
+            .as_slice()
+            .iter()
+            .any(|x| !x.is_finite() || *x <= 0.0)
+        {
+            return Err(TensorError::NotPositiveDefinite.into());
+        }
+        Ok((shape, l))
+    }
+
+    fn residual_column(&self, x: &DoubleTensor) -> Result<DoubleTensor> {
+        let r = x.sub(&self.mu)?;
+        Ok(r.reshape(&with_suffix(r.shape(), &[1]))?)
+    }
+
+    fn terms(&self, l: &DoubleTensor, z: &DoubleTensor, n: usize) -> Result<DoubleTensor> {
+        let half_log_det = l.diag_part()?.ln().sum_axes(&[-1])?;
+        let quadratic = z.mul(z)?.sum_axes(&[-2, -1])?;
+        Ok(half_log_det.sub(&(&quadratic * 0.5 + 0.5 * n as f64 * (2.0 * PI).ln()))?)
+    }
+
+    /// Log density per broadcast vector. An error if the precision cannot be factored.
+    pub fn log_prob_terms(&self, x: &DoubleTensor) -> Result<DoubleTensor> {
+        let (_, l) = self.factor(x.shape())?;
+        let z = l.matmul_transposed(&self.residual_column(x)?, true, false)?;
+        self.terms(&l, &z, x.shape()[x.rank() - 1])
+    }
+
+    /// Joint log density. Negative infinity for a precision that is not positive definite.
+    pub fn log_prob(&self, x: &DoubleTensor) -> Result<f64> {
+        match self.log_prob_terms(x) {
+            Ok(terms) => Ok(terms.sum()),
+            Err(DistributionError::Tensor(TensorError::NotPositiveDefinite)) => {
+                Ok(f64::NEG_INFINITY)
+            }
+            Err(e) => Err(e),
+        }
+    }
+
+    fn gradient(
+        &self,
+        x: &DoubleTensor,
+        shape: &[usize],
+        l: &DoubleTensor,
+        r: &DoubleTensor,
+        z: &DoubleTensor,
+    ) -> Result<MultivariateGaussianPrecisionGradient> {
+        let a = l.matmul(z)?.reshape(&with_suffix(shape, &[]))?;
+        let outer = r.matmul_transposed(r, false, true)?;
+        let symmetric = l.cholesky_inverse()?.sub(&outer)? * 0.5;
+        // A strict-lower entry represents both symmetric entries.
+        let lower = symmetric.tril(0)?.add(&symmetric.tril(-1)?)?;
+        Ok(MultivariateGaussianPrecisionGradient {
+            x: sum_over_batch(&a, x.shape())?.neg(),
+            mu: sum_over_batch(&a, self.mu.shape())?,
+            precision: sum_over_batch(&lower, self.precision.shape())?,
+        })
+    }
+
+    /// Joint density and its derivatives using a single factorization.
+    /// Impossible points return negative infinity and no gradient.
+    pub fn log_prob_and_gradient(
+        &self,
+        x: &DoubleTensor,
+    ) -> Result<(f64, Option<MultivariateGaussianPrecisionGradient>)> {
+        let (shape, l) = match self.factor(x.shape()) {
+            Ok(parts) => parts,
+            Err(DistributionError::Tensor(TensorError::NotPositiveDefinite)) => {
+                return Ok((f64::NEG_INFINITY, None));
+            }
+            Err(e) => return Err(e),
+        };
+        let r = self.residual_column(x)?;
+        let z = l.matmul_transposed(&r, true, false)?;
+        let lp = self.terms(&l, &z, shape[shape.len() - 1])?.sum();
+        let gradient = if lp.is_finite() {
+            Some(self.gradient(x, &shape, &l, &r, &z)?)
+        } else {
+            None
+        };
+        Ok((lp, gradient))
+    }
+
+    /// Derivatives at a point with positive definite precision.
+    pub fn d_log_prob(&self, x: &DoubleTensor) -> Result<MultivariateGaussianPrecisionGradient> {
+        let (shape, l) = self.factor(x.shape())?;
+        let r = self.residual_column(x)?;
+        let z = l.matmul_transposed(&r, true, false)?;
+        self.gradient(x, &shape, &l, &r, &z)
+    }
+
+    /// Draws independent vectors with covariance P⁻¹, using a triangular solve.
+    /// The requested shape must contain the entire parameter batch.
+    pub fn sample(&self, shape: &[usize], rng: &mut KeanuRng) -> Result<DoubleTensor> {
+        let (broadcast, l) = self.factor(shape)?;
+        if broadcast != shape {
+            return invalid_parameter("sample shape must include the precision and mean batch");
+        }
+        let columns: Vec<usize> = shape.iter().copied().chain([1]).collect();
+        let z = rng.gaussian(&columns);
+        let x = l
+            .solve_triangular(&z, true, true)?
+            .reshape(&with_suffix(shape, &[]))?;
+        Ok(x.add(&self.mu)?)
     }
 }
 
@@ -651,6 +822,121 @@ impl<'a> Multinomial<'a> {
             }
         }
         Ok(IntTensor::new(shape, samples)?)
+    }
+}
+
+/// Multinomial counts parameterized by finite logits over the last axis.
+/// The count totals and leading dimensions of the logits and values broadcast.
+#[derive(Debug, Clone, PartialEq)]
+pub struct MultinomialLogit<'a> {
+    n: Param<'a, i64>,
+    logits: Param<'a>,
+}
+
+/// Derivatives of the joint log mass with respect to the logits.
+#[derive(Debug, Clone, PartialEq)]
+pub struct MultinomialLogitGradient {
+    /// Derivatives summed to the logits' original shape.
+    pub logits: DoubleTensor,
+}
+
+impl<'a> MultinomialLogit<'a> {
+    /// Creates a distribution with a nonnegative total for each event and a last category axis of logits.
+    pub fn new(n: impl IntoParam<'a, i64>, logits: impl IntoParam<'a, f64>) -> Result<Self> {
+        let (n, logits) = (n.into_param(), logits.into_param());
+        if logits.shape().last().is_none_or(|&k| k == 0) {
+            return invalid_parameter("logits need a nonempty category axis");
+        }
+        Ok(Self { n, logits })
+    }
+
+    fn batch_shape(&self, shape: &[usize]) -> Result<Vec<usize>> {
+        if shape.last() != self.logits.shape().last() {
+            return Err(DistributionError::InvalidValue(format!(
+                "count vectors of shape {shape:?} must end in the logits' category axis"
+            )));
+        }
+        let batch_shape = broadcast_shape(batch(shape, 1), batch(self.logits.shape(), 1))?;
+        Ok(broadcast_shape(&batch_shape, self.n.shape())?.to_vec())
+    }
+
+    /// One log mass per count vector. Impossible counts give negative infinity.
+    /// Nonfinite logits or a negative total give NaN for their events.
+    pub fn log_prob(&self, x: &IntTensor) -> Result<DoubleTensor> {
+        let batch = self.batch_shape(x.shape())?;
+        let k = x.shape()[x.rank() - 1];
+        let shape = batch.iter().copied().chain([k]).collect::<Vec<_>>();
+        let counts = x.broadcast_to(&shape)?;
+        let totals = self.n.broadcast_to(&batch)?;
+        let log_p = self.logits.log_softmax(-1)?.broadcast_to(&shape)?;
+        let logits = self.logits.broadcast_to(&shape)?;
+        let values = counts
+            .as_slice()
+            .chunks_exact(k)
+            .zip(log_p.as_slice().chunks_exact(k))
+            .zip(logits.as_slice().chunks_exact(k))
+            .zip(totals.as_slice())
+            .map(|(((counts, log_p), logits), &n)| {
+                if n < 0 || logits.iter().any(|l| !l.is_finite()) {
+                    return f64::NAN;
+                }
+                let mut remaining = n;
+                let mut lp = 0.0;
+                for (&count, &log_p) in counts.iter().zip(log_p) {
+                    if count < 0 || count > remaining {
+                        return f64::NEG_INFINITY;
+                    }
+                    if count != 0 {
+                        let smaller = count.min(remaining - count);
+                        if smaller != 0 {
+                            // ln C(remaining, count) via beta, avoiding subtraction of large factorials.
+                            lp -= (remaining as f64 + 1.0).ln()
+                                + log_beta(
+                                    smaller as f64 + 1.0,
+                                    (remaining - smaller) as f64 + 1.0,
+                                );
+                        }
+                        lp += count as f64 * log_p;
+                    }
+                    remaining -= count;
+                }
+                if remaining == 0 {
+                    lp
+                } else {
+                    f64::NEG_INFINITY
+                }
+            })
+            .collect();
+        Ok(DoubleTensor::new(&batch, values)?)
+    }
+
+    /// Joint log-mass derivatives, x − n softmax(logits), at points in the support.
+    pub fn d_log_prob(&self, x: &IntTensor) -> Result<MultinomialLogitGradient> {
+        let batch = self.batch_shape(x.shape())?;
+        let totals = self
+            .n
+            .broadcast_to(&batch)?
+            .to_double()
+            .reshape(&with_suffix(&batch, &[1]))?;
+        let probabilities = self.logits.softmax(-1)?;
+        let gradient = x.to_double().sub(&probabilities.mul(&totals)?)?;
+        Ok(MultinomialLogitGradient {
+            logits: sum_over_batch(&gradient, self.logits.shape())?,
+        })
+    }
+
+    /// Draws counts whose last axis matches the logits and whose totals equal n.
+    pub fn sample(&self, shape: &[usize], rng: &mut KeanuRng) -> Result<IntTensor> {
+        let batch = self.batch_shape(shape)?;
+        if batch != shape[..shape.len() - 1] {
+            return invalid_parameter("sample shape must include the multinomial parameter batch");
+        }
+        if self.logits.as_slice().iter().any(|l| !l.is_finite())
+            || self.n.as_slice().iter().any(|&n| n < 0)
+        {
+            return invalid_parameter("multinomial logits must be finite and totals nonnegative");
+        }
+        Multinomial::new(&*self.n, self.logits.softmax(-1)?)?.sample(shape, rng)
     }
 }
 

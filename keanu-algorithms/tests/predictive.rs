@@ -554,3 +554,101 @@ fn samples_map_onto_a_rewritten_graph() {
         samples.f64(a).unwrap().as_slice()
     );
 }
+
+#[test]
+fn replay_on_a_separate_graph_uses_the_held_out_shape_and_preserves_the_state() {
+    let c = conjugate();
+    let mut rng = KeanuRng::seed_from_u64(12);
+    let posterior = exact_posterior(&c, 8_000, &mut rng);
+
+    let b = GraphBuilder::new();
+    let design = b.constant(DoubleTensor::vector(vec![-1.0, 0.0, 2.0, 3.0]));
+    let unused_parent = b.gaussian(0.0, 1.0);
+    let mu = b.gaussian(unused_parent, 2.0);
+    let mean = mu * design + 1.0;
+    let y = b.gaussian(mean, 0.5);
+    let (mu, mean, y) = (mu.id(), mean.id(), y.id());
+    let (graph, state) = b.build().unwrap();
+    let predictive = PredictiveSampler::new()
+        .with_draws(4_000)
+        .predict(
+            &graph,
+            &state,
+            &posterior,
+            &[(c.mu, mu)],
+            &[mean, y],
+            &mut rng,
+        )
+        .unwrap();
+
+    assert_eq!(predictive.nodes(), &[mean, y]);
+    assert_eq!(predictive.len(), 4_000);
+    assert!(state.value(mu).is_none() && state.value(y).is_none());
+    let source = f64_draws(&posterior, c.mu);
+    let means = predictive.f64(mean).unwrap();
+    for (i, draw) in means.as_slice().iter().enumerate() {
+        assert_eq!(
+            draw.as_slice(),
+            &[
+                1.0 - source[2 * i],
+                1.0,
+                1.0 + 2.0 * source[2 * i],
+                1.0 + 3.0 * source[2 * i]
+            ]
+        );
+    }
+    let outcomes = predictive.f64(y).unwrap();
+    let differences: Vec<_> = outcomes
+        .as_slice()
+        .iter()
+        .zip(means.as_slice())
+        .map(|(y, mean)| y.as_slice()[3] - mean.as_slice()[3])
+        .collect();
+    let (mean_error, variance) = mean_and_variance(&differences);
+    assert!(mean_error.abs() < 0.03, "{mean_error}");
+    assert!((variance - 0.25).abs() < 0.03, "{variance}");
+}
+
+#[test]
+fn replay_rejects_invalid_bindings_and_requires_explicit_draws_of_new_latents() {
+    let c = conjugate();
+    let mut rng = KeanuRng::seed_from_u64(3);
+    let posterior = exact_posterior(&c, 2, &mut rng);
+    let b = GraphBuilder::new();
+    let x = b.gaussian_with_shape(&[2], 0.0, 1.0);
+    let y = x + 1.0;
+    let (x, y) = (x.id(), y.id());
+    let (graph, state) = b.build().unwrap();
+    let sampler = PredictiveSampler::new();
+    assert!(
+        sampler
+            .predict(&graph, &state, &posterior, &[], &[y], &mut rng)
+            .is_err()
+    );
+    assert!(
+        sampler
+            .predict(&graph, &state, &posterior, &[(c.mu, x)], &[y], &mut rng)
+            .is_err()
+    );
+    assert!(
+        sampler
+            .predict(&graph, &state, &posterior, &[(c.mu, y)], &[x], &mut rng)
+            .is_err()
+    );
+    assert!(
+        sampler
+            .predict(&graph, &state, &posterior, &[(c.ys[0], x)], &[y], &mut rng)
+            .is_err()
+    );
+    let draws = sampler
+        .predict(&graph, &state, &posterior, &[], &[x, y], &mut rng)
+        .unwrap();
+    let x = draws.f64(x).unwrap();
+    let y = draws.f64(y).unwrap();
+    for (x, y) in x.as_slice().iter().zip(y.as_slice()) {
+        assert_eq!(
+            y.as_slice(),
+            &[x.as_slice()[0] + 1.0, x.as_slice()[1] + 1.0]
+        );
+    }
+}

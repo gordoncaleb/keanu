@@ -163,17 +163,25 @@ impl Nested {
 
     /// Whether the kind has one value per element with an element-wise density (a truncated, censored,
     /// zero-inflated or hurdle kind), so that it can itself be a mixture component or an emission.
-    pub(crate) fn is_elementwise(self) -> bool {
-        self.wrapper().is_some() || self.inflation().is_some()
+    pub(crate) fn is_elementwise(self, inner: &DistributionKind) -> bool {
+        (self.wrapper().is_some() && !matches!(inner, DistributionKind::PoissonBinomial))
+            || self.inflation().is_some()
     }
 
     /// Checks that `inner` can be wrapped this way, returning the reason it can't.
     pub(crate) fn check_inner(self, inner: &DistributionKind) -> std::result::Result<(), String> {
+        if let DistributionKind::Transformed(base, bijector) = inner {
+            super::transformed::check(base, *bijector)?;
+        }
         match self {
-            Nested::Truncated | Nested::Censored if !inner.has_cdf() => Err(format!(
-                "the base distribution ({}) has no CDF, so it cannot be truncated or censored",
-                inner.name()
-            )),
+            Nested::Truncated | Nested::Censored
+                if !inner.has_cdf() && !matches!(inner, DistributionKind::PoissonBinomial) =>
+            {
+                Err(format!(
+                    "the base distribution ({}) has no CDF, so it cannot be truncated or censored",
+                    inner.name()
+                ))
+            }
             Nested::Mixture if !inner.is_elementwise() => Err(format!(
                 "the component distribution ({}) does not have one value per element with an element-wise \
                  density, so it cannot be mixed",
@@ -287,6 +295,9 @@ impl Nested {
         parameters: &[&Value],
         gradient: bool,
     ) -> Option<Result<(DoubleTensor, Option<LogProbGradientParts>)>> {
+        if !self.is_elementwise(inner) {
+            return None;
+        }
         if let Some(inflation) = self.inflation() {
             return Some(inflated::elementwise(
                 inflation, inner, value, parameters, gradient,
@@ -309,6 +320,9 @@ impl Nested {
         b: usize,
     ) -> Result<LogProbHvpParts> {
         let (nested, inner) = kind.nested_parts();
+        if let (Some(wrapper), DistributionKind::PoissonBinomial) = (nested.wrapper(), inner) {
+            return wrappers::poisson_binomial_hvp(wrapper, value, parameters, parameter_tangents);
+        }
         match nested {
             // element-wise, so contracted per element (see `distribution_hvp::elementwise`)
             Nested::Truncated | Nested::Censored | Nested::ZeroInflated | Nested::Hurdle => {

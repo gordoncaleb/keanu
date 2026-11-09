@@ -19,6 +19,44 @@ tag. `RUST_MIGRATION_PLAN.md` describes the rewrite and `book/src/from-java.md` 
 - The "Unreleased: Java" changes below were made to the Java implementation during the rewrite, mostly bug fixes
   the Rust port found, so that the Rust version is a faithful conversion.
 
+### Stan and PyMC example coverage
+
+- Added runnable models for hierarchical item response, Lotka–Volterra dynamics, predictor measurement error,
+  spline regression, Euler–Maruyama, vector autoregression, and hierarchical A/B experiments across markets.
+  Seeded tests check recovery or prediction using existing Rust APIs.
+- Added a location-scale Student-t with real-valued degrees of freedom, including stable log tails and exact
+  first- and second-order derivatives. The robust regression example learns the degrees of freedom.
+- Added negative-binomial log-mean regression with first- and second-order derivatives. Scalar transforms of
+  distributions with a CDF now support censoring and truncation, demonstrated by a shared-frailty survival model.
+- Added logit-binomial tails and derivatives for censored and truncated counts, and posterior replay on separate
+  prediction graphs. The spline and vector autoregression examples use the new prediction API.
+- Added opt-in pointwise log likelihood per independent vector or matrix event for supported multivariate
+  distributions, plus K-fold and leave-one-out cross-validation by refitting.
+- Added streaming labeled CSV export with tensor coordinates and exact integer and boolean values.
+- Added static HMC with optional step-size warmup, coordinate-wise slice sampling, and population
+  differential-evolution Metropolis for continuous models. The inference benchmark reports sampler efficiency
+  and compares L-BFGS, trust-region Newton, and BOBYQA.
+
+- Added thin QR with graph derivatives and serialization, tensor least squares, and Kronecker solves.
+- Added inducing-point and periodic GP priors, multivariate walk and local-level builders, and exact joint
+  elimination of small scalar discrete groups. Added correlated regression and structured forecasting demos.
+
+- Added native multinomial logits and a precision-parameterized multivariate Gaussian, with batched
+  events, exact graph derivatives and saved-model support. Added vote-share regression and signal denoising examples.
+
+- Added Poisson-binomial counts and discrete Weibull lifetimes, including exact graph derivatives and
+  saved-model support. The new examples fit heterogeneous batch totals and censored lifetime data.
+
+- Added differentiable Poisson-binomial log tails and a Jones–Faddy skew Student-t distribution with
+  censoring, truncation, and saved-model support. Added an asymmetric regression demo and predictive
+  exceedance risk to the calibration demo.
+
+- Added batched Poisson-binomial graph censoring and truncation, including exact Hessian-vector products
+  and conditional sampling for rare count intervals. The calibration demo now fits top-coded totals.
+
+- Added shape-one Pólya–Gamma PG(1, z), with exact sampling, graph derivatives, saved-model support, and a
+  Gibbs demo for Bernoulli logistic regression.
+
 ### Closing the feature gaps with PyMC and TensorFlow Probability
 
 Work from `docs/plans/2026-11-04-001-feat-ppl-feature-gaps-plan.md`. Java compatibility is no longer a goal, so

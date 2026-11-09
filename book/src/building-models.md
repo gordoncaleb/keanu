@@ -60,6 +60,7 @@ censored](#truncated-and-censored-distributions); "inverse" means a truncation i
 | `logit_normal` | logit mean μ and sd σ | (0, 1) | PyMC `LogitNormal` | inverse |
 | `inverse_gaussian` | mean μ, shape λ | positive | PyMC `Wald` | rejection |
 | `half_student_t` | degrees of freedom ν (real), scale σ | positive | PyMC `HalfStudentT` | rejection |
+| `location_scale_student_t` | degrees of freedom ν (real), location μ, scale σ | real | Stan and PyMC Student-t | rejection |
 | `log_logistic` | scale α (the median), shape β | positive | Stan `loglogistic` | inverse |
 | `rice` | noncentrality ν, scale σ | positive | PyMC `Rice` | none |
 | `generalized_gamma` | scale θ, shape k, power p (`gamma(θ, k)` at p = 1) | positive | Stacy's family | rejection |
@@ -120,11 +121,16 @@ that proposes whole values.
 - `beta_binomial(n, alpha, beta)` is a binomial whose success probability is Beta(α, β): over-dispersed successes
   out of n trials, with mean nα/(α + β). Its log CDF and survival function are finite sums, so it can be truncated
   and censored too.
+- `negative_binomial_log(eta, alpha)` takes the log mean η directly, as Stan's `neg_binomial_2_log`. Its log
+  mass and derivatives stay usable for extreme finite predictors where `exp(eta)` would underflow or overflow.
+  Use `negative_binomial(mu, alpha)` for negative-binomial CDFs, truncation or censoring.
 - `bernoulli_logit(eta)`, `binomial_logit(eta, n)` and `categorical_logit(shape, &logits)` take log odds (or
   unnormalised log probabilities) and `poisson_log(eta)` the log of the mean, as Stan's `bernoulli_logit`,
   `binomial_logit`, `categorical_logit` and `poisson_log`. Their log probabilities are computed as −softplus(∓η),
   ηₓ − logsumexp(η) and kη − e^η, so they stay finite and accurate for any linear predictor (a logit of ±700
   included), with no sigmoid or exponential taken first.
+- `binomial_logit` also supports censoring and truncation. It evaluates the log tails directly from the logit,
+  including where the probability of success rounds to zero or one.
 
 ```rust,ignore
 {{#include ../../keanu/tests/book.rs:zero_inflated}}
@@ -221,8 +227,11 @@ bijectors (`ElementBijector`) are `LowerBound(a)` (x = a + exp(y)), `UpperBound(
 `Interval(a, b)` (x = a + (b − a)·logistic(y)) and `Affine { loc, scale }` (x = loc + scale·y), with constant
 bounds, location and scale. So a Gaussian through `LowerBound(0.0)` is a log-normal, and through
 `Interval(0.0, 1.0)` a logit-normal. The support is the image of the base's support. A transformed distribution is
-element-wise, so it can be a mixture component or a `log_density` kind, but it has no CDF, so it can't be truncated
-or censored. Its base can't be censored or a hurdle either, since their point masses have no Jacobian.
+element-wise, so it can be a mixture component or a `log_density` kind. It can be truncated or censored when the
+base has a CDF. Increasing transforms evaluate each tail at the inverse point and decreasing transforms swap the
+tails. A transformed base with a closed-form quantile also supports inverse-CDF truncation sampling. For a
+truncated or censored transform, use `HessianMethod::Auto` or `FiniteDifference` for second-order inference.
+The transform's base needs a density, as censored and hurdle bases carry point masses.
 
 ```rust,ignore
 {{#include ../../keanu/tests/book.rs:mixture_of}}
@@ -261,6 +270,76 @@ them, and Metropolis–Hastings updates them incrementally with the nodes a prop
 the density rather than a generative step, so forward sampling, predictive sampling and the particle filter ignore
 it. Factors are saved and loaded with the model, but scan bodies can't hold them.
 
+## Heterogeneous success counts and discrete lifetimes
+
+`poisson_binomial(p)` models the number of successes in independent trials that can have different
+probabilities. The last axis of `p` indexes trials and the leading axes index batches. The log mass
+uses a log-space recurrence and can evaluate outcomes whose probability underflows. At count k
+out of n trials, it uses O(n × (1 + min(k, n − k))) time. The calibration example infers a shared
+log-odds offset from top-coded batch totals. It uses the distribution's `log_ccdf` to average exceedance
+risk for the underlying totals over posterior draws. The distribution also exposes `log_cdf`,
+parameter gradients and Hessian-vector products for both tails.
+[Stan Poisson-binomial reference](https://mc-stan.org/docs/functions-reference/bounded_discrete_distributions.html)
+
+Use `b.censored(DistributionKind::PoissonBinomial, &[p.id()], lower, upper)` for clipped totals,
+or `b.truncated(DistributionKind::PoissonBinomial, &[p.id()], lower, upper)` for totals retained
+only within an inclusive count interval. The bounds are whole numbers or infinities and broadcast
+with the leading axes of `p`. Truncation sums the interval mass directly in log space and can
+sample even when the interval has too little probability for repeated rejection. Both wrappers
+work as distribution nodes. The mixture and hidden Markov model APIs require elementwise
+parameters, whereas these wrappers take a vector of trial probabilities for each count.
+
+`discrete_weibull(q, beta)` models nonnegative counts with survival probability P(X ≥ k) = q^(k^beta).
+The probability q lies strictly between zero and one, and beta is positive. The mass and tails use
+stable log formulas and support censoring and truncation. The reliability example fits lifetimes
+recorded in completed cycles, with devices that are still running at a fixed cutoff treated as
+right-censored. [PyMC discrete Weibull reference](https://www.pymc.io/projects/docs/en/v5.24.0/api/distributions/generated/pymc.DiscreteWeibull.html)
+
+## Skew Student-t errors
+
+`skew_student_t(a, b, mu, sigma)` uses separate positive shapes for the left and right tails in the
+Jones–Faddy parameterization. Equal shapes give a Student-t with degrees of freedom `2 * a`. The
+density and both log tails are differentiable, and the graph distribution supports censoring and
+truncation. The regression example learns a slope and tail shape from synthetic asymmetric residuals.
+[PyMC SkewStudentT reference](https://www.pymc.io/projects/docs/en/stable/api/distributions/generated/pymc.SkewStudentT.html)
+
+## Pólya–Gamma augmentation
+
+`polya_gamma1(z)` is the shape-one Pólya–Gamma distribution PG(1, z), with finite tilt `z` and
+positive support. The density and its derivatives use two rapidly converging series, and the sampler
+uses alternating-series rejection. In Bernoulli logistic regression, each observation gets a
+PG(1, z) auxiliary variable with tilt equal to its current logit. Given those variables, the Gaussian
+prior yields a Gaussian full conditional for the coefficients. The `polya_gamma_logistic` example
+compares the Gibbs posterior with grid integration of the original Bernoulli-logit model.
+[Polson, Scott, and Windle (2013)](https://arxiv.org/abs/1205.0310)
+
+## Multinomial logits and Gaussian precision
+
+Use `multinomial_logit(n, logits)` for counts over the last axis of a logit tensor. Trial totals and
+leading dimensions broadcast. The log mass uses the log-softmax directly, which keeps rare observed
+categories scoreable even when the corresponding probabilities underflow. The vote-share example sets
+one candidate's logit to zero and estimates the other candidates' slopes relative to that reference.
+[Stan multinomial logit reference](https://mc-stan.org/docs/functions-reference/multinomial-distribution.html)
+
+Use `multivariate_gaussian_precision(mu, precision)` when the model specifies inverse covariance.
+Keanu reads the lower triangle as the entries of a symmetric positive definite matrix. Density and sampling
+use its Cholesky factor directly. The signal denoising example compares NUTS with the exact Gaussian
+posterior for a prior that couples adjacent signal values. The precision matrix uses dense storage.
+[Stan precision-form normal reference](https://mc-stan.org/docs/2_32/functions-reference/multivariate-normal-distribution-precision-parameterization.html)
+[PyMC MvNormal reference](https://www.pymc.io/projects/docs/en/stable/api/distributions/generated/pymc.MvNormal.html)
+
+## Thin QR and structured linear solves
+
+For a tall or square design matrix, `DoubleVar::thin_qr()` returns orthonormal columns Q and an upper
+triangular R with a nonnegative diagonal. Forward, reverse, and second-order differentiation require full
+column rank. The tensor version also accepts wide matrices. `DoubleTensor::least_squares()` uses QR for
+full-column-rank systems with a vector or matrix right-hand side.
+
+`DoubleVar::solve_kronecker(B, rhs)` solves `A X Bᵀ = rhs`, where A is the receiving variable. Pass
+the row-major right-hand side as a matrix. The graph uses two ordinary solves and never allocates the
+full Kronecker product. The `correlated_regression` example uses QR and a triangular solve to recover
+coefficients in the original predictor coordinates.
+
 ## Marginalising discrete latents
 
 NUTS needs every latent to be continuous. A discrete latent with finitely many values can instead be summed out of
@@ -295,6 +374,11 @@ latents are marginalised one after another when each has its own observations.
 A Gaussian mixture written with an explicit `categorical` assignment per point and marginalised this way has the
 same log probability, gradients and posterior as the same model written with `mixture`; the
 [Gaussian mixture example](examples.md#a-gaussian-mixture) fits both.
+
+Use `marginalize_joint` for a small group of scalar discrete latents that share an observation or whose
+prior probabilities depend on one another. The group may have up to 1,000 joint assignments. The returned
+record gives the assignment table and the corresponding joint posterior probabilities at each evaluated
+state. Sample from those joint probabilities to preserve dependencies between the recovered latents.
 
 ## Missing observations
 

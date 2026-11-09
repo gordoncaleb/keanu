@@ -176,6 +176,9 @@ pub(crate) fn check(
     bijector: ElementBijector,
 ) -> std::result::Result<(), String> {
     bijector.check()?;
+    if let DistributionKind::Transformed(inner, bijector) = base {
+        check(inner, *bijector)?;
+    }
     let point_masses = matches!(
         base,
         DistributionKind::Censored(_) | DistributionKind::Hurdle(_)
@@ -229,25 +232,67 @@ pub(crate) fn elementwise(
     parameters: &[&Value],
     gradient: bool,
 ) -> Result<(DoubleTensor, Option<LogProbGradientParts>)> {
+    evaluate(
+        base,
+        bijector,
+        Univariate::Density,
+        value,
+        parameters,
+        gradient,
+    )
+}
+
+/// Evaluate a density or tail through the inverse map. Only a density acquires a Jacobian term.
+pub(crate) fn evaluate(
+    base: &DistributionKind,
+    bijector: ElementBijector,
+    function: Univariate,
+    value: &Value,
+    parameters: &[&Value],
+    gradient: bool,
+) -> Result<(DoubleTensor, Option<LogProbGradientParts>)> {
     let x = value.f64()?;
     let inverses = inverses(bijector, x);
     let y = base_points(x, &inverses)?;
-    let (densities, parts) = base.univariate(Univariate::Density, &y, parameters, gradient)?;
-    let shape = keanu_tensor::broadcast_shape(densities.shape(), x.shape())?;
+    let base_function = match (function, bijector.is_increasing()) {
+        (Univariate::Cdf, false) => Univariate::Ccdf,
+        (Univariate::Ccdf, false) => Univariate::Cdf,
+        _ => function,
+    };
+    let (terms, parts) = base.univariate(base_function, &y, parameters, gradient)?;
+    let density = function == Univariate::Density;
+    let shape = keanu_tensor::broadcast_shape(terms.shape(), x.shape())?;
     let inside = broadcast(&part(x, &inverses, 0.0, |_| 1.0)?, &shape)?;
-    let log_d1 = broadcast(&part(x, &inverses, 0.0, |i| i.log_d1)?, &shape)?;
-    let values: Vec<f64> = broadcast(&densities, &shape)?
-        .into_iter()
-        .zip(&log_d1)
-        .zip(&inside)
-        .map(|((d, l), &inside)| {
-            if inside == 1.0 {
-                d + l
+    let mut values = broadcast(&terms, &shape)?;
+    if density {
+        let log_d1 = broadcast(&part(x, &inverses, 0.0, |i| i.log_d1)?, &shape)?;
+        for (i, value) in values.iter_mut().enumerate() {
+            *value = if inside[i] == 1.0 {
+                *value + log_d1[i]
             } else {
                 f64::NEG_INFINITY
+            };
+        }
+    } else {
+        let points = broadcast(x, &shape)?;
+        for (i, value) in values.iter_mut().enumerate() {
+            if inside[i] == 0.0 {
+                let x = points[i];
+                let below = match bijector {
+                    ElementBijector::LowerBound(a) | ElementBijector::Interval(a, _) => x <= a,
+                    ElementBijector::UpperBound(b) => x < b,
+                    ElementBijector::Affine { loc, .. } => x < loc,
+                };
+                *value = if x.is_nan() {
+                    f64::NAN
+                } else if below == (function == Univariate::Cdf) {
+                    f64::NEG_INFINITY
+                } else {
+                    0.0
+                };
             }
-        })
-        .collect();
+        }
+    }
     let values = DoubleTensor::new(&shape, values)?;
     let Some((dy, dparameters)) = parts.filter(|_| gradient) else {
         return Ok((values, None));
@@ -262,12 +307,16 @@ pub(crate) fn elementwise(
     let dx = dy
         .map(|dy| -> Result<DoubleTensor> {
             let d1 = broadcast(&part(x, &inverses, 1.0, |i| i.d1)?, &shape)?;
-            let d2 = broadcast(&part(x, &inverses, 0.0, |i| i.d2)?, &shape)?;
-            let dx = broadcast(&dy, &shape)?
-                .into_iter()
-                .zip(d1.iter().zip(&d2))
-                .map(|(dy, (d1, d2))| dy * d1 + d2 / d1)
-                .collect();
+            let mut dx = broadcast(&dy, &shape)?;
+            for (dx, &d1) in dx.iter_mut().zip(&d1) {
+                *dx *= d1;
+            }
+            if density {
+                let d2 = broadcast(&part(x, &inverses, 0.0, |i| i.d2)?, &shape)?;
+                for ((dx, d2), d1) in dx.iter_mut().zip(d2).zip(d1) {
+                    *dx += d2 / d1;
+                }
+            }
             Ok(DoubleTensor::new(&shape, masked(dx))?)
         })
         .transpose()?;

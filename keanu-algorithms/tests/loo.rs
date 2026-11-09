@@ -269,3 +269,61 @@ fn invalid_inputs_are_rejected() {
     invalid(compare(&[("six", &six), ("three", &three)]).map(|_| ()));
     invalid(stacking_weights::<Loo>(&[]).map(|_| ()));
 }
+
+#[test]
+fn refit_loo_and_kfold_match_the_conjugate_predictive_density() {
+    use keanu_algorithms::{NetworkSamples, kfold, refit_loo};
+    use keanu_tensor::special::ndtri;
+
+    let data = [-1.0, 0.4, 1.6, 0.2];
+    let predictive = |training: &[usize], held_out: &[usize]| {
+        assert!(training.iter().all(|i| !held_out.contains(i)));
+        assert_eq!(training.len() + held_out.len(), data.len());
+        let precision = 1.0 + training.len() as f64;
+        let mean = training.iter().map(|&i| data[i]).sum::<f64>() / precision;
+        let sd = 1.0 / precision.sqrt();
+        let b = GraphBuilder::new();
+        let mu = b.gaussian(0.0, 1.0);
+        let y = b.gaussian_with_shape(&[held_out.len()], mu, 1.0);
+        b.observe(
+            y,
+            DoubleTensor::vector(held_out.iter().map(|&i| data[i]).collect()),
+        );
+        let mu = mu.id();
+        let (graph, mut state) = b.build()?;
+        let model = Model::new(graph, &state)?;
+        let mut draws = NetworkSamples::new(model.graph(), &[mu])?;
+        for i in 0..4096 {
+            let z = ndtri((i as f64 + 0.5) / 4096.0);
+            state.set(model.graph(), mu, DoubleTensor::scalar(mean + sd * z))?;
+            draws.record(&state, 0.0)?;
+        }
+        PointwiseLogLik::from_samples(&model, &state, &draws)
+    };
+    for folds in [[0, 1, 2, 3], [7, 2, 7, 2]] {
+        let cv = if folds[0] == 0 {
+            refit_loo(data.len(), predictive).unwrap()
+        } else {
+            kfold(&folds, predictive).unwrap()
+        };
+        let mut total = 0.0;
+        for (i, &score) in cv.pointwise_elpd.iter().enumerate() {
+            let train: Vec<_> = data
+                .iter()
+                .zip(folds)
+                .filter_map(|(&y, fold)| (fold != folds[i]).then_some(y))
+                .collect();
+            let precision = 1.0 + train.len() as f64;
+            let mean = train.iter().sum::<f64>() / precision;
+            let exact = normal_log_density(data[i], mean, (1.0 + 1.0 / precision).sqrt());
+            assert!(
+                (score - exact).abs() < 1e-4,
+                "point {i}: {score} vs {exact}"
+            );
+            total += exact;
+        }
+        assert!((cv.elpd() - total).abs() < 4e-4);
+    }
+    assert!(kfold(&[4, 4], |_, _| unreachable!()).is_err());
+    assert!(kfold(&[0, 0, 1, 1], |_, _| predictive(&[1, 2, 3], &[0])).is_err());
+}

@@ -1,6 +1,6 @@
 //! Discrete distributions. Values are integers (`IntTensor`) or booleans (`BoolTensor`).
 
-use crate::continuous::{sample_beta_ratio, sample_gamma};
+use crate::continuous::{sample_beta_ratio, sample_gamma, sample_log_gamma};
 use crate::error::{Result, invalid_parameter};
 use crate::param::{IntoParam, Param};
 use crate::rng::KeanuRng;
@@ -14,9 +14,13 @@ use keanu_tensor::{BoolTensor, DoubleTensor, IntTensor, Shape};
 
 mod counts;
 mod ordinal;
+mod poisson_binomial;
+mod weibull;
 
 pub use counts::{HyperGeometric, Skellam, SkellamGradient};
 pub use ordinal::{OrderedProbit, OrderedProbitGradient};
+pub use poisson_binomial::{BoundedPoissonBinomial, PoissonBinomial, PoissonBinomialGradient};
+pub use weibull::{DiscreteWeibull, DiscreteWeibullGradient};
 
 /// Bernoulli distribution: true with probability `prob_true`.
 #[derive(Debug, Clone, PartialEq)]
@@ -640,6 +644,111 @@ impl<'a> NegativeBinomial<'a> {
                 return Ok(0);
             }
             sample_poisson(rate, rng)
+        })
+    }
+}
+
+/// Negative binomial with log mean `log_mu` and dispersion `alpha`, as Stan's `neg_binomial_2_log`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct NegativeBinomialLog<'a> {
+    /// The log mean η.
+    pub log_mu: Param<'a>,
+    /// The positive dispersion α.
+    pub alpha: Param<'a>,
+}
+
+/// Derivatives of [`NegativeBinomialLog::log_prob`].
+#[derive(Debug, Clone, PartialEq)]
+pub struct NegativeBinomialLogGradient {
+    /// With respect to the log mean.
+    pub log_mu: DoubleTensor,
+    /// With respect to dispersion.
+    pub alpha: DoubleTensor,
+}
+
+impl<'a> NegativeBinomialLog<'a> {
+    /// Creates the distribution from its parameters.
+    pub fn new(log_mu: impl IntoParam<'a, f64>, alpha: impl IntoParam<'a, f64>) -> Self {
+        Self {
+            log_mu: log_mu.into_param(),
+            alpha: alpha.into_param(),
+        }
+    }
+
+    /// The element-wise log probability, broadcast with the parameters. A log mean of −∞ gives a point mass
+    /// at zero. Positive infinite or NaN log means and non-positive or non-finite dispersion are invalid.
+    pub fn log_prob(&self, k: &IntTensor) -> Result<DoubleTensor> {
+        map((k, &*self.log_mu, &*self.alpha), |(k, log_mu, alpha)| {
+            if k < 0 {
+                return f64::NEG_INFINITY;
+            }
+            if !(alpha > 0.0 && alpha.is_finite() && log_mu < f64::INFINITY) {
+                return f64::NAN;
+            }
+            let k = k as f64;
+            let log_odds = log_mu - alpha.ln();
+            // For tiny odds, α log(1 + μ/α) is μ to working precision, even if μ/α underflows.
+            let penalty = if log_odds < -37.0 {
+                log_mu.exp()
+            } else {
+                alpha * softplus(log_odds)
+            };
+            let count_term = if k == 0.0 {
+                0.0
+            } else {
+                -k * softplus(-log_odds)
+            };
+            negative_binomial_log_coefficient(k, alpha) - penalty + count_term
+        })
+    }
+
+    /// The broadcast derivatives with respect to the log mean and dispersion.
+    pub fn d_log_prob(&self, k: &IntTensor) -> Result<NegativeBinomialLogGradient> {
+        let [log_mu, alpha] = map_n((k, &*self.log_mu, &*self.alpha), |(k, log_mu, alpha)| {
+            if k < 0 {
+                return [0.0; 2];
+            }
+            let k = k as f64;
+            let log_odds = log_mu - alpha.ln();
+            let log_q = -softplus(log_odds);
+            let p = sigmoid(log_odds);
+            let kq = k * log_q.exp();
+            let alpha_p = if log_odds < 0.0 {
+                (log_mu + log_q).exp()
+            } else {
+                alpha * p
+            };
+            [
+                kq - alpha_p,
+                digamma(k + alpha) - digamma(alpha) + log_q + p - kq / alpha,
+            ]
+        })?;
+        Ok(NegativeBinomialLogGradient { log_mu, alpha })
+    }
+
+    /// Draws from the Gamma–Poisson mixture, keeping the rate in log space until the Poisson draw.
+    pub fn sample(&self, shape: &[usize], rng: &mut KeanuRng) -> Result<IntTensor> {
+        sample_each(shape, &[&self.log_mu, &self.alpha], |p| {
+            let (log_mu, alpha) = (p[0], p[1]);
+            if !(alpha > 0.0 && alpha.is_finite() && log_mu < f64::INFINITY) {
+                return invalid_parameter(format!(
+                    "invalid negative binomial log mean {log_mu} or dispersion {alpha}"
+                ));
+            }
+            if log_mu == f64::NEG_INFINITY {
+                return Ok(0);
+            }
+            let rate = (log_mu + (sample_log_gamma(alpha, rng)? - alpha.ln())).exp();
+            if rate >= i64::MAX as f64 {
+                return invalid_parameter(format!(
+                    "negative binomial Poisson rate {rate} exceeds the count range"
+                ));
+            }
+            if rate == 0.0 {
+                Ok(0)
+            } else {
+                sample_poisson(rate, rng)
+            }
         })
     }
 }

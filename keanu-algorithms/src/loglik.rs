@@ -48,7 +48,13 @@ use crate::error::{AlgorithmError, Result};
 use crate::samples::{ChainSamples, NetworkSamples};
 use crate::support::node_name;
 use keanu_distributions::KeanuRng;
-use keanu_graph::{Graph, Model, NodeId, State, node_log_prob_terms, upstream_lambda_section};
+use keanu_graph::{
+    Graph, Model, NodeId, State, node_log_prob_event_terms, node_log_prob_terms,
+    upstream_lambda_section,
+};
+use keanu_tensor::DoubleTensor;
+
+type Terms = fn(&Graph, &State, NodeId) -> keanu_graph::Result<DoubleTensor>;
 
 /// One point of a pointwise log likelihood: an element of an observed node, or the whole node.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -84,7 +90,26 @@ impl PointwiseLogLik {
     /// draws, or if the samples don't record a latent an observed node depends on (naming the missing latents), and
     /// any error evaluating the model at a draw.
     pub fn from_chains(model: &Model, state: &State, samples: &ChainSamples) -> Result<Self> {
-        let layout = Layout::new(model, state, &samples.chains()[0])?;
+        Self::chains_with_terms(model, state, samples, node_log_prob_terms)
+    }
+
+    /// Like [`Self::from_chains`], with one point per independent event for supported multivariate
+    /// distributions. See [`node_log_prob_event_terms`] for the supported families.
+    pub fn from_chains_by_event(
+        model: &Model,
+        state: &State,
+        samples: &ChainSamples,
+    ) -> Result<Self> {
+        Self::chains_with_terms(model, state, samples, node_log_prob_event_terms)
+    }
+
+    fn chains_with_terms(
+        model: &Model,
+        state: &State,
+        samples: &ChainSamples,
+        terms: Terms,
+    ) -> Result<Self> {
+        let layout = Layout::new(model, state, &samples.chains()[0], terms)?;
         let values = samples
             .chains()
             .iter()
@@ -96,7 +121,26 @@ impl PointwiseLogLik {
     /// The pointwise log likelihood of one chain's (or one approximation's) draws, as a single chain. Fails as
     /// [`from_chains`](Self::from_chains).
     pub fn from_samples(model: &Model, state: &State, samples: &NetworkSamples) -> Result<Self> {
-        let layout = Layout::new(model, state, samples)?;
+        Self::samples_with_terms(model, state, samples, node_log_prob_terms)
+    }
+
+    /// Like [`Self::from_samples`], with one point per independent event for supported multivariate
+    /// distributions. See [`node_log_prob_event_terms`] for the supported families.
+    pub fn from_samples_by_event(
+        model: &Model,
+        state: &State,
+        samples: &NetworkSamples,
+    ) -> Result<Self> {
+        Self::samples_with_terms(model, state, samples, node_log_prob_event_terms)
+    }
+
+    fn samples_with_terms(
+        model: &Model,
+        state: &State,
+        samples: &NetworkSamples,
+        terms: Terms,
+    ) -> Result<Self> {
+        let layout = Layout::new(model, state, samples, terms)?;
         let values = vec![layout.evaluate(model, state, samples)?];
         Ok(layout.finish(values))
     }
@@ -166,6 +210,7 @@ impl PointwiseLogLik {
 
 /// What to evaluate at each draw: the observed nodes, their points, and the latents to set from the samples.
 struct Layout {
+    terms: Terms,
     observed: Vec<NodeId>,
     points: Vec<LogLikPoint>,
     /// The observed nodes' parents, which each draw recomputes (back to the probabilistic nodes).
@@ -176,7 +221,7 @@ struct Layout {
 
 impl Layout {
     /// The layout for samples like `first`, whose first draw gives the shape of each node's terms.
-    fn new(model: &Model, state: &State, first: &NetworkSamples) -> Result<Self> {
+    fn new(model: &Model, state: &State, first: &NetworkSamples, terms: Terms) -> Result<Self> {
         crate::support::check_likelihood(model)?;
         let graph = model.graph();
         let sampled = first.nodes();
@@ -222,6 +267,7 @@ impl Layout {
         // the points of each node, from the shape of its log probability terms at the first draw (the shape
         // depends only on the nodes' shapes, so it is the same at every draw)
         let mut layout = Self {
+            terms,
             observed,
             points: Vec::new(),
             parents,
@@ -230,7 +276,7 @@ impl Layout {
         let mut work = state.clone();
         layout.set_draw(model, &mut work, first, 0)?;
         for &id in &layout.observed {
-            let shape = node_log_prob_terms(graph, &work, id)?.shape().to_vec();
+            let shape = terms(graph, &work, id)?.shape().to_vec();
             layout.points.extend(node_points(graph, id, &shape));
         }
         Ok(layout)
@@ -304,7 +350,7 @@ impl Layout {
         self.set_draw(model, work, samples, index)?;
         let mut row = Vec::with_capacity(self.points.len());
         for &id in &self.observed {
-            row.extend_from_slice(node_log_prob_terms(graph, work, id)?.as_slice());
+            row.extend_from_slice((self.terms)(graph, work, id)?.as_slice());
         }
         if row.len() != self.points.len() {
             return Err(AlgorithmError::InvalidArgument(format!(

@@ -557,3 +557,113 @@ fn the_kinds_report_their_names_and_parameters() {
         Op::LogDensity(K::Transformed(..))
     ));
 }
+
+#[test]
+fn censored_and_truncated_transforms_match_their_native_equivalents() {
+    let b = GraphBuilder::new();
+    let mu = b.gaussian(0.0, 1.0);
+    b.set_value(mu, s(0.3));
+    let sigma = b.scalar(0.8);
+    let parameters = [mu.id(), sigma.id()];
+    let transformed = K::Transformed(Arc::new(K::Gaussian), ElementBijector::LowerBound(0.0));
+    let lower = b.constant(v(&[0.4; 3]));
+    let censored: DoubleVar = b.censored(transformed.clone(), &parameters, lower, 2.0);
+    let native_censored: DoubleVar = b.censored(K::LogNormal, &parameters, lower, 2.0);
+    b.observe(censored, v(&[0.4, 1.1, 2.0]));
+    b.observe(native_censored, v(&[0.4, 1.1, 2.0]));
+    let truncated: DoubleVar = b.truncated(transformed, &parameters, -1.0, 2.0);
+    let native_truncated: DoubleVar = b.truncated(K::LogNormal, &parameters, 0.0, 2.0);
+    b.observe(truncated, s(1.1));
+    b.observe(native_truncated, s(1.1));
+    let mu = mu.id();
+    let ids = [
+        (censored.id(), native_censored.id()),
+        (truncated.id(), native_truncated.id()),
+    ];
+    let (graph, state) = b.build().unwrap();
+    for (actual, native) in ids {
+        let lp = node_log_prob_terms(&graph, &state, actual).unwrap();
+        let expected = node_log_prob_terms(&graph, &state, native).unwrap();
+        assert_all_close(lp.as_slice(), expected.as_slice(), 1e-12, "log terms");
+        let dp = node_log_prob_gradient(&graph, &state, actual).unwrap();
+        let reference = node_log_prob_gradient(&graph, &state, native).unwrap();
+        assert_all_close(
+            dp.parameters[0].as_ref().unwrap().as_slice(),
+            reference.parameters[0].as_ref().unwrap().as_slice(),
+            1e-12,
+            "location derivatives",
+        );
+    }
+    let mut state = state;
+    let model = Model::new(graph, &state).unwrap();
+    let params = Parameterisation::with_space(&model, &state, Space::Constrained).unwrap();
+    assert_eq!(model.latents(), &[mu]);
+    let hessian = params
+        .hessian_with(&[0.3], false, keanu_graph::HessianMethod::Auto, &mut state)
+        .unwrap();
+    assert!(hessian.as_slice()[0].is_finite());
+}
+
+#[test]
+fn a_decreasing_transform_swaps_cdf_tails_and_quantiles() {
+    let b = GraphBuilder::new();
+    let mu = b.scalar(0.3);
+    let sigma = b.scalar(0.8);
+    let reflected_mu = b.scalar(0.4);
+    let reflected_sigma = b.scalar(1.6);
+    let transformed = K::Transformed(
+        Arc::new(K::Gaussian),
+        ElementBijector::Affine {
+            loc: 1.0,
+            scale: -2.0,
+        },
+    );
+    let lower = b.constant(v(&[-0.2; 3]));
+    let censored: DoubleVar = b.censored(transformed.clone(), &[mu.id(), sigma.id()], lower, 1.5);
+    let native: DoubleVar = b.censored(
+        K::Gaussian,
+        &[reflected_mu.id(), reflected_sigma.id()],
+        lower,
+        1.5,
+    );
+    b.observe(censored, v(&[-0.2, 0.8, 1.5]));
+    b.observe(native, v(&[-0.2, 0.8, 1.5]));
+    // This tail is too small for rejection sampling.
+    let draws: DoubleVar = b.truncated(transformed, &[mu.id(), sigma.id()], 30.0, 31.0);
+    let (censored, native, draws) = (censored.id(), native.id(), draws.id());
+    let (graph, mut state) = b.build().unwrap();
+    assert_all_close(
+        node_log_prob_terms(&graph, &state, censored)
+            .unwrap()
+            .as_slice(),
+        node_log_prob_terms(&graph, &state, native)
+            .unwrap()
+            .as_slice(),
+        1e-12,
+        "reflected log terms",
+    );
+    state
+        .lazy_eval(&graph, &[draws], &mut KeanuRng::seed_from_u64(4))
+        .unwrap();
+    let draw = state.f64(draws).unwrap().to_scalar().unwrap();
+    assert!((30.0..=31.0).contains(&draw), "{draw}");
+}
+
+#[test]
+fn censoring_rejects_an_invalid_base_transform() {
+    let b = GraphBuilder::new();
+    let transformed = K::Transformed(
+        Arc::new(K::Gaussian),
+        ElementBijector::Affine {
+            loc: 0.0,
+            scale: 0.0,
+        },
+    );
+    let _: DoubleVar = b.censored(
+        transformed,
+        &[b.scalar(0.0).id(), b.scalar(1.0).id()],
+        -1.0,
+        1.0,
+    );
+    assert!(b.build().unwrap_err().to_string().contains("bijector"));
+}

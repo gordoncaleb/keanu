@@ -23,6 +23,8 @@ mod ab_testing;
 mod abc_stochastic_sir;
 #[path = "../examples/causal_effect.rs"]
 mod causal_effect;
+#[path = "../examples/censored_frailty.rs"]
+mod censored_frailty;
 #[path = "../examples/challenger_disaster.rs"]
 mod challenger_disaster;
 #[path = "../examples/cheating_students.rs"]
@@ -31,43 +33,77 @@ mod cheating_students;
 mod co2_forecast;
 #[path = "../examples/coal_mining_disasters.rs"]
 mod coal_mining_disasters;
+#[path = "../examples/correlated_regression.rs"]
+mod correlated_regression;
 #[path = "../examples/cure_model.rs"]
 mod cure_model;
 #[path = "../examples/custom_distribution.rs"]
 mod custom_distribution;
+#[path = "../examples/discrete_weibull_reliability.rs"]
+mod discrete_weibull_reliability;
 #[path = "../examples/disease_mapping.rs"]
 mod disease_mapping;
 #[path = "../examples/drift_diffusion.rs"]
 mod drift_diffusion;
 #[path = "../examples/eight_schools.rs"]
 mod eight_schools;
+#[path = "../examples/euler_maruyama.rs"]
+mod euler_maruyama;
 #[path = "../examples/extreme_values.rs"]
 mod extreme_values;
 #[path = "../examples/gaussian_mixture.rs"]
 mod gaussian_mixture;
 #[path = "../examples/gp_regression.rs"]
 mod gp_regression;
+#[path = "../examples/hierarchical_experiments.rs"]
+mod hierarchical_experiments;
 #[path = "../examples/hmm.rs"]
 mod hmm;
+#[path = "../examples/item_response.rs"]
+mod item_response;
+#[path = "../examples/lotka_volterra.rs"]
+mod lotka_volterra;
+#[path = "../examples/measurement_error.rs"]
+mod measurement_error;
 #[path = "../examples/missing_data.rs"]
 mod missing_data;
 #[path = "../examples/multi_state.rs"]
 mod multi_state;
+#[path = "../examples/multinomial_logit_regression.rs"]
+mod multinomial_logit_regression;
+#[path = "../examples/multivariate_walk_forecast.rs"]
+mod multivariate_walk_forecast;
 #[path = "../examples/occupancy.rs"]
 mod occupancy;
 #[path = "../examples/pharmacokinetics.rs"]
 mod pharmacokinetics;
+#[path = "../examples/poisson_binomial_calibration.rs"]
+mod poisson_binomial_calibration;
+#[path = "../examples/polya_gamma_logistic.rs"]
+mod polya_gamma_logistic;
+#[path = "../examples/precision_gaussian_denoising.rs"]
+mod precision_gaussian_denoising;
 #[path = "../examples/radon.rs"]
 mod radon;
+#[path = "../examples/robust_regression.rs"]
+mod robust_regression;
 #[path = "../examples/sir.rs"]
 mod sir;
+#[path = "../examples/skew_student_t_regression.rs"]
+mod skew_student_t_regression;
 #[path = "../examples/smc_model_comparison.rs"]
 mod smc_model_comparison;
+#[path = "../examples/spline_regression.rs"]
+mod spline_regression;
 #[path = "../examples/stochastic_volatility.rs"]
 mod stochastic_volatility;
+#[path = "../examples/structured_gp.rs"]
+mod structured_gp;
 #[path = "../examples/text_messaging.rs"]
 mod text_messaging;
 
+#[path = "../examples/vector_autoregression.rs"]
+mod vector_autoregression;
 const LONGER: usize = 20;
 
 fn assert_close(actual: f64, expected: f64, within: f64, what: &str) {
@@ -1377,4 +1413,175 @@ fn missing_data_recovers_the_coefficients_and_the_held_out_outcomes() {
         &pick(&data.x1, &data.x1_missing),
     );
     assert!(r > 0.8, "imputed covariate correlates {r} with the truth");
+}
+
+#[test]
+fn item_response_recovers_difficulty_and_predicts_held_out_responses() {
+    let (brier, item_rmse) = item_response::run(250).unwrap();
+    assert!(brier < 0.22, "held-out Brier score {brier}");
+    assert!(item_rmse < 0.55, "item difficulty RMSE {item_rmse}");
+}
+
+#[test]
+fn lotka_volterra_recovers_rates_and_forecasts_held_out_populations() {
+    let (rates, rmse) = lotka_volterra::run(200).unwrap();
+    for (&rate, expected) in rates.as_slice().iter().zip(lotka_volterra::TRUE_RATES) {
+        assert_close(rate, expected, 0.12, "Lotka–Volterra rate");
+    }
+    assert!(rmse < 0.18, "held-out trajectory RMSE {rmse}");
+}
+
+#[test]
+fn measurement_error_model_corrects_attenuation_of_the_slope() {
+    let (naive, corrected) = measurement_error::run(250).unwrap();
+    assert!(
+        naive < measurement_error::TRUE_SLOPE - 0.4,
+        "naive slope {naive}"
+    );
+    assert_close(
+        corrected,
+        measurement_error::TRUE_SLOPE,
+        0.2,
+        "corrected slope",
+    );
+}
+
+#[test]
+fn spline_regression_predicts_on_a_different_grid() {
+    let rmse = spline_regression::run(200).unwrap();
+    assert!(rmse < 0.11, "held-out curve RMSE {rmse}");
+}
+
+#[test]
+fn euler_maruyama_recovers_rate_and_diffusion() {
+    let (rate, diffusion) = euler_maruyama::run(250).unwrap();
+    assert_close(rate, euler_maruyama::RATE, 0.5, "mean-reversion rate");
+    assert_close(diffusion, euler_maruyama::DIFFUSION, 0.16, "diffusion");
+}
+
+#[test]
+fn vector_autoregression_recovers_cross_series_coefficients() {
+    let (coefficients, rmse) = vector_autoregression::run(200).unwrap();
+    for (&actual, expected) in coefficients
+        .as_slice()
+        .iter()
+        .zip(vector_autoregression::TRUE_COEFFICIENTS)
+    {
+        assert_close(actual, expected, 0.15, "VAR coefficient");
+    }
+    assert!(rmse < 0.08, "conditional mean forecast RMSE {rmse}");
+}
+
+#[test]
+fn hierarchical_experiments_recover_the_effect_and_predict_heterogeneity() {
+    let (mean, mean_sd, new_market_sd) = hierarchical_experiments::run(350).unwrap();
+    assert_close(
+        mean,
+        hierarchical_experiments::TRUE_MEAN_EFFECT,
+        0.23,
+        "mean effect",
+    );
+    assert!(
+        new_market_sd > 1.8 * mean_sd,
+        "mean SD {mean_sd}, new market SD {new_market_sd}"
+    );
+}
+
+#[test]
+fn robust_regression_learns_the_slope_and_heavy_tails() {
+    let (slope, nu) = robust_regression::run(350).unwrap();
+    assert_close(slope, robust_regression::TRUE_SLOPE, 0.13, "robust slope");
+    assert!((1.0..8.0).contains(&nu), "degrees of freedom {nu}");
+}
+
+#[test]
+fn censored_frailty_recovers_the_treatment_effect() {
+    let (effect, censored) = censored_frailty::run(300).unwrap();
+    assert!(censored > 30, "{censored} censored observations");
+    assert_close(
+        effect,
+        censored_frailty::TRUE_EFFECT,
+        0.16,
+        "log-time effect",
+    );
+}
+
+#[test]
+fn phase5_qr_regression_recovers_the_correlated_coefficients() {
+    let beta = correlated_regression::run(400).unwrap();
+    for (&estimated, expected) in beta
+        .as_slice()
+        .iter()
+        .zip(correlated_regression::TRUE_COEFFICIENTS)
+    {
+        assert!(
+            (estimated - expected).abs() < 0.18,
+            "{estimated} vs {expected}"
+        );
+    }
+}
+
+#[test]
+fn phase5_both_structured_gp_priors_forecast_a_held_out_period() {
+    for rmse in structured_gp::run(250).unwrap() {
+        assert!(rmse < 0.12, "held-out RMSE {rmse}");
+    }
+}
+
+#[test]
+fn phase5_multivariate_walk_forecasts_the_expected_mean_and_cross_covariance() {
+    let (mean, cross) = multivariate_walk_forecast::run(5000).unwrap();
+    assert!((mean[0] - 1.8).abs() < 0.04, "{mean:?}");
+    assert!((mean[1] - 1.6).abs() < 0.04, "{mean:?}");
+    assert!((cross - 4.0 * 0.3 * 0.2).abs() < 0.025, "{cross}");
+}
+
+#[test]
+fn phase6_multinomial_logit_recovers_vote_share_slopes() {
+    let slopes = multinomial_logit_regression::run(450).unwrap();
+    for (&actual, expected) in slopes.as_slice().iter().zip([0.8, -0.55]) {
+        assert!((actual - expected).abs() < 0.17, "{actual} vs {expected}");
+    }
+}
+
+#[test]
+fn phase6_precision_gaussian_denoising_agrees_with_the_exact_posterior_mean() {
+    let (estimated, expected) = precision_gaussian_denoising::run(500).unwrap();
+    for (&actual, &expected) in estimated.as_slice().iter().zip(expected.as_slice()) {
+        assert!((actual - expected).abs() < 0.06, "{actual} vs {expected}");
+    }
+}
+
+#[test]
+fn phase6_counts_recover_a_poisson_binomial_calibration_offset() {
+    use poisson_binomial_calibration::{OFFSET, run};
+    let (estimated, risk) = run(300).unwrap();
+    assert!((estimated - OFFSET).abs() < 0.24, "{estimated} vs {OFFSET}");
+    // Independent enumeration of the 64 trial outcomes at the generating offset.
+    assert!((risk - 0.199_008_131_846_656_44).abs() < 0.07, "{risk}");
+}
+
+#[test]
+fn phase6_polya_gamma_gibbs_matches_the_unaugmented_logistic_posterior() {
+    let (gibbs, grid) = polya_gamma_logistic::run(4000).unwrap();
+    assert!((gibbs[0] - grid[0]).abs() < 0.035, "{gibbs:?} vs {grid:?}");
+    assert!((gibbs[1] - grid[1]).abs() < 0.02, "{gibbs:?} vs {grid:?}");
+}
+
+#[test]
+fn phase6_counts_recover_discrete_weibull_parameters_from_censored_lifetimes() {
+    use discrete_weibull_reliability::{BETA, Q, run};
+    let [q, beta] = run(350).unwrap();
+    assert!((q - Q).abs() < 0.06, "{q} vs {Q}");
+    assert!((beta - BETA).abs() < 0.22, "{beta} vs {BETA}");
+}
+
+#[test]
+fn phase6_skew_t_regression_recovers_the_slope_and_tail_shape() {
+    let [slope, shape] = skew_student_t_regression::run(400).unwrap();
+    assert!(
+        (slope - skew_student_t_regression::SLOPE).abs() < 0.15,
+        "{slope}"
+    );
+    assert!((shape - 4.5).abs() < 0.65, "{shape}");
 }

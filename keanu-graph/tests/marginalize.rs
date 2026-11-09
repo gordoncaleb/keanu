@@ -599,3 +599,88 @@ fn a_support_set_by_an_observed_count_with_a_latent_rate_marginalises() {
         "log prob",
     );
 }
+
+#[test]
+fn joint_scalar_latents_with_a_shared_observation_match_explicit_enumeration() {
+    use keanu_graph::{Value, marginalize_joint};
+    use keanu_tensor::special::log_sum_exp;
+
+    let b = GraphBuilder::new();
+    let shift = b.gaussian(0.0, 1.0).label("shift");
+    b.set_value(shift, DoubleTensor::scalar(0.25));
+    let a = b.bernoulli(0.4).label("a");
+    let c = b
+        .bernoulli(b.where_(a, b.scalar(0.8), b.scalar(0.3)))
+        .label("c");
+    let m = shift
+        + b.where_(a, b.scalar(1.0), b.scalar(0.0))
+        + b.where_(c, b.scalar(-0.5), b.scalar(0.5));
+    let y = b.gaussian(m, 0.6).label("observed");
+    b.observe(y, DoubleTensor::scalar(0.8));
+    let [shift, a, c, y] = [shift.id(), a.id(), c.id(), y.id()];
+    let (graph, state) = b.build().unwrap();
+    let model = Model::new(graph.clone(), &state).unwrap();
+    // Request the assignment order opposite the graph's dependency order.
+    let (reduced, mut new_state, group) = marginalize_joint(&graph, &state, &[c, a]).unwrap();
+    assert_eq!(
+        group.assignments(),
+        &[vec![0, 0], vec![0, 1], vec![1, 0], vec![1, 1]]
+    );
+    assert_eq!(group.latents(), &[c, a]);
+    assert!(group.node(a).is_none());
+    assert!(group.node(y).is_some());
+    let new_model = Model::new(reduced, &new_state).unwrap();
+    let target = group.node(shift).unwrap();
+    for x in [-0.2, 0.25, 0.7] {
+        new_state
+            .set_and_cascade(new_model.graph(), target, DoubleTensor::scalar(x))
+            .unwrap();
+        let mut weights = Vec::new();
+        for row in group.assignments() {
+            let mut work = state.clone();
+            model
+                .set_and_cascade(
+                    &mut work,
+                    [
+                        (shift, Value::F64(DoubleTensor::scalar(x))),
+                        (a, Value::Bool(BoolTensor::scalar(row[1] == 1))),
+                        (c, Value::Bool(BoolTensor::scalar(row[0] == 1))),
+                    ],
+                )
+                .unwrap();
+            weights.push(model.log_prob(&work).unwrap());
+        }
+        let expected = log_sum_exp(weights.iter().copied());
+        assert!((new_model.log_prob(&new_state).unwrap() - expected).abs() < 1e-12);
+        let actual = group.probabilities(&new_state).unwrap();
+        for (&p, w) in actual.as_slice().iter().zip(weights) {
+            assert!((p - (w - expected).exp()).abs() < 1e-12);
+        }
+    }
+    assert!(marginalize_joint(&graph, &state, &[a]).is_err());
+}
+
+#[test]
+fn joint_enumeration_checks_the_cartesian_product_limit() {
+    let b = GraphBuilder::new();
+    let a = b.binomial(0.3, 32).id();
+    let c = b.binomial(0.5, 32).id();
+    let (graph, state) = b.build().unwrap();
+    assert!(keanu_graph::marginalize_joint(&graph, &state, &[a, c]).is_err());
+}
+
+#[test]
+fn a_nonfinite_joint_assignment_does_not_hide_a_valid_alternative() {
+    let b = GraphBuilder::new();
+    let valid = b.bernoulli(0.5);
+    let sigma = b.where_(valid, b.scalar(1.0), b.scalar(-1.0));
+    let y = b.gaussian(0.0, sigma);
+    b.observe(y, DoubleTensor::scalar(0.0));
+    let id = valid.id();
+    let (graph, state) = b.build().unwrap();
+    let (graph, state, joint) = keanu_graph::marginalize_joint(&graph, &state, &[id]).unwrap();
+    let model = Model::new(graph, &state).unwrap();
+    assert_eq!(joint.probabilities(&state).unwrap().as_slice(), &[0.0, 1.0]);
+    let expected = -0.5 * std::f64::consts::TAU.ln() - 2.0_f64.ln();
+    assert!((model.log_prob(&state).unwrap() - expected).abs() < 1e-12);
+}

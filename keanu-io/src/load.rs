@@ -361,6 +361,7 @@ fn add_node(
         P::Determinant(_) => Op::Determinant,
         P::Cholesky(_) => Op::Cholesky,
         P::CholeskyInverse(_) => Op::CholeskyInverse,
+        P::ThinQr(_) => Op::ThinQr,
         P::SolveTriangular(p) => Op::SolveTriangular {
             lower: p.lower,
             transpose: p.transpose,

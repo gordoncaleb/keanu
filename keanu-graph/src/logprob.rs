@@ -100,6 +100,14 @@ pub fn node_log_prob_terms(graph: &Graph, state: &State, id: NodeId) -> Result<D
     kind.log_prob_terms(value(state, id)?, &parameters(graph, state, id)?)
 }
 
+/// Like [`node_log_prob_terms`], with one term per independent event for batched multivariate Gaussian,
+/// precision-form Gaussian, multivariate Student-t, Wishart and inverse Wishart (including Cholesky forms), matrix normal,
+/// von Mises–Fisher, Dirichlet-multinomial and Plackett–Luce observations.
+pub fn node_log_prob_event_terms(graph: &Graph, state: &State, id: NodeId) -> Result<DoubleTensor> {
+    graph.check_ids([&id])?;
+    kind(graph, id)?.log_prob_event_terms(value(state, id)?, &parameters(graph, state, id)?)
+}
+
 /// The support of a probabilistic node's distribution given its parameters' current values (see [`Support`]).
 /// An error if the node is not probabilistic or a parameter has no value.
 pub fn node_support(graph: &Graph, state: &State, id: NodeId) -> Result<Support> {

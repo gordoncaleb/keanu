@@ -110,7 +110,7 @@ fn one_chain_of_samples_is_one_chain() {
 }
 
 #[test]
-fn a_multivariate_gaussian_has_one_point_per_node() {
+fn a_multivariate_gaussian_can_report_one_point_per_vector() {
     let b = GraphBuilder::new();
     let mu = b.gaussian_with_shape(&[3], 0.0, 1.0).label("mu");
     let covariance = b.constant(DoubleTensor::eye(3).unwrap());
@@ -140,6 +140,53 @@ fn a_multivariate_gaussian_has_one_point_per_node() {
     assert_eq!(loglik.points()[0].node, single);
     assert_eq!(loglik.points()[1].node, batch);
     assert_sums_to_log_likelihood(&model, &state, chains.chains(), &loglik, |_| 0.0);
+
+    let by_event = PointwiseLogLik::from_chains_by_event(&model, &state, &chains).unwrap();
+    assert_eq!(by_event.names(), &["single", "batch[0]", "batch[1]"]);
+    assert_sums_to_log_likelihood(&model, &state, chains.chains(), &by_event, |_| 0.0);
+    let first =
+        PointwiseLogLik::from_samples_by_event(&model, &state, &chains.chains()[0]).unwrap();
+    assert_eq!(first.values()[0], by_event.values()[0]);
+    let first_mu = chains.chains()[0].f64(mu).unwrap().as_slice()[0].as_slice();
+    let expected = -0.5
+        * (3.0 * std::f64::consts::TAU.ln()
+            + [0.0, 0.4, -0.2]
+                .into_iter()
+                .zip(first_mu)
+                .map(|(y, &mu)| (y - mu).powi(2))
+                .sum::<f64>());
+    assert!((first.values()[0][0][1] - expected).abs() < 1e-12);
+}
+
+#[test]
+fn continuous_and_discrete_multivariate_batches_can_report_separate_points() {
+    let b = GraphBuilder::new();
+    let scale = b.constant(DoubleTensor::eye(2).unwrap());
+    let mu = b.constant(DoubleTensor::zeros(&[2, 2]));
+    let y = b.multivariate_student_t(4.0, mu, scale).label("y");
+    b.observe(
+        y,
+        DoubleTensor::new(&[2, 2], vec![0.0, 0.0, 1.0, 1.0]).unwrap(),
+    );
+    let alpha = b.constant(DoubleTensor::vector(vec![1.0, 2.0]));
+    let counts = b
+        .dirichlet_multinomial(b.int_constant(IntTensor::vector(vec![3, 3])), alpha)
+        .label("counts");
+    b.observe(counts, IntTensor::new(&[2, 2], vec![0, 3, 3, 0]).unwrap());
+    let (graph, state) = b.build().unwrap();
+    let model = Model::new(graph, &state).unwrap();
+    let mut samples = NetworkSamples::new(model.graph(), &[]).unwrap();
+    samples.record(&state, 0.0).unwrap();
+
+    let grouped = PointwiseLogLik::from_samples(&model, &state, &samples).unwrap();
+    let split = PointwiseLogLik::from_samples_by_event(&model, &state, &samples).unwrap();
+    assert_eq!(grouped.names(), &["y", "counts"]);
+    assert_eq!(split.names(), &["y[0]", "y[1]", "counts[0]", "counts[1]"]);
+    let row = &split.values()[0][0];
+    assert!(row[0] > row[1]);
+    assert!((row[2] - 0.4_f64.ln()).abs() < 1e-12);
+    assert!((row[3] - 0.1_f64.ln()).abs() < 1e-12);
+    assert!((split.totals()[0][0] - grouped.totals()[0][0]).abs() < 1e-12);
 }
 
 #[test]

@@ -2008,6 +2008,14 @@ impl serde::Serialize for DistributionKind {
             Self::Wiener => "DISTRIBUTION_KIND_WIENER",
             Self::MixtureOf => "DISTRIBUTION_KIND_MIXTURE_OF",
             Self::Transformed => "DISTRIBUTION_KIND_TRANSFORMED",
+            Self::LocationScaleStudentT => "DISTRIBUTION_KIND_LOCATION_SCALE_STUDENT_T",
+            Self::NegativeBinomialLog => "DISTRIBUTION_KIND_NEGATIVE_BINOMIAL_LOG",
+            Self::MultinomialLogit => "DISTRIBUTION_KIND_MULTINOMIAL_LOGIT",
+            Self::MultivariateGaussianPrecision => "DISTRIBUTION_KIND_MULTIVARIATE_GAUSSIAN_PRECISION",
+            Self::PoissonBinomial => "DISTRIBUTION_KIND_POISSON_BINOMIAL",
+            Self::DiscreteWeibull => "DISTRIBUTION_KIND_DISCRETE_WEIBULL",
+            Self::SkewStudentT => "DISTRIBUTION_KIND_SKEW_STUDENT_T",
+            Self::PolyaGamma1 => "DISTRIBUTION_KIND_POLYA_GAMMA1",
         };
         serializer.serialize_str(variant)
     }
@@ -2098,6 +2106,14 @@ impl<'de> serde::Deserialize<'de> for DistributionKind {
             "DISTRIBUTION_KIND_WIENER",
             "DISTRIBUTION_KIND_MIXTURE_OF",
             "DISTRIBUTION_KIND_TRANSFORMED",
+            "DISTRIBUTION_KIND_LOCATION_SCALE_STUDENT_T",
+            "DISTRIBUTION_KIND_NEGATIVE_BINOMIAL_LOG",
+            "DISTRIBUTION_KIND_MULTINOMIAL_LOGIT",
+            "DISTRIBUTION_KIND_MULTIVARIATE_GAUSSIAN_PRECISION",
+            "DISTRIBUTION_KIND_POISSON_BINOMIAL",
+            "DISTRIBUTION_KIND_DISCRETE_WEIBULL",
+            "DISTRIBUTION_KIND_SKEW_STUDENT_T",
+            "DISTRIBUTION_KIND_POLYA_GAMMA1",
         ];
 
         struct GeneratedVisitor;
@@ -2217,6 +2233,14 @@ impl<'de> serde::Deserialize<'de> for DistributionKind {
                     "DISTRIBUTION_KIND_WIENER" => Ok(DistributionKind::Wiener),
                     "DISTRIBUTION_KIND_MIXTURE_OF" => Ok(DistributionKind::MixtureOf),
                     "DISTRIBUTION_KIND_TRANSFORMED" => Ok(DistributionKind::Transformed),
+                    "DISTRIBUTION_KIND_LOCATION_SCALE_STUDENT_T" => Ok(DistributionKind::LocationScaleStudentT),
+                    "DISTRIBUTION_KIND_NEGATIVE_BINOMIAL_LOG" => Ok(DistributionKind::NegativeBinomialLog),
+                    "DISTRIBUTION_KIND_MULTINOMIAL_LOGIT" => Ok(DistributionKind::MultinomialLogit),
+                    "DISTRIBUTION_KIND_MULTIVARIATE_GAUSSIAN_PRECISION" => Ok(DistributionKind::MultivariateGaussianPrecision),
+                    "DISTRIBUTION_KIND_POISSON_BINOMIAL" => Ok(DistributionKind::PoissonBinomial),
+                    "DISTRIBUTION_KIND_DISCRETE_WEIBULL" => Ok(DistributionKind::DiscreteWeibull),
+                    "DISTRIBUTION_KIND_SKEW_STUDENT_T" => Ok(DistributionKind::SkewStudentT),
+                    "DISTRIBUTION_KIND_POLYA_GAMMA1" => Ok(DistributionKind::PolyaGamma1),
                     _ => Err(serde::de::Error::unknown_variant(value, FIELDS)),
                 }
             }
@@ -4016,6 +4040,9 @@ impl serde::Serialize for Node {
                 node::Op::Bessel(v) => {
                     struct_ser.serialize_field("bessel", v)?;
                 }
+                node::Op::ThinQr(v) => {
+                    struct_ser.serialize_field("thinQr", v)?;
+                }
                 node::Op::Scan(v) => {
                     struct_ser.serialize_field("scan", v)?;
                 }
@@ -4113,6 +4140,8 @@ impl<'de> serde::Deserialize<'de> for Node {
             "sparse_matmul",
             "sparseMatmul",
             "bessel",
+            "thin_qr",
+            "thinQr",
             "scan",
             "ode",
         ];
@@ -4180,6 +4209,7 @@ impl<'de> serde::Deserialize<'de> for Node {
             MatrixExp,
             SparseMatmul,
             Bessel,
+            ThinQr,
             Scan,
             Ode,
         }
@@ -4264,6 +4294,7 @@ impl<'de> serde::Deserialize<'de> for Node {
                             "matrixExp" | "matrix_exp" => Ok(GeneratedField::MatrixExp),
                             "sparseMatmul" | "sparse_matmul" => Ok(GeneratedField::SparseMatmul),
                             "bessel" => Ok(GeneratedField::Bessel),
+                            "thinQr" | "thin_qr" => Ok(GeneratedField::ThinQr),
                             "scan" => Ok(GeneratedField::Scan),
                             "ode" => Ok(GeneratedField::Ode),
                             _ => Err(serde::de::Error::unknown_field(value, FIELDS)),
@@ -4709,6 +4740,13 @@ impl<'de> serde::Deserialize<'de> for Node {
                                 return Err(serde::de::Error::duplicate_field("bessel"));
                             }
                             op__ = map_.next_value::<::std::option::Option<_>>()?.map(node::Op::Bessel)
+;
+                        }
+                        GeneratedField::ThinQr => {
+                            if op__.is_some() {
+                                return Err(serde::de::Error::duplicate_field("thinQr"));
+                            }
+                            op__ = map_.next_value::<::std::option::Option<_>>()?.map(node::Op::ThinQr)
 ;
                         }
                         GeneratedField::Scan => {

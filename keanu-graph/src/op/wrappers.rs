@@ -21,11 +21,11 @@
 
 use super::distribution::{DistributionKind, LogProbGradientParts, ParameterGradients, Univariate};
 use super::distribution_hvp::rules::{self, Hessian, MAX_INPUTS};
-use super::distribution_hvp::{self, Elementwise};
+use super::distribution_hvp::{self, Elementwise, LogProbHvpParts};
 use super::{Support, broadcast, invalid_parameter};
 use crate::error::{GraphError, Result};
 use crate::value::{DType, Value};
-use keanu_distributions::KeanuRng;
+use keanu_distributions::{BoundedPoissonBinomial, KeanuRng, PoissonBinomial};
 use keanu_tensor::special::log1mexp;
 use keanu_tensor::{DoubleTensor, Shape, broadcast_shape};
 use std::f64::consts::LN_2;
@@ -210,6 +210,7 @@ pub(crate) fn log_prob(
 
 /// [`log_prob`] element-wise: the log probability of each element of `value` broadcast with the parameters, and
 /// the gradient parts in that broadcast shape (what [`DistributionKind::univariate`] gives for the log density).
+/// For Poisson-binomial, gradients are reduced to the original parameter shape, including its trial axis.
 pub(crate) fn elementwise(
     wrapper: Wrapper,
     base: &DistributionKind,
@@ -217,6 +218,20 @@ pub(crate) fn elementwise(
     parameters: &[&Value],
     gradient: bool,
 ) -> Result<(DoubleTensor, Option<LogProbGradientParts>)> {
+    if matches!(base, DistributionKind::PoissonBinomial) {
+        let x = value.i64()?;
+        return poisson_binomial(wrapper, parameters, |d| {
+            if gradient {
+                let (values, grad) = d.log_prob_and_gradient(x)?;
+                Ok((
+                    values,
+                    Some((None, smallvec::smallvec![Some(grad.p), None, None])),
+                ))
+            } else {
+                Ok((d.log_prob(x)?, None))
+            }
+        });
+    }
     let bounds = Bounds::unordered(base, parameters)?;
     let mut shape = Shape::from_slice(value.shape());
     for p in parameters {
@@ -249,6 +264,38 @@ pub(crate) fn elementwise(
     };
     let (log_probs, gradient) = parts;
     Ok((DoubleTensor::new(&shape, log_probs)?, gradient))
+}
+
+fn poisson_binomial<T>(
+    wrapper: Wrapper,
+    parameters: &[&Value],
+    f: impl FnOnce(BoundedPoissonBinomial<'_, '_>) -> Result<T>,
+) -> Result<T> {
+    let &[p, lower, upper] = parameters else {
+        return Err(GraphError::InvalidValue(
+            "bounded Poisson-binomial needs p, lower and upper".into(),
+        ));
+    };
+    let d = PoissonBinomial::new(p.f64()?)?;
+    let (lower, upper) = (lower.f64()?, upper.f64()?);
+    f(match wrapper {
+        Wrapper::Censored => d.censored(lower, upper),
+        Wrapper::Truncated => d.truncated(lower, upper),
+    })
+}
+
+pub(crate) fn poisson_binomial_hvp(
+    wrapper: Wrapper,
+    value: &Value,
+    parameters: &[&Value],
+    parameter_tangents: &[Option<&DoubleTensor>],
+) -> Result<LogProbHvpParts> {
+    let Some(tangent) = parameter_tangents[0] else {
+        return Ok((None, smallvec::smallvec![None, None, None]));
+    };
+    let x = value.i64()?;
+    let product = poisson_binomial(wrapper, parameters, |d| Ok(d.hvp(x, tangent)?))?;
+    Ok((None, smallvec::smallvec![Some(product), None, None]))
 }
 
 /// Element-wise log probabilities and gradient parts.
@@ -579,6 +626,11 @@ pub(crate) fn sample_truncated(
     parameters: &[&Value],
     rng: &mut KeanuRng,
 ) -> Result<Value> {
+    if matches!(base, DistributionKind::PoissonBinomial) {
+        return poisson_binomial(Wrapper::Truncated, parameters, |d| {
+            Ok(Value::I64(d.sample(shape, rng)?))
+        });
+    }
     let bounds = Bounds::new(base, parameters)?;
     let lower = broadcast(bounds.lower, shape)?;
     let upper = broadcast(bounds.upper, shape)?;
@@ -833,6 +885,11 @@ pub(crate) fn sample_censored(
     parameters: &[&Value],
     rng: &mut KeanuRng,
 ) -> Result<Value> {
+    if matches!(base, DistributionKind::PoissonBinomial) {
+        return poisson_binomial(Wrapper::Censored, parameters, |d| {
+            Ok(Value::I64(d.sample(shape, rng)?))
+        });
+    }
     let bounds = Bounds::new(base, parameters)?;
     let lower = broadcast(bounds.lower, shape)?;
     let upper = broadcast(bounds.upper, shape)?;

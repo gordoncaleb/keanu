@@ -57,7 +57,7 @@ pub mod vi;
 
 pub use abc::{Abc, AbcKernel, SummaryStatistics};
 pub use error::{AlgorithmError, Result};
-pub use export::CmdStanCsv;
+pub use export::{CmdStanCsv, write_labeled_trace};
 pub use forward::ForwardSampler;
 /// How the Laplace approximation and the trust-region optimizer compute Hessians (exact, finite differences, or
 /// exact where possible); see [`Laplace::with_hessian_method`].
@@ -67,7 +67,7 @@ pub use keanu_graph::HessianMethod;
 pub use keanu_graph::Space;
 pub use laplace::{Laplace, LaplaceResult};
 pub use loglik::{LogLikPoint, PointwiseLogLik};
-pub use loo::{Comparison, Loo, Waic};
+pub use loo::{Comparison, Loo, RefitCrossValidation, Waic, kfold, refit_loo};
 pub use marginal::{LatentMarginals, recover_marginals};
 pub use predictive::PredictiveSampler;
 pub use psis::Psis;

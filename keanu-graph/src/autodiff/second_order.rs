@@ -397,6 +397,12 @@ fn vjp_tangent(
                 .sub(&tr(&m)?.mul(&det)?)?;
             vec![Some(d.mul(&g.reshape(&matrix_broadcast(1, &out_shape))?)?)]
         }
+        Op::ThinQr => {
+            if t[0].is_none() {
+                return Ok(none());
+            }
+            vec![Some(super::qr::vjp_tangent(y, g, out_tangent()?)?)]
+        }
         Op::Cholesky => {
             // S = L⁻ᵀ phi(Lᵀ L̄) L⁻¹, read back to the lower triangle; with D = d(L⁻¹) = -L⁻¹ L̇ L⁻¹,
             // Ṡ = Dᵀ phi(Lᵀ L̄) L⁻¹ + L⁻ᵀ phi(L̇ᵀ L̄) L⁻¹ + L⁻ᵀ phi(Lᵀ L̄) D

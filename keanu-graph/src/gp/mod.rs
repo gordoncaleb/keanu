@@ -42,8 +42,10 @@
 //! positivity of a length scale) are not checked: give them priors with the right support.
 
 pub mod hsgp;
+mod structured;
 
 pub use hsgp::{Hsgp, HsgpDomain, HsgpPrior};
+pub use structured::{InducingGp, PeriodicHsgp};
 
 use crate::builder::GraphBuilder;
 use crate::error::GraphError;

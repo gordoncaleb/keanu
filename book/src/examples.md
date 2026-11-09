@@ -25,6 +25,15 @@ from, and the SMC model comparison checks its evidence against the closed form.
 | `causal_effect` | Does a treatment work, when sicker people are more likely to take it? Conditioning against intervening, and the average treatment effect |
 | `missing_data` | What do the data say when a fifth of the outcomes and a tenth of a covariate are missing? A regression with the gaps imputed |
 | `cure_model` | What fraction of patients does a treatment cure, and how soon do the others relapse? A mixture cure model of censored survival times |
+| `skew_student_t_regression` | How does a linear trend fit when large residuals favor one direction? |
+| `poisson_binomial_calibration` | How should we calibrate individual success probabilities when only top-coded batch totals are recorded? |
+| `polya_gamma_logistic` | How can auxiliary variables turn Bernoulli logistic regression into Gibbs updates with a Gaussian slope conditional? |
+| `discrete_weibull_reliability` | How long do devices last when some are still running at the end of the test? |
+| `multinomial_logit_regression` | How does a precinct-level covariate shift votes among three candidates? |
+| `precision_gaussian_denoising` | What signal is consistent with noisy measurements and a precision prior that links neighbors? |
+| `correlated_regression` | How can we fit two strongly correlated predictors in orthogonal coordinates? |
+| `structured_gp` | Can a low-rank GP forecast a held-out period? Fourier and inducing-point priors |
+| `multivariate_walk_forecast` | How does correlated innovation noise affect a two-series forecast? |
 | `gp_regression` | What smooth function produced noisy measurements? Gaussian process hyperparameters by NUTS, exactly and with an HSGP |
 | `stochastic_volatility` | How volatile are daily returns, and how persistent is the volatility? A scan over latent innovations |
 | `hmm` | When does a series switch regime, and how often? A two-state hidden Markov model |
@@ -363,3 +372,126 @@ covered the truth). See [Simulation-based inference](simulation-based-inference.
 ```rust,ignore
 {{#include ../../keanu/examples/abc_stochastic_sir.rs}}
 ```
+
+## Hierarchical item response
+
+A two-parameter logistic model fits a student's ability and each item's difficulty and discrimination. The model
+uses indexed student–item pairs and a standard normal ability prior to fix the scale. Item difficulty and log
+discrimination use non-centred hierarchical priors. The example generates seeded responses, holds out one item
+per student, and reports the Brier score (mean squared probability error) and the item difficulty RMSE.
+
+Run it with `cargo run --release --example item_response`. The model follows the structure of the
+[Stan hierarchical 2PL case study](https://mc-stan.org/users/documentation/case-studies.html).
+
+```rust,ignore
+{{#include ../../keanu/examples/item_response.rs}}
+```
+
+## Lotka–Volterra predator–prey dynamics
+
+The rates of prey growth and consumption and predator growth and death are inferred from noisy observations of
+both populations. The example generates a reference trajectory with a separate fixed-step RK4 implementation,
+fits the first 25 times with NUTS and a differentiable ODE, and forecasts the last five times. It reports
+posterior mean rates and the forecast RMSE against the underlying trajectory.
+
+Run it with `cargo run --release --example lotka_volterra`. The same differential equations are used in the
+[Stan case study](https://mc-stan.org/users/documentation/case-studies/lotka-volterra-predator-prey.html) and
+[PyMC example](https://www.pymc.io/projects/examples/en/latest/ode_models/ODE_Lotka_Volterra_multiple_ways.html),
+which use historical hare and lynx observations.
+
+```rust,ignore
+{{#include ../../keanu/examples/lotka_volterra.rs}}
+```
+
+## Regression with predictor measurement error
+
+A noisy measurement of a predictor can attenuate an ordinary least squares slope. This example fits the
+predictor as a latent standard normal variable, with a separate Gaussian likelihood for its noisy measurement
+and one for the outcome. On seeded synthetic data the test checks that the measurement-error model recovers
+the generating slope more closely than regression on the noisy measurements.
+
+Run it with `cargo run --release --example measurement_error`. [Stan measurement error guide](https://mc-stan.org/docs/2_39/stan-users-guide/measurement-error.html)
+
+```rust,ignore
+{{#include ../../keanu/examples/measurement_error.rs}}
+```
+
+## Spline regression
+
+A Bayesian linear spline represents a nonlinear mean as a weighted sum of piecewise-linear basis functions.
+The example fits noisy observations on one grid, then binds the posterior coefficients into a separate graph
+for a smaller grid. It draws outcomes and checks the mean prediction against the generating curve.
+
+Run it with `cargo run --release --example spline_regression`. [PyMC spline example](https://www.pymc.io/projects/examples/en/latest/howto/spline.html)
+
+```rust,ignore
+{{#include ../../keanu/examples/spline_regression.rs}}
+```
+
+## Euler–Maruyama for stochastic dynamics
+
+A noisy mean-reverting process is discretized with an Euler–Maruyama step. Standard-normal innovations enter a
+deterministic scan as per-step inputs. NUTS estimates the reversion rate and diffusion from simulated observations.
+
+Run it with `cargo run --release --example euler_maruyama`. [PyMC SDE example](https://www.pymc.io/projects/examples/en/latest/time_series/Euler-Maruyama_and_SDEs.html)
+
+```rust,ignore
+{{#include ../../keanu/examples/euler_maruyama.rs}}
+```
+
+## Bayesian vector autoregression
+
+A bivariate VAR(1) estimates how each series responds to its own lag and the other series' lag. The example
+replays posterior coefficients through a scan on a separate forecast graph and checks them against the process's
+conditional mean. The reported error measures the mean forecast, with future innovations averaged out.
+
+Run it with `cargo run --release --example vector_autoregression`. [PyMC VAR example](https://www.pymc.io/projects/examples/en/latest/time_series/bayesian_var_model.html)
+
+```rust,ignore
+{{#include ../../keanu/examples/vector_autoregression.rs}}
+```
+
+## Hierarchical A/B experiments across markets
+
+Binomial A/B counts share a baseline conversion rate and a hierarchy for the market treatment effects on the
+log-odds scale. The example estimates the population mean effect and uses the law of total variance to report
+the larger predictive uncertainty about the effect in a new market.
+
+Run it with `cargo run --release --example hierarchical_experiments`. [PyMC multi-market meta-analysis](https://www.pymc.io/projects/examples/en/latest/causal_inference/multiple_experiments_meta_analysis.html)
+
+```rust,ignore
+{{#include ../../keanu/examples/hierarchical_experiments.rs}}
+```
+
+## Robust regression with learned tail weight
+
+A Student-t observation model gives large residuals more probability than a Gaussian. Use
+`location_scale_student_t(nu, mu, sigma)` to infer the positive real degrees of freedom `nu` jointly with the
+regression coefficients and scale. The example generates data independently from a Student-t with three degrees
+of freedom and checks recovery of the slope and evidence for heavy tails.
+
+Run it with `cargo run --release --example robust_regression`.
+
+```rust,ignore
+{{#include ../../keanu/examples/robust_regression.rs}}
+```
+
+## Right-censored survival with shared frailty
+
+An unobserved group effect shifts log event times. A Gaussian transformed by exponentiation gives the event-time
+distribution. Follow-up ends at a fixed deadline, so records at the deadline contribute a survival probability.
+The seeded test checks recovery of the treatment effect on log event time.
+
+Run it with `cargo run --release --example censored_frailty`.
+
+```rust,ignore
+{{#include ../../keanu/examples/censored_frailty.rs}}
+```
+
+## Structured regression and forecasting
+
+- `correlated_regression` fits a synthetic two-predictor Gaussian regression with a prior in QR coordinates.
+  It maps draws back to the original coefficients with a triangular solve.
+- `structured_gp` compares Fourier and inducing-point forecasts on a held-out period of a synthetic signal.
+- `multivariate_walk_forecast` uses a correlated innovation factor to forecast two synthetic series from their
+  last known values and checks the forecast's cross-covariance.

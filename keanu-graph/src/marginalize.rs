@@ -15,6 +15,10 @@
 //! over k is the latent's conditional distribution given everything else, p(zₛ = k | θ, y), from which the latent
 //! is recovered after sampling (see [`MarginalizedLatent::probabilities`] and [`MarginalizedLatent::draw`]).
 
+mod joint;
+
+pub use joint::{JointMarginalized, marginalize_joint};
+
 use crate::error::{GraphError, Result};
 use crate::graph::{Graph, Node, NodeId, Parents};
 use crate::op::log_density::has_elementwise_density;

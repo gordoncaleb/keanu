@@ -33,6 +33,32 @@ Settings on `MetropolisHastings`:
 
 `SamplingOptions` sets how many initial steps to drop (burn-in) and how often to record a sample (down-sampling).
 
+## Static Hamiltonian Monte Carlo
+
+`Hmc` moves all continuous latents using a fixed number of leapfrog steps with an identity mass matrix.
+Set the trajectory length with `with_leapfrog_steps` and the nominal step size with `with_step_size`.
+The step size is jittered by up to 10% each transition to vary the trajectory length.
+`with_adapt_count` enables step-size adaptation for that many initial transitions. Drop those transitions
+with `SamplingOptions::with_drop` when calling `sample_with_statistics`. The statistics count acceptances,
+divergences, and gradient evaluations and report the current nominal step size.
+
+## Gradient-free continuous sampling
+
+`Slice` updates each continuous coordinate in turn. It steps out from a bracket of configurable width and
+shrinks the bracket until it finds a point within the slice. A call to `sample` records one draw per sweep.
+Use `sampler` with `generate` for burn-in and thinning. The sampler exposes the number of density evaluations.
+[Neal’s slice sampling paper](https://arxiv.org/abs/physics/0009028)
+
+`DifferentialEvolutionMetropolis` runs a population of at least three walkers. Give it one state per walker,
+with the same observations and dispersed starting positions. It updates one walker at a time using the scaled
+difference between two other walkers plus Gaussian noise. Each returned `NetworkSamples` contains one walker's
+draws. Use independently seeded populations for between-chain diagnostics because walkers within a population
+interact. [Ter Braak’s differential evolution paper](https://doi.org/10.1007/S11222-006-8769-1)
+
+All three methods work in unconstrained coordinates by default. They record the original latent values and the
+model's log probability, with the Jacobian used internally for sampling. Slice and differential-evolution
+Metropolis use fixed settings throughout a run.
+
 ## NUTS
 
 The No-U-Turn sampler is Hamiltonian Monte Carlo that tunes its own trajectory length. It uses gradients, so it
@@ -226,7 +252,19 @@ samples need to hold only the latents the targets depend on; for a prior draw, a
 on must not itself depend on a latent (make it a target too). `with_draws(n)` uses `n` evenly spaced posterior
 samples instead of all of them.
 
+Use `predict` for a separate graph built on held-out data. Pass pairs of sampled source IDs and destination
+latent IDs. Each pair must agree in type and shape, while the prediction targets can have a different shape
+from the training observations. Request a deterministic node for its fitted value or a probabilistic node
+for a predictive draw. Include a new upstream latent among the targets if it should be drawn. See the
+[spline regression](examples.md#spline-regression) and [VAR](examples.md#bayesian-vector-autoregression) examples.
+
 ## Pointwise log likelihood
+
+Use `PointwiseLogLik::from_chains_by_event` or `from_samples_by_event` to score each independent event in a
+batch separately. This applies to multivariate Gaussian and Student-t, Wishart and inverse Wishart, matrix
+normal, von Mises–Fisher, Dirichlet-multinomial, and Plackett–Luce observations. An event is a whole vector or
+matrix. The ordinary constructors group each multivariate node into one point. Both modes group dependent
+sequences, such as a hidden Markov model, into one point.
 
 Model comparison by leave-one-out cross-validation or WAIC, and tools such as ArviZ, need the log likelihood of
 each observation at each posterior draw. `PointwiseLogLik::from_chains` (or `from_samples` for one chain, or for the
@@ -266,6 +304,13 @@ coordinates.
 
 In Python, `arviz.from_cmdstan(["output_1.csv", ...], log_likelihood="log_lik")` reads the files into an
 `InferenceData` with posterior, sample statistics and log likelihood groups.
+
+## Exporting labeled draws
+
+`write_labeled_trace` writes a long-form CSV to a writer such as a `BufWriter<File>`. Each row contains the
+chain, draw, node ID, label, tensor index, data type, and value. Indices start at zero. Tensor elements use
+row-major coordinates such as `[0, 1]`, and scalars use `[]`. Integer values keep their full precision and
+booleans appear as `true` or `false`. The writer streams rows from the in-memory chains.
 
 ## Simulated annealing
 

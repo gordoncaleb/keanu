@@ -231,3 +231,39 @@ alternating runs (the absolute times are higher than the table's because the mac
 | metropolisHastings1000 hierarchicalGaussian | 2.17 ms | 1.57 ms | 1.4× |
 | metropolisHastings1000 linearRegression | 2.36 ms | 1.57 ms | 1.5× |
 | metropolisHastings1000 thermometers | 1.35 ms | 1.38 ms | 1.0× |
+## Phase 4 inference benchmark
+
+Run `cargo run --release --example inference_benchmark`. These measurements use an arm64 macOS workspace
+with rustc 1.99.1. Sampling reports the median of five seeded runs with 500 warmup sweeps and 3,000
+retained draws per chain. ESS per second uses the first coordinate and includes warmup time. For
+differential evolution it uses one walker's ESS and includes the cost of updating all eight walkers.
+
+| Target | Sampler | ESS/s | Evaluations |
+| --- | --- | ---: | ---: |
+| Correlated Gaussian | NUTS | 11,651 | 20,404 |
+| Correlated Gaussian | Static HMC | 58,690 | 17,501 |
+| Correlated Gaussian | Slice | 30,369 | 35,298 |
+| Correlated Gaussian | Differential evolution | 16,112 | 28,008 |
+| Discontinuous density | Slice | 141,177 | 27,716 |
+| Discontinuous density | Differential evolution | 18,933 | 28,008 |
+
+NUTS counts the leapfrog evaluations in its trees and excludes the separate step-size search. Static HMC
+counts the initial gradient and its leapfrog evaluations. The gradient-free methods count joint density
+evaluations. The discontinuous target is uniform on each half of its support, with the positive half
+three times as dense as the negative half.
+
+Optimizer timings are the medians of 21 runs from identical starts in constrained coordinates. All three
+solvers reached the same log density to six decimal places on each target.
+
+| Target | Optimizer | Time (µs) | Evaluations | Hessian-vector products |
+| --- | --- | ---: | ---: | ---: |
+| Correlated Gaussian | L-BFGS | 12.0 | 10 | 0 |
+| Correlated Gaussian | Trust-region Newton | 28.8 | 6 | 3 |
+| Correlated Gaussian | BOBYQA | 113.1 | 36 | 0 |
+| Rosenbrock valley | L-BFGS | 138.6 | 84 | 0 |
+| Rosenbrock valley | Trust-region Newton | 637.6 | 60 | 44 |
+| Rosenbrock valley | BOBYQA | 519.2 | 152 | 0 |
+
+L-BFGS reached the shared solution fastest on these two targets. They do not establish a case for adding a
+full BFGS implementation. Evaluating variational update rules would require a separate benchmark on an
+inference workload that needs them.

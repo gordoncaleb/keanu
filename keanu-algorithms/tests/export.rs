@@ -500,3 +500,39 @@ fn invalid_exports_are_rejected() {
     let chains = ChainSamples::new(vec![samples]).unwrap();
     invalid(CmdStanCsv::new(model.graph()).write_chain(&chains, 0, &mut out));
 }
+
+#[test]
+fn labeled_trace_preserves_labels_coordinates_and_integer_precision() {
+    use keanu_algorithms::{NetworkSamples, write_labeled_trace};
+    use keanu_tensor::{BoolTensor, IntTensor};
+
+    let b = GraphBuilder::new();
+    let grid = b
+        .constant(DoubleTensor::new(&[2, 2], vec![1.0, 2.0, 3.0, 4.0]).unwrap())
+        .label("grid, \"held out\"")
+        .id();
+    let count = b
+        .int_constant(IntTensor::scalar(9_007_199_254_740_993))
+        .id();
+    let flag = b.bool_constant(BoolTensor::scalar(true)).label("flag").id();
+    let (graph, state) = b.build().unwrap();
+    let mut samples = NetworkSamples::new(&graph, &[grid, count, flag]).unwrap();
+    samples.record(&state, 0.0).unwrap();
+    samples.record(&state, 0.0).unwrap();
+    let chains = ChainSamples::new(vec![samples.clone(), samples]).unwrap();
+    let mut bytes = Vec::new();
+    write_labeled_trace(&graph, &chains, &mut bytes).unwrap();
+    let output = String::from_utf8(bytes).unwrap();
+    let expected = [
+        "chain,draw,node,label,index,dtype,value",
+        "0,0,0,\"grid, \"\"held out\"\"\",\"[0, 0]\",f64,1",
+        "0,0,0,\"grid, \"\"held out\"\"\",\"[0, 1]\",f64,2",
+        "0,0,0,\"grid, \"\"held out\"\"\",\"[1, 0]\",f64,3",
+        "0,0,0,\"grid, \"\"held out\"\"\",\"[1, 1]\",f64,4",
+        "0,0,1,\"#1\",\"[]\",i64,9007199254740993",
+        "0,0,2,\"flag\",\"[]\",bool,true",
+    ];
+    assert!(output.lines().take(expected.len()).eq(expected));
+    assert!(output.ends_with("1,1,2,\"flag\",\"[]\",bool,true\n"));
+    assert_eq!(output.lines().count(), 1 + 2 * 2 * 6);
+}

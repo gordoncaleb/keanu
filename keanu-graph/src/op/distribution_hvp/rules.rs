@@ -239,6 +239,12 @@ pub(crate) fn density_rule(kind: &DistributionKind) -> Option<DensityRule> {
         },
         K::Poisson => |k, p, h| h.add(1, 1, -k / (p[0] * p[0])),
         K::NegativeBinomial => negative_binomial,
+        K::NegativeBinomialLog => negative_binomial_log,
+        K::SkewStudentT => |x, p, h| derived(h, d::SkewStudentT::log_prob_derivatives(x, at(p))),
+        K::PolyaGamma1 => |x, p, h| derived(h, d::PolyaGamma1::log_prob_derivatives(x, at(p))),
+        K::DiscreteWeibull => {
+            |k, p, h| derived(h, d::DiscreteWeibull::log_prob_derivatives(k, at(p)))
+        }
         K::BetaBinomial => beta_binomial,
         // ln σ(±η): −σ(η)σ(−η)
         K::BernoulliLogit => |_, p, h| h.add(1, 1, -sigmoid(p[0]) * sigmoid(-p[0])),
@@ -274,6 +280,9 @@ pub(crate) fn density_rule(kind: &DistributionKind) -> Option<DensityRule> {
         K::Kumaraswamy => |x, p, h| derived(h, d::Kumaraswamy::log_prob_derivatives(x, at(p))),
         K::LogitNormal => |x, p, h| derived(h, d::LogitNormal::log_prob_derivatives(x, at(p))),
         K::HalfStudentT => |x, p, h| derived(h, d::HalfStudentT::log_prob_derivatives(x, at(p))),
+        K::LocationScaleStudentT => {
+            |x, p, h| derived(h, d::LocationScaleStudentT::log_prob_derivatives(x, at(p)))
+        }
         K::AsymmetricLaplace => {
             |x, p, h| derived(h, d::AsymmetricLaplace::log_prob_derivatives(x, at(p)))
         }
@@ -478,6 +487,29 @@ fn negative_binomial(k: f64, p: &[f64], h: &mut Hessian) {
     );
 }
 
+fn negative_binomial_log(k: f64, parameters: &[f64], h: &mut Hessian) {
+    if k < 0.0 {
+        return;
+    }
+    let (log_mu, alpha) = (parameters[0], parameters[1]);
+    let log_odds = log_mu - alpha.ln();
+    let p = sigmoid(log_odds);
+    let q = sigmoid(-log_odds);
+    let alpha_p = if log_odds < 0.0 {
+        (log_mu - keanu_tensor::special::softplus(log_odds)).exp()
+    } else {
+        alpha * p
+    };
+    let kq_over_alpha = k * q / alpha;
+    h.add(1, 1, -q * (k * p + alpha_p));
+    h.add(1, 2, p * kq_over_alpha - p * p);
+    h.add(
+        2,
+        2,
+        trigamma(k + alpha) - trigamma(alpha) + (p * p + kq_over_alpha * q) / alpha,
+    );
+}
+
 /// The rule for a log CDF (`upper` false) or log survival function (`upper` true): fills the Hessian of one element
 /// given the point, the parameters and the first-order gradient there (the point's derivative first, 0 where there
 /// is none).
@@ -512,7 +544,24 @@ pub(crate) fn cdf_rule(kind: &DistributionKind) -> Option<CdfRule> {
             }
         },
         K::Binomial => binomial_cdf,
+        K::BinomialLogit => |k, p, _, g, h| {
+            let (eta, n) = (p[0], p[1]);
+            if k >= 0.0 && k < n {
+                let score = g[1];
+                h.add(
+                    1,
+                    1,
+                    score * ((k + 1.0) * sigmoid(-eta) - (n - k) * sigmoid(eta) - score),
+                );
+            }
+        },
         K::NegativeBinomial => negative_binomial_cdf,
+        K::SkewStudentT => {
+            |x, p, u, _, h| derived(h, d::SkewStudentT::log_cdf_derivatives(x, at(p), u))
+        }
+        K::DiscreteWeibull => {
+            |k, p, u, _, h| derived(h, d::DiscreteWeibull::log_cdf_derivatives(k, at(p), u))
+        }
         // the tail is a finite sum, whose Hessian in the shapes is summed with it (inputs k, n, α, β)
         K::SkewNormal => {
             |x, p, u, _, h| derived(h, d::SkewNormal::log_cdf_derivatives(x, at(p), u))
@@ -542,6 +591,12 @@ pub(crate) fn cdf_rule(kind: &DistributionKind) -> Option<CdfRule> {
         K::HalfStudentT => {
             |x, p, u, _, h| derived(h, d::HalfStudentT::log_cdf_derivatives(x, at(p), u))
         }
+        K::LocationScaleStudentT => |x, p, u, _, h| {
+            derived(
+                h,
+                d::LocationScaleStudentT::log_cdf_derivatives(x, at(p), u),
+            )
+        },
         K::AsymmetricLaplace => {
             |x, p, u, _, h| derived(h, d::AsymmetricLaplace::log_cdf_derivatives(x, at(p), u))
         }

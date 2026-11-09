@@ -646,11 +646,20 @@ impl Approximation {
             (Factor::Dense(l), log_det)
         } else {
             let sqrt_alpha: Vec<f64> = alpha.iter().map(|a| a.sqrt()).collect();
-            let scaled: Vec<Vec<f64>> = beta
+            let scaled = beta
                 .iter()
-                .map(|b| b.iter().zip(&sqrt_alpha).map(|(b, s)| b / s).collect())
+                .flat_map(|column| column.iter().zip(&sqrt_alpha).map(|(b, s)| b / s))
                 .collect();
-            let (q, r_tilde) = thin_qr(scaled, n);
+            let matrix = DoubleTensor::new(&[k, n], scaled).ok()?.transpose().ok()?;
+            let (q, r) = matrix.thin_qr().ok()?;
+            let q = q
+                .transpose()
+                .ok()?
+                .as_slice()
+                .chunks_exact(n)
+                .map(<[f64]>::to_vec)
+                .collect();
+            let r_tilde = r.into_vec();
             // I + R̃ γ R̃ᵀ
             let mut inner = matmul(&matmul(&r_tilde, &gamma, k), &transpose(&r_tilde, k), k);
             for i in 0..k {
@@ -795,56 +804,6 @@ fn cholesky(a: &[f64], n: usize) -> Option<Vec<f64>> {
         .ok()
         .map(|l| l.as_slice().to_vec())
         .filter(|l| (0..n).all(|i| l[i * n + i] > 0.0 && l[i * n + i].is_finite()))
-}
-
-/// The thin QR factorisation, by Householder reflections, of the n × k matrix (k < n) whose columns are `columns`:
-/// Q's k orthonormal columns and R, k × k upper triangular (row-major).
-fn thin_qr(mut columns: Vec<Vec<f64>>, n: usize) -> (Vec<Vec<f64>>, Vec<f64>) {
-    let k = columns.len();
-    let mut reflectors: Vec<Option<(Vec<f64>, f64)>> = Vec::with_capacity(k);
-    for j in 0..k {
-        let x = &columns[j][j..];
-        let norm = dot(x, x).sqrt();
-        let mut v = x.to_vec();
-        let alpha = if x[0] > 0.0 { -norm } else { norm };
-        v[0] -= alpha;
-        let v_norm2 = dot(&v, &v);
-        if norm == 0.0 || v_norm2 == 0.0 {
-            reflectors.push(None);
-            continue;
-        }
-        for column in columns.iter_mut().skip(j) {
-            let projection = 2.0 * dot(&v, &column[j..]) / v_norm2;
-            for (c, vi) in column[j..].iter_mut().zip(&v) {
-                *c -= projection * vi;
-            }
-        }
-        reflectors.push(Some((v, v_norm2)));
-    }
-    let mut r = vec![0.0; k * k];
-    for (j, column) in columns.iter().enumerate() {
-        for i in 0..=j {
-            r[i * k + j] = column[i];
-        }
-    }
-    let mut q: Vec<Vec<f64>> = (0..k)
-        .map(|j| {
-            let mut e = vec![0.0; n];
-            e[j] = 1.0;
-            e
-        })
-        .collect();
-    for (j, reflector) in reflectors.iter().enumerate().rev() {
-        if let Some((v, v_norm2)) = reflector {
-            for column in &mut q {
-                let projection = 2.0 * dot(v, &column[j..]) / v_norm2;
-                for (c, vi) in column[j..].iter_mut().zip(v) {
-                    *c -= projection * vi;
-                }
-            }
-        }
-    }
-    (q, r)
 }
 
 /// One Pathfinder path: its best Gaussian approximation and what the path recorded.
@@ -1218,27 +1177,5 @@ mod tests {
         let mut alpha = vec![1.0];
         update_diagonal(&mut alpha, &[0.5], &[1.5]);
         assert!((alpha[0] - 1.0 / 3.0).abs() < 1e-12);
-    }
-
-    #[test]
-    fn thin_qr_factorises() {
-        let columns = vec![
-            vec![1.0, 2.0, 0.0, -1.0],
-            vec![0.5, -1.0, 3.0, 2.0],
-            vec![1.0, 2.0, 0.0, -1.0],
-        ];
-        let (q, r) = thin_qr(columns.clone(), 4);
-        for (j, column) in columns.iter().enumerate() {
-            for i in 0..4 {
-                let value: f64 = (0..3).map(|a| q[a][i] * r[a * 3 + j]).sum();
-                assert!((value - column[i]).abs() < 1e-12);
-            }
-        }
-        for a in 0..3 {
-            for b in 0..3 {
-                let expected = f64::from(u8::from(a == b));
-                assert!((dot(&q[a], &q[b]) - expected).abs() < 1e-12);
-            }
-        }
     }
 }

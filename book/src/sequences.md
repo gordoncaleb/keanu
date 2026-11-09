@@ -44,6 +44,11 @@ continuous or discrete, and its parameters carry a trailing state axis.
   `keanu_distributions::HiddenMarkovChain` gives the log likelihood of any per-state emission log probabilities, the
   smoothed state marginals, the Viterbi path and simulated state paths (see below).
 
+For multivariate random walks, `multivariate_gaussian_random_walk` adds a vector drift and correlated
+Gaussian innovations to the supplied initial vector, returning a path shaped `[steps, k]`. It builds
+a deterministic path from standard-normal innovations. `multivariate_local_level` packages the
+zero-drift walk with Gaussian measurement noise and integrates out the levels with the Kalman filter.
+
 **Linear-Gaussian state-space models.** `linear_gaussian_state_space(steps, initial_mean, initial_covariance,
 transition_matrix, transition_covariance, observation_matrix, observation_covariance)` is the model of the Kalman
 filter: a hidden state x of dimension d with x₀ ~ N(initial mean, initial covariance) and

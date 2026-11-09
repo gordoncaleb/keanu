@@ -8,7 +8,7 @@ use std::ops::RangeInclusive;
 
 impl DistributionKind {
     /// Whether every element of the distribution's value has finitely many possible values whatever its
-    /// parameters, and the elements can be changed one at a time: the Bernoulli, binomial, beta-binomial,
+    /// parameters, and the elements can be changed one at a time: the Bernoulli, binomial, beta-binomial, Poisson-binomial,
     /// categorical, ordered logistic and probit, hypergeometric and discrete uniform (and their logit forms), and a
     /// truncated, zero-inflated or hurdle form of one of these. A truncated Poisson or negative binomial can have finitely many values too, when
     /// its upper bound is finite, which only [`finite_support`](Self::finite_support) can tell.
@@ -20,6 +20,7 @@ impl DistributionKind {
         match self {
             DistributionKind::Bernoulli
             | DistributionKind::Binomial
+            | DistributionKind::PoissonBinomial
             | DistributionKind::Categorical
             | DistributionKind::OrderedLogistic
             | DistributionKind::OrderedProbit
@@ -60,6 +61,20 @@ impl DistributionKind {
             DistributionKind::Bernoulli | DistributionKind::BernoulliLogit => fixed(0, 1),
             DistributionKind::Categorical | DistributionKind::CategoricalLogit => {
                 fixed(0, parameters.len() as i64 - 1)
+            }
+            DistributionKind::PoissonBinomial => {
+                let &[p] = parameters else {
+                    return Err(self.wrong_parameters());
+                };
+                let Some((&trials, batch)) = p.f64()?.shape().split_last() else {
+                    return Err(self.wrong_parameters());
+                };
+                if keanu_tensor::broadcast_shape(batch, shape)?.as_slice() != shape {
+                    return Err(GraphError::InvalidValue(
+                        "trial batches do not broadcast to the count shape".into(),
+                    ));
+                }
+                fixed(0, trials as i64)
             }
             DistributionKind::OrderedLogistic | DistributionKind::OrderedProbit => {
                 let &[_, cutpoints] = parameters else {
@@ -117,7 +132,9 @@ impl DistributionKind {
                     return Err(self.wrong_parameters());
                 };
                 let base_support = match base.as_ref() {
-                    DistributionKind::Poisson | DistributionKind::NegativeBinomial => {
+                    DistributionKind::Poisson
+                    | DistributionKind::NegativeBinomial
+                    | DistributionKind::DiscreteWeibull => {
                         vec![0..=i64::MAX; len]
                     }
                     other => match other.finite_support(base_parameters, shape)? {
@@ -228,6 +245,9 @@ mod tests {
         let n = int(&[2, 5]);
         let binomial = DistributionKind::Binomial.finite_support(&[&p, &n], &[2]);
         assert_eq!(binomial.unwrap(), Some(vec![0..=2, 0..=5]));
+        let trials = Value::F64(DoubleTensor::full(&[2, 3], 0.4));
+        let poisson_binomial = DistributionKind::PoissonBinomial.finite_support(&[&trials], &[2]);
+        assert_eq!(poisson_binomial.unwrap(), Some(vec![0..=3, 0..=3]));
         let (lo, hi) = (Value::I64(IntTensor::scalar(-1)), int(&[1, 3]));
         let uniform = DistributionKind::UniformInt.finite_support(&[&lo, &hi], &[2]);
         assert_eq!(uniform.unwrap(), Some(vec![-1..=0, -1..=2]));

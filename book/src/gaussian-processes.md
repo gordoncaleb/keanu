@@ -106,3 +106,19 @@ prior that keeps it above the smallest value m can represent.
 
 The GP regression example (`cargo run --release --example gp_regression`) fits the same model with an exact GP and
 with an HSGP, sampling the HSGP's weights with its hyperparameters by NUTS.
+
+## Inducing points and periodic bases
+
+`InducingGp::new(&kernel, locations)` creates one standard-normal coefficient per inducing location.
+Its `predict(x)` returns the conditional mean given those coefficients, with a rank-limited covariance
+and no conditional residual. The inducing locations are fixed. Use the same prior for training and
+forecast inputs so both use the same inducing draws. The graph factors only the inducing covariance
+and uses a cross-covariance between the inputs and the inducing locations.
+
+`PeriodicHsgp::new(&kernel, harmonics)` uses a one-dimensional `Kernel::periodic` with scalar
+parameters. It retains a constant feature and one sine and cosine per harmonic. Its `predict(x)`
+reuses the Fourier coefficients at new inputs, including future periods. The `basis(x)` methods
+return the features for either prior. Their row products give the implied covariance, which you can
+compare with the dense kernel. [Solin and Särkkä (2014)](https://proceedings.mlr.press/v33/solin14.html)
+
+The `structured_gp` example fits both priors to a synthetic periodic signal and forecasts a held-out period.

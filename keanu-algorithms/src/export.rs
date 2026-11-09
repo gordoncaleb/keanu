@@ -71,8 +71,10 @@ use crate::loglik::PointwiseLogLik;
 use crate::mcmc::SamplingOptions;
 use crate::mcmc::nuts::{Metric, Nuts, NutsStatistics};
 use crate::samples::{ChainSamples, NetworkSample, NetworkSamples};
-use keanu_graph::{Graph, NodeId, Value};
+use crate::support::node_name;
+use keanu_graph::{Graph, GraphError, NodeId, Value};
 use std::collections::HashSet;
+use std::fmt::Display;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
@@ -85,6 +87,92 @@ const NUTS_COLUMNS: [&str; 6] = [
     "divergent__",
     "energy__",
 ];
+
+/// Streams a long-form CSV trace with one row per tensor element of each draw.
+///
+/// The columns are `chain,draw,node,label,index,dtype,value`. Chain, draw, node and tensor indices are
+/// zero-based. The index is a bracketed list in row-major order, or `[]` for a scalar. Labels are preserved
+/// verbatim with CSV escaping. Unlabeled nodes use `#` followed by the node ID. Values retain their type
+/// (`f64`, `i64` or `bool`), including integers above the precision of f64.
+///
+/// Returns an error if a sampled node is missing from the graph or a draw has the wrong type or shape.
+/// An error can leave a partial trace in the writer. Pass a buffered writer when exporting to a file.
+pub fn write_labeled_trace(
+    graph: &Graph,
+    samples: &ChainSamples,
+    out: &mut impl Write,
+) -> Result<()> {
+    let nodes = samples
+        .nodes()
+        .iter()
+        .map(|&id| {
+            let node = graph.node(id).ok_or(GraphError::UnknownNode(id))?;
+            let label = node_name(graph, id).replace('"', "\"\"");
+            Ok((id, node, label))
+        })
+        .collect::<Result<Vec<_>>>()?;
+    let io = |e: std::io::Error| AlgorithmError::Io(e.to_string());
+    writeln!(out, "chain,draw,node,label,index,dtype,value").map_err(io)?;
+    for (chain, draws) in samples.chains().iter().enumerate() {
+        for draw in draws.iter() {
+            for (id, node, label) in &nodes {
+                let value = draw.get(*id).ok_or(GraphError::MissingValue(*id))?;
+                if value.shape() != node.shape() || value.dtype() != node.dtype() {
+                    return Err(AlgorithmError::InvalidArgument(format!(
+                        "chain {chain} draw {} disagrees with the graph's type or shape for node {}",
+                        draw.index(),
+                        id.index(),
+                    )));
+                }
+                let prefix = format!("{chain},{},{},\"{label}\"", draw.index(), id.index());
+                let shape = value.shape();
+                match &value {
+                    Value::F64(t) => trace_elements(
+                        out,
+                        &prefix,
+                        shape,
+                        "f64",
+                        t.as_slice().iter().map(|&x| number(x)),
+                    ),
+                    Value::I64(t) => {
+                        trace_elements(out, &prefix, shape, "i64", t.as_slice().iter())
+                    }
+                    Value::Bool(t) => {
+                        trace_elements(out, &prefix, shape, "bool", t.as_slice().iter())
+                    }
+                    _ => {
+                        return Err(AlgorithmError::InvalidArgument(
+                            "unsupported trace value type".into(),
+                        ));
+                    }
+                }
+                .map_err(io)?;
+            }
+        }
+    }
+    out.flush().map_err(io)
+}
+
+fn trace_elements(
+    out: &mut impl Write,
+    prefix: &str,
+    shape: &[usize],
+    dtype: &str,
+    values: impl Iterator<Item = impl Display>,
+) -> std::io::Result<()> {
+    let mut index = vec![0; shape.len()];
+    for value in values {
+        writeln!(out, "{prefix},\"{index:?}\",{dtype},{value}")?;
+        for (i, &size) in index.iter_mut().zip(shape).rev() {
+            *i += 1;
+            if *i < size {
+                break;
+            }
+            *i = 0;
+        }
+    }
+    Ok(())
+}
 
 /// A CmdStan CSV writer for the draws of one model; see the [module documentation](self).
 #[derive(Debug, Clone)]

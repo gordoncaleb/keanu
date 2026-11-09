@@ -138,6 +138,26 @@ impl<F: EventFamily> Events<'_, F> {
         Ok(if impossible { f64::NEG_INFINITY } else { total })
     }
 
+    /// One log density per independent event, shaped like the batch.
+    pub(crate) fn log_prob_terms(&self, x: &DoubleTensor) -> Result<DoubleTensor> {
+        let layout = self.layout(x.shape())?;
+        let mut terms = Vec::with_capacity(layout.count);
+        for i in 0..layout.count {
+            let value = &x.as_slice()[i * layout.event_len..(i + 1) * layout.event_len];
+            let parameters = layout.at(i);
+            let term = self
+                .family
+                .check(&layout.event, value, &parameters)
+                .unwrap_or_else(|| {
+                    self.family
+                        .gradient::<f64>(&layout.event, value, &parameters)
+                        .log_prob
+                });
+            terms.push(term);
+        }
+        Ok(DoubleTensor::new(&layout.batch, terms)?)
+    }
+
     /// The gradient with respect to x and each parameter, each shaped like it (the parameters' summed over the
     /// batch axes they broadcast along).
     pub(crate) fn d_log_prob(&self, x: &DoubleTensor) -> Result<(DoubleTensor, Vec<DoubleTensor>)> {
@@ -381,6 +401,11 @@ macro_rules! event_distribution {
             /// invalid, −∞ for a value outside the support. An error if the shapes don't fit.
             pub fn log_prob(&self, x: &DoubleTensor) -> Result<f64> {
                 self.events().log_prob(x)
+            }
+
+            /// One log density per independent event, shaped like the batch.
+            pub fn log_prob_terms(&self, x: &DoubleTensor) -> Result<DoubleTensor> {
+                self.events().log_prob_terms(x)
             }
 
             /// The derivatives of [`Self::log_prob`] with respect to x and every parameter, each summed to its

@@ -36,6 +36,7 @@ use smallvec::SmallVec;
 use std::borrow::Cow;
 use std::collections::HashMap;
 
+mod qr;
 mod second_order;
 
 pub(crate) use second_order::{SecondOrderSeed, forward_tangents, second_order_sweep};
@@ -121,6 +122,7 @@ pub fn is_differentiable(graph: &Graph, id: NodeId) -> bool {
             | Op::Determinant
             | Op::Cholesky
             | Op::CholeskyInverse
+            | Op::ThinQr
             | Op::SolveTriangular { .. }
             | Op::Solve
             | Op::LogAbsDeterminant
@@ -1449,6 +1451,10 @@ fn jvp(
             let summed = products.sum_axes(&[rank as isize - 1, rank as isize])?;
             Some(summed.reshape(&batched(b, &out_shape))?.mul(y)?)
         }
+        Op::ThinQr => {
+            let Some(t0) = t[0] else { return Ok(None) };
+            Some(qr::jvp(y, &*lift(t0, out_shape.len())?)?)
+        }
         Op::Cholesky => {
             let Some(t0) = t[0] else { return Ok(None) };
             // dL = L phi(L⁻¹ dA L⁻ᵀ), dA the symmetric matrix read from the lower triangle of the tangent
@@ -1817,6 +1823,7 @@ fn vjp(
             )?;
             vec![Some(g.reshape(&shape)?.mul(&det)?.mul(&inv_t)?)]
         }
+        Op::ThinQr => vec![Some(qr::vjp(y, g)?)],
         Op::Cholesky => {
             // S = L⁻ᵀ phi(Lᵀ Lbar) L⁻¹; dA (read from the lower triangle) = tril(S + Sᵀ) - diag(S)
             let l = y;

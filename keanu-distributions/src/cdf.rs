@@ -16,11 +16,12 @@ use crate::continuous::LN_SQRT_2PI;
 use crate::error::Result;
 use crate::util::{digamma, ln_gamma, map, map_n, safe_ln_times, softplus};
 use crate::{
-    Beta, BetaBinomial, BetaBinomialGradient, BetaGradient, Binomial, BinomialGradient, Cauchy,
-    CauchyGradient, Exponential, ExponentialGradient, Gamma, GammaGradient, Gaussian,
-    GaussianGradient, Laplace, LaplaceGradient, LogNormal, LogNormalGradient, Logistic,
-    LogisticGradient, NegativeBinomial, NegativeBinomialGradient, Poisson, PoissonGradient,
-    StudentT, StudentTGradient, Uniform, UniformGradient, Weibull, WeibullGradient,
+    Beta, BetaBinomial, BetaBinomialGradient, BetaGradient, Binomial, BinomialGradient,
+    BinomialLogit, BinomialLogitGradient, Cauchy, CauchyGradient, Exponential, ExponentialGradient,
+    Gamma, GammaGradient, Gaussian, GaussianGradient, Laplace, LaplaceGradient, LogNormal,
+    LogNormalGradient, Logistic, LogisticGradient, NegativeBinomial, NegativeBinomialGradient,
+    Poisson, PoissonGradient, StudentT, StudentTGradient, Uniform, UniformGradient, Weibull,
+    WeibullGradient,
 };
 use keanu_tensor::special::{
     log_beta, log_gamma_p, log_gamma_p_da, log_gamma_q, log_gamma_q_da, log_inc_beta,
@@ -680,6 +681,81 @@ impl Binomial<'_> {
     /// The element-wise derivative of [`Self::log_ccdf`] with respect to p.
     pub fn d_log_ccdf(&self, k: &IntTensor) -> Result<BinomialGradient> {
         self.cdf_gradient(k, true)
+    }
+}
+
+impl BinomialLogit<'_> {
+    fn tail(k: i64, eta: f64, n: i64, upper: bool) -> (f64, f64) {
+        if k < 0 || k >= n {
+            return (
+                if (k < 0) == upper {
+                    0.0
+                } else {
+                    f64::NEG_INFINITY
+                },
+                0.0,
+            );
+        }
+        let log_p = -softplus(-eta);
+        let log_q = -softplus(eta);
+        let failures = (n - k) as f64;
+        let successes = (k + 1) as f64;
+        let beta = log_beta(failures, successes);
+        let (a, b, log_x, log_y, sign) = if upper {
+            (successes, failures, log_p, log_q, 1.0)
+        } else {
+            (failures, successes, log_q, log_p, -1.0)
+        };
+        // For small x, I_x(a,b) = x^a / (a B(a,b)) to working precision when b*x is tiny.
+        // In log space this also covers logits where x itself rounds to zero.
+        let small = |log_x: f64, b: f64| log_x < -37.0 - b.ln();
+        if small(log_x, b) {
+            return (a * log_x - a.ln() - beta, sign * a);
+        }
+        let log_probability = log_complement(log_inc_beta(a, b, log_x.exp()), || {
+            if small(log_y, a) {
+                b * log_y - b.ln() - beta
+            } else {
+                log_inc_beta(b, a, log_y.exp())
+            }
+        });
+        let log_derivative = a * log_x + b * log_y - beta;
+        (
+            log_probability,
+            sign * ratio(log_derivative, log_probability),
+        )
+    }
+
+    /// Element-wise log cumulative probability, ln P(X <= k).
+    pub fn log_cdf(&self, k: &IntTensor) -> Result<DoubleTensor> {
+        map((k, &*self.logit, &*self.n), |(k, eta, n)| {
+            Self::tail(k, eta, n, false).0
+        })
+    }
+
+    /// Element-wise log survival probability, ln P(X > k).
+    pub fn log_ccdf(&self, k: &IntTensor) -> Result<DoubleTensor> {
+        map((k, &*self.logit, &*self.n), |(k, eta, n)| {
+            Self::tail(k, eta, n, true).0
+        })
+    }
+
+    /// Derivative of the log cumulative probability with respect to the logit.
+    pub fn d_log_cdf(&self, k: &IntTensor) -> Result<BinomialLogitGradient> {
+        Ok(BinomialLogitGradient {
+            logit: map((k, &*self.logit, &*self.n), |(k, eta, n)| {
+                Self::tail(k, eta, n, false).1
+            })?,
+        })
+    }
+
+    /// Derivative of the log survival probability with respect to the logit.
+    pub fn d_log_ccdf(&self, k: &IntTensor) -> Result<BinomialLogitGradient> {
+        Ok(BinomialLogitGradient {
+            logit: map((k, &*self.logit, &*self.n), |(k, eta, n)| {
+                Self::tail(k, eta, n, true).1
+            })?,
+        })
     }
 }
 

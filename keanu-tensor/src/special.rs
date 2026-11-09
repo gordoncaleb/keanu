@@ -1266,7 +1266,7 @@ fn log_beta_prefix(a: f64, b: f64, x: f64, ln_x: f64, ln_y: f64) -> f64 {
     let d1 = (shift - a) / a;
     let d2 = (a - shift) / b;
     // ln Γ(a + b) - ln Γ(a) - ln Γ(b) by Stirling's formula, less the (a+b)^(a+b) / (aᵃ bᵇ) absorbed above
-    let stirling = 0.5 * (a * b / total).ln() - LN_SQRT_2PI + stirling_correction(total)
+    let stirling = 0.5 * (a * (b / total)).ln() - LN_SQRT_2PI + stirling_correction(total)
         - stirling_correction(a)
         - stirling_correction(b);
     term(a, ln_x, d1) + term(b, ln_y, d2) + stirling
@@ -1311,6 +1311,12 @@ fn inc_beta_cf<const K: usize>(
     ln_y: f64,
 ) -> IncBeta<K> {
     let log_front = log_beta_front((a, b), x, ln_x, ln_y);
+    if x == 0.0 {
+        return IncBeta {
+            value: log_front.exp(),
+            log_value: log_front,
+        };
+    }
     let Some(g) = continued_fraction(Jet::constant(1.0), |n| {
         let m = (n / 2) as f64;
         let one = Jet::constant(1.0);
@@ -1530,11 +1536,26 @@ fn inc_beta_all<const K: usize>(a: f64, b: f64, x: f64) -> IncBeta<K> {
             log_value: Jet::constant(0.0),
         };
     }
-    let shapes = (Jet::var(a, 0), Jet::var(b, 1));
     let y = 1.0 - x;
+    let ln_y = if x < 0.5 { (-x).ln_1p() } else { y.ln() };
+    inc_beta_coordinates(a, b, x, y, x.ln(), ln_y)
+}
+
+fn inc_beta_coordinates<const K: usize>(
+    a: f64,
+    b: f64,
+    x: f64,
+    y: f64,
+    ln_x: f64,
+    ln_y: f64,
+) -> IncBeta<K> {
+    let shapes = (Jet::var(a, 0), Jet::var(b, 1));
     if a.min(b) >= BASYM_MIN_SHAPE {
-        // λ = (a + b)(mean - x)
-        let lambda = mean_offset(a, b, x);
+        let lambda = if x <= y {
+            mean_offset(a, b, x)
+        } else {
+            -mean_offset(b, a, y)
+        };
         if lambda.abs() <= BASYM_MAX_DEVIATION * a.min(b) {
             return if lambda >= 0.0 {
                 inc_beta_basym(shapes, (x, y), lambda)
@@ -1543,13 +1564,75 @@ fn inc_beta_all<const K: usize>(a: f64, b: f64, x: f64) -> IncBeta<K> {
             };
         }
     }
-    let ln_x = x.ln();
-    let ln_y = if x < 0.5 { (-x).ln_1p() } else { y.ln() };
-    if x > (a + 1.0) / (a + b + 2.0) {
+    let total = a + b + 2.0;
+    let reflect = if x <= y {
+        x > (a + 1.0) / total
+    } else {
+        y < (b + 1.0) / total
+    };
+    if reflect {
         inc_beta_cf((shapes.1, shapes.0), y, ln_y, ln_x).complement()
     } else {
         inc_beta_cf(shapes, x, ln_x, ln_y)
     }
+}
+
+fn inc_beta_logit_all<const K: usize>(a: f64, b: f64, eta: f64) -> IncBeta<K> {
+    if !(a > 0.0 && b > 0.0 && (a + b).is_finite()) || eta.is_nan() {
+        return IncBeta::NAN;
+    }
+    if eta.is_infinite() {
+        return inc_beta_all(a, b, if eta.is_sign_positive() { 1.0 } else { 0.0 });
+    }
+    let ln_x = -softplus(-eta);
+    let ln_y = -softplus(eta);
+    inc_beta_coordinates(a, b, ln_x.exp(), ln_y.exp(), ln_x, ln_y)
+}
+
+/// Log regularized incomplete beta at sigmoid(eta), retaining both beta coordinates separately.
+/// This preserves a finite log tail when sigmoid(eta) rounds to zero.
+pub fn log_inc_beta_logit(a: f64, b: f64, eta: f64) -> f64 {
+    inc_beta_logit_all::<0>(a, b, eta).log_value.v
+}
+
+/// Log density of the log odds of a Beta(a, b) variate at eta.
+pub fn log_beta_logit_density(a: f64, b: f64, eta: f64) -> f64 {
+    if !(a > 0.0 && b > 0.0 && (a + b).is_finite()) || eta.is_nan() {
+        return f64::NAN;
+    }
+    if eta.is_infinite() {
+        return f64::NEG_INFINITY;
+    }
+    let ln_x = -softplus(-eta);
+    let ln_y = -softplus(eta);
+    if eta <= 0.0 {
+        log_beta_prefix(a, b, ln_x.exp(), ln_x, ln_y)
+    } else {
+        log_beta_prefix(b, a, ln_y.exp(), ln_y, ln_x)
+    }
+}
+
+/// Log incomplete beta at sigmoid(eta), with gradient and Hessian ordered as (a, b, eta).
+/// Derivatives at infinite eta are unspecified.
+pub fn log_inc_beta_logit_derivatives(a: f64, b: f64, eta: f64) -> (f64, [f64; 3], [[f64; 3]; 3]) {
+    let log = inc_beta_logit_all::<2>(a, b, eta).log_value;
+    let ln_x = -softplus(-eta);
+    let ln_y = -softplus(eta);
+    let (x, y) = (ln_x.exp(), ln_y.exp());
+    let d = (log_beta_logit_density(a, b, eta) - log.v).exp();
+    let common = digamma(a + b);
+    let da = d * (ln_x - digamma(a) + common - log.g[0]);
+    let db = d * (ln_y - digamma(b) + common - log.g[1]);
+    let deta = d * (a * y - b * x - d);
+    (
+        log.v,
+        [log.g[0], log.g[1], d],
+        [
+            [log.h[0][0], log.h[0][1], da],
+            [log.h[1][0], log.h[1][1], db],
+            [da, db, deta],
+        ],
+    )
 }
 
 /// The regularised incomplete beta function I_x(a, b) = B(x; a, b) / B(a, b) for a, b > 0 and 0 <= x <= 1 (NaN

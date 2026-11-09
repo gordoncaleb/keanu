@@ -99,6 +99,8 @@ message Node {
     SparseMatrix sparse_matmul = 67;
     // An element-wise special function of the one parent with a constant order.
     Bessel bessel = 68;
+    // The thin QR factors stacked on the row axis of a tall or square matrix.
+    Empty thin_qr = 69;
     Scan scan = 100;
     Ode ode = 101;
   }
@@ -671,6 +673,22 @@ enum DistributionKind {
   DISTRIBUTION_KIND_MIXTURE_OF = 77;
   // Parameters: the base's (see `Distribution.bijector`).
   DISTRIBUTION_KIND_TRANSFORMED = 78;
+  // Parameters: `nu`, `mu`, `sigma`.
+  DISTRIBUTION_KIND_LOCATION_SCALE_STUDENT_T = 79;
+  // Parameters: `log_mu`, `alpha`.
+  DISTRIBUTION_KIND_NEGATIVE_BINOMIAL_LOG = 80;
+  // Parameters: `n`, `logits`.
+  DISTRIBUTION_KIND_MULTINOMIAL_LOGIT = 81;
+  // Parameters: `mu`, `precision`.
+  DISTRIBUTION_KIND_MULTIVARIATE_GAUSSIAN_PRECISION = 82;
+  // Parameter: `p`, with trials on its last axis.
+  DISTRIBUTION_KIND_POISSON_BINOMIAL = 83;
+  // Parameters: `q`, `beta`.
+  DISTRIBUTION_KIND_DISCRETE_WEIBULL = 84;
+  // Jones–Faddy skew Student-t. Parameters: `a`, `b`, `mu`, `sigma`.
+  DISTRIBUTION_KIND_SKEW_STUDENT_T = 85;
+  // Shape-one Pólya–Gamma. Parameter: `z`.
+  DISTRIBUTION_KIND_POLYA_GAMMA1 = 86;
 }
 
 // The neighbourhood of a spatial distribution: the number of areas and the edges between them, as pairs of area

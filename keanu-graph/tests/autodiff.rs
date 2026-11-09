@@ -1252,3 +1252,17 @@ fn sparse_matmul_values_and_gradients() {
         })
     ));
 }
+
+#[test]
+fn batched_thin_qr_gradients_match_finite_differences() {
+    let a = t(
+        &[2, 3, 2],
+        &[
+            1.0, 2.0, 3.0, -1.0, 0.5, 1.0, -2.0, 0.0, 1.0, 1.0, 0.5, -3.0,
+        ],
+    );
+    check(&[a], |b, vars| {
+        let (q, r) = vars[0].thin_qr();
+        b.concat(-2, &[q, r])
+    });
+}

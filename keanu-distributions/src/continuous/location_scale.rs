@@ -444,3 +444,101 @@ impl<'a> StudentT<'a> {
         Ok(normal.div(&denominator)?)
     }
 }
+
+derived_distribution! {
+    /// Student-t with real degrees of freedom, location and positive scale.
+    LocationScaleStudentT, LocationScaleStudentTGradient, inputs = 4,
+    (
+        /// The positive degrees of freedom.
+        nu,
+        /// The location.
+        mu,
+        /// The positive scale.
+        sigma,
+    ),
+    log_prob = location_scale_student_t_log_prob,
+    log_cdf = location_scale_student_t_log_cdf,
+}
+
+fn student_t_log_normalizer<const K: usize>(nu: Jet<K>) -> Jet<K> {
+    if nu.v >= 1e5 {
+        // The next term in the log-gamma ratio is 1/(24ν³), below f64 precision here.
+        -LN_SQRT_2PI - 0.25 / nu
+    } else {
+        ((nu + 1.0) * 0.5).ln_gamma() - (nu * 0.5).ln_gamma() - 0.5 * (nu.ln() + PI.ln())
+    }
+}
+
+fn location_scale_student_t_log_prob<const K: usize>(
+    x: Jet<K>,
+    [nu, mu, sigma]: [Jet<K>; 3],
+) -> Jet<K> {
+    if !(nu.v.is_finite() && nu.v > 0.0 && mu.v.is_finite() && sigma.v.is_finite() && sigma.v > 0.0)
+    {
+        return Jet::constant(f64::NAN);
+    }
+    let centred = x - mu;
+    let z = centred / sigma;
+    let log_kernel = if z.v.abs() < 1e150 * nu.v.sqrt().min(1.0) {
+        (z.square() / nu).ln_1p()
+    } else {
+        let magnitude = if centred.v < 0.0 { -centred } else { centred };
+        (2.0 * (magnitude.ln() - sigma.ln()) - nu.ln()).softplus()
+    };
+    student_t_log_normalizer(nu) - sigma.ln() - (nu + 1.0) * 0.5 * log_kernel
+}
+
+fn location_scale_student_t_log_cdf<const K: usize>(
+    x: Jet<K>,
+    [nu, mu, sigma]: [Jet<K>; 3],
+    upper: bool,
+) -> Jet<K> {
+    if !(nu.v.is_finite() && nu.v > 0.0 && mu.v.is_finite() && sigma.v.is_finite() && sigma.v > 0.0)
+    {
+        return Jet::constant(f64::NAN);
+    }
+    let centred = x - mu;
+    let z = centred / sigma;
+    if z.v.abs() < 1e-4 * nu.v.sqrt().min(1.0) {
+        // Integrate the density's Taylor series at the centre, where the beta argument loses precision.
+        let mass =
+            z * student_t_log_normalizer(nu).exp() * (1.0 - (nu + 1.0) * z.square() / (6.0 * nu));
+        return (0.5 + if upper { -mass } else { mass }).ln();
+    }
+    let magnitude = if centred.v < 0.0 { -centred } else { centred };
+    let half_nu = nu * 0.5;
+    let half = Jet::constant(0.5);
+    let log_odds = 2.0 * (magnitude.ln() - sigma.ln()) - nu.ln();
+    let log_w = -log_odds.softplus();
+    let w = log_w.exp();
+    let log_tail = if w.v < 1e-100 && log_odds.v.is_finite() {
+        // The leading term of the incomplete beta integral avoids underflow in its argument.
+        half_nu * log_w + student_t_log_normalizer(nu) - 0.5 * nu.ln()
+    } else if log_odds.v < 0.0 {
+        let complement = (-(-log_odds).softplus()).exp();
+        complement.log_inc_beta(w.v, half, half_nu).log1mexp() - LN_2
+    } else {
+        w.log_inc_beta((-(-log_odds).softplus()).exp().v, half_nu, half) - LN_2
+    };
+    if (z.v > 0.0) == upper {
+        log_tail
+    } else {
+        log_tail.log1mexp()
+    }
+}
+
+impl LocationScaleStudentT<'_> {
+    /// Draws a sample of the requested shape, broadcast with the parameters. Degrees of freedom and scale
+    /// must be positive and all parameters finite.
+    pub fn sample(&self, shape: &[usize], rng: &mut KeanuRng) -> Result<DoubleTensor> {
+        sample_each(shape, &[&self.nu, &self.mu, &self.sigma], |p| {
+            let (nu, mu, sigma) = (p[0], p[1], p[2]);
+            if !(nu.is_finite() && nu > 0.0 && mu.is_finite() && sigma.is_finite() && sigma > 0.0) {
+                return invalid_parameter(format!(
+                    "Student-t requires finite parameters and positive nu and sigma, got {p:?}"
+                ));
+            }
+            Ok(mu + sigma * rng.next_gaussian() * super::positive::sample_student_scale(nu, rng)?)
+        })
+    }
+}

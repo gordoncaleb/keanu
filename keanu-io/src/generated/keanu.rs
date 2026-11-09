@@ -34,7 +34,7 @@ pub struct Node {
     pub label: ::prost::alloc::string::String,
     #[prost(
         oneof = "node::Op",
-        tags = "10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 100, 101"
+        tags = "10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 100, 101"
     )]
     pub op: ::core::option::Option<node::Op>,
 }
@@ -164,6 +164,9 @@ pub mod node {
         /// An element-wise special function of the one parent with a constant order.
         #[prost(message, tag = "68")]
         Bessel(super::Bessel),
+        /// The thin QR factors stacked on the row axis of a tall or square matrix.
+        #[prost(message, tag = "69")]
+        ThinQr(super::Empty),
         #[prost(message, tag = "100")]
         Scan(super::Scan),
         #[prost(message, tag = "101")]
@@ -1268,6 +1271,22 @@ pub enum DistributionKind {
     MixtureOf = 77,
     /// Parameters: the base's (see `Distribution.bijector`).
     Transformed = 78,
+    /// Parameters: `nu`, `mu`, `sigma`.
+    LocationScaleStudentT = 79,
+    /// Parameters: `log_mu`, `alpha`.
+    NegativeBinomialLog = 80,
+    /// Parameters: `n`, `logits`.
+    MultinomialLogit = 81,
+    /// Parameters: `mu`, `precision`.
+    MultivariateGaussianPrecision = 82,
+    /// Parameter: `p`, with trials on its last axis.
+    PoissonBinomial = 83,
+    /// Parameters: `q`, `beta`.
+    DiscreteWeibull = 84,
+    /// Jones–Faddy skew Student-t. Parameters: `a`, `b`, `mu`, `sigma`.
+    SkewStudentT = 85,
+    /// Shape-one Pólya–Gamma. Parameter: `z`.
+    PolyaGamma1 = 86,
 }
 impl DistributionKind {
     /// String value of the enum field names used in the ProtoBuf definition.
@@ -1361,6 +1380,16 @@ impl DistributionKind {
             Self::Wiener => "DISTRIBUTION_KIND_WIENER",
             Self::MixtureOf => "DISTRIBUTION_KIND_MIXTURE_OF",
             Self::Transformed => "DISTRIBUTION_KIND_TRANSFORMED",
+            Self::LocationScaleStudentT => "DISTRIBUTION_KIND_LOCATION_SCALE_STUDENT_T",
+            Self::NegativeBinomialLog => "DISTRIBUTION_KIND_NEGATIVE_BINOMIAL_LOG",
+            Self::MultinomialLogit => "DISTRIBUTION_KIND_MULTINOMIAL_LOGIT",
+            Self::MultivariateGaussianPrecision => {
+                "DISTRIBUTION_KIND_MULTIVARIATE_GAUSSIAN_PRECISION"
+            }
+            Self::PoissonBinomial => "DISTRIBUTION_KIND_POISSON_BINOMIAL",
+            Self::DiscreteWeibull => "DISTRIBUTION_KIND_DISCRETE_WEIBULL",
+            Self::SkewStudentT => "DISTRIBUTION_KIND_SKEW_STUDENT_T",
+            Self::PolyaGamma1 => "DISTRIBUTION_KIND_POLYA_GAMMA1",
         }
     }
     /// Creates an enum from field names used in the ProtoBuf definition.
@@ -1455,6 +1484,18 @@ impl DistributionKind {
             "DISTRIBUTION_KIND_WIENER" => Some(Self::Wiener),
             "DISTRIBUTION_KIND_MIXTURE_OF" => Some(Self::MixtureOf),
             "DISTRIBUTION_KIND_TRANSFORMED" => Some(Self::Transformed),
+            "DISTRIBUTION_KIND_LOCATION_SCALE_STUDENT_T" => {
+                Some(Self::LocationScaleStudentT)
+            }
+            "DISTRIBUTION_KIND_NEGATIVE_BINOMIAL_LOG" => Some(Self::NegativeBinomialLog),
+            "DISTRIBUTION_KIND_MULTINOMIAL_LOGIT" => Some(Self::MultinomialLogit),
+            "DISTRIBUTION_KIND_MULTIVARIATE_GAUSSIAN_PRECISION" => {
+                Some(Self::MultivariateGaussianPrecision)
+            }
+            "DISTRIBUTION_KIND_POISSON_BINOMIAL" => Some(Self::PoissonBinomial),
+            "DISTRIBUTION_KIND_DISCRETE_WEIBULL" => Some(Self::DiscreteWeibull),
+            "DISTRIBUTION_KIND_SKEW_STUDENT_T" => Some(Self::SkewStudentT),
+            "DISTRIBUTION_KIND_POLYA_GAMMA1" => Some(Self::PolyaGamma1),
             _ => None,
         }
     }

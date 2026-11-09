@@ -17,6 +17,8 @@
 //! discrete) at their values in the state, so that it can be one step of a compound sampler. It notices when other
 //! steps change the state and picks up from there.
 
+pub mod hmc;
+
 use crate::error::{AlgorithmError, Result};
 use crate::mcmc::{SamplingAlgorithm, SamplingOptions, generate, is_impossible};
 use crate::samples::NetworkSamples;
@@ -1052,11 +1054,11 @@ impl AdaptiveStepSize {
         self.counter = 0;
     }
 
-    /// Adapts to a step's tree.
-    fn learn(&mut self, tree: &Tree) {
+    /// Adapts to the acceptance statistic of the latest trajectory.
+    fn learn(&mut self, accept_rate: f64) {
         self.counter += 1;
         let count = self.counter as f64;
-        self.accept_rate = (tree.sum_metropolis_acceptance / tree.size as f64).min(1.0);
+        self.accept_rate = accept_rate;
         let w = 1.0 / (count + Self::T0);
         self.h_bar = (1.0 - w) * self.h_bar + w * (self.target - self.accept_rate);
         let log_step_size = self.mu - (count.sqrt() / Self::GAMMA) * self.h_bar;
@@ -1601,7 +1603,8 @@ impl SamplingAlgorithm for NutsSampler<'_> {
             // as Stan's adaptive samplers: learn the step size from the tree, then the potential from the draw, and
             // when a slow window ends, find a step size for the new potential and restart dual averaging from it
             if self.config.adapt_step_size {
-                self.step_size.learn(&tree);
+                self.step_size
+                    .learn((tree.sum_metropolis_acceptance / tree.size as f64).min(1.0));
             }
             let potential_changed =
                 self.config.adapt_potential && self.potential.update(&self.proposal.position)?;

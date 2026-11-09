@@ -80,6 +80,8 @@ continuous! {
     /// Half Student-t with nu (real) degrees of freedom and scale sigma; see
     /// [`keanu_distributions::HalfStudentT`].
     half_student_t, half_student_t_with_shape => HalfStudentT(nu, sigma);
+    /// Student-t with real positive degrees of freedom, location and positive scale.
+    location_scale_student_t, location_scale_student_t_with_shape => LocationScaleStudentT(nu, mu, sigma);
     /// Asymmetric Laplace with location mu (the tau-quantile), scale sigma and skewness tau in (0, 1) (Stan's
     /// `skew_double_exponential`); see [`keanu_distributions::AsymmetricLaplace`].
     asymmetric_laplace, asymmetric_laplace_with_shape => AsymmetricLaplace(mu, sigma, tau);
@@ -426,6 +428,33 @@ impl GraphBuilder {
         )
     }
 
+    /// Negative binomial with mean exp(log_mu) and positive dispersion alpha.
+    pub fn negative_binomial_log<'b>(
+        &'b self,
+        log_mu: impl IntoDoubleVar<'b>,
+        alpha: impl IntoDoubleVar<'b>,
+    ) -> IntVar<'b> {
+        let ids = [log_mu.into_var(self).id(), alpha.into_var(self).id()];
+        IntVar::new(
+            self,
+            self.distribution(DistributionKind::NegativeBinomialLog, None, &ids),
+        )
+    }
+
+    /// Like [`Self::negative_binomial_log`], with the requested shape broadcast with the parameters.
+    pub fn negative_binomial_log_with_shape<'b>(
+        &'b self,
+        shape: &[usize],
+        log_mu: impl IntoDoubleVar<'b>,
+        alpha: impl IntoDoubleVar<'b>,
+    ) -> IntVar<'b> {
+        let ids = [log_mu.into_var(self).id(), alpha.into_var(self).id()];
+        IntVar::new(
+            self,
+            self.distribution(DistributionKind::NegativeBinomialLog, Some(shape), &ids),
+        )
+    }
+
     /// An ordered logistic node (Stan's `ordered_logistic`): a category index in 0..K from a location eta and K - 1
     /// strictly increasing cutpoints along the cutpoints' last axis. The value's shape is the broadcast of eta's
     /// shape and the cutpoints' leading axes. Latent cutpoints are best given an ordered prior (the `Ordered`
@@ -708,7 +737,8 @@ impl GraphBuilder {
     /// A truncated distribution: `base` (a univariate distribution kind with a CDF: Gaussian, LogNormal,
     /// Exponential, Gamma, Beta, StudentT, Cauchy, Laplace, Logistic, Uniform, Weibull, SkewNormal, ExGaussian,
     /// Gumbel, GeneralizedExtremeValue, GeneralizedPareto, InverseGaussian, Kumaraswamy, LogitNormal, HalfStudentT,
-    /// AsymmetricLaplace, LogLogistic, GeneralizedGamma, Poisson, Binomial, BetaBinomial or NegativeBinomial) with
+    /// AsymmetricLaplace, LogLogistic, GeneralizedGamma, Poisson, Binomial, PoissonBinomial, BetaBinomial or
+    /// NegativeBinomial) with
     /// `parameters` (its parameter nodes, in its order), restricted to `[lower, upper]` and renormalised by the
     /// probability the base gives that range. Either bound may be infinite; for a discrete base both must be whole
     /// numbers (or infinite) and the range includes them.
@@ -716,9 +746,9 @@ impl GraphBuilder {
     /// The node's support is the base's intersected with the bounds, so gradient based samplers keep a latent
     /// truncated node inside them. Values are drawn by inverting the base's CDF where it has a closed-form inverse
     /// (Gaussian, LogNormal, Exponential, Cauchy, Laplace, Logistic, Uniform, Weibull, Gumbel,
-    /// GeneralizedExtremeValue, GeneralizedPareto, Kumaraswamy, LogitNormal, AsymmetricLaplace, LogLogistic) and by
-    /// rejection otherwise,
-    /// which fails with an error if the bounds hold too little of the base's probability.
+    /// GeneralizedExtremeValue, GeneralizedPareto, Kumaraswamy, LogitNormal, AsymmetricLaplace, LogLogistic).
+    /// For a Poisson-binomial base, sampling uses the conditional count masses if the first draw is outside the
+    /// bounds. Other bases use rejection, which fails with an error if the bounds hold too little probability.
     ///
     /// The handle type must match the base's value type ([`DoubleVar`] or [`IntVar`]). Building fails if the base
     /// has no CDF, the parameters don't match it, or constant bounds have `lower >= upper`. Bounds that are not
@@ -988,7 +1018,7 @@ impl GraphBuilder {
     /// rules and the chain rule through the inverse map, and is element-wise itself (a mixture component, a
     /// [`log_density`](Self::log_density), pointwise log likelihoods). Its support is the image of the
     /// base's support (which must be a range of real numbers), so gradient based samplers keep a latent
-    /// transformed node inside it. It has no CDF, so it can't be truncated or censored.
+    /// transformed node inside it. It can be truncated or censored when its base has a CDF.
     ///
     /// ```
     /// use keanu_graph::{DoubleVar, GraphBuilder, op::{DistributionKind, ElementBijector}};
@@ -1216,6 +1246,88 @@ impl GraphBuilder {
         )
     }
 
+    /// A multivariate local-level state-space model. Both transition and observation use the identity
+    /// matrix. The level starts at the specified Gaussian and evolves with zero drift and process
+    /// covariance `level_covariance`. Observations add noise with covariance `observation_covariance`.
+    /// The observation node has shape `[steps, k]`. Its log density integrates out the levels with the
+    /// Kalman filter, as in [`Self::linear_gaussian_state_space`].
+    pub fn multivariate_local_level<'b>(
+        &'b self,
+        steps: usize,
+        initial_mean: impl IntoDoubleVar<'b>,
+        initial_covariance: impl IntoDoubleVar<'b>,
+        level_covariance: impl IntoDoubleVar<'b>,
+        observation_covariance: impl IntoDoubleVar<'b>,
+    ) -> DoubleVar<'b> {
+        let initial_mean = initial_mean.into_var(self);
+        let shape = initial_mean.shape();
+        let [k] = shape.as_slice() else {
+            self.record(GraphError::InvalidValue(
+                "a multivariate local level needs a vector initial mean".into(),
+            ));
+            return initial_mean;
+        };
+        let identity = match DoubleTensor::eye(*k) {
+            Ok(matrix) => self.constant(matrix),
+            Err(error) => {
+                self.record(error.into());
+                return initial_mean;
+            }
+        };
+        self.linear_gaussian_state_space(
+            steps,
+            initial_mean,
+            initial_covariance,
+            identity,
+            level_covariance,
+            identity,
+            observation_covariance,
+        )
+    }
+
+    /// A multivariate Gaussian random walk of shape `[steps, k]`. The first row is the supplied
+    /// `initial` vector. Each later row adds `drift` (scalar or vector `[k]`) and an independent
+    /// innovation with covariance `L Lᵀ`, where L is the lower triangle of `innovation_cholesky`.
+    /// The walk is deterministic given the initial vector and its standard-normal innovation node.
+    /// Pass a multivariate Gaussian initial node to give the initial state a prior.
+    pub fn multivariate_gaussian_random_walk<'b>(
+        &'b self,
+        steps: usize,
+        drift: impl IntoDoubleVar<'b>,
+        innovation_cholesky: impl IntoDoubleVar<'b>,
+        initial: impl IntoDoubleVar<'b>,
+    ) -> DoubleVar<'b> {
+        let (drift, l, initial) = (
+            drift.into_var(self),
+            innovation_cholesky.into_var(self),
+            initial.into_var(self),
+        );
+        let shape = initial.shape();
+        let [k] = shape.as_slice() else {
+            self.record(GraphError::InvalidValue(
+                "a multivariate walk needs a vector initial state".into(),
+            ));
+            return initial;
+        };
+        if steps == 0
+            || *k == 0
+            || l.shape() != [*k, *k]
+            || !(drift.shape().is_empty() || drift.shape() == [*k])
+        {
+            self.record(GraphError::InvalidValue(format!(
+                "a multivariate walk needs positive steps and dimension, a [{k}, {k}] innovation factor, and scalar or [{k}] drift"
+            )));
+            return initial;
+        }
+        let first = initial.reshape(&[1, *k as isize]);
+        if steps == 1 {
+            return first;
+        }
+        let z = self.gaussian_with_shape(&[steps - 1, *k], 0.0, 1.0);
+        let increments = z.matmul_transposed(l.tril(0), false, true) + drift;
+        self.concat(0, &[first, first + increments.cumsum(0)])
+    }
+
     /// An autoregressive process AR(p) of `steps` values (see [`keanu_distributions::Autoregressive`], as PyMC's
     /// `AR`): the first p values are N(`init_mu`, `init_sigma`) and each later one
     /// N(`constant` + Σᵢ ρᵢ x_{t−i}, `sigma`), with `rho` the vector `[p]` of the coefficients of lags 1 to p. The
@@ -1360,6 +1472,20 @@ macro_rules! builders {
 }
 
 builders! {
+    /// Jones–Faddy skew Student-t with positive shapes a and b, location, and positive scale.
+    skew_student_t, skew_student_t_with_shape => SkewStudentT(a: IntoDoubleVar, b: IntoDoubleVar, mu: IntoDoubleVar, sigma: IntoDoubleVar) -> DoubleVar;
+    /// Shape-one Pólya–Gamma PG(1, z), with finite tilt z and positive support.
+    polya_gamma1, polya_gamma1_with_shape => PolyaGamma1(z: IntoDoubleVar) -> DoubleVar;
+    /// A success count from independent Bernoulli trials, with the trial probabilities on the last axis of p.
+    poisson_binomial, poisson_binomial_with_shape => PoissonBinomial(p: IntoDoubleVar) -> IntVar;
+    /// A discrete Weibull count with survival P(X ≥ k) = q^(k^β) for k ≥ 0.
+    discrete_weibull, discrete_weibull_with_shape => DiscreteWeibull(q: IntoDoubleVar, beta: IntoDoubleVar) -> IntVar;
+    /// Counts over the last axis of the logits, with the specified number of trials per event.
+    /// The log mass is evaluated on the logit scale. See [`keanu_distributions::MultinomialLogit`].
+    multinomial_logit, multinomial_logit_with_shape => MultinomialLogit(n: IntoIntVar, logits: IntoDoubleVar) -> IntVar;
+    /// A multivariate Gaussian given its precision matrix. Only the lower triangle of the matrix is read.
+    /// See [`keanu_distributions::MultivariateGaussianPrecision`].
+    multivariate_gaussian_precision, multivariate_gaussian_precision_with_shape => MultivariateGaussianPrecision(mu: IntoDoubleVar, precision: IntoDoubleVar) -> DoubleVar;
     /// An ordered probit node (Stan's `ordered_probit`): a category index in 0..K from a location eta and K − 1
     /// strictly increasing cutpoints along the cutpoints' last axis, P(k) = Φ(η − c_k) − Φ(η − c_(k+1)). Shapes and
     /// conventions are those of [`Self::ordered_logistic`]; see [`keanu_distributions::OrderedProbit`].

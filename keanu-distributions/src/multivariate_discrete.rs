@@ -133,6 +133,12 @@ impl<'a> DirichletMultinomial<'a> {
         self.events(&n).log_prob(&x.to_double())
     }
 
+    /// One log probability per count vector, shaped like the batch.
+    pub fn log_prob_terms(&self, x: &IntTensor) -> Result<DoubleTensor> {
+        let n = self.n.to_double();
+        self.events(&n).log_prob_terms(&x.to_double())
+    }
+
     /// The derivative of [`Self::log_prob`] with respect to `alpha`.
     pub fn d_log_prob(&self, x: &IntTensor) -> Result<DirichletMultinomialGradient> {
         let n = self.n.to_double();
@@ -325,6 +331,11 @@ impl<'a> PlackettLuce<'a> {
     /// don't fit.
     pub fn log_prob(&self, x: &IntTensor) -> Result<f64> {
         self.events().log_prob(&x.to_double())
+    }
+
+    /// One log probability per ranking, shaped like the batch.
+    pub fn log_prob_terms(&self, x: &IntTensor) -> Result<DoubleTensor> {
+        self.events().log_prob_terms(&x.to_double())
     }
 
     /// The derivative of [`Self::log_prob`] with respect to the worths (NaN for a value that is not a ranking).

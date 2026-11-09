@@ -1,6 +1,7 @@
 //! Typed handles to nodes being built, with operators and methods that add new nodes.
 
 use crate::builder::GraphBuilder;
+use crate::error::GraphError;
 use crate::graph::NodeId;
 use crate::op::{
     ArgOp, BesselOp, BinaryOp, CompareOp, CumulativeOp, LogicOp, Op, Predicate, ReduceOp, UnaryOp,
@@ -832,6 +833,19 @@ impl<'b> DoubleVar<'b> {
     pub fn cholesky(self) -> Self {
         self.same(Op::Cholesky)
     }
+    /// Reduced QR with orthonormal Q and upper triangular R with a nonnegative diagonal. The input
+    /// has shape `[..., m, n]` with `m >= n`. The factors have shapes `[..., m, n]` and `[..., n, n]`.
+    /// Differentiation requires full column rank.
+    pub fn thin_qr(self) -> (Self, Self) {
+        let factors = self.same(Op::ThinQr);
+        let [.., rows, _] = *self.shape() else {
+            return (factors, factors); // adding the operation already recorded the shape error
+        };
+        (
+            factors.slice(&format!("...,:{rows},:")),
+            factors.slice(&format!("...,{rows}:,:")),
+        )
+    }
     /// The full symmetric inverse of the matrix whose lower Cholesky factor this is.
     pub fn cholesky_inverse(self) -> Self {
         self.same(Op::CholeskyInverse)
@@ -853,6 +867,26 @@ impl<'b> DoubleVar<'b> {
     pub fn solve(self, rhs: impl IntoDoubleVar<'b>) -> Self {
         self.with(Op::Solve, rhs)
     }
+    /// Solves a Kronecker system with square factors A (self) and B (right).
+    /// Supply the row-major right-hand side as a matrix `[..., m, n]` and receive X of the same
+    /// trailing shape, solving `A X Bᵀ = rhs`. The factors and rhs may have broadcast batch axes.
+    /// This uses two ordinary solves without constructing the `(m n) × (m n)` Kronecker matrix.
+    pub fn solve_kronecker(
+        self,
+        right: impl IntoDoubleVar<'b>,
+        rhs: impl IntoDoubleVar<'b>,
+    ) -> Self {
+        let right = right.into_var(self.builder);
+        let rhs = rhs.into_var(self.builder);
+        if rhs.shape().len() < 2 {
+            self.builder.record(GraphError::InvalidValue(
+                "a Kronecker solve needs its right-hand side shaped as a matrix".into(),
+            ));
+            return rhs;
+        }
+        right.solve(self.solve(rhs).transpose()).transpose()
+    }
+
     /// ln |det| of each matrix (the last two dimensions), finite where the determinant itself would overflow or
     /// underflow; -∞ for a singular matrix.
     pub fn log_abs_determinant(self) -> Self {

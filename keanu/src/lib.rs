@@ -75,21 +75,26 @@ pub use error::{Error, Result};
 /// The types most programs need.
 pub mod prelude {
     pub use crate::algorithms::abc::{Abc, AbcKernel, SummaryStatistics};
-    pub use crate::algorithms::export::CmdStanCsv;
+    pub use crate::algorithms::export::{CmdStanCsv, write_labeled_trace};
     pub use crate::algorithms::forward::ForwardSampler;
     pub use crate::algorithms::laplace::{Laplace, LaplaceResult};
     pub use crate::algorithms::loglik::PointwiseLogLik;
-    pub use crate::algorithms::loo::{Comparison, Loo, Waic, loo, waic};
+    pub use crate::algorithms::loo::{
+        Comparison, Loo, RefitCrossValidation, Waic, kfold, loo, refit_loo, waic,
+    };
     pub use crate::algorithms::marginal::{LatentMarginals, recover_marginals};
     pub use crate::algorithms::mcmc::annealing::{AnnealingSchedule, SimulatedAnnealing};
     pub use crate::algorithms::mcmc::compound::Compound;
+    pub use crate::algorithms::mcmc::differential_evolution::DifferentialEvolutionMetropolis;
     pub use crate::algorithms::mcmc::gibbs::{DiscreteMetropolis, Gibbs};
+    pub use crate::algorithms::mcmc::hmc::Hmc;
     pub use crate::algorithms::mcmc::metropolis::{
         MetropolisHastings, RejectionStrategy, VariableSelector,
     };
     pub use crate::algorithms::mcmc::nuts::Nuts;
     pub use crate::algorithms::mcmc::proposal::{GaussianProposal, PriorProposal};
     pub use crate::algorithms::mcmc::select::Sampler;
+    pub use crate::algorithms::mcmc::slice::Slice;
     pub use crate::algorithms::mcmc::{SamplingOptions, generate};
     pub use crate::algorithms::optimizer::{
         Adam, Bobyqa, ConjugateGradient, GradientOptimizer, Lbfgs, NonGradientOptimizer,
@@ -107,11 +112,12 @@ pub mod prelude {
     };
     pub use crate::algorithms::{NetworkSample, NetworkSamples, Samples};
     pub use crate::distributions::{Adjacency, KeanuRng};
+    pub use crate::graph::gp::{InducingGp, PeriodicHsgp};
     pub use crate::graph::{
         BoolVar, Bym2, CustomDistribution, CustomGradient, DType, DoubleVar, Graph, GraphBuilder,
-        HessianMethod, Imputed, IntVar, Intervened, Marginalized, MaskedObservation, Model, NodeId,
-        Parameterisation, Space, State, Support, Value, Var, intervene, marginalize,
-        observe_masked,
+        HessianMethod, Imputed, IntVar, Intervened, JointMarginalized, Marginalized,
+        MaskedObservation, Model, NodeId, Parameterisation, Space, State, Support, Value, Var,
+        intervene, marginalize, marginalize_joint, observe_masked,
     };
     pub use crate::tensor::{BoolTensor, DoubleTensor, IntTensor, SparseMatrix, Tensor};
     pub use crate::{Error, Result};

@@ -515,6 +515,24 @@ fn general_cases() -> Vec<Case> {
             Expect::Matches,
         ),
         (
+            "thin QR factors",
+            |b| {
+                let a = latent(
+                    b,
+                    t(
+                        &[2, 3, 2],
+                        &[
+                            1.0, 2.0, 3.0, -1.0, 0.5, 1.0, -2.0, 0.0, 1.0, 1.0, 0.5, -3.0,
+                        ],
+                    ),
+                );
+                let (q, r) = a.thin_qr();
+                observe(b, q);
+                observe(b, r);
+            },
+            Expect::Matches,
+        ),
+        (
             "solves",
             |b| {
                 let m = latent(
@@ -1734,6 +1752,33 @@ fn distribution_cases() -> Vec<DistributionCase> {
             let y = b.poisson(rate);
             b.observe(y, ints(&[0, 3]));
         }),
+        case("poisson-binomial with broadcast trials", |b| {
+            let p = probabilities(b, &[0.2, 0.7, 0.3, 0.9]);
+            let y = b.poisson_binomial_with_shape(&[4], p);
+            b.observe(y, ints(&[0, 1, 3, 4]));
+        }),
+        case("bounded poisson-binomial with broadcast trials", |b| {
+            let p = probabilities(b, &[0.2, 0.7, 0.3, 0.9]);
+            let lower = v(&[1.0, 1.0, f64::NEG_INFINITY]);
+            let upper = v(&[4.0, 3.0, 3.0]);
+            let params = [p.id()];
+            let truncated: IntVar<'_> =
+                b.truncated(K::PoissonBinomial, &params, lower.clone(), upper.clone());
+            let censored: IntVar<'_> = b.censored(K::PoissonBinomial, &params, lower, upper);
+            b.observe(truncated, ints(&[1, 2, 3]));
+            b.observe(censored, ints(&[1, 2, 3]));
+        }),
+        case("discrete Weibull density and tails", |b| {
+            let q = probabilities(b, &[0.5, 0.7, 0.85]);
+            let beta = positive(b, 1.4);
+            let y = b.discrete_weibull(q, beta);
+            b.observe(y, ints(&[0, 2, 5]));
+            let parameters = [q.id(), beta.id()];
+            let truncated: IntVar<'_> = b.truncated(K::DiscreteWeibull, &parameters, 1.0, 6.0);
+            b.observe(truncated, ints(&[1, 3, 6]));
+            let censored: IntVar<'_> = b.censored(K::DiscreteWeibull, &parameters, 1.0, 6.0);
+            b.observe(censored, ints(&[1, 3, 6]));
+        }),
         case("negative_binomial", |b| {
             let mu = positive_vector(b, &[1.5, 3.0]);
             let alpha = positive(b, 2.0);
@@ -1744,6 +1789,20 @@ fn distribution_cases() -> Vec<DistributionCase> {
             let p = [positive(b, 0.2), positive(b, 0.5), positive(b, 0.3)];
             let y = b.categorical(&[2], &p);
             b.observe(y, ints(&[2, 0]));
+        }),
+        case("multinomial logits with broadcast trial counts", |b| {
+            let logits = latent_vector(b, &[-0.8, 0.4, 1.2]);
+            let totals = b.int_constant(ints(&[6, 4]));
+            let y = b.multinomial_logit(totals, logits);
+            b.observe(y, IntTensor::new(&[2, 3], vec![1, 3, 2, 0, 4, 0]).unwrap());
+        }),
+        case("multivariate Gaussian precision", |b| {
+            let p = latent(b, t(&[2, 2], &[2.5, 0.0, -0.4, 1.4]));
+            let mu = latent_vector(b, &[0.2, -0.1]);
+            let x = b.multivariate_gaussian_precision(mu, p);
+            b.set_value(x, v(&[0.1, 0.4]));
+            let y = b.multivariate_gaussian_precision_with_shape(&[2, 2], x, p);
+            b.observe(y, t(&[2, 2], &[-0.3, 0.6, 0.7, -0.2]));
         }),
         case("multinomial", |b| {
             let p = positive_vector(b, &[0.2, 0.5, 0.3]);
@@ -1781,6 +1840,12 @@ fn distribution_cases() -> Vec<DistributionCase> {
         case("poisson_log", |b| {
             let log_mu = latent_vector(b, &[-0.3, 0.8]);
             let y = b.poisson_log(log_mu);
+            b.observe(y, ints(&[0, 4]));
+        }),
+        case("negative_binomial_log", |b| {
+            let log_mu = latent_vector(b, &[-0.3, 0.8]);
+            let alpha = positive(b, 2.1);
+            let y = b.negative_binomial_log(log_mu, alpha);
             b.observe(y, ints(&[0, 4]));
         }),
         case("categorical_logit", |b| {
@@ -2278,6 +2343,12 @@ fn distribution_cases() -> Vec<DistributionCase> {
             let y: IntVar<'_> = b.truncated(K::Binomial, &params, 1.0, 6.0);
             b.observe(y, ints(&[1, 4, 6]));
         }),
+        case("truncated binomial_logit", |b| {
+            let eta = latent_vector(b, &[-0.8, 0.0, 1.2]);
+            let params = [eta.id(), b.int_constant(IntTensor::scalar(8)).id()];
+            let y: IntVar<'_> = b.truncated(K::BinomialLogit, &params, 1.0, 6.0);
+            b.observe(y, ints(&[1, 4, 6]));
+        }),
         case("truncated negative_binomial with a fixed dispersion", |b| {
             let params = [
                 positive_vector(b, &[2.5, 2.5, 2.5]).id(),
@@ -2402,6 +2473,12 @@ fn distribution_cases() -> Vec<DistributionCase> {
             let y: IntVar<'_> = b.censored(K::Binomial, &params, 1.0, 6.0);
             b.observe(y, ints(&[1, 4, 6]));
         }),
+        case("censored binomial_logit", |b| {
+            let eta = latent_vector(b, &[-0.8, 0.0, 1.2]);
+            let params = [eta.id(), b.int_constant(IntTensor::scalar(8)).id()];
+            let y: IntVar<'_> = b.censored(K::BinomialLogit, &params, 1.0, 6.0);
+            b.observe(y, ints(&[1, 4, 6]));
+        }),
         case("censored negative_binomial with a fixed dispersion", |b| {
             let params = [
                 positive_vector(b, &[2.5, 2.5, 2.5]).id(),
@@ -2492,6 +2569,13 @@ fn distribution_cases() -> Vec<DistributionCase> {
             b.set_value(x, DoubleTensor::scalar(0.7));
             let y = b.half_student_t_with_shape(&[2], nu, sigma);
             b.observe(y, v(&[0.3, 2.5]));
+        }),
+        case("location_scale_student_t", |b| {
+            let (nu, mu, sigma) = (positive(b, 4.5), scalar_latent(b, 0.2), positive(b, 1.2));
+            let x = b.location_scale_student_t(nu, mu, sigma);
+            b.set_value(x, DoubleTensor::scalar(0.7));
+            let y = b.location_scale_student_t_with_shape(&[3], nu, mu, sigma);
+            b.observe(y, v(&[-2.0, 0.2, 2.5]));
         }),
         case("asymmetric_laplace", |b| {
             let (mu, sigma) = (scalar_latent(b, 0.1), positive(b, 1.1));
@@ -2629,6 +2713,26 @@ fn distribution_cases() -> Vec<DistributionCase> {
             let y = b.von_mises_fisher_with_shape(&[2, 3], mu, kappa * 3.0);
             b.observe(y, t(&[2, 3], &[0.0, 1.0, 0.0, -0.36, 0.48, 0.8]));
         }),
+        unconstrained("shape-one Pólya–Gamma", |b| {
+            let tilt = latent_vector(b, &[-1.5, 0.0, 4.0]);
+            let pg = b.polya_gamma1(tilt);
+            b.set_value(pg, v(&[0.08, 0.15, 0.3]));
+            let observed = b.polya_gamma1_with_shape(&[2, 3], tilt);
+            b.observe(observed, t(&[2, 3], &[0.05, 0.16, 0.55, 0.23, 0.2, 0.11]));
+        }),
+        case("skew Student-t density and tails", |b| {
+            let a = positive(b, 3.3);
+            let right = positive(b, 1.7);
+            let mu = latent_vector(b, &[-0.3, 0.2, 0.5]);
+            let sigma = positive(b, 1.3);
+            let y = b.skew_student_t(a, right, mu, sigma);
+            b.observe(y, v(&[-1.0, 0.2, 2.0]));
+            let params = [a.id(), right.id(), mu.id(), sigma.id()];
+            let truncated: DoubleVar<'_> = b.truncated(K::SkewStudentT, &params, -1.5, 2.2);
+            b.observe(truncated, v(&[-0.8, 0.4, 1.3]));
+            let censored: DoubleVar<'_> = b.censored(K::SkewStudentT, &params, -1.5, 2.2);
+            b.observe(censored, v(&[-1.5, 0.4, 2.2]));
+        }),
         case("truncated skew_normal", |b| {
             truncated_family(
                 b,
@@ -2694,6 +2798,16 @@ fn distribution_cases() -> Vec<DistributionCase> {
         }),
         case("truncated half_student_t", |b| {
             truncated_family(b, K::HalfStudentT, &[P(4.5), P(1.2)], (0.5, 2.0), 1.2, 3.0)
+        }),
+        case("truncated location_scale_student_t", |b| {
+            truncated_family(
+                b,
+                K::LocationScaleStudentT,
+                &[P(4.5), R(0.2), P(1.2)],
+                (0.2, 2.0),
+                1.2,
+                3.0,
+            )
         }),
         case("truncated asymmetric_laplace", |b| {
             truncated_family(
@@ -2766,6 +2880,15 @@ fn distribution_cases() -> Vec<DistributionCase> {
         }),
         case("censored half_student_t", |b| {
             censored_family(b, K::HalfStudentT, &[P(4.5), P(1.2)], (0.5, 2.5), 1.3)
+        }),
+        case("censored location_scale_student_t", |b| {
+            censored_family(
+                b,
+                K::LocationScaleStudentT,
+                &[P(4.5), R(0.2), P(1.2)],
+                (-1.0, 2.0),
+                0.7,
+            )
         }),
         case("censored asymmetric_laplace", |b| {
             censored_family(

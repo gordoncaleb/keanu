@@ -1,20 +1,24 @@
-//! Markov chain Monte Carlo: Metropolis–Hastings, simulated annealing, the No-U-Turn sampler, Gibbs and random-walk
-//! steps for discrete latents and compound samplers made of them, plus the machinery they share for turning a chain
-//! into [`NetworkSamples`].
+//! Markov chain Monte Carlo: Metropolis–Hastings, differential evolution, slice sampling, static HMC, NUTS,
+//! simulated annealing, and Gibbs and random-walk steps for discrete latents. Includes compound samplers and
+//! shared machinery for turning a chain into [`NetworkSamples`].
 
 pub mod annealing;
 pub mod chains;
 pub mod compound;
+pub mod differential_evolution;
 pub mod gibbs;
 pub mod metropolis;
 pub mod nuts;
 pub mod proposal;
 pub mod select;
+pub mod slice;
+
+pub use nuts::hmc;
 
 use crate::error::{AlgorithmError, Result};
 use crate::samples::NetworkSamples;
 use keanu_distributions::KeanuRng;
-use keanu_graph::{Graph, NodeId, State};
+use keanu_graph::{Graph, Model, NodeId, Parameterisation, Space, State};
 
 /// A chain that can be advanced one step at a time.
 pub trait SamplingAlgorithm {
@@ -56,6 +60,21 @@ impl SamplingOptions {
         self.down_sample_interval = down_sample_interval;
         self
     }
+
+    fn validate(self, total: usize) -> Result<()> {
+        if self.down_sample_interval == 0 {
+            return Err(AlgorithmError::InvalidSetting(
+                "the down sample interval must be at least 1".into(),
+            ));
+        }
+        if self.drop >= total {
+            return Err(AlgorithmError::InvalidSetting(format!(
+                "cannot drop {} of {total} samples",
+                self.drop
+            )));
+        }
+        Ok(())
+    }
 }
 
 impl Default for SamplingOptions {
@@ -76,17 +95,7 @@ pub fn generate(
     options: SamplingOptions,
     rng: &mut KeanuRng,
 ) -> Result<NetworkSamples> {
-    if options.down_sample_interval == 0 {
-        return Err(AlgorithmError::InvalidSetting(
-            "the down sample interval must be at least 1".into(),
-        ));
-    }
-    if options.drop >= total {
-        return Err(AlgorithmError::InvalidSetting(format!(
-            "cannot drop {} of {total} samples",
-            options.drop
-        )));
-    }
+    options.validate(total)?;
     for _ in 0..options.drop {
         algorithm.step(state, rng)?;
     }
@@ -104,4 +113,29 @@ pub fn generate(
 /// a support).
 pub(crate) fn is_impossible(log_prob: f64) -> bool {
     !log_prob.is_finite()
+}
+
+/// Initialize a sampler that moves all continuous latents in the given coordinates.
+fn continuous_target<'m>(
+    model: &'m Model,
+    state: &mut State,
+    nodes: &[NodeId],
+    space: Space,
+    rng: &mut KeanuRng,
+) -> Result<(Parameterisation<'m>, Vec<f64>)> {
+    if nodes.is_empty() {
+        return Err(AlgorithmError::InvalidArgument("no nodes to sample".into()));
+    }
+    crate::support::check_nodes(model.graph(), nodes)?;
+    crate::support::check_latents(model)?;
+    crate::support::evaluate_all(model.graph(), state, rng)?;
+    let param = Parameterisation::with_space(model, state, space)?;
+    let position = crate::support::start_point(&param, state)?;
+    if position.is_empty() {
+        return Err(AlgorithmError::NoLatents);
+    }
+    if position.iter().any(|x| !x.is_finite()) {
+        return Err(AlgorithmError::ImpossibleStart);
+    }
+    Ok((param, position))
 }

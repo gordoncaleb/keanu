@@ -385,6 +385,14 @@ distribution_codes!(
     MatrixNormal,
     VonMisesFisher,
     Wiener,
+    LocationScaleStudentT,
+    NegativeBinomialLog,
+    MultinomialLogit,
+    MultivariateGaussianPrecision,
+    PoissonBinomial,
+    DiscreteWeibull,
+    SkewStudentT,
+    PolyaGamma1,
 );
 
 #[cfg(test)]
@@ -402,7 +410,7 @@ mod tests {
     }
 
     /// The number of distribution kinds in the schema.
-    const DISTRIBUTION_KINDS: i32 = 78;
+    const DISTRIBUTION_KINDS: i32 = 86;
 
     #[test]
     fn every_schema_value_has_a_variant() {

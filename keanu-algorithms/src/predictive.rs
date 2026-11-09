@@ -1,11 +1,12 @@
 //! Predictive sampling: draws of observed nodes as the model would generate them, either from the prior or given
-//! each draw of a posterior.
+//! each draw of a posterior. Posterior draws can also be replayed on a separate prediction graph.
 
 use crate::error::{AlgorithmError, Result};
 use crate::samples::NetworkSamples;
 use crate::support::{MAX_REDRAWS, check_nodes};
 use keanu_distributions::KeanuRng;
 use keanu_graph::{Graph, GraphError, Intervened, Model, NodeId, State};
+use std::collections::{HashMap, HashSet};
 
 /// Draws prior- and posterior-predictive samples of observed nodes (the "targets").
 ///
@@ -21,7 +22,7 @@ use keanu_graph::{Graph, GraphError, Intervened, Model, NodeId, State};
 #[non_exhaustive]
 pub struct PredictiveSampler {
     /// The number of posterior draws to use, evenly spaced through the posterior samples; `None` (the default)
-    /// uses every sample. Only [`posterior`](Self::posterior) uses it.
+    /// uses every sample. Used when predicting from posterior draws.
     pub draws: Option<usize>,
 }
 
@@ -62,23 +63,71 @@ impl PredictiveSampler {
         targets: &[NodeId],
         rng: &mut KeanuRng,
     ) -> Result<NetworkSamples> {
-        let redrawn = vec![false; model.graph().len()];
-        self.draw(model, state, samples, targets, &redrawn, rng)
+        let graph = model.graph();
+        check_targets(graph, state, targets)?;
+        let redrawn = vec![false; graph.len()];
+        self.draw(graph, state, samples, targets, &redrawn, rng)
+    }
+
+    /// Replay posterior draws on a separate graph, for example one built on held-out data of a different shape.
+    ///
+    /// Each binding pairs a sampled source node with an unobserved probabilistic node of the prediction graph.
+    /// Values must match the destination's type and shape. Targets are node IDs in the prediction graph.
+    /// Deterministic targets are evaluated and probabilistic targets are drawn given their parents. A target
+    /// cannot also be bound. Other observations keep their values. To draw a new latent upstream of a target,
+    /// include it in the targets. Every other required latent must be bound.
+    ///
+    /// This uses a copy of `state`. Fails for an empty target list, an unknown target or destination, an absent
+    /// source, repeated binding endpoints, a missing required binding, or an evaluation error.
+    pub fn predict(
+        &self,
+        graph: &Graph,
+        state: &State,
+        samples: &NetworkSamples,
+        bindings: &[(NodeId, NodeId)],
+        targets: &[NodeId],
+        rng: &mut KeanuRng,
+    ) -> Result<NetworkSamples> {
+        if targets.is_empty() {
+            return Err(AlgorithmError::InvalidArgument(
+                "no target nodes to draw".into(),
+            ));
+        }
+        check_nodes(graph, targets)?;
+        let sampled: HashSet<_> = samples.nodes().iter().copied().collect();
+        let mut mapping = HashMap::with_capacity(bindings.len());
+        for &(source, destination) in bindings {
+            graph
+                .node(destination)
+                .ok_or(GraphError::UnknownNode(destination))?;
+            if !sampled.contains(&source) || mapping.insert(source, destination).is_some() {
+                return Err(AlgorithmError::InvalidArgument(format!(
+                    "prediction source {source:?} must occur in the samples and be bound only once"
+                )));
+            }
+            if !is_latent(graph, state, destination) || targets.contains(&destination) {
+                return Err(AlgorithmError::InvalidArgument(format!(
+                    "prediction destination {} must be an unobserved probabilistic node outside the targets",
+                    graph.describe(destination)
+                )));
+            }
+        }
+        let mapped = samples.map_nodes(graph, |id| mapping.get(&id).copied())?;
+        let redrawn = vec![false; graph.len()];
+        self.draw(graph, state, &mapped, targets, &redrawn, rng)
     }
 
     /// [`posterior`](Self::posterior), with the latents marked in `redrawn` (by index) drawn again for each draw,
     /// from their distributions given their parents, rather than taken from `samples`.
     fn draw(
         &self,
-        model: &Model,
+        graph: &Graph,
         state: &State,
         samples: &NetworkSamples,
         targets: &[NodeId],
         redrawn: &[bool],
         rng: &mut KeanuRng,
     ) -> Result<NetworkSamples> {
-        let graph = model.graph();
-        check_targets(graph, state, targets)?;
         check_nodes(graph, samples.nodes())?;
         let indices = self.thinned(samples.len())?;
 
@@ -86,9 +135,15 @@ impl PredictiveSampler {
         for &id in targets {
             work.unobserve(id)?;
         }
-        // observations other than the targets are fixed, so what they depend on doesn't matter
-        let ancestors = ancestors(graph, targets, |id| work.is_observed(id));
         let sampled = membership(graph, samples.nodes());
+        // Observations and carried latent draws are fixed, so their parents do not affect prediction.
+        let ancestors = ancestors(graph, targets, |id| {
+            work.is_observed(id)
+                || (is_latent(graph, &work, id)
+                    && sampled[id.index()]
+                    && !redrawn[id.index()]
+                    && !is_target(targets, id))
+        });
         let missing: Vec<String> = ancestors
             .iter()
             .filter(|&&id| {
@@ -188,7 +243,8 @@ impl PredictiveSampler {
                 redrawn[new.index()] = true;
             }
         }
-        self.draw(model, state, &samples, &targets, &redrawn, rng)
+        check_targets(model.graph(), state, &targets)?;
+        self.draw(model.graph(), state, &samples, &targets, &redrawn, rng)
     }
 
     /// `count` draws of `targets` from the prior: each draw samples the latents the targets depend on from their

@@ -5,7 +5,7 @@ use keanu_distributions::{Gamma, Gaussian, KeanuRng, Poisson};
 use keanu_graph::op::DistributionKind;
 use keanu_graph::{
     DoubleVar, Graph, GraphBuilder, GraphError, IntVar, NodeId, State, Support, Value,
-    node_log_prob, node_log_prob_gradient, node_support,
+    node_log_prob, node_log_prob_gradient, node_log_prob_terms, node_support,
 };
 use keanu_tensor::{DoubleTensor, IntTensor};
 
@@ -403,6 +403,47 @@ fn censored_likelihood_at_the_bounds_is_the_tail_probability() {
         .unwrap();
     let expected = at(poisson.log_cdf(&IntTensor::scalar(1)));
     assert!((node_log_prob(&graph, &state, id).unwrap() - expected).abs() < 1e-14);
+}
+
+#[test]
+fn bounded_poisson_binomial_broadcasts_bounds_over_trial_batches() {
+    let b = GraphBuilder::new();
+    let p = b.constant(
+        DoubleTensor::new(&[2, 1, 4], vec![0.5, 0.5, 0.5, 0.5, 0.0, 1.0, 0.5, 0.5]).unwrap(),
+    );
+    let lower = v(&[1.0, 1.0, -INF]);
+    let upper = v(&[4.0, 3.0, 3.0]);
+    let censored: IntVar<'_> = b.censored(
+        DistributionKind::PoissonBinomial,
+        &[p.id()],
+        lower.clone(),
+        upper.clone(),
+    );
+    let truncated: IntVar<'_> =
+        b.truncated(DistributionKind::PoissonBinomial, &[p.id()], lower, upper);
+    let x = IntTensor::new(&[2, 3], vec![1, 2, 3, 1, 2, 3]).unwrap();
+    b.observe(censored, x.clone());
+    b.observe(truncated, x);
+    let (censored, truncated) = (censored.id(), truncated.id());
+    let (graph, mut state) = b.build().unwrap();
+    evaluate(&graph, &mut state, 91);
+    for (node, expected) in [
+        (
+            censored,
+            [5.0 / 16.0, 6.0 / 16.0, 5.0 / 16.0, 0.25, 0.5, 0.25],
+        ),
+        (
+            truncated,
+            [4.0 / 15.0, 6.0 / 14.0, 4.0 / 15.0, 0.25, 0.5, 0.25],
+        ),
+    ] {
+        let terms = node_log_prob_terms(&graph, &state, node).unwrap();
+        assert_eq!(terms.shape(), &[2, 3]);
+        for (&term, probability) in terms.as_slice().iter().zip(expected) {
+            assert!((term.exp() - probability).abs() < 1e-14);
+        }
+        assert_eq!(node_log_prob(&graph, &state, node).unwrap(), terms.sum());
+    }
 }
 
 #[test]

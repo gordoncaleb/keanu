@@ -70,6 +70,7 @@ use crate::optimizer::Lbfgs;
 use crate::psis::{khat_threshold, psis};
 use keanu_distributions::KeanuRng;
 use keanu_tensor::special::{log_sum_exp, ndtri};
+use std::collections::BTreeMap;
 use std::fmt;
 
 /// The p_waic of a point above which WAIC is unreliable (Vehtari, Gelman and Gabry, 2017).
@@ -297,6 +298,89 @@ impl fmt::Display for Waic {
 /// As [`loo_from_values`].
 pub fn loo(loglik: &PointwiseLogLik) -> Result<Loo> {
     loo_from_values(loglik.values(), loglik.names(), None)
+}
+
+/// Refit-based cross-validation scores, one per observation in the input order.
+#[derive(Debug, Clone, PartialEq)]
+#[non_exhaustive]
+pub struct RefitCrossValidation {
+    /// Each observation's log posterior predictive density under the fit that excluded its fold.
+    pub pointwise_elpd: Vec<f64>,
+}
+
+impl RefitCrossValidation {
+    /// The sum of the pointwise predictive scores. Higher is better for the same held-out observations.
+    pub fn elpd(&self) -> f64 {
+        self.pointwise_elpd.iter().sum()
+    }
+}
+
+/// Fit once per fold and score held-out observations.
+///
+/// `fold_ids[i]` identifies observation i's fold. IDs may be nonconsecutive and are visited in ascending order.
+/// The callback receives training and held-out indices, both in input order. It must fit using the training
+/// indices alone and return the log likelihood of the held-out observations, with points in the given order.
+/// Each point's score is the log mean of its likelihood over the returned posterior draws. The caller chooses
+/// the model, fitting algorithm, and seeds.
+///
+/// # Errors
+///
+/// Returns an error if there are fewer than two distinct folds, the callback fails, or its output has the wrong
+/// number of points, no draws, NaN, or positive infinite log likelihoods. Negative infinity represents zero
+/// likelihood and is allowed.
+pub fn kfold(
+    fold_ids: &[usize],
+    mut refit: impl FnMut(&[usize], &[usize]) -> Result<PointwiseLogLik>,
+) -> Result<RefitCrossValidation> {
+    let mut folds = BTreeMap::<_, Vec<_>>::new();
+    for (i, &fold) in fold_ids.iter().enumerate() {
+        folds.entry(fold).or_default().push(i);
+    }
+    if folds.len() < 2 {
+        return Err(AlgorithmError::InvalidArgument(
+            "refit cross-validation needs at least two distinct folds".into(),
+        ));
+    }
+    let mut pointwise_elpd = vec![0.0; fold_ids.len()];
+    let mut training = Vec::with_capacity(fold_ids.len());
+    for (fold, held_out) in folds {
+        training.clear();
+        training.extend(
+            fold_ids
+                .iter()
+                .enumerate()
+                .filter(|&(_, &id)| id != fold)
+                .map(|(i, _)| i),
+        );
+        let loglik = refit(&training, &held_out)?;
+        if loglik.len() != held_out.len() || loglik.draws() == 0 {
+            return Err(AlgorithmError::InvalidArgument(format!(
+                "fold {fold} needs draws for {} held-out points, got {} points and {} draws per chain",
+                held_out.len(),
+                loglik.len(),
+                loglik.draws(),
+            )));
+        }
+        for (point, observation) in held_out.into_iter().enumerate() {
+            let values = loglik.point(point);
+            if values.iter().any(|x| x.is_nan() || *x == f64::INFINITY) {
+                return Err(AlgorithmError::InvalidArgument(format!(
+                    "fold {fold} observation {observation} has a NaN or positive infinite log likelihood"
+                )));
+            }
+            pointwise_elpd[observation] =
+                log_sum_exp(values.iter().copied()) - (values.len() as f64).ln();
+        }
+    }
+    Ok(RefitCrossValidation { pointwise_elpd })
+}
+
+/// Leave-one-out cross-validation by refitting once per observation. The callback contract is as for [`kfold`].
+pub fn refit_loo(
+    observations: usize,
+    refit: impl FnMut(&[usize], &[usize]) -> Result<PointwiseLogLik>,
+) -> Result<RefitCrossValidation> {
+    kfold(&(0..observations).collect::<Vec<_>>(), refit)
 }
 
 /// PSIS-LOO estimates from log likelihood values `[chain][draw][point]` and the points' names, with the given

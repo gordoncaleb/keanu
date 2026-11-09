@@ -115,6 +115,8 @@ pub enum DistributionKind {
     LkjCholesky,
     /// Parameters: `mu`, `covariance`; the value's last dimension is the event dimension. Support: real.
     MultivariateGaussian,
+    /// A multivariate normal with a mean and a positive definite precision matrix.
+    MultivariateGaussianPrecision,
     /// Parameters: `location` (the minimum value), `scale` (the shape). Support: greater than `location`.
     Pareto,
     /// Parameters: `v (i64)`. Support: real.
@@ -157,6 +159,8 @@ pub enum DistributionKind {
     /// Parameters: `nu` (degrees of freedom, real), `sigma` (scale). Support: greater than 0. See
     /// [`keanu_distributions::HalfStudentT`].
     HalfStudentT,
+    /// Student-t with real degrees of freedom, location and scale. Support: real.
+    LocationScaleStudentT,
     /// Parameters: `mu` (location, the τ-quantile), `sigma` (scale), `tau` (skewness, in (0, 1)). Support: real. See
     /// [`keanu_distributions::AsymmetricLaplace`].
     AsymmetricLaplace,
@@ -223,10 +227,22 @@ pub enum DistributionKind {
     Geometric,
     /// Parameters: `n (i64)`, `p` -> i64. Support: discrete.
     Multinomial,
+    /// A multinomial whose category weights are expressed as finite logits.
+    MultinomialLogit,
+    /// A count of independent Bernoulli trials with individual probabilities.
+    PoissonBinomial,
+    /// A count with discrete Weibull survival probabilities.
+    DiscreteWeibull,
+    /// Jones–Faddy skew Student-t with independent tail shapes.
+    SkewStudentT,
+    /// Shape-one Pólya–Gamma with exponential tilt `z`. Support: positive.
+    PolyaGamma1,
     /// Parameters: `mu` -> i64. Support: discrete.
     Poisson,
     /// Parameters: `mu` (mean), `alpha` (dispersion) -> i64, with variance mu + mu²/alpha. Support: discrete.
     NegativeBinomial,
+    /// Negative binomial in log-mean and dispersion form. Support: discrete.
+    NegativeBinomialLog,
     /// Parameters: `eta`, `cutpoints` (strictly increasing along the last axis, K - 1 of them) -> i64 category index
     /// in 0..K. The value's shape is the broadcast of eta's shape and the cutpoints' leading axes. Support:
     /// discrete.
@@ -470,6 +486,7 @@ macro_rules! distributions {
         $kind:ident $name:literal ($($param:ident: $ptype:ident),+) -> $vtype:ident => $build:expr,
         support = $support:expr
         $(, cdf = $cdf:ident)?
+        $(, event_terms = $terms:ident)?
         $(, sample = $sample:expr)? $(, gradient = $gradient:expr)? $(, fused = $fused:expr)?;
     )+) => {
         impl DistributionKind {
@@ -525,6 +542,7 @@ macro_rules! distributions {
             pub(crate) fn has_cdf(&self) -> bool {
                 match self {
                     $(DistributionKind::$kind => has_cdf!([$($cdf)?]),)+
+                    DistributionKind::Transformed(base, _) => base.has_cdf(),
                     _ => false,
                 }
             }
@@ -534,7 +552,10 @@ macro_rules! distributions {
             pub(crate) fn is_elementwise(&self) -> bool {
                 match self {
                     $(DistributionKind::$kind => is_elementwise!([$($cdf)?]),)+
-                    nested_kinds!() => self.nested_parts().0.is_elementwise(),
+                    nested_kinds!() => {
+                        let (nested, inner) = self.nested_parts();
+                        nested.is_elementwise(inner)
+                    }
                     DistributionKind::Transformed(..) => true,
                     _ => false,
                 }
@@ -563,8 +584,8 @@ macro_rules! distributions {
                             None => return Err(self.no_cdf()),
                         }
                     }
-                    DistributionKind::Transformed(base, bijector) if function == Univariate::Density => {
-                        transformed::elementwise(base, *bijector, x, parameters, gradient)?
+                    DistributionKind::Transformed(base, bijector) => {
+                        transformed::evaluate(base, *bijector, function, x, parameters, gradient)?
                     }
                     _ => return Err(self.no_cdf()),
                 })
@@ -582,6 +603,9 @@ macro_rules! distributions {
                     $(DistributionKind::$kind => inverse_cdf!(
                         [$($cdf)?], self, p, upper, parameters, [$($param: $ptype),+], $build
                     ),)+
+                    DistributionKind::Transformed(base, bijector) => base
+                        .inverse_cdf(p, upper ^ !bijector.is_increasing(), parameters)?
+                        .map(|quantile| quantile.map(|y| bijector.forward(y))),
                     _ => None,
                 })
             }
@@ -795,10 +819,21 @@ macro_rules! distributions {
             /// the others (the multivariate kinds, a hidden Markov model, the linear Gaussian state space model, a
             /// custom distribution).
             pub(crate) fn log_prob_terms(&self, value: &Value, parameters: &[&Value]) -> Result<DoubleTensor> {
+                self.terms(value, parameters, false)
+            }
+
+            pub(crate) fn log_prob_event_terms(&self, value: &Value, parameters: &[&Value]) -> Result<DoubleTensor> {
+                self.terms(value, parameters, true)
+            }
+
+            fn terms(&self, value: &Value, parameters: &[&Value], by_event: bool) -> Result<DoubleTensor> {
                 Ok(match self {
                     $(DistributionKind::$kind => {
                         let &[$($param),+] = parameters else { return Err(self.wrong_parameters()) };
                         $(let $param = tensor!($ptype, $param);)+
+                        $(if by_event {
+                            return Ok($build.$terms(tensor!($vtype, value))?);
+                        })?
                         $build.log_prob(tensor!($vtype, value))?.terms()
                     })+
                     DistributionKind::Kde(kde) => kde.log_prob(value.f64()?),
@@ -1130,7 +1165,10 @@ distributions! {
         support = Support::CorrelationCholesky;
     MultivariateGaussian "multivariate_gaussian" (mu: F64, covariance: F64) -> F64 =>
         d::MultivariateGaussian::new(mu, covariance),
-        support = Support::Real;
+        support = Support::Real, event_terms = log_prob_terms;
+    MultivariateGaussianPrecision "multivariate_gaussian_precision" (mu: F64, precision: F64) -> F64 =>
+        d::MultivariateGaussianPrecision::new(mu, precision),
+        support = Support::Real, event_terms = log_prob_terms, fused = gaussian_precision_fused;
     LinearGaussianStateSpace "linear_gaussian_state_space" (
         initial_mean: F64, initial_covariance: F64, transition_matrix: F64, transition_covariance: F64,
         observation_matrix: F64, observation_covariance: F64
@@ -1155,6 +1193,10 @@ distributions! {
     StudentT "student_t" (v: I64) -> F64 => d::StudentT::new(v),
         support = Support::Real,
         cdf = rejection;
+    LocationScaleStudentT "location_scale_student_t" (nu: F64, mu: F64, sigma: F64) -> F64 =>
+        d::LocationScaleStudentT::new(nu, mu, sigma),
+        support = Support::Real,
+        cdf = rejection;
     Triangular "triangular" (x_min: F64, x_max: F64, c: F64) -> F64 => d::Triangular::new(x_min, x_max, c),
         support = Support::Interval(x_min.clone(), x_max.clone()),
         cdf = none;
@@ -1170,6 +1212,11 @@ distributions! {
     VonMises "von_mises" (mu: F64, kappa: F64) -> F64 => d::VonMises::new(mu, kappa),
         support = Support::Circular,
         cdf = none;
+    SkewStudentT "skew_student_t" (a: F64, b: F64, mu: F64, sigma: F64) -> F64 =>
+        d::SkewStudentT::new(a, b, mu, sigma),
+        support = Support::Real, cdf = rejection;
+    PolyaGamma1 "polya_gamma1" (z: F64) -> F64 => d::PolyaGamma1::new(z),
+        support = Support::greater_than(0.0), cdf = none;
     SkewNormal "skew_normal" (xi: F64, omega: F64, alpha: F64) -> F64 => d::SkewNormal::new(xi, omega, alpha),
         support = Support::Real,
         cdf = rejection;
@@ -1220,25 +1267,25 @@ distributions! {
         fused = wiener_log_prob_and_gradient;
     MultivariateStudentT "multivariate_student_t" (nu: F64, mu: F64, scale: F64) -> F64 =>
         d::MultivariateStudentT::new(nu, mu, scale),
-        support = Support::Real;
+        support = Support::Real, event_terms = log_prob_terms;
     MultivariateStudentTCholesky "multivariate_student_t_cholesky" (nu: F64, mu: F64, scale_cholesky: F64) -> F64 =>
         d::MultivariateStudentTCholesky::new(nu, mu, scale_cholesky),
-        support = Support::Real;
+        support = Support::Real, event_terms = log_prob_terms;
     Wishart "wishart" (nu: F64, scale: F64) -> F64 => d::Wishart::new(nu, scale),
-        support = Support::CovarianceMatrix;
+        support = Support::CovarianceMatrix, event_terms = log_prob_terms;
     WishartCholesky "wishart_cholesky" (nu: F64, scale_cholesky: F64) -> F64 =>
         d::WishartCholesky::new(nu, scale_cholesky),
-        support = Support::CovarianceCholesky;
+        support = Support::CovarianceCholesky, event_terms = log_prob_terms;
     InverseWishart "inverse_wishart" (nu: F64, scale: F64) -> F64 => d::InverseWishart::new(nu, scale),
-        support = Support::CovarianceMatrix;
+        support = Support::CovarianceMatrix, event_terms = log_prob_terms;
     InverseWishartCholesky "inverse_wishart_cholesky" (nu: F64, scale_cholesky: F64) -> F64 =>
         d::InverseWishartCholesky::new(nu, scale_cholesky),
-        support = Support::CovarianceCholesky;
+        support = Support::CovarianceCholesky, event_terms = log_prob_terms;
     MatrixNormal "matrix_normal" (mu: F64, row_covariance: F64, column_covariance: F64) -> F64 =>
         d::MatrixNormal::new(mu, row_covariance, column_covariance),
-        support = Support::Real;
+        support = Support::Real, event_terms = log_prob_terms;
     VonMisesFisher "von_mises_fisher" (mu: F64, kappa: F64) -> F64 => d::VonMisesFisher::new(mu, kappa),
-        support = Support::UnitVector;
+        support = Support::UnitVector, event_terms = log_prob_terms;
     Bernoulli "bernoulli" (prob_true: F64) -> Bool => d::Bernoulli::new(prob_true),
         support = Support::Discrete;
     Binomial "binomial" (p: F64, n: I64) -> I64 => d::Binomial::new(p, n),
@@ -1249,12 +1296,22 @@ distributions! {
         cdf = none;
     Multinomial "multinomial" (n: I64, p: F64) -> I64 => d::Multinomial::new(n, p)?,
         support = Support::Discrete;
+    MultinomialLogit "multinomial_logit" (n: I64, logits: F64) -> I64 => d::MultinomialLogit::new(n, logits)?,
+        support = Support::Discrete;
+    PoissonBinomial "poisson_binomial" (p: F64) -> I64 => d::PoissonBinomial::new(p)?,
+        support = Support::Discrete, fused = poisson_binomial_fused;
+    DiscreteWeibull "discrete_weibull" (q: F64, beta: F64) -> I64 => d::DiscreteWeibull::new(q, beta),
+        support = Support::Discrete, cdf = rejection;
     Poisson "poisson" (mu: F64) -> I64 => d::Poisson::new(mu),
         support = Support::Discrete,
         cdf = rejection;
     NegativeBinomial "negative_binomial" (mu: F64, alpha: F64) -> I64 => d::NegativeBinomial::new(mu, alpha),
         support = Support::Discrete,
         cdf = rejection;
+    NegativeBinomialLog "negative_binomial_log" (log_mu: F64, alpha: F64) -> I64 =>
+        d::NegativeBinomialLog::new(log_mu, alpha),
+        support = Support::Discrete,
+        cdf = none;
     OrderedLogistic "ordered_logistic" (eta: F64, cutpoints: F64) -> I64 =>
         d::OrderedLogistic::new(eta, cutpoints),
         support = Support::Discrete;
@@ -1269,9 +1326,9 @@ distributions! {
         support = Support::Discrete,
         cdf = none;
     DirichletMultinomial "dirichlet_multinomial" (n: I64, alpha: F64) -> I64 => d::DirichletMultinomial::new(n, alpha),
-        support = Support::Discrete;
+        support = Support::Discrete, event_terms = log_prob_terms;
     PlackettLuce "plackett_luce" (worths: F64) -> I64 => d::PlackettLuce::new(worths),
-        support = Support::Discrete;
+        support = Support::Discrete, event_terms = log_prob_terms;
     UniformInt "uniform_int" (x_min: I64, x_max: I64) -> I64 => d::UniformInt::new(x_min, x_max),
         support = Support::Discrete,
         cdf = none,
@@ -1283,7 +1340,7 @@ distributions! {
         support = Support::Discrete;
     BinomialLogit "binomial_logit" (logit: F64, n: I64) -> I64 => d::BinomialLogit::new(logit, n),
         support = Support::Discrete,
-        cdf = none;
+        cdf = rejection;
     PoissonLog "poisson_log" (log_mu: F64) -> I64 => d::PoissonLog::new(log_mu),
         support = Support::Discrete,
         cdf = none;
@@ -1421,6 +1478,31 @@ fn gaussian_log_prob_and_gradient(
     ))
 }
 
+fn gaussian_precision_fused(
+    distribution: &d::MultivariateGaussianPrecision<'_>,
+    x: &DoubleTensor,
+) -> Result<(f64, LogProbGradientParts)> {
+    let (lp, gradient) = distribution.log_prob_and_gradient(x)?;
+    Ok((
+        lp,
+        match gradient {
+            Some(g) => (
+                Some(g.x),
+                smallvec::smallvec![Some(g.mu), Some(g.precision)],
+            ),
+            None => (None, smallvec::smallvec![None, None]),
+        },
+    ))
+}
+
+fn poisson_binomial_fused(
+    distribution: &d::PoissonBinomial<'_>,
+    x: &keanu_tensor::IntTensor,
+) -> Result<(f64, LogProbGradientParts)> {
+    let (lp, gradient) = distribution.log_prob_and_gradient(x)?;
+    Ok((lp.sum(), (None, smallvec::smallvec![Some(gradient.p)])))
+}
+
 /// The Wiener log density and gradient from one pass over the series.
 fn wiener_log_prob_and_gradient(
     wiener: &d::Wiener<'_>,
@@ -1502,6 +1584,14 @@ fn event_value_shape(
         )),
     };
     let (event, expected): (Vec<usize>, Vec<Vec<usize>>) = match kind {
+        K::MultivariateGaussianPrecision => {
+            let k = last("mu", shapes[0], 1)?;
+            (vec![k], vec![vec![k], vec![k, k]])
+        }
+        K::MultinomialLogit => {
+            let k = last("logits", shapes[1], 1)?;
+            (vec![k], vec![vec![], vec![k]])
+        }
         K::DirichletMultinomial => {
             let k = last("alpha", shapes[1], 1)?;
             (vec![k], vec![vec![], vec![k]])
@@ -1778,7 +1868,9 @@ impl DistributionOp {
                     ))),
                 }
             }
-            DistributionKind::MultivariateStudentT
+            DistributionKind::MultivariateGaussianPrecision
+            | DistributionKind::MultinomialLogit
+            | DistributionKind::MultivariateStudentT
             | DistributionKind::MultivariateStudentTCholesky
             | DistributionKind::Wishart
             | DistributionKind::WishartCholesky
@@ -1790,6 +1882,26 @@ impl DistributionOp {
             | DistributionKind::PlackettLuce => {
                 let shapes: Vec<&[usize]> = parameters.iter().map(|(_, s)| *s).collect();
                 event_value_shape(kind, requested, &shapes).map_err(invalid)
+            }
+            DistributionKind::Truncated(base) | DistributionKind::Censored(base)
+                if matches!(base.as_ref(), DistributionKind::PoissonBinomial) =>
+            {
+                let shape =
+                    keanu_tensor::broadcast_shape(requested.unwrap_or(&[]), parameters[1].1)?;
+                let shape = keanu_tensor::broadcast_shape(&shape, parameters[2].1)?;
+                Self::value_shape(base, Some(&shape), &parameters[..1])
+            }
+            DistributionKind::PoissonBinomial => {
+                let Some((&trials, batch)) = parameters[0].1.split_last() else {
+                    return Err(invalid("p needs a last axis of trial probabilities".into()));
+                };
+                if trials == 0 {
+                    return Err(invalid("the trial axis must be nonempty".into()));
+                }
+                Ok(keanu_tensor::broadcast_shape(
+                    batch,
+                    requested.unwrap_or(&[]),
+                )?)
             }
             DistributionKind::OrderedLogistic | DistributionKind::OrderedProbit => {
                 let (eta, cutpoints) = (parameters[0].1, parameters[1].1);

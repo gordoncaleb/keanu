@@ -259,3 +259,145 @@ impl AsymmetricLaplace<'_> {
         self.inverse_cdf(&uniform_open(&shape, rng))
     }
 }
+
+derived_distribution! {
+    /// Jones–Faddy skew Student-t, with separate shapes for the left and right tails.
+    /// When a = b the result is Student-t with 2a degrees of freedom.
+    SkewStudentT, SkewStudentTGradient, inputs = 5,
+    (
+        /// Positive shape controlling the left tail.
+        a,
+        /// Positive shape controlling the right tail.
+        b,
+        /// Location.
+        mu,
+        /// Positive scale.
+        sigma,
+    ),
+    log_prob = skew_student_t_log_prob,
+    log_cdf = skew_student_t_log_cdf,
+}
+
+fn valid_skew_t(a: f64, b: f64, mu: f64, sigma: f64) -> bool {
+    a > 0.0 && b > 0.0 && (a + b).is_finite() && mu.is_finite() && sigma > 0.0 && sigma.is_finite()
+}
+
+/// The beta log odds are twice asinh((x − μ) / (σ sqrt(a + b))).
+fn skew_t_half_log_odds<const K: usize>(x: Jet<K>, mu: Jet<K>, log_scale: Jet<K>) -> Jet<K> {
+    let centred = x - mu;
+    let z = centred / log_scale.exp();
+    if z.v.abs() <= 1e12 && (z.v != 0.0 || centred.v == 0.0) {
+        let r = z.v.hypot(1.0).recip();
+        return z.chain(z.v.asinh(), r, -(z.v * r) * r * r);
+    }
+    if centred.v == 0.0 {
+        return Jet::constant(0.0);
+    }
+    let sign = if centred.v < 0.0 { -1.0 } else { 1.0 };
+    let log_abs = if centred.v.is_finite() {
+        (centred * sign).ln()
+    } else {
+        ((x * 0.5 - mu * 0.5) * sign).ln() + LN_2
+    };
+    let log_z = log_abs - log_scale;
+    if log_z.v > 1e12_f64.ln() {
+        sign * (log_z + LN_2)
+    } else {
+        let w = log_z.exp() * sign;
+        let r = w.v.hypot(1.0).recip();
+        w.chain(w.v.asinh(), r, -(w.v * r) * r * r)
+    }
+}
+
+fn beta_logit_density<const K: usize>(a: Jet<K>, b: Jet<K>, eta: Jet<K>) -> Jet<K> {
+    use keanu_tensor::special::{log_beta_logit_density, trigamma};
+    let value = log_beta_logit_density(a.v, b.v, eta.v);
+    if K == 0 {
+        return Jet::constant(value);
+    }
+    let (log_u, log_v) = (-softplus(-eta.v), -softplus(eta.v));
+    let (u, v) = (log_u.exp(), log_v.exp());
+    let total = a.v + b.v;
+    let psi = digamma(total);
+    let shared = trigamma(total);
+    Jet::compose(
+        value,
+        &[a, b, eta],
+        [
+            log_u - digamma(a.v) + psi,
+            log_v - digamma(b.v) + psi,
+            a.v * v - b.v * u,
+        ],
+        [
+            [shared - trigamma(a.v), shared, v],
+            [shared, shared - trigamma(b.v), -u],
+            [v, -u, -total * u * v],
+        ],
+    )
+}
+
+fn skew_student_t_log_prob<const K: usize>(x: Jet<K>, [a, b, mu, sigma]: [Jet<K>; 4]) -> Jet<K> {
+    if !valid_skew_t(a.v, b.v, mu.v, sigma.v) {
+        return Jet::constant(f64::NAN);
+    }
+    if x.v.is_infinite() {
+        return Jet::constant(f64::NEG_INFINITY);
+    }
+    let log_scale = sigma.ln() + (a + b).ln() * 0.5;
+    let s = skew_t_half_log_odds(x, mu, log_scale);
+    let eta = 2.0 * s;
+    let magnitude = if s.v < 0.0 { -s } else { s };
+    let log_cosh = magnitude + (-2.0 * magnitude).softplus() - LN_2;
+    LN_2 - log_scale - log_cosh + beta_logit_density(a, b, eta)
+}
+
+fn skew_student_t_log_cdf<const K: usize>(
+    x: Jet<K>,
+    [a, b, mu, sigma]: [Jet<K>; 4],
+    upper: bool,
+) -> Jet<K> {
+    use keanu_tensor::special::{log_inc_beta_logit, log_inc_beta_logit_derivatives};
+    if !valid_skew_t(a.v, b.v, mu.v, sigma.v) {
+        return Jet::constant(f64::NAN);
+    }
+    let log_scale = sigma.ln() + (a + b).ln() * 0.5;
+    let eta = 2.0 * skew_t_half_log_odds(x, mu, log_scale);
+    let (a, b, eta) = if upper { (b, a, -eta) } else { (a, b, eta) };
+    if K == 0 {
+        return Jet::constant(log_inc_beta_logit(a.v, b.v, eta.v));
+    }
+    let (value, gradient, hessian) = log_inc_beta_logit_derivatives(a.v, b.v, eta.v);
+    Jet::compose(value, &[a, b, eta], gradient, hessian)
+}
+
+impl SkewStudentT<'_> {
+    /// Samples the inverse transform of a Beta(a, b) variate using the logs of two gamma draws.
+    /// Returns an error if a draw is outside the finite f64 range.
+    pub fn sample(&self, shape: &[usize], rng: &mut KeanuRng) -> Result<DoubleTensor> {
+        sample_each(shape, &[&self.a, &self.b, &self.mu, &self.sigma], |p| {
+            let (a, b, mu, sigma) = (p[0], p[1], p[2], p[3]);
+            if !valid_skew_t(a, b, mu, sigma) {
+                return invalid_parameter(
+                    "skew Student-t needs positive shapes and scale and finite parameters",
+                );
+            }
+            let s = 0.5
+                * (super::positive::sample_log_gamma(a, rng)?
+                    - super::positive::sample_log_gamma(b, rng)?);
+            let abs = s.abs();
+            let scaled = if abs < 350.0 {
+                // Multiplying in logs also avoids an intermediate overflow of σ sqrt(a + b).
+                (sigma.ln() + 0.5 * (a + b).ln() + abs.sinh().ln()).exp()
+            } else {
+                (sigma.ln() + 0.5 * (a + b).ln() + abs - LN_2).exp()
+            };
+            let x = mu + scaled.copysign(s);
+            if !x.is_finite() {
+                return Err(crate::DistributionError::InvalidValue(
+                    "skew Student-t draw exceeds the finite f64 range".into(),
+                ));
+            }
+            Ok(x)
+        })
+    }
+}

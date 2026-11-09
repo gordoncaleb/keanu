@@ -96,6 +96,7 @@ impl DistributionKind {
             | K::Kumaraswamy
             | K::LogitNormal
             | K::HalfStudentT
+            | K::LocationScaleStudentT
             | K::AsymmetricLaplace
             | K::LogLogistic
             | K::Rice
@@ -105,6 +106,10 @@ impl DistributionKind {
             | K::Geometric
             | K::Poisson
             | K::NegativeBinomial
+            | K::SkewStudentT
+            | K::PolyaGamma1
+            | K::DiscreteWeibull
+            | K::NegativeBinomialLog
             | K::UniformInt
             | K::BetaBinomial
             | K::BernoulliLogit
@@ -120,6 +125,19 @@ impl DistributionKind {
                 parameter_tangents,
                 b,
             ),
+            K::MultivariateGaussianPrecision => {
+                let &[mu, precision] = parameters else {
+                    return Err(self.wrong_parameters());
+                };
+                gaussian_precision_hvp(
+                    value.f64()?,
+                    mu.f64()?,
+                    precision.f64()?,
+                    value_tangent,
+                    parameter_tangents,
+                    b,
+                )
+            }
             K::MultivariateGaussian => {
                 let &[mu, covariance] = parameters else {
                     return Err(self.wrong_parameters());
@@ -165,6 +183,29 @@ impl DistributionKind {
                     sigma.f64()?,
                     value_tangent,
                     parameter_tangents[0],
+                    b,
+                )
+            }
+            K::PoissonBinomial => {
+                let &[p] = parameters else {
+                    return Err(self.wrong_parameters());
+                };
+                let Some(tangent) = parameter_tangents[0] else {
+                    return Ok((None, smallvec::smallvec![None]));
+                };
+                let product = keanu_distributions::PoissonBinomial::new(p.f64()?)?
+                    .hvp(value.i64()?, tangent)?;
+                Ok((None, smallvec::smallvec![Some(product)]))
+            }
+            K::MultinomialLogit => {
+                let &[n, logits] = parameters else {
+                    return Err(self.wrong_parameters());
+                };
+                multinomial_logit_hvp(
+                    value.shape(),
+                    &n.i64()?.to_double(),
+                    logits.f64()?,
+                    parameter_tangents[1],
                     b,
                 )
             }
@@ -618,6 +659,36 @@ fn zero_sum_normal_hvp(
 
 /// The multinomial in its probabilities, over the last axis: the gradient is x_i/p_i − Σx/Σp, so the product is
 /// −x_i/p_i² ṗ_i + Σx/(Σp)² Σṗ (with 0/p taken as 0, as in first order).
+/// Differentiates x − n p along logits: −n p ⊙ (t − Σ p t).
+fn multinomial_logit_hvp(
+    shape: &[usize],
+    n: &DoubleTensor,
+    logits: &DoubleTensor,
+    tangent: Option<&DoubleTensor>,
+    b: usize,
+) -> Result<LogProbHvpParts> {
+    let Some(tangent) = tangent else {
+        return Ok((None, smallvec::smallvec![None, None]));
+    };
+    let column = |x: &DoubleTensor| -> Result<DoubleTensor> {
+        let shape = x
+            .shape()
+            .iter()
+            .map(|&d| d as isize)
+            .chain([1])
+            .collect::<Vec<_>>();
+        Ok(x.reshape(&shape)?)
+    };
+    let p = logits.softmax(-1)?;
+    let t = fit(tangent.clone(), b, shape)?;
+    let mean = p.mul(&t)?.sum_axes(&[-1])?;
+    let h = p.mul(&t.sub(&column(&mean)?)?)?.mul(&column(n)?)?.neg();
+    Ok((
+        None,
+        smallvec::smallvec![None, Some(reduce_to(h, logits.shape())?)],
+    ))
+}
+
 fn multinomial_hvp(
     x: &DoubleTensor,
     p: &DoubleTensor,
@@ -1245,6 +1316,71 @@ fn multivariate_gaussian_hvp(
     }
     let hc = reduce_to(hc * 0.5, covariance.shape())?;
     Ok((Some(hx), smallvec::smallvec![Some(hm), Some(hc)]))
+}
+
+/// With r = x − μ and P the symmetric precision read from its lower triangle, the gradient is
+/// (−P r, P r, ½(P⁻¹ − r rᵀ)). The matrix gradient folds symmetric entries into the lower triangle.
+fn gaussian_precision_hvp(
+    x: &DoubleTensor,
+    mu: &DoubleTensor,
+    precision: &DoubleTensor,
+    value_tangent: Option<&DoubleTensor>,
+    tangents: &[Option<&DoubleTensor>],
+    b: usize,
+) -> Result<LogProbHvpParts> {
+    if value_tangent.is_none() && tangents.iter().all(Option::is_none) {
+        return Ok((None, smallvec::smallvec![None, None]));
+    }
+    let residual = x.sub(mu)?;
+    let n = residual.shape()[residual.rank() - 1];
+    let mut batch = broadcast_shape(
+        &residual.shape()[..residual.rank() - 1],
+        &precision.shape()[..precision.rank() - 2],
+    )?;
+    batch.push(n);
+    let column = |t: &DoubleTensor| -> Result<DoubleTensor> {
+        let shape = t
+            .shape()
+            .iter()
+            .map(|&d| d as isize)
+            .chain([1])
+            .collect::<Vec<_>>();
+        Ok(t.reshape(&shape)?)
+    };
+    let tangent = |t: Option<&DoubleTensor>| -> Result<DoubleTensor> {
+        match t {
+            Some(t) => fit(t.clone(), b, &batch),
+            None => Ok(DoubleTensor::zeros(&batched_shape(b, &batch))),
+        }
+    };
+    let r = column(&residual)?;
+    let dr = column(&tangent(value_tangent)?.sub(&tangent(tangents[0])?)?)?;
+    let symmetric = |lower: &DoubleTensor| -> Result<DoubleTensor> {
+        Ok(lower.tril(0)?.add(&lower.tril(-1)?.transpose()?)?)
+    };
+    let p = symmetric(precision)?;
+    let mut da = p.matmul(&dr)?;
+    let cross = dr.matmul_transposed(&r, false, true)?;
+    let mut hp = cross.add(&cross.transpose()?)?;
+    if let Some(dp) = tangents[1] {
+        let dp = symmetric(&*lift(dp, batch.len() + 1)?)?;
+        let covariance = precision.cholesky()?.cholesky_inverse()?;
+        da = da.add(&dp.matmul(&r)?)?;
+        hp = hp.add(&covariance.matmul(&dp)?.matmul(&covariance)?)?;
+    }
+    let vector = da.shape()[..da.rank() - 1]
+        .iter()
+        .map(|&d| d as isize)
+        .collect::<Vec<_>>();
+    let da = da.reshape(&vector)?;
+    let hp = hp.tril(0)?.add(&hp.tril(-1)?)? * -0.5;
+    Ok((
+        Some(reduce_to(da.neg(), x.shape())?),
+        smallvec::smallvec![
+            Some(reduce_to(da, mu.shape())?),
+            Some(reduce_to(hp, precision.shape())?)
+        ],
+    ))
 }
 
 /// Pv for the ICAR's precision P: the graph Laplacian plus 1 on the diagonal of each island.

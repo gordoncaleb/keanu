@@ -544,3 +544,73 @@ fn the_second_frechet_derivative_matches_finite_differences_of_the_first() {
         assert_tensor_close_rel(&swapped, &second, 1e-12);
     }
 }
+
+#[test]
+fn thin_qr_reconstructs_rectangular_batched_and_rank_deficient_matrices() {
+    let mut rng = Lcg(23);
+    for (rows, cols) in [(5, 3), (3, 5), (3, 3), (0, 3), (3, 0)] {
+        let input = rng.tensor(&[2, rows, cols]);
+        let (q, r) = input.thin_qr().unwrap();
+        let k = rows.min(cols);
+        assert_eq!(q.shape(), &[2, rows, k]);
+        assert_eq!(r.shape(), &[2, k, cols]);
+        assert_tensor_close_rel(&q.matmul(&r).unwrap(), &input, 1e-12);
+        assert_tensor_close_rel(
+            &q.matmul_transposed(&q, true, false).unwrap(),
+            &DoubleTensor::eye(k)
+                .unwrap()
+                .broadcast_to(&[2, k, k])
+                .unwrap(),
+            1e-12,
+        );
+        assert!(r.diag_part().unwrap().as_slice().iter().all(|&d| d >= 0.0));
+        assert_eq!(r.tril(-1).unwrap().sum(), 0.0);
+    }
+    let repeated = DoubleTensor::new(&[3, 2], vec![1.0, 1.0, 2.0, 2.0, -1.0, -1.0]).unwrap();
+    let (q, r) = repeated.thin_qr().unwrap();
+    assert_tensor_close_rel(&q.matmul(&r).unwrap(), &repeated, 1e-12);
+    assert_tensor_close_rel(
+        &q.matmul_transposed(&q, true, false).unwrap(),
+        &DoubleTensor::eye(2).unwrap(),
+        1e-12,
+    );
+    assert_eq!(
+        repeated.least_squares(&DoubleTensor::vector(vec![1.0, 2.0, -1.0])),
+        Err(TensorError::SingularMatrix)
+    );
+    assert!(DoubleTensor::scalar(1.0).thin_qr().is_err());
+    assert!(DoubleTensor::full(&[2, 2], f64::NAN).thin_qr().is_err());
+}
+
+#[test]
+fn least_squares_satisfies_the_normal_equations_and_broadcasts_rhs() {
+    let a = DoubleTensor::new(
+        &[2, 3, 2],
+        vec![1.0, 1.0, 2.0, 0.0, 3.0, 2.0, 0.0, 1.0, 2.0, 1.0, 3.0, 1.0],
+    )
+    .unwrap();
+    let b = DoubleTensor::vector(vec![3.0, 2.0, 5.0]);
+    let x = a.least_squares(&b).unwrap();
+    assert_eq!(x.shape(), &[2, 2]);
+    let residual = a
+        .matmul(&x.reshape(&[2, 2, 1]).unwrap())
+        .unwrap()
+        .sub(&b.reshape(&[3, 1]).unwrap())
+        .unwrap();
+    assert_tensor_close_rel(
+        &a.matmul_transposed(&residual, true, false).unwrap(),
+        &DoubleTensor::zeros(&[2, 2, 1]),
+        1e-12,
+    );
+    let matrix_rhs = DoubleTensor::concat(
+        1,
+        &[
+            &b.reshape(&[3, 1]).unwrap(),
+            &(&b * 2.0).reshape(&[3, 1]).unwrap(),
+        ],
+    )
+    .unwrap();
+    let solved = a.least_squares(&matrix_rhs).unwrap();
+    assert_tensor_close_rel(&solved.slice("...,0").unwrap(), &x, 1e-12);
+    assert_tensor_close_rel(&solved.slice("...,1").unwrap(), &(&x * 2.0), 1e-12);
+}

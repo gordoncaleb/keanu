@@ -134,6 +134,7 @@ fn save_op(graph: &Graph, id: NodeId) -> Result<P> {
         Op::Determinant => P::Determinant(empty()),
         Op::Cholesky => P::Cholesky(empty()),
         Op::CholeskyInverse => P::CholeskyInverse(empty()),
+        Op::ThinQr => P::ThinQr(empty()),
         Op::SolveTriangular { lower, transpose } => P::SolveTriangular(proto::SolveTriangular {
             lower: *lower,
             transpose: *transpose,

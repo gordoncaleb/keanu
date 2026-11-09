@@ -31,6 +31,19 @@ weights and smooths them; the fitted shape k̂ tells you whether the result can 
 
 The PSIS algorithm itself is available as `keanu::algorithms::psis::psis`, for any importance sampling problem.
 
+## Refitting on held-out data
+
+`kfold` takes one fold ID per observation. Each callback receives the training and held-out indices in the
+original observation order. Fit on the training indices, then build a graph that observes the held-out values.
+Use `NetworkSamples::map_nodes` to bind each chain's parameter draws to the corresponding nodes of that graph.
+Evaluate the held-out observations with `PointwiseLogLik::from_samples` or combine the remapped chains with
+`ChainSamples::new` and use `PointwiseLogLik::from_chains`. Return one likelihood point per held-out index in
+the order given to the callback.
+
+`refit_loo` uses a separate fold for each observation, so it costs as many fits as there are observations.
+Both functions take the log of the mean likelihood over posterior draws for each held-out observation and
+return the scores in the original observation order. `elpd()` sums those scores.
+
 ## Comparing models
 
 `compare` ranks models best first. `elpd_diff` is each model's elpd minus the best one's (so it is negative for the
