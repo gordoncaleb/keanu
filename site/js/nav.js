@@ -41,7 +41,7 @@ export const DOMAINS = [
         title: "Demand forecasting",
         question: "How much stock do we need next month?",
         summary: "A seasonal forecast of daily sales with its uncertainty, turned into a stock level.",
-        ready: false,
+        ready: true,
       },
       {
         href: "reliability.html",
