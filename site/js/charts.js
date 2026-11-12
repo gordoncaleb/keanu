@@ -133,30 +133,37 @@ function axes(svg, { left, right, top, bottom, x, y, xTicks, yTicks, xFormat, yF
 
 /**
  * A mean line inside a 90% band over days, continuing into a forecast after a "today" rule.
- * `history` and `forecast` are arrays of { mean, low, high }.
+ * `history` and `forecast` are arrays of { mean, low, high }. Optionally, `update`'s third argument adds observed
+ * values on the history days ({ observed: [...] }, drawn as rings) and a horizontal limit ({ limit: { value, label } },
+ * such as a capacity), and `options.dayLabel(i, historyLength)` names day i (by default 1, 2, ... then +1, +2, ...).
  */
 export function bandChart(container, options) {
   const frame = new Frame(container, options);
   let data = null;
-  frame.setLegend([
-    { key: "line", label: "Posterior mean" },
-    { key: "band", label: "90% interval" },
-  ]);
+  const dayLabel =
+    options.dayLabel ?? ((i, days) => (i < days ? `${i + 1}` : `+${i - days + 1}`));
+  const legend = (observed) =>
+    frame.setLegend([
+      { key: "line", label: "Posterior mean" },
+      { key: "band", label: "90% interval" },
+      ...(observed ? [{ key: "ring", label: options.observedLabel ?? "Observed" }] : []),
+    ]);
+  legend(false);
   frame.render = () => {
     if (!data) return;
-    const { history, forecast } = data;
+    const { history, forecast, observed, limit } = data;
     const all = [...history, ...forecast];
     const { svg, width, height } = frame.svg();
     const pad = { left: 52, right: 16, top: 16, bottom: 30 };
     const n = all.length;
     const x = scale(0, n - 1, pad.left, width - pad.right);
-    const hi = Math.max(...all.map((d) => d.high));
+    const hi = Math.max(...all.map((d) => d.high), ...(observed ?? []), limit?.value ?? 0);
     const yTicks = coverTicks(hi, 4);
     const y = scale(0, yTicks.at(-1), height - pad.bottom, pad.top);
     const dayTicks = ticks(0, n - 1, Math.max(3, Math.floor(width / 110))).filter((t) => Number.isInteger(t));
     axes(svg, {
       left: pad.left, right: width - pad.right, top: pad.top, bottom: height - pad.bottom,
-      x, y, xTicks: dayTicks, yTicks, xFormat: (t) => (t < history.length ? `${t + 1}` : `+${t - history.length + 1}`),
+      x, y, xTicks: dayTicks, yTicks, xFormat: (t) => dayLabel(t, history.length),
       yFormat: options.tickFormat ?? options.yFormat,
     });
     const area = (rows, offset) =>
@@ -170,6 +177,12 @@ export function bandChart(container, options) {
     el("polygon", { points: area(joined, history.length - 1), class: "band forecast" }, svg);
     el("path", { d: line(history, 0), class: "series-line" }, svg);
     el("path", { d: line(joined, history.length - 1), class: "series-line forecast" }, svg);
+    for (const [i, v] of (observed ?? []).entries()) el("circle", { cx: x(i), cy: y(v), r: 2.5, class: "observed" }, svg);
+    if (limit) {
+      el("line", { x1: pad.left, x2: width - pad.right, y1: y(limit.value), y2: y(limit.value), class: "marker threshold" }, svg);
+      const text = el("text", { x: pad.left + 6, y: y(limit.value) - 6, class: "annotation" }, svg);
+      text.textContent = limit.label;
+    }
     const today = x(history.length - 1);
     el("line", { x1: today, x2: today, y1: pad.top, y2: height - pad.bottom, class: "rule" }, svg);
     const label = el("text", { x: today + 6, y: pad.top + 10, class: "annotation" }, svg);
@@ -195,11 +208,18 @@ export function bandChart(container, options) {
       dot.setAttribute("cy", y(d.mean));
       cross.setAttribute("visibility", "visible");
       dot.setAttribute("visibility", "visible");
-      const day = focused < history.length ? `Day ${focused + 1}` : `${focused - history.length + 1} days ahead`;
-      frame.show(x(focused), y(d.high), [
+      const day = options.dayLabel
+        ? `Day ${dayLabel(focused, history.length)}`
+        : focused < history.length ? `Day ${focused + 1}` : `${focused - history.length + 1} days ahead`;
+      const rows = [
         { key: "line", value: options.yFormat(d.mean), label: day },
         { value: `${options.yFormat(d.low)} to ${options.yFormat(d.high)}`, label: "90% interval" },
-      ]);
+      ];
+      if (observed?.[focused] !== undefined) {
+        rows.push({ key: "ring", value: options.yFormat(observed[focused]), label: (options.observedLabel ?? "Observed").toLowerCase() });
+      }
+      if (limit) rows.push({ value: options.yFormat(limit.value), label: limit.label.toLowerCase() });
+      frame.show(x(focused), y(d.high), rows);
     };
     const away = () => {
       cross.setAttribute("visibility", "hidden");
@@ -223,14 +243,21 @@ export function bandChart(container, options) {
     });
   };
   return {
-    update(history, forecast) {
-      data = { history, forecast };
+    update(history, forecast, { observed, limit } = {}) {
+      data = { history, forecast, observed, limit };
+      legend(Boolean(observed));
       frame.render();
+      const cells = (d) => [options.yFormat(d.mean), options.yFormat(d.low), options.yFormat(d.high)];
+      const extra = observed ? [options.observedLabel ?? "Observed"] : [];
       frame.setTable(
-        ["Day", "Mean", "5%", "95%"],
+        ["Day", "Mean", "5%", "95%", ...extra],
         [
-          ...history.map((d, i) => [`${i + 1}`, options.yFormat(d.mean), options.yFormat(d.low), options.yFormat(d.high)]),
-          ...forecast.map((d, i) => [`+${i + 1}`, options.yFormat(d.mean), options.yFormat(d.low), options.yFormat(d.high)]),
+          ...history.map((d, i) => [
+            dayLabel(i, history.length),
+            ...cells(d),
+            ...(observed ? [observed[i] === undefined ? "" : options.yFormat(observed[i])] : []),
+          ]),
+          ...forecast.map((d, i) => [dayLabel(history.length + i, history.length), ...cells(d), ...(observed ? [""] : [])]),
         ],
       );
     },

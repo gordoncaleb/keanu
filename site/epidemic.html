@@ -1,0 +1,106 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Epidemic forecasting · Keanu demos</title>
+    <meta name="description" content="Fit an outbreak model to its first weeks of reported cases in your browser, then see whether the hospital beds will run out." />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Schibsted+Grotesk:wght@400;500;600;650;700&display=swap" rel="stylesheet" />
+    <link rel="stylesheet" href="styles.css" />
+    <script type="module" src="js/nav.js"></script>
+    <script type="module" src="js/epidemic.js"></script>
+  </head>
+  <body>
+    <div class="layout">
+    <aside class="sidebar" id="sidebar"></aside>
+    <div class="content">
+    <main>
+      <h1>Will the hospitals run out of beds?</h1>
+      <p class="lede">
+        Five weeks into an outbreak, daily case reports are climbing. Keanu learns how fast the infection spreads from
+        those counts, with its uncertainty, then runs every plausible outbreak forward to see how many hospital beds it
+        will need, and what cutting contacts would change.
+      </p>
+
+      <p class="answer" id="answer" data-stale aria-live="polite">
+        With
+        <label class="visually-hidden" for="beds">Number of hospital beds</label>
+        <input id="beds" type="number" min="0" max="5000" step="10" value="900" style="--chars: 4.2ch" /> beds,
+        there is <span id="fill-article">a</span> <span class="figure" id="fill">…</span> chance they fill, with
+        occupancy peaking around <span class="figure" id="peak-day">…</span> at
+        <span class="figure" id="peak">…</span> patients.
+      </p>
+
+      <div class="controls">
+        <label>
+          Cut contacts by
+          <input id="cut" type="range" min="0" max="0.6" step="0.05" value="0" aria-describedby="cut-value" />
+        </label>
+        <span id="cut-value"></span>
+        <label>
+          From day
+          <input id="from-day" type="range" min="36" max="120" step="1" value="50" aria-describedby="from-day-value" />
+        </label>
+        <span id="from-day-value"></span>
+      </div>
+      <p class="status" id="status" role="status"></p>
+
+      <dl class="facts">
+        <div><dt>Basic reproduction number, R₀</dt><dd id="r0">…</dd></div>
+        <div><dt>Days a person stays infectious</dt><dd id="recovery">…</dd></div>
+        <div><dt>Share of infections reported</dt><dd id="reporting">…</dd></div>
+        <div><dt>Days with more patients than beds, on average</dt><dd id="days-over">…</dd></div>
+        <div><dt>Chance the beds fill with no change in contacts</dt><dd id="without">…</dd></div>
+        <div><dt>Share of the town infected by day 200</dt><dd id="attack">…</dd></div>
+      </dl>
+
+      <div id="cases-chart"></div>
+      <div id="occupancy-chart"></div>
+      <div id="peak-chart"></div>
+
+      <section class="method prose" aria-labelledby="method-heading">
+        <h2 id="method-heading">How Keanu answered this</h2>
+        <p>
+          The data are 35 days of reported cases in a town of 300,000 people. Keanu fits a susceptible, infected,
+          recovered (SIR) model that steps forward one day at a time. Only some infections are reported, and daily
+          counts scatter more than a Poisson count would, so the reports are negative binomial around a fraction of
+          the day's new infections.
+        </p>
+        <pre>new infections(t) = S(t−1) × (1 − exp(−(R₀ / D) × I(t−1) / N))
+S(t) = S(t−1) − new infections(t)
+I(t) = I(t−1) × (1 − 1 / D) + new infections(t)
+reported(t) ~ NegativeBinomial(mean ρ × new infections(t), dispersion φ)
+
+R₀ ~ LogNormal(ln 2, 0.5)     D ~ LogNormal(ln 7, 0.2)     ρ ~ Beta(12, 28)
+I₀ ~ LogNormal(ln 10, 1)      1 / φ ~ Exponential(5)</pre>
+        <p>
+          The No-U-Turn Sampler draws 500 plausible outbreaks in your browser, taking gradients through all 35 days of
+          the recursion. Early in an outbreak the counts mostly tell you how fast cases grow. Growth alone can't
+          separate a high R₀ with a long infectious period from a lower R₀ with a short one, nor many infections with
+          few reported from fewer with more reported, so the priors on the infectious period D and the reporting rate
+          ρ do real work here. In a real outbreak they would come from clinical and survey studies.
+        </p>
+        <p>
+          For the forecast, each draw runs forward to day 200. The hospital side is deliberately simple and fixed: 2%
+          of infections need a bed, seven days after infection, and patients stay eight days on average, leaving at a
+          constant rate. Cutting contacts scales transmission down from the chosen day on. It reuses the 500 draws, so
+          dragging it updates the forecast without refitting.
+        </p>
+        <p>
+          The case counts are synthetic, generated with a known R₀ of 1.8, an infectious period of six days and a
+          quarter of infections reported, so you can see how well the model recovers them. The town, the hospital
+          figures and the infection are invented; nothing here describes a real disease or health system.
+        </p>
+      </section>
+    </main>
+
+    <footer class="site-footer">
+      Keanu is a probabilistic programming library in Rust. Results are illustrations, not medical or public health
+      advice.
+    </footer>
+    </div>
+    </div>
+  </body>
+</html>
