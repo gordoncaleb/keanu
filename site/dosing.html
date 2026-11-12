@@ -1,0 +1,106 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Drug dosing · Keanu demos</title>
+    <meta name="description" content="Learn how one patient handles a fictional drug from a few blood samples, in your browser, then choose a dose that keeps the level in range." />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Schibsted+Grotesk:wght@400;500;600;650;700&display=swap" rel="stylesheet" />
+    <link rel="stylesheet" href="styles.css" />
+    <script type="module" src="js/nav.js"></script>
+    <script type="module" src="js/dosing.js"></script>
+  </head>
+  <body>
+    <div class="layout">
+    <aside class="sidebar" id="sidebar"></aside>
+    <div class="content">
+    <main>
+      <h1>What dose keeps this patient in the safe range?</h1>
+      <p class="lede">
+        Too little of a drug does nothing and too much is toxic, and patients clear drugs at very different speeds. Six
+        blood samples after a first dose say how this patient handles it. Keanu learns that, with its uncertainty, and
+        works out what a regular dose would do. The drug and the patient are fictional.
+      </p>
+
+      <p class="answer" id="answer" data-stale aria-live="polite">
+        Giving
+        <label class="visually-hidden" for="dose">Dose in mg</label>
+        <input id="dose" type="number" min="25" max="1500" step="25" value="400" style="--chars: 4.2ch" /> mg every
+        <label class="visually-hidden" for="interval">Hours between doses</label>
+        <select id="interval">
+          <option value="6">6</option>
+          <option value="8">8</option>
+          <option value="12" selected>12</option>
+          <option value="24">24</option>
+        </select>
+        hours, the level stays in the target range <span class="figure" id="in-range">…</span> of the time, with
+        <span id="low-article">a</span> <span class="figure" id="low">…</span> chance it falls too low and
+        <span id="high-article">a</span> <span class="figure" id="high">…</span> chance the peak is too high.
+        <span id="suggestion-lead">For this patient,</span> <span class="figure" id="suggested">…</span> every
+        <span id="suggested-interval">12</span> hours <span id="suggestion-verb">works best</span>.
+      </p>
+
+      <div class="controls">
+        <span id="basis-label">Based on</span>
+        <div class="segmented" role="group" aria-labelledby="basis-label">
+          <button type="button" data-population="false" aria-pressed="true">This patient's samples</button>
+          <button type="button" data-population="true" aria-pressed="false">The population alone</button>
+        </div>
+      </div>
+      <p class="status" id="status" role="status"></p>
+
+      <dl class="facts">
+        <div><dt>Peak level at steady state</dt><dd id="peak">…</dd></div>
+        <div><dt>Lowest level at steady state</dt><dd id="trough">…</dd></div>
+        <div><dt>This patient's half-life</dt><dd id="half-life">…</dd></div>
+        <div><dt>Time in range for the true patient</dt><dd id="true-in-range">…</dd></div>
+      </dl>
+      <p class="message" id="comparison"></p>
+
+      <div id="steady-chart"></div>
+      <div id="first-dose-chart"></div>
+      <div id="parameters-chart"></div>
+
+      <section class="method prose" aria-labelledby="method-heading">
+        <h2 id="method-heading">How Keanu answered this</h2>
+        <p>
+          <strong>
+            The drug, its target range and the patient are all fictional, and the blood samples are synthetic. This is a
+            demonstration of a statistical method, not medical advice, and must not be used to dose anyone.
+          </strong>
+        </p>
+        <p>
+          The patient took one 300 mg dose and gave blood 1, 2, 4, 8, 12 and 24 hours later. Keanu fits the standard
+          one-compartment model of a drug taken by mouth: it is absorbed from the gut at rate ka into a body volume V,
+          and cleared at CL litres an hour. Patients differ, so what is known about the whole population (how clearance,
+          volume and absorption vary between people) is the starting point, and the patient's own samples refine it.
+        </p>
+        <pre>level(t) = D ka / (V (ka − ke)) × (exp(−ke t) − exp(−ka t))    ke = CL / V
+CL ~ LogNormal(ln 5 L/h, 0.35)    V ~ LogNormal(ln 50 L, 0.25)    ka ~ LogNormal(ln 1.2 per hour, 0.4)
+measured level ~ LogNormal(ln level(t), 0.15)</pre>
+        <p>
+          The No-U-Turn Sampler draws 1,000 plausible versions of the patient in your browser. Repeated doses add up, so
+          once doses have built up the level over each interval is a sum of every past dose, which has an exact formula.
+          For each draw Keanu computes that profile and reads off the time spent between 4 and 12 mg/L, the lowest level
+          and the peak. Averaging over the draws gives the chances in the sentence. The suggested dose is the one, in
+          steps of 25 mg, that keeps the level in range longest, preferring the lower risk when doses are close.
+          Changing the dose or interval reuses the fitted draws, so it updates without refitting.
+        </p>
+        <p>
+          The assumptions are plain: the patient's parameters stay fixed over time, the drug is fully absorbed, each dose
+          is taken on schedule, and measurement error is proportional, about 15%. "The population alone" repeats the
+          decision with draws from the population instead of the patient's posterior, to show what the six samples are
+          worth.
+        </p>
+      </section>
+    </main>
+
+    <footer class="site-footer">
+      Keanu is a probabilistic programming library in Rust. Results are illustrations, not medical advice.
+    </footer>
+    </div>
+    </div>
+  </body>
+</html>

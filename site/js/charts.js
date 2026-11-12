@@ -265,6 +265,193 @@ export function bandChart(container, options) {
 }
 
 /**
+ * The day-based band chart's twin for a curve over a measured axis, such as hours after a dose: a mean line inside
+ * a 90% band. `update(history, forecast, extras)` takes rows of { mean, low, high } (pass an empty forecast), and
+ * `extras` gives: `x`, the x value of each history row (ticks then use `options.xFormat`, tooltips `options.xLabel(x)`, the
+ * table `options.xHeading`); `reference`, a dashed line with one value per row, named by `options.referenceLabel`;
+ * `points`, measured marks [{ x, y }], named by `options.pointsLabel`; and `levels`, horizontal lines
+ * [{ value, label, tone }].
+ */
+export function measuredChart(container, options) {
+  const frame = new Frame(container, options);
+  let data = null;
+  frame.setLegend([
+    { key: "line", label: "Posterior mean" },
+    { key: "band", label: "90% interval" },
+  ]);
+  frame.render = () => {
+    if (!data) return;
+    const { history, forecast, extras } = data;
+    const all = [...history, ...forecast];
+    const { svg, width, height } = frame.svg();
+    const pad = { left: 52, right: 16, top: 16, bottom: 30 };
+    const n = all.length;
+    const xs = extras.x;
+    const points = extras.points ?? [];
+    const levels = extras.levels ?? [];
+    // px maps an x value (a day index without extras.x) to pixels; x maps a row index
+    const px = xs ? scale(xs[0], xs.at(-1), pad.left, width - pad.right) : scale(0, n - 1, pad.left, width - pad.right);
+    const x = xs ? (i) => px(xs[i]) : px;
+    const hi = Math.max(
+      ...all.map((d) => d.high),
+      ...(extras.reference ?? []),
+      ...points.map((p) => p.y),
+      ...levels.map((l) => l.value),
+    );
+    const yTicks = coverTicks(hi, 4);
+    const y = scale(0, yTicks.at(-1), height - pad.bottom, pad.top);
+    const tickCount = Math.max(3, Math.floor(width / 110));
+    const dayTicks = xs ? ticks(xs[0], xs.at(-1), tickCount) : ticks(0, n - 1, tickCount).filter((t) => Number.isInteger(t));
+    axes(svg, {
+      left: pad.left, right: width - pad.right, top: pad.top, bottom: height - pad.bottom,
+      x: px, y, xTicks: dayTicks, yTicks,
+      xFormat: xs ? options.xFormat : (t) => (t < history.length ? `${t + 1}` : `+${t - history.length + 1}`),
+      yFormat: options.tickFormat ?? options.yFormat,
+    });
+    for (const level of levels) {
+      const ly = y(level.value);
+      el("line", { x1: pad.left, x2: width - pad.right, y1: ly, y2: ly, class: `marker ${level.tone ?? ""}` }, svg);
+      el("text", { x: width - pad.right, y: ly - 5, class: "annotation", "text-anchor": "end" }, svg).textContent =
+        level.label;
+    }
+    const area = (rows, offset) =>
+      rows.map((d, i) => `${x(i + offset)},${y(d.high)}`).join(" ") +
+      " " +
+      rows.map((d, i) => `${x(i + offset)},${y(d.low)}`).reverse().join(" ");
+    const line = (rows, offset) => rows.map((d, i) => `${i ? "L" : "M"}${x(i + offset)},${y(d.mean)}`).join("");
+    el("polygon", { points: area(history, 0), class: "band" }, svg);
+    if (forecast.length) {
+      // the forecast starts from the last observed day so the two bands join
+      const joined = [history.at(-1), ...forecast];
+      el("polygon", { points: area(joined, history.length - 1), class: "band forecast" }, svg);
+      el("path", { d: line(history, 0), class: "series-line" }, svg);
+      el("path", { d: line(joined, history.length - 1), class: "series-line forecast" }, svg);
+      const today = x(history.length - 1);
+      el("line", { x1: today, x2: today, y1: pad.top, y2: height - pad.bottom, class: "rule" }, svg);
+      const label = el("text", { x: today + 6, y: pad.top + 10, class: "annotation" }, svg);
+      label.textContent = "Forecast";
+      if (today + 6 + label.getComputedTextLength() > width - pad.right) {
+        label.setAttribute("x", today - 6);
+        label.setAttribute("text-anchor", "end");
+      }
+    } else {
+      el("path", { d: line(history, 0), class: "series-line" }, svg);
+    }
+    if (extras.reference) {
+      const d = extras.reference.map((v, i) => `${i ? "L" : "M"}${x(i)},${y(v)}`).join("");
+      el("path", { d, class: "reference-line" }, svg);
+    }
+    for (const p of points) el("circle", { cx: px(p.x), cy: y(p.y), r: 4.5, class: "observed" }, svg);
+
+    const cross = el("line", { y1: pad.top, y2: height - pad.bottom, class: "crosshair", visibility: "hidden" }, svg);
+    const dot = el("circle", { r: 4, class: "crosshair-dot", visibility: "hidden" }, svg);
+    const hit = el("rect", {
+      x: pad.left, y: pad.top, width: width - pad.left - pad.right, height: height - pad.top - pad.bottom,
+      class: "hit", tabindex: 0, "aria-label": `${options.title}: use the arrow keys to read each ${xs ? "point" : "day"}`,
+    }, svg);
+    let focused = history.length - 1;
+    const at = (i) => {
+      focused = Math.max(0, Math.min(n - 1, i));
+      const d = all[focused];
+      cross.setAttribute("x1", x(focused));
+      cross.setAttribute("x2", x(focused));
+      dot.setAttribute("cx", x(focused));
+      dot.setAttribute("cy", y(d.mean));
+      cross.setAttribute("visibility", "visible");
+      dot.setAttribute("visibility", "visible");
+      const day = xs
+        ? options.xLabel(xs[focused])
+        : focused < history.length ? `Day ${focused + 1}` : `${focused - history.length + 1} days ahead`;
+      const tip = [
+        { key: "line", value: options.yFormat(d.mean), label: day },
+        { value: `${options.yFormat(d.low)} to ${options.yFormat(d.high)}`, label: "90% interval" },
+      ];
+      if (extras.reference) {
+        tip.push({
+          value: options.yFormat(extras.reference[focused]),
+          label: (options.referenceLabel ?? "Reference").toLowerCase(),
+        });
+      }
+      frame.show(x(focused), y(d.high), tip);
+    };
+    const away = () => {
+      cross.setAttribute("visibility", "hidden");
+      dot.setAttribute("visibility", "hidden");
+      frame.hide();
+    };
+    hit.addEventListener("pointermove", (e) => {
+      const box = svg.getBoundingClientRect();
+      const fraction = (e.clientX - box.left - pad.left) / (width - pad.left - pad.right);
+      if (!xs) {
+        at(Math.round(fraction * (n - 1)));
+        return;
+      }
+      const value = xs[0] + fraction * (xs.at(-1) - xs[0]);
+      let nearest = 0;
+      xs.forEach((v, i) => {
+        if (Math.abs(v - value) < Math.abs(xs[nearest] - value)) nearest = i;
+      });
+      at(nearest);
+    });
+    hit.addEventListener("pointerleave", away);
+    hit.addEventListener("focus", () => at(focused));
+    hit.addEventListener("blur", away);
+    hit.addEventListener("keydown", (e) => {
+      const move = { ArrowLeft: -1, ArrowRight: 1, Home: -n, End: n }[e.key];
+      if (move) {
+        e.preventDefault();
+        at(focused + move);
+      }
+    });
+  };
+  return {
+    update(history, forecast, extras = {}) {
+      data = { history, forecast, extras };
+      const referenceLabel = options.referenceLabel ?? "Reference";
+      const pointsLabel = options.pointsLabel ?? "Measured";
+      if (extras.reference || extras.points) {
+        frame.setLegend([
+          { key: "line", label: "Posterior mean" },
+          { key: "band", label: "90% interval" },
+          ...(extras.reference ? [{ key: "dash", label: referenceLabel }] : []),
+          ...(extras.points ? [{ key: "ring", label: pointsLabel }] : []),
+        ]);
+      }
+      frame.render();
+      if (extras.x) {
+        const measured = new Map((extras.points ?? []).map((p) => [p.x, p.y]));
+        frame.setTable(
+          [
+            options.xHeading ?? "",
+            "Mean",
+            "5%",
+            "95%",
+            ...(extras.reference ? [referenceLabel] : []),
+            ...(extras.points ? [pointsLabel] : []),
+          ],
+          history.map((d, i) => [
+            options.xFormat(extras.x[i]),
+            options.yFormat(d.mean),
+            options.yFormat(d.low),
+            options.yFormat(d.high),
+            ...(extras.reference ? [options.yFormat(extras.reference[i])] : []),
+            ...(extras.points ? [measured.has(extras.x[i]) ? options.yFormat(measured.get(extras.x[i])) : ""] : []),
+          ]),
+        );
+        return;
+      }
+      frame.setTable(
+        ["Day", "Mean", "5%", "95%"],
+        [
+          ...history.map((d, i) => [`${i + 1}`, options.yFormat(d.mean), options.yFormat(d.low), options.yFormat(d.high)]),
+          ...forecast.map((d, i) => [`+${i + 1}`, options.yFormat(d.mean), options.yFormat(d.low), options.yFormat(d.high)]),
+        ],
+      );
+    },
+  };
+}
+
+/**
  * A histogram { start, width, fraction } with vertical markers [{ value, label }]. Bars for which `emphasis(lo, hi)`
  * is true use the series color; the rest are muted.
  */

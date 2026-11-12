@@ -67,7 +67,7 @@ export const DOMAINS = [
         title: "Drug dosing",
         question: "What dose keeps this patient in the safe range?",
         summary: "A drug's concentration over time learned from a few blood samples, for a dose you choose.",
-        ready: false,
+        ready: true,
       },
     ],
   },
