@@ -16,7 +16,7 @@
 //! the uncertainty in both tomorrow's volatility and the model's parameters. Returns are fractions (0.01 is 1%);
 //! the models work in percent, where their priors are calibrated.
 
-use crate::run::{ChainRun, Interval, draws, mean, quantile, scalar_draws};
+use crate::run::{ChainRun, Histogram, Interval, draws, mean, quantile, scalar_draws};
 use keanu::prelude::*;
 use serde::Serialize;
 
@@ -150,6 +150,25 @@ pub struct ForecastDay {
     pub volatility: Interval,
 }
 
+/// The next day's loss at one confidence level.
+#[derive(Debug, Clone, Copy, Serialize)]
+pub struct TailRisk {
+    /// The confidence level, such as 0.99.
+    pub level: f64,
+    /// The loss exceeded with probability 1 − level.
+    pub value_at_risk: f64,
+    /// The mean loss beyond the value at risk.
+    pub expected_shortfall: f64,
+    /// The value at risk of a normal model with the whole sample's standard deviation.
+    pub naive_value_at_risk: f64,
+}
+
+/// The confidence levels of [`VolatilityReport::tail`].
+pub const TAIL_LEVELS: [f64; 4] = [0.95, 0.975, 0.99, 0.995];
+
+/// The standard normal quantiles at [`TAIL_LEVELS`].
+const NORMAL_QUANTILES: [f64; 4] = [1.644_853_627, 1.959_963_985, 2.326_347_874, 2.575_829_304];
+
 /// What the risk manager sees.
 #[derive(Debug, Clone, Serialize)]
 pub struct VolatilityReport {
@@ -169,6 +188,10 @@ pub struct VolatilityReport {
     pub value_at_risk_99: f64,
     /// The next day's 97.5% expected shortfall: the mean loss on the worst 2.5% of days.
     pub expected_shortfall_975: f64,
+    /// The next day's value at risk and expected shortfall at each of [`TAIL_LEVELS`].
+    pub tail: Vec<TailRisk>,
+    /// The distribution of tomorrow's loss (negative for a gain), in the position's currency.
+    pub loss_histogram: Histogram,
     /// The 99% value at risk of a normal model with the whole sample's standard deviation, for comparison.
     pub naive_value_at_risk_99: f64,
     /// Divergent NUTS transitions after adaptation.
@@ -383,6 +406,25 @@ impl VolatilityModel {
             value_at_risk_95: quantile(&tomorrow, 0.95),
             value_at_risk_99: quantile(&tomorrow, 0.99),
             expected_shortfall_975: mean(&worst),
+            tail: TAIL_LEVELS
+                .iter()
+                .zip(NORMAL_QUANTILES)
+                .map(|(&level, z)| {
+                    let value_at_risk = quantile(&tomorrow, level);
+                    let beyond: Vec<f64> = tomorrow
+                        .iter()
+                        .copied()
+                        .filter(|&l| l >= value_at_risk)
+                        .collect();
+                    TailRisk {
+                        level,
+                        value_at_risk,
+                        expected_shortfall: mean(&beyond),
+                        naive_value_at_risk: z * sd / 100.0 * position,
+                    }
+                })
+                .collect(),
+            loss_histogram: Histogram::of(&tomorrow, 60),
             naive_value_at_risk_99: 2.326_347_874 * sd / 100.0 * position,
             divergences: self.chain.divergences(),
             draws: n,

@@ -1,0 +1,114 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Value at risk · Keanu demos</title>
+    <meta name="description" content="Fit a volatility model to daily returns in your browser and see how much a position could lose tomorrow." />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Schibsted+Grotesk:wght@400;500;600;650;700&display=swap" rel="stylesheet" />
+    <link rel="stylesheet" href="styles.css" />
+    <script type="module" src="js/var.js"></script>
+  </head>
+  <body>
+    <header class="site-header">
+      <a class="wordmark" href="index.html">Keanu</a>
+      <nav aria-label="Demos">
+        <a href="var.html" aria-current="page">Value at risk</a>
+        <a href="credit.html">Credit portfolio</a>
+      </nav>
+    </header>
+
+    <main>
+      <h1>How much could this position lose tomorrow?</h1>
+      <p class="lede">
+        Volatility clusters: calm days follow calm days, and turbulent days follow turbulent ones. Keanu fits a volatility
+        model to daily returns, right here in your browser, and turns the uncertainty in tomorrow's volatility, and in the
+        model itself, into a loss you can plan for.
+      </p>
+
+      <p class="answer" id="answer" data-stale aria-live="polite">
+        Holding
+        <label class="visually-hidden" for="position">Position value in dollars</label>
+        $<input id="position" type="text" inputmode="numeric" value="1,000,000" style="--chars: 9ch" />,
+        on one day in
+        <label class="visually-hidden" for="level">How rare a day</label>
+        <select id="level">
+          <option value="0">20</option>
+          <option value="1">40</option>
+          <option value="2" selected>100</option>
+          <option value="3">200</option>
+        </select>
+        I should expect to lose more than <span class="figure" id="var">…</span>. On those days the loss averages
+        <span class="figure" id="es">…</span>.
+      </p>
+
+      <div class="controls">
+        <span id="model-label">Model</span>
+        <div class="segmented" role="group" aria-labelledby="model-label">
+          <button type="button" data-model="garch" aria-pressed="true">GARCH(1,1)</button>
+          <button type="button" data-model="stochastic" aria-pressed="false">Stochastic volatility</button>
+        </div>
+      </div>
+      <p class="status" id="status" role="status"></p>
+
+      <dl class="facts">
+        <div><dt>Volatility today, annualised</dt><dd id="today">…</dd></div>
+        <div><dt>Long-run volatility it reverts to</dt><dd id="long-run">…</dd></div>
+        <div><dt>Days for a volatility shock to halve</dt><dd id="half-life">…</dd></div>
+        <div><dt>A normal model's answer, ignoring clustering</dt><dd id="naive">…</dd></div>
+      </dl>
+      <p class="message" id="comparison"></p>
+
+      <div id="volatility-chart"></div>
+      <div id="loss-chart"></div>
+
+      <section class="data-entry" aria-labelledby="data-heading">
+        <h2 id="data-heading">Use your own returns</h2>
+        <p>
+          The sample is 200 days simulated from a stochastic volatility model, so you can see whether the fit recovers
+          it. Paste at least 30 daily closing prices or daily returns instead: one per line, or comma separated. Prices
+          become log returns. Nothing leaves your browser.
+        </p>
+        <label class="visually-hidden" for="returns">Daily prices or returns</label>
+        <textarea id="returns" spellcheck="false" placeholder="101.2&#10;100.7&#10;102.9&#10;…"></textarea>
+        <button type="button" class="action" id="fit-returns">Fit these returns</button>
+        <button type="button" class="quiet" id="use-sample">Use the sample again</button>
+        <p class="message" id="data-message" role="status"></p>
+      </section>
+
+      <section class="method prose" aria-labelledby="method-heading">
+        <h2 id="method-heading">How Keanu answered this</h2>
+        <p>
+          Both models say a day's return is normal with mean zero and a volatility that changes from day to day. They
+          differ in how it changes.
+        </p>
+        <pre>GARCH(1,1)
+  σ²ₜ = ω + α r²ₜ₋₁ + β σ²ₜ₋₁            today's variance from yesterday's shock and variance
+  (α, β, 1 − α − β) ~ Dirichlet(2, 6, 2)    keeps the process stationary
+  ω ~ HalfNormal(1)
+
+Stochastic volatility
+  hₜ = μ + φ (hₜ₋₁ − μ) + σ εₜ          the log variance is itself random
+  μ ~ N(0, 10)   (φ + 1)/2 ~ Beta(20, 1.5)   σ ~ HalfCauchy(5)
+  rₜ ~ N(0, exp(hₜ / 2))</pre>
+        <p>
+          Keanu samples each model's posterior with the No-U-Turn Sampler (NUTS) in WebAssembly, a few steps at a time
+          in a background thread. GARCH has three parameters and fits in well under a second. Stochastic volatility has
+          a latent volatility for every day, so it takes longer, and it captures volatility that moves on its own rather
+          than only in response to returns.
+        </p>
+        <p>
+          For tomorrow, every posterior draw simulates the next day's volatility and then 20 returns. Value at risk is a
+          quantile of those losses and expected shortfall is the mean loss beyond it, so both include the uncertainty in
+          the parameters as well as in tomorrow's return.
+        </p>
+      </section>
+    </main>
+
+    <footer class="site-footer">
+      Keanu is a probabilistic programming library in Rust. Results are illustrations, not investment advice.
+    </footer>
+  </body>
+</html>

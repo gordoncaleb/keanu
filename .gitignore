@@ -7,3 +7,6 @@
 *.iml
 .vscode
 *.DS_Store
+
+# Demo site WebAssembly build output
+/site/pkg/
