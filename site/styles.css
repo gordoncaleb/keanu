@@ -647,8 +647,9 @@ section > p,
   stroke-dasharray: 2 3;
 }
 
+/* the comparison is a muted ink: red stays reserved for limits such as a warranty's end or a budget */
 .series-line.compare {
-  stroke: var(--threshold);
+  stroke: var(--muted);
   stroke-width: 1.5;
   stroke-dasharray: 6 4;
 }
@@ -660,7 +661,7 @@ section > p,
 
 .legend-key.line.compare,
 .tip-key.line.compare {
-  background: var(--threshold);
+  background: var(--muted);
 }
 
 .table-view {

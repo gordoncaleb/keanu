@@ -60,7 +60,7 @@ export const DOMAINS = [
         title: "Epidemic forecasting",
         question: "Will the hospitals run out of beds?",
         summary: "An outbreak model fitted to early case counts, projecting peak demand for beds.",
-        ready: false,
+        ready: true,
       },
       {
         href: "dosing.html",
