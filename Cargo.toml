@@ -8,6 +8,7 @@ members = [
     "keanu-algorithms",
     "keanu-parity",
     "keanu",
+    "keanu-wasm",
 ]
 
 [workspace.package]

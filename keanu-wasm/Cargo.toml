@@ -1,0 +1,21 @@
+[package]
+name = "keanu-wasm"
+version = "0.1.0"
+description = "Keanu's applied demo models, and WebAssembly bindings that run them in a browser worker"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+keanu = { path = "../keanu", default-features = false }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+wasm-bindgen = "=0.2.130"
+
+[lints]
+workspace = true

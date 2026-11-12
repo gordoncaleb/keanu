@@ -57,6 +57,15 @@ tag. `RUST_MIGRATION_PLAN.md` describes the rewrite and `book/src/from-java.md` 
 - Added shape-one Pólya–Gamma PG(1, z), with exact sampling, graph derivatives, saved-model support, and a
   Gibbs demo for Bernoulli logistic regression.
 
+### WebAssembly and applied demos
+
+- Keanu builds for `wasm32-unknown-unknown`: faer's thread pool is only used off wasm32, and `rand` no longer
+  pulls in OS entropy (Keanu always seeds its own generator).
+- The new unpublished `keanu-wasm` crate holds applied demo models with browser bindings: an A/B test decision,
+  credit portfolio risk (hierarchical default model, exact Poisson-binomial tail, value at risk under stress) and
+  volatility with value at risk (GARCH(1,1) or stochastic volatility). Fits advance a few NUTS transitions per call
+  so a Web Worker can report progress.
+
 ### Review fixes for the Stan and PyMC coverage
 
 - Static HMC no longer records draws made while its step size adapts: `sample` discards the `adapt_count` warmup
