@@ -1,0 +1,100 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Demand forecasting · Keanu demos</title>
+    <meta name="description" content="Forecast a product's daily sales in your browser and see how much stock covers the next weeks at the service level you choose." />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Schibsted+Grotesk:wght@400;500;600;650;700&display=swap" rel="stylesheet" />
+    <link rel="stylesheet" href="styles.css" />
+    <script type="module" src="js/nav.js"></script>
+    <script type="module" src="js/demand.js"></script>
+  </head>
+  <body>
+    <div class="layout">
+    <aside class="sidebar" id="sidebar"></aside>
+    <div class="content">
+    <main>
+      <h1>How much stock do we need next month?</h1>
+      <p class="lede">
+        Order too little and customers leave empty-handed; order too much and cash sits on the shelf. Keanu learns a
+        product's trend, its weekly rhythm and how noisy its sales are from a year of history, then simulates thousands of
+        possible months to find the stock that covers demand as often as you need.
+      </p>
+
+      <p class="answer" id="answer" data-stale aria-live="polite">
+        To cover demand for the next
+        <label class="visually-hidden" for="period">Days to cover</label>
+        <input id="period" type="number" min="1" max="56" value="28" style="--chars: 2.6ch" /> days on
+        <label class="visually-hidden" for="service">Service level</label>
+        <select id="service">
+          <option value="0.8">80%</option>
+          <option value="0.9">90%</option>
+          <option value="0.95" selected>95%</option>
+          <option value="0.98">98%</option>
+          <option value="0.99">99%</option>
+          <option value="0.995">99.5%</option>
+        </select>
+        of outcomes, we need <span class="figure" id="stock">…</span> units: <span id="expected">…</span> expected
+        plus <span id="safety">…</span> of safety stock. With
+        <label class="visually-hidden" for="on-hand">Units on hand</label>
+        <input id="on-hand" type="number" min="0" value="300" style="--chars: 4.6ch" /> units on hand, order
+        <span class="figure" id="order">…</span>. On average we would run <span class="figure" id="short">…</span>
+        short and have <span id="left-over">…</span> left over.
+      </p>
+      <p class="status" id="status" role="status"></p>
+
+      <dl class="facts">
+        <div><dt>Total demand over the period, 90% of the time</dt><dd id="range">…</dd></div>
+        <div><dt>Share of demand met from stock</dt><dd id="fill">…</dd></div>
+        <div><dt>Change in demand over the past year</dt><dd id="growth">…</dd></div>
+        <div><dt>Busiest day of the week</dt><dd id="busiest">…</dd></div>
+      </dl>
+
+      <div id="sales-chart"></div>
+      <div id="demand-chart"></div>
+      <div id="weekday-chart"></div>
+
+      <section class="method prose" aria-labelledby="method-heading">
+        <h2 id="method-heading">How Keanu answered this</h2>
+        <p>
+          The history is a year of daily unit sales for one product. Keanu fits a negative binomial model on the log
+          scale: a level of demand that follows a steady trend but also wanders from one four-week period to the next, an
+          effect for each day of the week, and a dispersion that lets sales vary more than a Poisson count would.
+        </p>
+        <pre>sales[day] ~ NegativeBinomial(exp(level[period] + weekday[day]), α)
+level[p] = level[p − 1] + trend + σ z[p]      z ~ N(0, 1)
+weekday effects sum to zero
+
+level ~ N(log mean sales, 1)     yearly trend ~ N(0, 1)
+σ ~ LogNormal(log 0.05, 0.6)     weekday ~ N(0, 0.5)
+log α ~ N(2.5, 1)</pre>
+        <p>
+          The No-U-Turn Sampler draws 300 plausible sets of parameters in your browser. Within a four-week period each
+          weekday has the same expected sales, so the model adds up those days and uses one term per period and weekday,
+          which keeps the fit to a second or two. For every draw Keanu then plays the next eight weeks forward 20 times,
+          letting the level keep wandering and drawing each day's sales, for 6,000 possible futures.
+        </p>
+        <p>
+          The stock you need is the quantile of total demand over your period at your service level, so it carries the
+          uncertainty in the trend and the weekly pattern as well as day-to-day noise. Changing the period, the service
+          level or the stock on hand reuses the same futures, so the answer updates without refitting.
+        </p>
+        <p>
+          The sales are synthetic, generated with known values: 40 units a day at the start, a trend of about 23% a year,
+          steps of 5% between periods, weekends busier than weekdays, and a dispersion of 10. The weekday chart marks the
+          true effects, and the demand chart marks what actually sold over your period in held-out weeks from the same
+          process.
+        </p>
+      </section>
+    </main>
+
+    <footer class="site-footer">
+      Keanu is a probabilistic programming library in Rust. Results are illustrations, not inventory advice.
+    </footer>
+    </div>
+    </div>
+  </body>
+</html>
