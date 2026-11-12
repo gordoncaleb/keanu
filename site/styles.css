@@ -640,6 +640,29 @@ section > p,
   background: var(--series);
 }
 
+/* Comparison lines on a curve chart: the truth, and an estimate to compare against. */
+.series-line.truth {
+  stroke: var(--ink);
+  stroke-width: 1.5;
+  stroke-dasharray: 2 3;
+}
+
+.series-line.compare {
+  stroke: var(--threshold);
+  stroke-width: 1.5;
+  stroke-dasharray: 6 4;
+}
+
+.legend-key.line.truth,
+.tip-key.line.truth {
+  background: var(--ink);
+}
+
+.legend-key.line.compare,
+.tip-key.line.compare {
+  background: var(--threshold);
+}
+
 .table-view {
   margin-top: 8px;
   font-size: 0.875rem;

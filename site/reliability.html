@@ -1,0 +1,92 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Equipment reliability · Keanu demos</title>
+    <meta name="description" content="Learn how long pumps last from the ones that failed and the ones still running, in your browser, then price a warranty." />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Schibsted+Grotesk:wght@400;500;600;650;700&display=swap" rel="stylesheet" />
+    <link rel="stylesheet" href="styles.css" />
+    <script type="module" src="js/nav.js"></script>
+    <script type="module" src="js/reliability.js"></script>
+  </head>
+  <body>
+    <div class="layout">
+    <aside class="sidebar" id="sidebar"></aside>
+    <div class="content">
+    <main>
+      <h1>When will this fleet start failing?</h1>
+      <p class="lede">
+        Most of our pumps are still running, so their lifetimes are only partly known. Keanu learns how pumps wear out
+        from the ones that failed and the ones that haven't yet, then prices a warranty on a new fleet: how many claims
+        to expect, and what they could cost.
+      </p>
+
+      <p class="answer" id="answer" data-stale aria-live="polite">
+        With a
+        <label class="visually-hidden" for="warranty">Warranty length in months</label>
+        <input id="warranty" type="number" min="0" max="120" value="12" style="--chars: 3.2ch" />-month warranty on
+        <label class="visually-hidden" for="fleet">Number of new pumps</label>
+        <input id="fleet" type="text" inputmode="numeric" value="5,000" style="--chars: 6ch" /> new pumps at
+        $<label class="visually-hidden" for="cost">Cost per claim in dollars</label><input id="cost" type="text" inputmode="numeric" value="350" style="--chars: 5ch" />
+        a claim, expect about <span class="figure" id="claims">…</span> claims, likely
+        <span class="figure" id="claims-range">…</span>, costing <span class="figure" id="cost-total">…</span>. There is
+        <span id="over-article">a</span> <span class="figure" id="over">…</span> chance claims cost more than
+        $<label class="visually-hidden" for="budget">Claims budget in dollars</label><input id="budget" type="text" inputmode="numeric" value="100,000" style="--chars: 8ch" />.
+      </p>
+
+      <p class="status" id="status" role="status"></p>
+
+      <dl class="facts">
+        <div><dt>Pumps in the history</dt><dd id="history">…</dd></div>
+        <div><dt>Age by which 1 in 10 pumps fails</dt><dd id="b10">…</dd></div>
+        <div><dt>Wear-out shape (above 1 means failures speed up with age)</dt><dd id="shape">…</dd></div>
+        <div><dt>Lifetime under high load, relative to normal</dt><dd id="load">…</dd></div>
+        <div><dt>Claims expected if we ignored the pumps still running</dt><dd id="naive-claims">…</dd></div>
+      </dl>
+
+      <div id="survival-chart"></div>
+      <div id="claims-chart"></div>
+      <div id="life-chart"></div>
+
+      <section class="method prose" aria-labelledby="method-heading">
+        <h2 id="method-heading">How Keanu answered this</h2>
+        <p>
+          The history is 500 pumps installed over the past five years, about a third of them under high load. Some have
+          failed, at a known age. The rest are still running, so all we know is that each will last longer than its age
+          so far. Keanu fits a Weibull lifetime with a shape shared by the fleet and a scale that high load shortens:
+        </p>
+        <pre>lifetime[i] ~ Weibull(k, η × exp(γ × high load[i]))
+failed pump:  observed at its age when it failed
+running pump: censored, lifetime > its age today
+log k ~ N(ln 1.5, 0.5)    log η ~ N(ln 60, 1)    γ ~ N(0, 0.5)</pre>
+        <p>
+          A failed pump contributes the chance of failing at exactly its age; a running pump contributes the chance of
+          surviving at least to its age, through Keanu's censored distribution. The No-U-Turn Sampler draws 500 plausible
+          lifetime curves in your browser. For each one, a new pump fails within the warranty with a probability averaged
+          over the load mix, so the claims on the new fleet are binomial. Keanu simulates them to give the likely range
+          and the chance of going over budget. Changing the warranty, fleet, cost or budget reuses the fitted draws, so
+          the answer updates without refitting.
+        </p>
+        <p>
+          Why the running pumps matter: drop them and keep only the failures, and the data hold only the lifetimes short
+          enough to have ended already. Every pump seems to fail within five years, so the fit is far too pessimistic,
+          and the warranty looks much more expensive than it is. The dashed red curve and the hollow rings show that fit. Pumps still running
+          are evidence of long lives, and censoring counts them as such.
+        </p>
+        <p>
+          The fleet is synthetic, generated with a known Weibull shape of 2 and a 72-month scale (43 months under high
+          load), so you can see the model recover the true curve.
+        </p>
+      </section>
+    </main>
+
+    <footer class="site-footer">
+      Keanu is a probabilistic programming library in Rust. Results are illustrations, not engineering advice.
+    </footer>
+    </div>
+    </div>
+  </body>
+</html>

@@ -409,3 +409,118 @@ export function intervalChart(container, options) {
     },
   };
 }
+
+/**
+ * A mean line inside a 90% band over a numeric x axis, with optional comparison lines and vertical markers.
+ * `points` are { x, mean, low, high, ...fields }; `options.lines` are [{ field, key, label }], extra series drawn
+ * from point[field] with `key` a line style ("truth" or "compare"). `options.xLabel(x)` names a point.
+ */
+export function curveChart(container, options) {
+  const frame = new Frame(container, options);
+  const lines = options.lines ?? [];
+  let data = null;
+  frame.setLegend([
+    { key: "line", label: "Posterior mean" },
+    { key: "band", label: "90% interval" },
+    ...lines.map((l) => ({ key: `line ${l.key}`, label: l.label })),
+  ]);
+  frame.render = () => {
+    if (!data) return;
+    const { points, markers } = data;
+    const { svg, width, height } = frame.svg();
+    const pad = { left: 52, right: 16, top: 16, bottom: 30 };
+    const x0 = points[0].x;
+    const x1 = points.at(-1).x;
+    const x = scale(x0, x1, pad.left, width - pad.right);
+    const hi = Math.max(...points.flatMap((p) => [p.high, ...lines.map((l) => p[l.field])]));
+    const yTicks = coverTicks(hi, 4);
+    const y = scale(0, yTicks.at(-1), height - pad.bottom, pad.top);
+    axes(svg, {
+      left: pad.left, right: width - pad.right, top: pad.top, bottom: height - pad.bottom, x, y,
+      xTicks: ticks(x0, x1, Math.max(3, Math.floor(width / 110))), yTicks,
+      xFormat: options.xFormat, yFormat: options.tickFormat ?? options.yFormat,
+    });
+    const area =
+      points.map((p) => `${x(p.x)},${y(p.high)}`).join(" ") +
+      " " +
+      points.map((p) => `${x(p.x)},${y(p.low)}`).reverse().join(" ");
+    el("polygon", { points: area, class: "band" }, svg);
+    const path = (field) => points.map((p, i) => `${i ? "L" : "M"}${x(p.x)},${y(p[field])}`).join("");
+    for (const l of lines) el("path", { d: path(l.field), class: `series-line ${l.key}` }, svg);
+    el("path", { d: path("mean"), class: "series-line" }, svg);
+    for (const marker of markers) {
+      if (marker.value < x0 || marker.value > x1) continue;
+      const mx = x(marker.value);
+      el("line", { x1: mx, x2: mx, y1: pad.top, y2: height - pad.bottom, class: `marker ${marker.tone ?? ""}` }, svg);
+      const label = el("text", { x: mx + 6, y: pad.top + 10, class: "annotation" }, svg);
+      label.textContent = marker.label;
+      if (mx + 6 + label.getComputedTextLength() > width - pad.right) {
+        label.setAttribute("x", mx - 6);
+        label.setAttribute("text-anchor", "end");
+      }
+    }
+
+    const n = points.length;
+    const cross = el("line", { y1: pad.top, y2: height - pad.bottom, class: "crosshair", visibility: "hidden" }, svg);
+    const dot = el("circle", { r: 4, class: "crosshair-dot", visibility: "hidden" }, svg);
+    const hit = el("rect", {
+      x: pad.left, y: pad.top, width: width - pad.left - pad.right, height: height - pad.top - pad.bottom,
+      class: "hit", tabindex: 0, "aria-label": `${options.title}: use the arrow keys to read each point`,
+    }, svg);
+    let focused = 0;
+    const at = (i) => {
+      focused = Math.max(0, Math.min(n - 1, i));
+      const p = points[focused];
+      cross.setAttribute("x1", x(p.x));
+      cross.setAttribute("x2", x(p.x));
+      dot.setAttribute("cx", x(p.x));
+      dot.setAttribute("cy", y(p.mean));
+      cross.setAttribute("visibility", "visible");
+      dot.setAttribute("visibility", "visible");
+      frame.show(x(p.x), y(p.high), [
+        { key: "line", value: options.yFormat(p.mean), label: options.xLabel(p.x) },
+        { value: `${options.yFormat(p.low)} to ${options.yFormat(p.high)}`, label: "90% interval" },
+        ...lines.map((l) => ({ key: `line ${l.key}`, value: options.yFormat(p[l.field]), label: l.label.toLowerCase() })),
+      ]);
+    };
+    const away = () => {
+      cross.setAttribute("visibility", "hidden");
+      dot.setAttribute("visibility", "hidden");
+      frame.hide();
+    };
+    hit.addEventListener("pointermove", (e) => {
+      const box = svg.getBoundingClientRect();
+      const px = e.clientX - box.left;
+      at(Math.round(((px - pad.left) / (width - pad.left - pad.right)) * (n - 1)));
+    });
+    hit.addEventListener("pointerleave", away);
+    hit.addEventListener("focus", () => at(focused));
+    hit.addEventListener("blur", away);
+    hit.addEventListener("keydown", (e) => {
+      const move = { ArrowLeft: -1, ArrowRight: 1, Home: -n, End: n }[e.key];
+      if (move) {
+        e.preventDefault();
+        at(focused + move);
+      }
+    });
+  };
+  return {
+    update(points, markers = []) {
+      data = { points, markers };
+      frame.render();
+      const step = options.tableStep ?? 1;
+      frame.setTable(
+        [options.xHeading ?? "", "Mean", "5%", "95%", ...lines.map((l) => l.label)],
+        points
+          .filter((_, i) => i % step === 0)
+          .map((p) => [
+            options.xLabel(p.x),
+            options.yFormat(p.mean),
+            options.yFormat(p.low),
+            options.yFormat(p.high),
+            ...lines.map((l) => options.yFormat(p[l.field])),
+          ]),
+      );
+    },
+  };
+}
