@@ -684,3 +684,175 @@ fn a_nonfinite_joint_assignment_does_not_hide_a_valid_alternative() {
     let expected = -0.5 * std::f64::consts::TAU.ln() - 2.0_f64.ln();
     assert!((model.log_prob(&state).unwrap() - expected).abs() < 1e-12);
 }
+
+/// The log probability of `model` at `state` and its gradient with respect to `id` against central differences.
+fn joint_gradient_check(model: &Model, state: &mut State, id: NodeId) -> (f64, f64) {
+    let gradient = model.log_prob_gradient(state).unwrap();
+    let g = gradient.get(id).unwrap().as_slice()[0];
+    let base = state.f64(id).unwrap().as_slice()[0];
+    let h = 1e-6;
+    let mut at = |x: f64| {
+        state.set_and_cascade(model.graph(), id, s(x)).unwrap();
+        model.log_prob(state).unwrap()
+    };
+    let fd = (at(base + h) - at(base - h)) / (2.0 * h);
+    at(base);
+    (g, fd)
+}
+
+/// A categorical latent whose probability vector is computed from a continuous latent and has an exact zero entry:
+/// the impossible category adds nothing to the marginal and nothing (in particular no NaN) to its gradient.
+#[test]
+fn a_zero_probability_joint_category_has_a_finite_gradient() {
+    let b = GraphBuilder::new();
+    let w = b.gaussian(0.0, 1.0).label("w");
+    b.set_value(w, s(0.3));
+    let ew = w.exp();
+    let zero = ew * 0.0;
+    let z = b.categorical(&[], &[ew, b.scalar(1.0), zero]);
+    let means = [-1.0, 2.0, 0.5];
+    let mean = b.where_(
+        z.elementwise_eq(b.int_scalar(0)),
+        b.scalar(means[0]),
+        b.where_(
+            z.elementwise_eq(b.int_scalar(1)),
+            b.scalar(means[1]),
+            b.scalar(means[2]),
+        ),
+    );
+    let y = b.gaussian(mean, 1.0);
+    b.observe(y, s(0.4));
+    let (w, z) = (w.id(), z.id());
+    let (graph, state) = b.build().unwrap();
+    let (graph, state, joint) = keanu_graph::marginalize_joint(&graph, &state, &[z]).unwrap();
+    let model = Model::new(graph, &state).unwrap();
+    let mut state = state;
+    let w = joint.node(w).unwrap();
+    for x in [-0.7, 0.3, 1.1] {
+        state.set_and_cascade(model.graph(), w, s(x)).unwrap();
+        let normal = |m: f64| -0.5 * (0.4 - m) * (0.4 - m) - 0.5 * std::f64::consts::TAU.ln();
+        let total = x.exp() + 1.0;
+        let expected = -0.5 * x * x - 0.5 * std::f64::consts::TAU.ln()
+            + log_sum_exp(&[
+                (x.exp() / total).ln() + normal(means[0]),
+                (1.0 / total).ln() + normal(means[1]),
+            ]);
+        assert_close_rel(model.log_prob(&state).unwrap(), expected, 1e-12, "log prob");
+        let (g, fd) = joint_gradient_check(&model, &mut state, w);
+        assert!(g.is_finite(), "gradient {g}");
+        assert_close_rel(g, fd, 1e-6, "gradient");
+        let p = Parameterisation::new(&model, &state).unwrap();
+        let u = p.from_state(&state).unwrap();
+        let hvp = p.hvp(&u, &[1.0], true, &mut state).unwrap();
+        let h = 1e-5;
+        let mut gradient_at = |x: f64| {
+            let (_, g) = p.log_prob_and_gradient(&[x], true, &mut state).unwrap();
+            g.unwrap()[0]
+        };
+        let fd = (gradient_at(u[0] + h) - gradient_at(u[0] - h)) / (2.0 * h);
+        gradient_at(u[0]);
+        assert!(hvp[0].is_finite(), "Hessian-vector product {}", hvp[0]);
+        assert_close_rel(hvp[0], fd, 1e-6, "Hessian-vector product");
+    }
+}
+
+/// A Poisson child whose rate is zero under one assignment while its count is positive: that assignment is
+/// impossible, and the gradient with respect to the rate parameter is the remaining assignment's.
+#[test]
+fn an_impossible_joint_likelihood_has_a_finite_gradient() {
+    let b = GraphBuilder::new();
+    let lambda = b.exponential(1.0).label("lambda");
+    b.set_value(lambda, s(2.0));
+    let z = b.bernoulli(0.3);
+    let rate = lambda * b.where_(z, b.scalar(1.0), b.scalar(0.0));
+    let y = b.poisson(rate);
+    b.observe(y, IntTensor::scalar(3));
+    let (lambda, z) = (lambda.id(), z.id());
+    let (graph, state) = b.build().unwrap();
+    let (graph, state, joint) = keanu_graph::marginalize_joint(&graph, &state, &[z]).unwrap();
+    let model = Model::new(graph, &state).unwrap();
+    let mut state = state;
+    let lambda = joint.node(lambda).unwrap();
+    for x in [0.5, 2.0, 4.5] {
+        state.set_and_cascade(model.graph(), lambda, s(x)).unwrap();
+        assert_eq!(joint.probabilities(&state).unwrap().as_slice(), &[0.0, 1.0]);
+        // -λ (exponential prior) + ln 0.3 + 3 ln λ - λ - ln 3!
+        let expected = -x + 0.3_f64.ln() + 3.0 * x.ln() - x - 6.0_f64.ln();
+        assert_close_rel(model.log_prob(&state).unwrap(), expected, 1e-12, "log prob");
+        let (g, fd) = joint_gradient_check(&model, &mut state, lambda);
+        assert!(g.is_finite(), "gradient {g}");
+        assert_close_rel(g, 3.0 / x - 2.0, 1e-12, "gradient");
+        assert_close_rel(g, fd, 1e-6, "finite difference");
+        // unconstrained u = ln λ: 4u - 2eᵘ + const, whose second derivative is -2λ
+        let p = Parameterisation::new(&model, &state).unwrap();
+        let u = p.from_state(&state).unwrap();
+        let hvp = p.hvp(&u, &[1.0], true, &mut state).unwrap();
+        assert_close_rel(hvp[0], -2.0 * x, 1e-12, "Hessian-vector product");
+    }
+}
+
+/// Three independent categorical latents with ten values each and their own observations: each prior and
+/// likelihood is built once per value of its own latent (30 each), not once per joint assignment (1000 each), and
+/// the marginal is the product of the three one-dimensional marginals.
+#[test]
+fn joint_terms_are_built_once_per_assignment_of_their_own_latents() {
+    use keanu_graph::op::Op;
+
+    let b = GraphBuilder::new();
+    let scale = b.exponential(1.0).label("scale");
+    b.set_value(scale, s(1.5));
+    let weights: Vec<_> = (0..10).map(|k| b.scalar(1.0 + k as f64)).collect();
+    let mut latents = Vec::new();
+    for (j, y) in [3, 7, 12].into_iter().enumerate() {
+        let z = b.categorical(&[], &weights);
+        let rate = scale * (z.to_double() + 1.0) + j as f64;
+        let observed = b.poisson(rate);
+        b.observe(observed, IntTensor::scalar(y));
+        latents.push(z.id());
+    }
+    let scale = scale.id();
+    let (graph, state) = b.build().unwrap();
+    let (reduced, mut new_state, joint) =
+        keanu_graph::marginalize_joint(&graph, &state, &latents).unwrap();
+    assert_eq!(joint.assignments().len(), 1000);
+    let count = |op: &str| {
+        reduced
+            .ids()
+            .filter(|&id| match reduced[id].op() {
+                Op::LogDensity(_) => op == "log_density",
+                Op::Unary(keanu_graph::op::UnaryOp::Ln) => op == "ln",
+                _ => false,
+            })
+            .count()
+    };
+    assert_eq!(count("log_density"), 30);
+    // ten numerators per latent and one shared normalizer each
+    assert_eq!(count("ln"), 33);
+    let model = Model::new(reduced, &new_state).unwrap();
+    let target = joint.node(scale).unwrap();
+    for x in [0.4, 1.5, 3.0] {
+        new_state
+            .set_and_cascade(model.graph(), target, s(x))
+            .unwrap();
+        let ln_poisson = |rate: f64, y: i64| {
+            y as f64 * rate.ln() - rate - (1..=y).map(|k| (k as f64).ln()).sum::<f64>()
+        };
+        let mut expected = -x;
+        for (j, y) in [3, 7, 12].into_iter().enumerate() {
+            let terms: Vec<f64> = (0..10)
+                .map(|k| {
+                    ((1.0 + k as f64) / 55.0).ln() + ln_poisson(x * (k as f64 + 1.0) + j as f64, y)
+                })
+                .collect();
+            expected += log_sum_exp(&terms);
+        }
+        assert_close_rel(
+            model.log_prob(&new_state).unwrap(),
+            expected,
+            1e-11,
+            "log prob",
+        );
+        let (g, fd) = joint_gradient_check(&model, &mut new_state, target);
+        assert_close_rel(g, fd, 1e-6, "gradient");
+    }
+}

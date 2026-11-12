@@ -57,6 +57,20 @@ tag. `RUST_MIGRATION_PLAN.md` describes the rewrite and `book/src/from-java.md` 
 - Added shape-one Pólya–Gamma PG(1, z), with exact sampling, graph derivatives, saved-model support, and a
   Gibbs demo for Bernoulli logistic regression.
 
+### Review fixes for the Stan and PyMC coverage
+
+- Static HMC no longer records draws made while its step size adapts: `sample` discards the `adapt_count` warmup
+  transitions, and `sample_with_statistics` rejects a drop smaller than them.
+- HMC and slice chains pick up latents moved by anything else between steps instead of reverting them. A slice
+  sweep that cannot shrink its bracket reports `AlgorithmError::SamplerStuck`.
+- Poisson-binomial gradients and Hessian-vector products checkpoint the dynamic programme, so memory grows with
+  √n rather than n trials (about 45 MB instead of 4.8 GB for 20,000 trials), with identical results.
+- Joint finite-discrete elimination builds each prior and likelihood once per assignment of the latents it
+  depends on, not once per joint assignment. Impossible assignments (a zero category probability, a zero Poisson
+  rate with a positive count) no longer make gradients NaN.
+- Truncated and censored transformed distributions have exact second derivatives, for Newton and Laplace.
+- A mixture with a NaN component density returns NaN instead of −∞.
+
 ### Closing the feature gaps with PyMC and TensorFlow Probability
 
 Work from `docs/plans/2026-11-04-001-feat-ppl-feature-gaps-plan.md`. Java compatibility is no longer a goal, so

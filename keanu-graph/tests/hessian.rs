@@ -2257,6 +2257,37 @@ fn distribution_cases() -> Vec<DistributionCase> {
                 b.observe(y, v(&[value, data]));
             }
         }),
+        case("truncated and censored transformed Gaussians", |b| {
+            let params = [scalar_latent(b, 0.3).id(), positive(b, 0.8).id()];
+            // each bijector with a latent value and latent bounds inside its image, and fixed censoring bounds
+            for (bijector, lower, value, upper) in [
+                (ElementBijector::LowerBound(1.0), 1.4, 1.9, 3.0),
+                (ElementBijector::UpperBound(-0.5), -2.5, -1.2, -0.8),
+                (ElementBijector::Interval(-1.0, 2.0), -0.6, 0.4, 1.5),
+                (
+                    ElementBijector::Affine {
+                        loc: 0.5,
+                        scale: -2.0,
+                    },
+                    -1.0,
+                    0.2,
+                    1.8,
+                ),
+            ] {
+                let kind = K::Transformed(Arc::new(K::Gaussian), bijector);
+                let (l, u) = bounds(b, lower, upper - lower);
+                let x: DoubleVar<'_> = b.truncated(kind.clone(), &params, l, u);
+                b.set_value(x, DoubleTensor::scalar(value));
+                // one bound beyond the image on each side
+                let above: DoubleVar<'_> = b.truncated(kind.clone(), &params, l, f64::INFINITY);
+                b.observe(above, DoubleTensor::scalar(value));
+                let below: DoubleVar<'_> = b.truncated(kind.clone(), &params, f64::NEG_INFINITY, u);
+                b.observe(below, DoubleTensor::scalar(value));
+                let fixed = b.constant(v(&[lower, lower, lower]));
+                let c: DoubleVar<'_> = b.censored(kind, &params, fixed, upper);
+                b.observe(c, v(&[lower, value, upper]));
+            }
+        }),
         case("a mixture of transformed gammas", |b| {
             let params = [positive(b, 0.9).id(), positive_vector(b, &[1.5, 4.0]).id()];
             let weights = latent_vector(b, &[0.3, -0.2]).softmax(0);

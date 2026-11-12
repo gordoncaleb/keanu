@@ -921,7 +921,10 @@ pub(crate) fn sample_censored(
 ///
 /// # Errors
 ///
-/// [`GraphError::NoSecondOrderRule`] naming the base if it has no log density or log CDF rule.
+/// [`GraphError::NoSecondOrderRule`] naming the base if it has no log density or log CDF rule. A transformed base
+/// has the rules of the distribution it transforms (see [`transformed::wrapped_second_order`]).
+///
+/// [`transformed::wrapped_second_order`]: super::transformed::wrapped_second_order
 pub(crate) fn second_order(
     wrapper: Wrapper,
     base: &DistributionKind,
@@ -931,6 +934,11 @@ pub(crate) fn second_order(
     b: usize,
     shape: &[usize],
 ) -> Result<Elementwise> {
+    if matches!(base, DistributionKind::Transformed(..)) {
+        return super::transformed::wrapped_second_order(
+            wrapper, base, value, parameters, tangents, b, shape,
+        );
+    }
     let bounds = Bounds::unordered(base, parameters)?;
     let m = bounds.base.len();
     let (lower_index, upper_index) = (m + 1, m + 2);

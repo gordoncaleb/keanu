@@ -37,6 +37,9 @@ pub enum AlgorithmError {
     IndefiniteHessian(String),
     /// Reading or writing a file or stream failed: the message says what and why.
     Io(String),
+    /// A sampler could not complete a transition from a valid point, for example because of numerical problems in
+    /// the density: the message says where.
+    SamplerStuck(String),
 }
 
 impl fmt::Display for AlgorithmError {
@@ -73,6 +76,7 @@ impl fmt::Display for AlgorithmError {
             ),
             Self::IndefiniteHessian(message) => f.write_str(message),
             Self::Io(message) => write!(f, "input/output error: {message}"),
+            Self::SamplerStuck(message) => write!(f, "sampling failed: {message}"),
         }
     }
 }

@@ -1,10 +1,11 @@
 //! Coordinate-wise slice sampling with Neal's stepping-out and shrinkage procedure.
 
-use super::{SamplingAlgorithm, SamplingOptions, continuous_target, generate};
+use super::{SamplingAlgorithm, SamplingOptions, continuous_target, generate, latent_values};
 use crate::error::{AlgorithmError, Result};
 use crate::samples::NetworkSamples;
 use keanu_distributions::KeanuRng;
 use keanu_graph::{Graph, Model, NodeId, Parameterisation, Space, State};
+use keanu_tensor::DoubleTensor;
 
 /// Gradient-free slice sampling. Each transition sweeps all continuous coordinates.
 #[derive(Debug, Clone, Copy)]
@@ -69,8 +70,10 @@ impl Slice {
             return Err(AlgorithmError::ImpossibleStart);
         }
         let sample_log_prob = log_prob - param.log_det_jacobian(&position)?;
+        let left = latent_values(&param, state);
         Ok(SliceSampler {
             config: *self,
+            left,
             param,
             position,
             log_prob,
@@ -103,6 +106,8 @@ impl Slice {
 #[derive(Debug)]
 pub struct SliceSampler<'m> {
     config: Slice,
+    /// The latent values this chain left in the state after its last sweep.
+    left: Vec<Option<DoubleTensor>>,
     param: Parameterisation<'m>,
     position: Vec<f64>,
     log_prob: f64,
@@ -115,6 +120,23 @@ impl SliceSampler<'_> {
     /// The number of joint density evaluations, including the initial point.
     pub fn evaluations(&self) -> usize {
         self.evaluations
+    }
+
+    /// Adopts the state's position if something else moved the latents since the last sweep.
+    fn resync(&mut self, state: &mut State) -> Result<()> {
+        if latent_values(&self.param, state) == self.left {
+            return Ok(());
+        }
+        let position = self.param.from_state(state)?;
+        self.evaluations += 1;
+        let log_prob = self.param.log_prob(&position, true, state)?;
+        if !log_prob.is_finite() {
+            return Err(AlgorithmError::ImpossibleStart);
+        }
+        self.sample_log_prob = log_prob - self.param.log_det_jacobian(&position)?;
+        self.position = position;
+        self.log_prob = log_prob;
+        Ok(())
     }
 
     fn sweep(&mut self, state: &mut State, rng: &mut KeanuRng) -> Result<(Vec<f64>, f64, f64)> {
@@ -166,7 +188,7 @@ impl SliceSampler<'_> {
                 }
             }
             log_prob = accepted.ok_or_else(|| {
-                AlgorithmError::InvalidSetting(format!(
+                AlgorithmError::SamplerStuck(format!(
                     "slice sampling could not shrink a finite bracket in coordinate {i}; check the interval width"
                 ))
             })?;
@@ -178,7 +200,8 @@ impl SliceSampler<'_> {
 
 impl SamplingAlgorithm for SliceSampler<'_> {
     fn step(&mut self, state: &mut State, rng: &mut KeanuRng) -> Result<()> {
-        match self.sweep(state, rng) {
+        self.resync(state)?;
+        let result = match self.sweep(state, rng) {
             Ok((position, log_prob, sample_log_prob)) => {
                 self.position = position;
                 self.log_prob = log_prob;
@@ -189,7 +212,9 @@ impl SamplingAlgorithm for SliceSampler<'_> {
                 self.param.to_state(&self.position, state)?;
                 Err(error)
             }
-        }
+        };
+        self.left = latent_values(&self.param, state);
+        result
     }
 
     fn record(&self, state: &State, samples: &mut NetworkSamples) -> Result<()> {

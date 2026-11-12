@@ -5,7 +5,7 @@ use super::{
     accept_with_log_probability, log_prob_and_gradient_at,
 };
 use crate::error::{AlgorithmError, Result};
-use crate::mcmc::{SamplingAlgorithm, SamplingOptions, continuous_target, generate};
+use crate::mcmc::{SamplingAlgorithm, SamplingOptions, continuous_target, generate, latent_values};
 use crate::samples::NetworkSamples;
 use crate::support::{block_shapes, concat, split};
 use keanu_distributions::KeanuRng;
@@ -107,8 +107,10 @@ impl Hmc {
             &potential,
         )?;
         let sample_log_prob = log_prob - param.log_det_jacobian(&z)?;
+        let left = latent_values(&param, state);
         Ok(HmcSampler {
             config: *self,
+            left,
             param,
             shapes,
             potential,
@@ -124,7 +126,8 @@ impl Hmc {
         })
     }
 
-    /// Records each transition. Use `sample_with_statistics` to discard warmup.
+    /// Runs `count` transitions, discarding the first [`adapt_count`](Self::adapt_count) (warmup, while the step size
+    /// still changes) and recording the rest.
     pub fn sample(
         &self,
         model: &Model,
@@ -134,11 +137,20 @@ impl Hmc {
         rng: &mut KeanuRng,
     ) -> Result<NetworkSamples> {
         Ok(self
-            .sample_with_statistics(model, state, nodes, count, SamplingOptions::default(), rng)?
+            .sample_with_statistics(
+                model,
+                state,
+                nodes,
+                count,
+                SamplingOptions::default().with_drop(self.adapt_count),
+                rng,
+            )?
             .0)
     }
 
-    /// Runs a chain and returns statistics for all transitions, including warmup.
+    /// Runs a chain and returns statistics for all transitions, including warmup. `options.drop` must cover the
+    /// [`adapt_count`](Self::adapt_count) warmup transitions: draws made while the step size still changes do not come
+    /// from a fixed transition kernel.
     pub fn sample_with_statistics(
         &self,
         model: &Model,
@@ -148,6 +160,12 @@ impl Hmc {
         options: SamplingOptions,
         rng: &mut KeanuRng,
     ) -> Result<(NetworkSamples, HmcStatistics)> {
+        if options.drop < self.adapt_count {
+            return Err(AlgorithmError::InvalidSetting(format!(
+                "HMC adapts its step size for {} transitions, so drop at least that many (drop is {})",
+                self.adapt_count, options.drop
+            )));
+        }
         let mut sampler = self.sampler(model, state, nodes, rng)?;
         let samples = generate(&mut sampler, state, count, options, rng)?;
         Ok((samples, sampler.statistics))
@@ -174,6 +192,8 @@ pub struct HmcStatistics {
 #[derive(Debug)]
 pub struct HmcSampler<'m> {
     config: Hmc,
+    /// The latent values this chain left in the state after its last transition.
+    left: Vec<Option<keanu_tensor::DoubleTensor>>,
     param: Parameterisation<'m>,
     shapes: Vec<Vec<usize>>,
     potential: PotentialState,
@@ -189,10 +209,53 @@ impl HmcSampler<'_> {
     pub fn statistics(&self) -> &HmcStatistics {
         &self.statistics
     }
+
+    /// Adopts the state's position if something else moved the latents since the last transition.
+    fn resync(&mut self, state: &mut State) -> Result<()> {
+        if latent_values(&self.param, state) == self.left {
+            return Ok(());
+        }
+        let z = self.param.from_state(state)?;
+        self.statistics.gradient_evaluations += 1;
+        let (log_prob, gradient) = log_prob_and_gradient_at(&self.param, &self.shapes, state, &z)?;
+        if !log_prob.is_finite() {
+            return Err(AlgorithmError::ImpossibleStart);
+        }
+        self.current = LeapfrogState::new(
+            Rc::new(split(&z, &self.shapes)),
+            self.current.momentum.clone(),
+            Rc::new(gradient),
+            log_prob,
+            &self.potential,
+        )?;
+        self.sample_log_prob = log_prob - self.param.log_det_jacobian(&z)?;
+        Ok(())
+    }
 }
 
 impl SamplingAlgorithm for HmcSampler<'_> {
     fn step(&mut self, state: &mut State, rng: &mut KeanuRng) -> Result<()> {
+        self.resync(state)?;
+        let result = self.transition(state, rng);
+        self.left = latent_values(&self.param, state);
+        result
+    }
+
+    fn record(&self, state: &State, samples: &mut NetworkSamples) -> Result<()> {
+        samples.record(state, self.sample_log_prob)
+    }
+
+    fn graph(&self) -> &Graph {
+        self.param.model().graph()
+    }
+
+    fn sampled_nodes(&self) -> &[NodeId] {
+        &self.nodes
+    }
+}
+
+impl HmcSampler<'_> {
+    fn transition(&mut self, state: &mut State, rng: &mut KeanuRng) -> Result<()> {
         let mut point = LeapfrogState::new(
             Rc::clone(&self.current.position),
             self.potential.random_momentum(rng)?,
@@ -257,17 +320,5 @@ impl SamplingAlgorithm for HmcSampler<'_> {
         }
         self.statistics.step_size = self.step_size.step_size;
         Ok(())
-    }
-
-    fn record(&self, state: &State, samples: &mut NetworkSamples) -> Result<()> {
-        samples.record(state, self.sample_log_prob)
-    }
-
-    fn graph(&self) -> &Graph {
-        self.param.model().graph()
-    }
-
-    fn sampled_nodes(&self) -> &[NodeId] {
-        &self.nodes
     }
 }

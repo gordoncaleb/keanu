@@ -19,6 +19,7 @@ use crate::error::{AlgorithmError, Result};
 use crate::samples::NetworkSamples;
 use keanu_distributions::KeanuRng;
 use keanu_graph::{Graph, Model, NodeId, Parameterisation, Space, State};
+use keanu_tensor::DoubleTensor;
 
 /// A chain that can be advanced one step at a time.
 pub trait SamplingAlgorithm {
@@ -107,6 +108,19 @@ pub fn generate(
         }
     }
     Ok(samples)
+}
+
+/// The values of a parameterisation's latents in a state. A sampler that caches its position compares a snapshot
+/// taken after its last step with the state at the start of the next, to notice moves made by anything else.
+pub(crate) fn latent_values(
+    param: &Parameterisation<'_>,
+    state: &State,
+) -> Vec<Option<DoubleTensor>> {
+    param
+        .latents()
+        .iter()
+        .map(|&id| state.f64(id).cloned())
+        .collect()
 }
 
 /// True for a log probability that means "impossible": not finite (-∞, NaN, or a density of +∞ at a boundary of

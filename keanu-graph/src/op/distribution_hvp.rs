@@ -657,8 +657,6 @@ fn zero_sum_normal_hvp(
     ))
 }
 
-/// The multinomial in its probabilities, over the last axis: the gradient is x_i/p_i − Σx/Σp, so the product is
-/// −x_i/p_i² ṗ_i + Σx/(Σp)² Σṗ (with 0/p taken as 0, as in first order).
 /// Differentiates x − n p along logits: −n p ⊙ (t − Σ p t).
 fn multinomial_logit_hvp(
     shape: &[usize],
@@ -689,6 +687,8 @@ fn multinomial_logit_hvp(
     ))
 }
 
+/// The multinomial in its probabilities, over the last axis: the gradient is x_i/p_i − Σx/Σp, so the product is
+/// −x_i/p_i² ṗ_i + Σx/(Σp)² Σṗ (with 0/p taken as 0, as in first order).
 fn multinomial_hvp(
     x: &DoubleTensor,
     p: &DoubleTensor,

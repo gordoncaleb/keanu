@@ -117,7 +117,16 @@ pub(crate) fn second_order_sweep(
         let out = value(state, id)?;
         let parent_tangents: SmallVec<[Option<&DoubleTensor>; 4]> =
             node.parents.iter().map(|&p| tangent_of(p)).collect();
+        // A masked-out impossible branch contributes zero to every parent, as in the first-order sweep (see
+        // `masked_out`): its local derivatives are infinite, and 0 × ∞ is NaN.
+        let zeros = |batch: usize| {
+            node.parents
+                .iter()
+                .map(|&p| Some(DoubleTensor::zeros(&batched_shape(batch, &graph[p].shape))))
+                .collect::<Vec<_>>()
+        };
         let curvature = match &cotangent {
+            Some(g) if masked_out(g, out) => None,
             Some(g) if parent_tangents.iter().any(Option::is_some) => Some(vjp_tangent(
                 graph,
                 id,
@@ -131,10 +140,16 @@ pub(crate) fn second_order_sweep(
             _ => None,
         };
         let first = cotangent
-            .map(|g| vjp(graph, id, &parent_values, out, g, 1))
+            .map(|g| match masked_out(&g, out) {
+                true => Ok(zeros(1)),
+                false => vjp(graph, id, &parent_values, out, g, 1),
+            })
             .transpose()?;
         let second = derivative
-            .map(|d| vjp(graph, id, &parent_values, out, d, b))
+            .map(|d| match masked_out(&d, out) {
+                true => Ok(zeros(b)),
+                false => vjp(graph, id, &parent_values, out, d, b),
+            })
             .transpose()?;
         let (mut first, mut second, mut curvature) = (
             first.map(Vec::into_iter),

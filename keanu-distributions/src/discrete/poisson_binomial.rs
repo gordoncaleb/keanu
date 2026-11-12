@@ -179,11 +179,44 @@ impl CountEvent {
     }
 }
 
+/// Reusable dynamic-programming buffers for the gradient sweep.
+///
+/// The reverse sweep needs the prefix polynomial before every trial. Storing all of them takes
+/// O(n·w) memory for DP width w, so the forward pass keeps only a checkpoint every `block` trials and
+/// the reverse sweep replays one block at a time from its checkpoint. With `block ≈ √n` this holds
+/// O(√n·w) coefficients at the cost of one extra forward pass. Replaying `advance` from a stored row
+/// is deterministic, so the result is identical to keeping every prefix. The buffers are reused
+/// across batch rows, along with the normalizer gradient of a truncated count.
+#[derive(Default)]
+struct Workspace {
+    checkpoints: Vec<Coefficient>,
+    block: Vec<Coefficient>,
+    normalizer: Vec<f64>,
+}
+
+/// The checkpoint spacing for `n` trials: ⌈√n⌉, so checkpoints and one replayed block are balanced.
+fn checkpoint_interval(n: usize) -> usize {
+    n.isqrt() + usize::from(n.isqrt().pow(2) < n)
+}
+
 fn row_log_prob(
     p: &[f64],
     event: CountEvent,
     gradient: Option<&mut [f64]>,
     tangent: Option<&[f64]>,
+    workspace: &mut Workspace,
+) -> f64 {
+    let interval = checkpoint_interval(p.len());
+    row_log_prob_with_interval(p, event, gradient, tangent, workspace, interval)
+}
+
+fn row_log_prob_with_interval(
+    p: &[f64],
+    event: CountEvent,
+    gradient: Option<&mut [f64]>,
+    tangent: Option<&[f64]>,
+    workspace: &mut Workspace,
+    interval: usize,
 ) -> f64 {
     if p.iter().any(|p| !(0.0..=1.0).contains(p)) {
         return f64::NAN;
@@ -195,13 +228,20 @@ fn row_log_prob(
         return 0.0;
     }
     let width = upper + 1;
+    let interval = interval.max(1);
+    let step = |row: &mut [Coefficient], i: usize| {
+        advance(row, p[i], tangent.map(|t| t[i]), failures);
+    };
     let mut row = initial_row(width);
-    let mut prefixes = Vec::new();
-    for (i, &prob) in p.iter().enumerate() {
-        if gradient.is_some() {
-            prefixes.extend_from_slice(&row);
+    let Workspace {
+        checkpoints, block, ..
+    } = workspace;
+    checkpoints.clear();
+    for i in 0..p.len() {
+        if gradient.is_some() && i % interval == 0 {
+            checkpoints.extend_from_slice(&row);
         }
-        advance(&mut row, prob, tangent.map(|t| t[i]), failures);
+        step(&mut row, i);
     }
     let directional = tangent.is_some();
     let total = row[lower..=upper]
@@ -212,30 +252,42 @@ fn row_log_prob(
     if let Some(gradient) = gradient.filter(|_| total.log_mass.is_finite()) {
         let total_score = total.dot.ratio(total.log_mass);
         let mut suffix = initial_row(width);
-        for (i, out) in gradient.iter_mut().enumerate().rev() {
-            let prefix = &prefixes[i * width..(i + 1) * width];
-            let a = if lower == 0 {
-                Coefficient::ZERO
-            } else {
-                convolution(prefix, &suffix, lower - 1, directional)
-            };
-            let b = convolution(prefix, &suffix, upper, directional);
-            // The sum of derivatives telescopes to the two omitted-trial boundary coefficients,
-            // even at p = 0 or 1.
-            let score = Signed::difference(a.log_mass, b.log_mass).ratio(total.log_mass);
-            let value = if directional {
-                let change = a.dot.add(b.dot.neg()).ratio(total.log_mass);
-                change
-                    - if total_score == 0.0 {
-                        0.0
-                    } else {
-                        score * total_score
-                    }
-            } else {
-                score
-            };
-            *out = if failures { -value } else { value };
-            advance(&mut suffix, p[i], tangent.map(|t| t[i]), failures);
+        // Walk the blocks backwards, replaying each block's prefixes from its checkpoint.
+        for (index, checkpoint) in checkpoints.chunks_exact(width).enumerate().rev() {
+            let start = index * interval;
+            let end = (start + interval).min(p.len());
+            block.clear();
+            block.extend_from_slice(checkpoint);
+            for i in start..end - 1 {
+                let previous = block.len() - width;
+                block.extend_from_within(previous..);
+                step(&mut block[previous + width..], i);
+            }
+            for i in (start..end).rev() {
+                let prefix = &block[(i - start) * width..(i - start + 1) * width];
+                let a = if lower == 0 {
+                    Coefficient::ZERO
+                } else {
+                    convolution(prefix, &suffix, lower - 1, directional)
+                };
+                let b = convolution(prefix, &suffix, upper, directional);
+                // The sum of derivatives telescopes to the two omitted-trial boundary coefficients,
+                // even at p = 0 or 1.
+                let score = Signed::difference(a.log_mass, b.log_mass).ratio(total.log_mass);
+                let value = if directional {
+                    let change = a.dot.add(b.dot.neg()).ratio(total.log_mass);
+                    change
+                        - if total_score == 0.0 {
+                            0.0
+                        } else {
+                            score * total_score
+                        }
+                } else {
+                    score
+                };
+                gradient[i] = if failures { -value } else { value };
+                step(&mut suffix, i);
+            }
         }
     }
     total.log_mass.min(0.0)
@@ -292,7 +344,7 @@ fn bounded_row(
     censored: bool,
     mut gradient: Option<&mut [f64]>,
     tangent: Option<&[f64]>,
-    scratch: &mut [f64],
+    workspace: &mut Workspace,
 ) -> f64 {
     let (lo, hi) = (lower as i64, upper as i64);
     if lower.partial_cmp(&upper) != Some(std::cmp::Ordering::Less) || count < lo || count > hi {
@@ -309,29 +361,33 @@ fn bounded_row(
         } else {
             CountEvent::Mass(count)
         };
-        return row_log_prob(p, event, gradient, tangent);
+        return row_log_prob(p, event, gradient, tangent, workspace);
     }
     let event = CountEvent::Mass(count);
     if lo.max(0) == hi.min(p.len() as i64) {
-        let mass = row_log_prob(p, event, None, None);
+        let mass = row_log_prob(p, event, None, None, workspace);
         return if mass.is_finite() { 0.0 } else { mass };
     }
-    let mass = row_log_prob(p, event, gradient.as_deref_mut(), tangent);
+    let mass = row_log_prob(p, event, gradient.as_deref_mut(), tangent, workspace);
     if !mass.is_finite() {
         return mass;
     }
-    scratch.fill(0.0);
+    let mut scratch = std::mem::take(&mut workspace.normalizer);
+    scratch.clear();
+    scratch.resize(p.len(), 0.0);
     let normalizer = row_log_prob(
         p,
         CountEvent::Between(lo, hi),
-        gradient.is_some().then_some(&mut *scratch),
+        gradient.is_some().then_some(&mut scratch[..]),
         tangent,
+        workspace,
     );
     if let Some(gradient) = gradient {
         for (g, &s) in gradient.iter_mut().zip(scratch.iter()) {
             *g -= s;
         }
     }
+    workspace.normalizer = scratch;
     (mass - normalizer).min(0.0)
 }
 
@@ -417,11 +473,7 @@ impl<'a> PoissonBinomial<'a> {
         let n = p.shape()[p.rank() - 1];
         let tangent = tangent.map(|t| t.broadcast_to(p.shape())).transpose()?;
         let mut gradient = want_gradient.then(|| vec![0.0; p.len()]);
-        let mut scratch = if want_gradient && bounds.is_some_and(|b| !b.censored) {
-            vec![0.0; n]
-        } else {
-            Vec::new()
-        };
+        let mut workspace = Workspace::default();
         let values = x
             .as_slice()
             .iter()
@@ -439,10 +491,10 @@ impl<'a> PoissonBinomial<'a> {
                         bounds.censored,
                         g,
                         t,
-                        &mut scratch,
+                        &mut workspace,
                     )
                 } else {
-                    row_log_prob(p, event(count), g, t)
+                    row_log_prob(p, event(count), g, t, &mut workspace)
                 }
             })
             .collect();
@@ -660,5 +712,90 @@ impl BoundedPoissonBinomial<'_, '_> {
             })
             .collect::<Result<Vec<_>>>()?;
         Ok(IntTensor::new(&shape, counts)?)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn gradient(
+        p: &[f64],
+        event: CountEvent,
+        tangent: Option<&[f64]>,
+        interval: usize,
+    ) -> Vec<f64> {
+        let mut out = vec![0.0; p.len()];
+        let mut workspace = Workspace::default();
+        row_log_prob_with_interval(p, event, Some(&mut out), tangent, &mut workspace, interval);
+        out
+    }
+
+    #[test]
+    fn checkpoint_interval_is_ceiling_square_root() {
+        let expected = [
+            (1, 1),
+            (2, 2),
+            (4, 2),
+            (5, 3),
+            (9, 3),
+            (10, 4),
+            (20_000, 142),
+        ];
+        for (n, interval) in expected {
+            assert_eq!(checkpoint_interval(n), interval, "n = {n}");
+        }
+    }
+
+    #[test]
+    fn checkpointed_sweep_matches_storing_every_prefix() {
+        let n = 23;
+        let p: Vec<f64> = (0..n).map(|i| ((i * 7 + 3) % 19) as f64 / 19.0).collect();
+        let tangent: Vec<f64> = (0..n).map(|i| ((i * 5) % 11) as f64 / 5.0 - 1.0).collect();
+        let events = [
+            CountEvent::Mass(9),
+            CountEvent::Mass(17),
+            CountEvent::AtMost(6),
+            CountEvent::Above(14),
+            CountEvent::Between(4, 12),
+        ];
+        // Interval one stores every prefix, as the sweep did before checkpointing; the others cover a
+        // short final block, an exact multiple of n, a single block and an interval beyond n.
+        for event in events {
+            for t in [None, Some(tangent.as_slice())] {
+                let reference = gradient(&p, event, t, 1);
+                for interval in [2, 3, 5, 7, 22, 23, 40, checkpoint_interval(n)] {
+                    assert_eq!(
+                        gradient(&p, event, t, interval),
+                        reference,
+                        "interval {interval}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn workspace_reuse_across_rows_of_different_width() {
+        let mut workspace = Workspace::default();
+        let long: Vec<f64> = (0..50).map(|i| (i as f64 + 0.5) / 50.0).collect();
+        let short = [0.2, 0.7, 0.4];
+        let mut first = vec![0.0; long.len()];
+        row_log_prob(
+            &long,
+            CountEvent::Mass(25),
+            Some(&mut first),
+            None,
+            &mut workspace,
+        );
+        let mut reused = vec![0.0; short.len()];
+        row_log_prob(
+            &short,
+            CountEvent::Mass(1),
+            Some(&mut reused),
+            None,
+            &mut workspace,
+        );
+        assert_eq!(reused, gradient(&short, CountEvent::Mass(1), None, 1));
     }
 }

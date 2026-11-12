@@ -409,6 +409,180 @@ pub(crate) fn second_order(
     })
 }
 
+/// The base's point for a bound `x` of a truncated or censored transformed kind: g(x) inside the image, and the
+/// matching end of the base's real line (a constant) beyond it.
+fn bound_point(bijector: ElementBijector, x: f64) -> (f64, Option<Inverse>) {
+    if let Some(inverse) = bijector.inverse(x) {
+        return (inverse.y, Some(inverse));
+    }
+    if x.is_nan() {
+        return (f64::NAN, None);
+    }
+    let below = match bijector {
+        ElementBijector::LowerBound(a) | ElementBijector::Interval(a, _) => x <= a,
+        ElementBijector::UpperBound(b) => x < b,
+        ElementBijector::Affine { loc, .. } => x < loc,
+    };
+    let y = if below == bijector.is_increasing() {
+        f64::NEG_INFINITY
+    } else {
+        f64::INFINITY
+    };
+    (y, None)
+}
+
+/// The second-order parts of a truncated or censored transformed kind (`wrapper` around `base` pushed through
+/// `bijector`) at `value` broadcast to `shape`, along the inputs' `tangents`: the value, the base parameters, then
+/// the lower and upper bound.
+///
+/// The value and both bounds map through g to the wrapper of the base (with the bounds swapped for a decreasing
+/// map), whose second-order parts give those at x by the chain rule: for each point-like input v with u = g(v),
+/// (H_v t)_v = g′(v) (H_u (g′ ⊙ t))_u + ∂_u F g″(v) t_v. Where the value has a density, its Jacobian log g′(x)
+/// adds (g‴g′ − g″²)/g′² ẋ. Values, gradients and the zero parts outside the image come from first order.
+pub(crate) fn wrapped_second_order(
+    wrapper: wrappers::Wrapper,
+    transformed: &DistributionKind,
+    value: &Value,
+    parameters: &[&Value],
+    tangents: &[Option<Vec<f64>>],
+    b: usize,
+    shape: &[usize],
+) -> Result<Elementwise> {
+    let DistributionKind::Transformed(base, bijector) = transformed else {
+        return Err(crate::error::GraphError::NoSecondOrderRule(format!(
+            "the {} distribution is not transformed",
+            transformed.name()
+        )));
+    };
+    let bijector = *bijector;
+    let (base_parameters, own) = wrappers::split(parameters, 2)?;
+    let m = base_parameters.len();
+    let (lower_index, upper_index) = (m + 1, m + 2);
+    let len: usize = shape.iter().product();
+    let increasing = bijector.is_increasing();
+    // the inputs in the base's coordinates: the image of x, then of each bound
+    // the base's points, then g′, g″ and g‴ broadcast to `shape`
+    type Mapped = (Value, Vec<f64>, Vec<f64>, Vec<f64>);
+    let map = |x: &DoubleTensor| -> Result<Mapped> {
+        let mapped: Vec<(f64, Option<Inverse>)> = x
+            .as_slice()
+            .iter()
+            .map(|&x| bound_point(bijector, x))
+            .collect();
+        let field = |f: &dyn Fn(&Option<Inverse>) -> f64| -> Result<Vec<f64>> {
+            broadcast(
+                &DoubleTensor::new(x.shape(), mapped.iter().map(|(_, i)| f(i)).collect())?,
+                shape,
+            )
+        };
+        let d1 = field(&|i| i.map_or(0.0, |i| i.d1))?;
+        let d2 = field(&|i| i.map_or(0.0, |i| i.d2))?;
+        let d3 = field(&|i| i.map_or(0.0, |i| i.d3))?;
+        let y = Value::F64(DoubleTensor::new(
+            x.shape(),
+            mapped.iter().map(|(y, _)| *y).collect(),
+        )?);
+        Ok((y, d1, d2, d3))
+    };
+    let x = value.f64()?;
+    let (y, x_d1, x_d2, x_d3) = map(x)?;
+    let (lower, lower_d1, lower_d2, _) = map(own[0].f64()?)?;
+    let (upper, upper_d1, upper_d2, _) = map(own[1].f64()?)?;
+    // a decreasing map takes the lower bound to the base's upper bound
+    let (base_lower, base_upper) = if increasing {
+        (&lower, &upper)
+    } else {
+        (&upper, &lower)
+    };
+    let (base_lower_index, base_upper_index) = if increasing {
+        (lower_index, upper_index)
+    } else {
+        (upper_index, lower_index)
+    };
+    let mut mapped_parameters: Vec<&Value> = base_parameters.to_vec();
+    mapped_parameters.push(base_lower);
+    mapped_parameters.push(base_upper);
+    // each point-like input: its index here, its index in the base's wrapper and g′ and g″ there
+    let points = [
+        (0, 0, &x_d1, &x_d2),
+        (lower_index, base_lower_index, &lower_d1, &lower_d2),
+        (upper_index, base_upper_index, &upper_d1, &upper_d2),
+    ];
+    let mut base_tangents = tangents.to_vec();
+    for &(here, there, d1, _) in &points {
+        base_tangents[there] = tangents[here]
+            .as_ref()
+            .map(|t| t.iter().enumerate().map(|(j, t)| t * d1[j % len]).collect());
+    }
+    let parts = wrappers::second_order(
+        wrapper,
+        base,
+        &y,
+        &mapped_parameters,
+        &base_tangents,
+        b,
+        shape,
+    )?;
+    let (values, first) = wrappers::elementwise(wrapper, transformed, value, parameters, true)?;
+    let values = distribution_hvp::spread(&values, shape)?;
+    let (x_gradient, parameter_gradients) =
+        first.unwrap_or_else(|| (None, smallvec::smallvec![None; parameters.len()]));
+    let gradients: Vec<Option<Vec<f64>>> = std::iter::once(x_gradient)
+        .chain(parameter_gradients)
+        .map(|g| g.map(|g| distribution_hvp::spread(&g, shape)).transpose())
+        .collect::<Result<_>>()?;
+    let mut hvps = gradients
+        .iter()
+        .map(|g| g.as_ref().map(|_| vec![0.0; b * len]))
+        .collect::<Vec<_>>();
+    for (out, h) in hvps.iter_mut().zip(&parts.hvps).take(m + 1).skip(1) {
+        if let (Some(out), Some(h)) = (out.as_mut(), h.as_ref()) {
+            out.copy_from_slice(h);
+        }
+    }
+    for &(here, there, d1, d2) in &points {
+        let (Some(out), Some(h)) = (hvps[here].as_mut(), parts.hvps[there].as_ref()) else {
+            continue;
+        };
+        let base_gradient = parts.gradients[there].as_ref();
+        let tangent = tangents[here].as_ref();
+        for (j, out) in out.iter_mut().enumerate() {
+            let i = j % len;
+            let curvature = base_gradient.map_or(0.0, |g| g[i] * d2[i]);
+            *out = d1[i] * h[j] + tangent.map_or(0.0, |t| curvature * t[j]);
+        }
+    }
+    // the Jacobian of a value with a density
+    if let (Some(out), Some(t)) = (hvps[0].as_mut(), tangents[0].as_ref()) {
+        let lower = broadcast(own[0].f64()?, shape)?;
+        let upper = broadcast(own[1].f64()?, shape)?;
+        let xs = broadcast(x, shape)?;
+        for (j, out) in out.iter_mut().enumerate() {
+            let i = j % len;
+            let mass =
+                wrapper == wrappers::Wrapper::Censored && (xs[i] == lower[i] || xs[i] == upper[i]);
+            if !values[i].is_finite() || x_d1[i] == 0.0 || mass {
+                continue;
+            }
+            let (d1, d2, d3) = (x_d1[i], x_d2[i], x_d3[i]);
+            *out += (d3 * d1 - d2 * d2) / (d1 * d1) * t[j];
+        }
+    }
+    // zero where the value is impossible
+    for out in hvps.iter_mut().flatten() {
+        for (j, out) in out.iter_mut().enumerate() {
+            if !values[j % len].is_finite() {
+                *out = 0.0;
+            }
+        }
+    }
+    Ok(Elementwise {
+        values,
+        gradients,
+        hvps,
+    })
+}
+
 /// The support: the image of the base's support under the forward map.
 pub(crate) fn support(
     base: &DistributionKind,

@@ -293,3 +293,54 @@ fn impossible_population_proposals_leave_walkers_and_recorded_density_at_the_old
         assert_eq!(state.f64(id).unwrap().to_scalar().unwrap(), 0.25);
     }
 }
+
+#[test]
+fn hmc_refuses_to_record_adaptation_draws() {
+    let (model, state, ids) = correlated();
+    let hmc = Hmc::default().with_adapt_count(50);
+    let error = hmc
+        .sample_with_statistics(
+            &model,
+            &mut state.clone(),
+            &ids,
+            200,
+            SamplingOptions::default().with_drop(49),
+            &mut rng(30),
+        )
+        .unwrap_err();
+    assert!(matches!(error, AlgorithmError::InvalidSetting(_)));
+    let draws = hmc
+        .sample(&model, &mut state.clone(), &ids, 200, &mut rng(30))
+        .unwrap();
+    assert_eq!(series(&draws, ids[0]).len(), 150);
+}
+
+#[test]
+fn hmc_and_slice_adopt_moves_made_by_something_else() {
+    let (model, state, ids) = correlated();
+    let moved = DoubleTensor::scalar(2.0);
+
+    let mut hmc_state = state.clone();
+    let mut random = rng(31);
+    let mut hmc = Hmc::default()
+        .with_step_size(1e6)
+        .sampler(&model, &mut hmc_state, &ids, &mut random)
+        .unwrap();
+    hmc_state.set(model.graph(), ids[0], moved.clone()).unwrap();
+    hmc.step(&mut hmc_state, &mut random).unwrap();
+    // The huge step diverges, so the chain stays where it is: at the moved point, not its cached start.
+    assert_eq!(hmc.statistics().accepted, 0);
+    assert_eq!(hmc_state.f64(ids[0]).unwrap(), &moved);
+
+    // A tiny bracket keeps the slice sampler near wherever its sweep starts.
+    let mut slice_state = state.clone();
+    let mut sampler = Slice::default()
+        .with_width(1e-6)
+        .with_max_intervals(1)
+        .sampler(&model, &mut slice_state, &ids, &mut random)
+        .unwrap();
+    slice_state.set(model.graph(), ids[0], moved).unwrap();
+    sampler.step(&mut slice_state, &mut random).unwrap();
+    let x = slice_state.f64(ids[0]).unwrap().as_slice()[0];
+    assert!((x - 2.0).abs() < 1e-5, "slice swept from {x}");
+}

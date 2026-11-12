@@ -38,8 +38,9 @@ Settings on `MetropolisHastings`:
 `Hmc` moves all continuous latents using a fixed number of leapfrog steps with an identity mass matrix.
 Set the trajectory length with `with_leapfrog_steps` and the nominal step size with `with_step_size`.
 The step size is jittered by up to 10% each transition to vary the trajectory length.
-`with_adapt_count` enables step-size adaptation for that many initial transitions. Drop those transitions
-with `SamplingOptions::with_drop` when calling `sample_with_statistics`. The statistics count acceptances,
+`with_adapt_count` enables step-size adaptation for that many initial transitions. `sample` discards them, and
+`sample_with_statistics` rejects a `SamplingOptions::with_drop` smaller than the adaptation count, because draws
+made while the step size changes do not come from a fixed transition kernel. The statistics count acceptances,
 divergences, and gradient evaluations and report the current nominal step size.
 
 ## Gradient-free continuous sampling

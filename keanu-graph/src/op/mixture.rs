@@ -133,10 +133,13 @@ pub(super) fn weighted_log_term(weight: f64, log_density: f64) -> f64 {
     }
 }
 
-/// logsumexp of the weighted component terms.
+/// logsumexp of the weighted component terms. A NaN term (an invalid component) makes the result NaN.
 pub(super) fn log_sum_exp(terms: &[f64]) -> f64 {
+    if terms.iter().any(|t| t.is_nan()) {
+        return f64::NAN;
+    }
     let max = terms.iter().copied().fold(f64::NEG_INFINITY, f64::max);
-    if max == f64::NEG_INFINITY || max.is_nan() {
+    if max == f64::NEG_INFINITY {
         max
     } else {
         max + terms.iter().map(|t| (t - max).exp()).sum::<f64>().ln()

@@ -337,6 +337,17 @@ pub(crate) fn reverse_sweep(
         if node.is_probabilistic() || !is_differentiable(graph, id) {
             continue;
         }
+        if masked_out(&cotangent, value(state, id)?) {
+            // A masked-out impossible branch (ln 0, a Poisson rate of 0 with a positive count) contributes zero to
+            // every parent: its local derivatives are infinite, and 0 × ∞ would make the gradient NaN.
+            for &parent in &node.parents {
+                if is_differentiable(graph, parent) {
+                    let zero = DoubleTensor::zeros(&batched_shape(b, &graph[parent].shape));
+                    accumulate(&mut cotangents[parent.0], zero)?;
+                }
+            }
+            continue;
+        }
         let parent_values = node
             .parents
             .iter()
@@ -357,6 +368,23 @@ pub(crate) fn reverse_sweep(
         }
     }
     Ok(())
+}
+
+/// Whether every element of a (co)tangent is exactly zero.
+pub(crate) fn is_zero(t: &DoubleTensor) -> bool {
+    t.as_slice().iter().all(|&x| x == 0.0)
+}
+
+/// Whether a node is a masked-out impossible branch: a value with a nonfinite element (−∞ for ln 0 or an impossible
+/// log density) that receives an exactly zero (co)tangent, as from an unselected branch of a where. Its parents get
+/// zero rather than 0 × ∞ = NaN. A finite value with infinite local derivatives (√x at 0) is not masked, so a
+/// derivative that really is undefined there still shows as NaN.
+pub(crate) fn masked_out(t: &DoubleTensor, out: &Value) -> bool {
+    let nonfinite = match out {
+        Value::F64(v) => v.as_slice().iter().any(|x| !x.is_finite()),
+        _ => false,
+    };
+    nonfinite && is_zero(t)
 }
 
 /// Adds a contribution to a node's (co)tangent.
@@ -1551,13 +1579,27 @@ fn jvp(
             Some(f64v(parents[0])?.matrix_exp_frechet(t0)?)
         }
         Op::Where => {
+            // A branch the predicate never selects contributes zero, not 0 × its tangent: its tangent may be
+            // nonfinite (a masked-out impossible term), and 0 × ∞ is NaN.
             let m = where_mask(parents)?;
-            let from_then = t[1].map(|tt| scale(tt, &m)).transpose()?;
-            let from_else = t[2].map(|te| scale(te, &m.map(|m| 1.0 - m))).transpose()?;
-            add_opt(
+            let (then_used, else_used) = where_branches_used(&m);
+            let from_then = t[1]
+                .filter(|_| then_used)
+                .map(|tt| scale(tt, &m))
+                .transpose()?;
+            let from_else = t[2]
+                .filter(|_| else_used)
+                .map(|te| scale(te, &m.map(|m| 1.0 - m)))
+                .transpose()?;
+            match add_opt(
                 from_then.map(|x| fit(x, b, &out_shape)).transpose()?,
                 from_else.map(|x| fit(x, b, &out_shape)).transpose()?,
-            )?
+            )? {
+                None if t[1..].iter().any(Option::is_some) => {
+                    Some(DoubleTensor::zeros(&batched_shape(b, &out_shape)))
+                }
+                tangent => tangent,
+            }
         }
         Op::Cpt { conditions, keys } => {
             // the selected outcome's tangent; zero (rather than none) if only unselected outcomes depend on wrt
@@ -2006,6 +2048,15 @@ fn where_mask(parents: &[&Value]) -> Result<DoubleTensor> {
         .as_bool()
         .ok_or_else(|| GraphError::InvalidValue("where predicate must be bool".into()))?
         .to_double_mask())
+}
+
+/// Whether a where's then and else branches are selected anywhere, given its [`where_mask`].
+fn where_branches_used(mask: &DoubleTensor) -> (bool, bool) {
+    let selected = mask.as_slice();
+    (
+        selected.iter().any(|&m| m != 0.0),
+        selected.iter().any(|&m| m != 1.0),
+    )
 }
 
 /// 1.0 where a `set_with_mask` node takes the set value (mask == 1.0), else 0.0, shaped like the operand.

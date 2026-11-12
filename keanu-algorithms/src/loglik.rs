@@ -56,13 +56,16 @@ use keanu_tensor::DoubleTensor;
 
 type Terms = fn(&Graph, &State, NodeId) -> keanu_graph::Result<DoubleTensor>;
 
-/// One point of a pointwise log likelihood: an element of an observed node, or the whole node.
+/// One point of a pointwise log likelihood: an element of an observed node, an event of a multivariate one (with the
+/// `*_by_event` constructors), or the whole node.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct LogLikPoint {
     /// The observed node.
     pub node: NodeId,
-    /// The index of the element within the node; empty for a node with one point.
+    /// The index of the element within the node, or with the `*_by_event` constructors of the event: an index over
+    /// the node's batch dimensions only (for a `[5, 3]` multivariate Gaussian node, `[2]` is its third row), not a
+    /// position in its values. Empty for a node with one point.
     pub index: Vec<usize>,
     /// The point's name: the node's label (or `#` and its index) followed by the index, as `y[3]` or `y[1, 2]`, or
     /// the bare name for a node with one point.

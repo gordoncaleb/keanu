@@ -9,6 +9,7 @@ use crate::rewrite::{Writer, check_distinct, check_state, mapped};
 use crate::state::State;
 use crate::value::DType;
 use keanu_tensor::{DoubleTensor, special::log_sum_exp};
+use std::collections::HashMap;
 
 /// Nodes and assignments of a joint marginalization.
 #[derive(Debug, Clone)]
@@ -210,10 +211,48 @@ pub fn marginalize_joint(
     }
 
     let active: Vec<_> = graph.ids().filter(|id| live[id.index()]).collect();
+    // The group latents each region node depends on (sorted column indices). Each node is built once per distinct
+    // assignment of its scope, and each prior or likelihood term once per distinct assignment of the latents it
+    // depends on, rather than once per joint assignment.
+    let mut scopes: Vec<Vec<usize>> = vec![Vec::new(); graph.len()];
+    let parent_scope = |scopes: &[Vec<usize>], id: NodeId| {
+        let mut scope: Vec<usize> = graph[id]
+            .parents
+            .iter()
+            .flat_map(|p| scopes[p.index()].iter().copied())
+            .collect();
+        scope.sort_unstable();
+        scope.dedup();
+        scope
+    };
+    let mut term_scopes = vec![Vec::new(); active.len()];
+    for (k, &id) in active.iter().enumerate() {
+        let parents = parent_scope(&scopes, id);
+        if let Some(i) = selected[id.index()] {
+            scopes[id.index()] = vec![i];
+            let mut scope = parents;
+            if let Err(at) = scope.binary_search(&i) {
+                scope.insert(at, i);
+            }
+            term_scopes[k] = scope;
+        } else if region[id.index()] {
+            scopes[id.index()] = parents;
+        } else {
+            term_scopes[k] = parents;
+        }
+    }
+    let key = |scope: &[usize], assignment: &[i64]| -> Vec<i64> {
+        scope.iter().map(|&i| assignment[i]).collect()
+    };
+    let mut node_cache: Vec<HashMap<Vec<i64>, NodeId>> = vec![HashMap::new(); active.len()];
+    let mut term_cache: Vec<HashMap<Vec<i64>, NodeId>> = vec![HashMap::new(); active.len()];
+    let mut normalizer_cache: Vec<HashMap<Vec<i64>, NodeId>> = vec![HashMap::new(); active.len()];
+
     let mut copies = mapping.clone();
     let impossible = out.constant(DoubleTensor::scalar(f64::NEG_INFINITY).into(), None);
     let mut assignments = Vec::with_capacity(count);
     let mut weights = Vec::with_capacity(count);
+    let mut terms = Vec::with_capacity(latents.len() + children.len());
     for mut index in 0..count {
         let mut assignment = vec![0; latents.len()];
         for (value, domain) in assignment.iter_mut().zip(&domains).rev() {
@@ -221,40 +260,64 @@ pub fn marginalize_joint(
             *value = *domain.start() + (index % size) as i64;
             index /= size;
         }
-        let mut terms = Vec::with_capacity(latents.len() + children.len());
-        for &id in &active {
+        terms.clear();
+        for (k, &id) in active.iter().enumerate() {
             let node = &graph[id];
+            if region[id.index()] {
+                let node_key = key(&scopes[id.index()], &assignment);
+                let copy = match node_cache[k].get(&node_key) {
+                    Some(&copy) => copy,
+                    None => {
+                        let copy = if let Some(i) = selected[id.index()] {
+                            out.constant(constant(node.dtype, &[], assignment[i])?, None)
+                        } else {
+                            let mut copy = node.clone();
+                            copy.label = None;
+                            copy.parents = node
+                                .parents
+                                .iter()
+                                .map(|&p| mapped(&copies, p))
+                                .collect::<Result<Parents>>()?;
+                            out.push(copy, None, false)
+                        };
+                        node_cache[k].insert(node_key, copy);
+                        copy
+                    }
+                };
+                copies[id.index()] = Some(copy);
+            }
+            let Op::Distribution(d) = &node.op else {
+                continue;
+            };
+            let term_key = key(&term_scopes[k], &assignment);
+            if let Some(&term) = term_cache[k].get(&term_key) {
+                terms.push(term);
+                continue;
+            }
             let parents = node
                 .parents
                 .iter()
                 .map(|&p| mapped(&copies, p))
                 .collect::<Result<Parents>>()?;
-            if let Some(i) = selected[id.index()] {
-                let Op::Distribution(d) = &node.op else {
-                    unreachable!("validated latent")
-                };
-                let value = out.constant(constant(node.dtype, &[], assignment[i])?, None);
-                copies[id.index()] = Some(value);
-                terms.push(log_prior(
-                    &mut out,
-                    &d.kind,
-                    value,
-                    &parents,
-                    (assignment[i] - *domains[i].start()) as usize,
-                )?);
-            } else if let Op::Distribution(d) = &node.op {
-                let value = mapped(&copies, id)?;
-                terms.push(log_density(&mut out, &d.kind, value, &parents)?);
+            let value = mapped(&copies, id)?;
+            let term = if let Some(i) = selected[id.index()] {
+                let category = (assignment[i] - *domains[i].start()) as usize;
+                let normalizer_key = key(&parent_scope(&scopes, id), &assignment);
+                let cached = normalizer_cache[k].get(&normalizer_key).copied();
+                let (term, normalizer) =
+                    log_prior(&mut out, &d.kind, value, &parents, category, cached)?;
+                if let Some(normalizer) = normalizer {
+                    normalizer_cache[k].insert(normalizer_key, normalizer);
+                }
+                term
             } else {
-                let mut copy = node.clone();
-                copy.label = None;
-                copy.parents = parents;
-                copies[id.index()] = Some(out.push(copy, None, false));
-            }
+                log_density(&mut out, &d.kind, value, &parents)?
+            };
+            term_cache[k].insert(term_key, term);
+            terms.push(term);
         }
-        let mut terms = terms.into_iter();
-        let mut weight = terms.next().expect("at least one selected prior");
-        for term in terms {
+        let mut weight = terms[0];
+        for &term in &terms[1..] {
             weight = out.add(Op::Binary(BinaryOp::Add), &[weight, term])?;
         }
         // Match Model::log_prob: a nonfinite term makes this assignment impossible.
@@ -307,38 +370,53 @@ fn log_density(
     }
 }
 
+/// The log prior of a selected latent at the category `index` of its support, and its categorical normalizer if
+/// it has one. A `normalizer` already built for the same parameter nodes is reused.
 fn log_prior(
     out: &mut Writer,
     kind: &DistributionKind,
     value: NodeId,
     parameters: &[NodeId],
     index: usize,
-) -> Result<NodeId> {
+    normalizer: Option<NodeId>,
+) -> Result<(NodeId, Option<NodeId>)> {
     let (numerator, normalizer) = match kind {
         DistributionKind::Categorical => {
-            let mut total = parameters[0];
-            for &p in &parameters[1..] {
-                total = out.add(Op::Binary(BinaryOp::Add), &[total, p])?;
-            }
+            let normalizer = match normalizer {
+                Some(normalizer) => normalizer,
+                None => {
+                    let mut total = parameters[0];
+                    for &p in &parameters[1..] {
+                        total = out.add(Op::Binary(BinaryOp::Add), &[total, p])?;
+                    }
+                    out.add(Op::Unary(UnaryOp::Ln), &[total])?
+                }
+            };
             (
                 out.add(Op::Unary(UnaryOp::Ln), &[parameters[index]])?,
-                out.add(Op::Unary(UnaryOp::Ln), &[total])?,
+                normalizer,
             )
         }
         DistributionKind::CategoricalLogit => {
-            let logits = out.add(Op::Stack(-1), parameters)?;
-            (
-                parameters[index],
-                out.add(
-                    Op::Reduce {
-                        kind: ReduceOp::LogSumExp,
-                        axes: None,
-                    },
-                    &[logits],
-                )?,
-            )
+            let normalizer = match normalizer {
+                Some(normalizer) => normalizer,
+                None => {
+                    let logits = out.add(Op::Stack(-1), parameters)?;
+                    out.add(
+                        Op::Reduce {
+                            kind: ReduceOp::LogSumExp,
+                            axes: None,
+                        },
+                        &[logits],
+                    )?
+                }
+            };
+            (parameters[index], normalizer)
         }
-        _ => return log_density(out, kind, value, parameters),
+        _ => return Ok((log_density(out, kind, value, parameters)?, None)),
     };
-    out.add(Op::Binary(BinaryOp::Sub), &[numerator, normalizer])
+    Ok((
+        out.add(Op::Binary(BinaryOp::Sub), &[numerator, normalizer])?,
+        Some(normalizer),
+    ))
 }
