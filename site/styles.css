@@ -475,6 +475,11 @@ section > p,
   background: var(--ink);
 }
 
+.legend-key.dash {
+  width: 16px;
+  border-top: 2px dashed var(--ink);
+}
+
 .plot {
   position: relative;
 }
@@ -605,6 +610,13 @@ section > p,
 .truth {
   stroke: var(--ink);
   stroke-width: 2;
+}
+
+.reference-line {
+  fill: none;
+  stroke: var(--ink);
+  stroke-width: 1.5;
+  stroke-dasharray: 4 3;
 }
 
 .tooltip {
