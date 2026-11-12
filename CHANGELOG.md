@@ -65,6 +65,10 @@ tag. `RUST_MIGRATION_PLAN.md` describes the rewrite and `book/src/from-java.md` 
   credit portfolio risk (hierarchical default model, exact Poisson-binomial tail, value at risk under stress) and
   volatility with value at risk (GARCH(1,1) or stochastic volatility). Fits advance a few NUTS transitions per call
   so a Web Worker can report progress.
+- A static demo site in `site/` runs them in the browser, with examples grouped by domain in a sidebar: value at
+  risk and credit portfolio (finance), an A/B test (marketing), demand forecasting and equipment reliability
+  (operations), and epidemic forecasting and drug dosing (health). Each opens with its question and an editable
+  sentence that is the model's answer; data are synthetic with known truth. `site/build.sh` builds it.
 
 ### Review fixes for the Stan and PyMC coverage
 
