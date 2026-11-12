@@ -4,49 +4,30 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Keanu demos</title>
-    <meta name="description" content="Probabilistic models answering real risk questions, fitted live in your browser by Keanu." />
+    <meta name="description" content="Probabilistic models answering practical questions, fitted live in your browser by Keanu." />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=Schibsted+Grotesk:wght@400;500;600;650;700&display=swap" rel="stylesheet" />
     <link rel="stylesheet" href="styles.css" />
+    <script type="module" src="js/home.js"></script>
   </head>
   <body>
-    <header class="site-header">
-      <a class="wordmark" href="index.html">Keanu</a>
-      <nav aria-label="Demos">
-        <a href="var.html">Value at risk</a>
-        <a href="credit.html">Credit portfolio</a>
-      </nav>
-    </header>
-
-    <main>
-      <h1>Risk questions, answered with their uncertainty</h1>
-      <p class="lede">
-        Keanu is a probabilistic programming library in Rust. These demos run it in your browser: each one fits a
-        Bayesian model to data as you watch, then answers a practical question with a range rather than a single guess.
-        Change the inputs and the answer updates.
-      </p>
-
-      <ul class="demos">
-        <li>
-          <a href="var.html">
-            <h2>How much could this position lose tomorrow?</h2>
-            <p>Volatility models of daily returns, value at risk and expected shortfall. Paste your own prices.</p>
-            <span class="timing">Fits in under a second</span>
-          </a>
-        </li>
-        <li>
-          <a href="credit.html">
-            <h2>How many of our loans will default, and what will it cost?</h2>
-            <p>Default rates learned from a loan history, then a loan book priced under a downturn you choose.</p>
-            <span class="timing">Fits in a few seconds</span>
-          </a>
-        </li>
-      </ul>
-    </main>
-
-    <footer class="site-footer">
-      Keanu is a probabilistic programming library in Rust. Results are illustrations, not financial advice.
-    </footer>
+    <div class="layout">
+      <aside class="sidebar" id="sidebar"></aside>
+      <div class="content">
+        <main>
+          <h1>Practical questions, answered with their uncertainty</h1>
+          <p class="lede">
+            Keanu is a probabilistic programming library in Rust. These examples run it in your browser: each one fits a
+            Bayesian model to data as you watch, then answers a question from finance, marketing, operations or health
+            with a range rather than a single guess. Change the inputs and the answer updates.
+          </p>
+          <div id="index"></div>
+        </main>
+        <footer class="site-footer">
+          Keanu is a probabilistic programming library in Rust. Results are illustrations, not professional advice.
+        </footer>
+      </div>
+    </div>
   </body>
 </html>

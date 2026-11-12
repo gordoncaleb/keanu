@@ -9,17 +9,13 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=Schibsted+Grotesk:wght@400;500;600;650;700&display=swap" rel="stylesheet" />
     <link rel="stylesheet" href="styles.css" />
+    <script type="module" src="js/nav.js"></script>
     <script type="module" src="js/var.js"></script>
   </head>
   <body>
-    <header class="site-header">
-      <a class="wordmark" href="index.html">Keanu</a>
-      <nav aria-label="Demos">
-        <a href="var.html" aria-current="page">Value at risk</a>
-        <a href="credit.html">Credit portfolio</a>
-      </nav>
-    </header>
-
+    <div class="layout">
+    <aside class="sidebar" id="sidebar"></aside>
+    <div class="content">
     <main>
       <h1>How much could this position lose tomorrow?</h1>
       <p class="lede">
@@ -110,5 +106,7 @@ Stochastic volatility
     <footer class="site-footer">
       Keanu is a probabilistic programming library in Rust. Results are illustrations, not investment advice.
     </footer>
+    </div>
+    </div>
   </body>
 </html>

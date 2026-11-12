@@ -28,6 +28,8 @@ const gradesChart = intervalChart($("grades-chart"), {
   description: "Default probability by grade at average debt-to-income, against the history and the true rates.",
   format: (v) => percent(v, 1),
   tickFormat: (v) => percent(v, 0),
+  name: (grade) => `Grade ${grade}, model`,
+  rowHeading: "Grade",
 });
 
 const fitted = { done: false };
@@ -49,7 +51,7 @@ function describeStress(s) {
 
 async function refresh({ stress, threshold }) {
   if (!fitted.done) return;
-  const r = await engine.report({ stress, threshold });
+  const r = await engine.report(stress, threshold);
   $("defaults").textContent = r.expected_defaults.mean.toFixed(0);
   const p = r.probability_defaults_exceed;
   const chance = p > 0.999 ? "more than 99.9%" : p < 0.001 ? "less than 0.1%" : percent(p, p < 0.1 ? 1 : 0);
@@ -99,8 +101,10 @@ async function fit() {
   const status = statusLine($("status"));
   status.progress("Learning default rates from 3,000 past loans", 0);
   try {
-    const { seconds } = await engine.fit("credit", FIT, (p) =>
-      status.progress("Learning default rates from 3,000 past loans", p),
+    const { seconds } = await engine.fit(
+      "CreditDemo",
+      [FIT.historyLoans, FIT.bookLoans, FIT.draws, FIT.seed],
+      { steps: 25, onProgress: (p) => status.progress("Learning default rates from 3,000 past loans", p) },
     );
     fitted.done = true;
     status.done(
@@ -108,7 +112,7 @@ async function fit() {
         `browser, from ${FIT.draws} posterior draws. Changing the scenario reuses them.`,
     );
     $("book-size").textContent = FIT.bookLoans;
-    const base = await engine.report({ stress: 0, threshold: threshold() });
+    const base = await engine.report(0, threshold());
     $("dti").textContent = `×${base.dti_odds_ratio.mean.toFixed(2)}`;
     gradesChart.update(
       base.grades.map((g) => ({

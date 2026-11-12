@@ -321,23 +321,38 @@ export function histogramChart(container, options) {
   };
 }
 
-/** Horizontal 90% intervals per row { label, low, mean, high, observed, truth }, with observed and true marks. */
+/**
+ * Horizontal 90% intervals per row { label, low, mean, high, observed?, truth? }, with optional observed (ring) and
+ * true (tick) marks. `options.legend` overrides the legend labels; `options.name(label)` names a row in tooltips.
+ */
 export function intervalChart(container, options) {
   const frame = new Frame(container, { ...options, height: 0 });
+  const labels = {
+    estimate: "Model, with 90% interval",
+    observed: "Observed in the history",
+    truth: "True rate (synthetic data)",
+    ...options.legend,
+  };
+  const name = options.name ?? ((label) => label);
   let rows = null;
-  frame.setLegend([
-    { key: "dot", label: "Model, with 90% interval" },
-    { key: "ring", label: "Observed in the history" },
-    { key: "tick", label: "True rate (synthetic data)" },
-  ]);
   frame.render = () => {
     if (!rows) return;
     frame.height = 36 + rows.length * 40;
     const { svg, width, height } = frame.svg();
-    const pad = { left: 64, right: 16, top: 8, bottom: 28 };
-    const hi = Math.max(...rows.flatMap((r) => [r.high, r.observed, r.truth]));
-    const xTicks = coverTicks(hi, Math.max(3, Math.floor(width / 110)));
-    const x = scale(0, xTicks.at(-1), pad.left, width - pad.right);
+    const pad = { left: options.labelWidth ?? 64, right: 16, top: 8, bottom: 28 };
+    const values = rows.flatMap((r) => [r.low, r.high, r.observed, r.truth].filter((v) => v !== undefined));
+    const hi = Math.max(...values);
+    const count = Math.max(3, Math.floor(width / 110));
+    let xTicks;
+    if (options.fromZero === false) {
+      // zoom to the data, with a little room either side
+      const lo = Math.min(...values);
+      const margin = (hi - lo) * 0.08 || Math.abs(hi) * 0.1 || 1;
+      xTicks = ticks(lo - margin, hi + margin, count);
+    } else {
+      xTicks = coverTicks(hi, count);
+    }
+    const x = scale(Math.min(xTicks[0], ...values), Math.max(xTicks.at(-1), hi), pad.left, width - pad.right);
     const grid = el("g", { class: "grid" }, svg);
     for (const t of xTicks) {
       el("line", { x1: x(t), x2: x(t), y1: pad.top, y2: height - pad.bottom }, grid);
@@ -351,16 +366,18 @@ export function intervalChart(container, options) {
       el("text", { x: pad.left - 12, y: cy, class: "row-label", "text-anchor": "end", "dominant-baseline": "middle" }, group)
         .textContent = r.label;
       el("line", { x1: x(r.low), x2: x(r.high), y1: cy, y2: cy, class: "whisker" }, group);
-      el("line", { x1: x(r.truth), x2: x(r.truth), y1: cy - 9, y2: cy + 9, class: "truth" }, group);
-      el("circle", { cx: x(r.observed), cy, r: 5, class: "observed" }, group);
+      if (r.truth !== undefined) el("line", { x1: x(r.truth), x2: x(r.truth), y1: cy - 9, y2: cy + 9, class: "truth" }, group);
+      if (r.observed !== undefined) el("circle", { cx: x(r.observed), cy, r: 5, class: "observed" }, group);
       el("circle", { cx: x(r.mean), cy, r: 5, class: "estimate" }, group);
-      const show = () =>
-        frame.show(x(r.high), cy, [
-          { key: "line", value: options.format(r.mean), label: `Grade ${r.label}, model` },
+      const show = () => {
+        const tip = [
+          { key: "line", value: options.format(r.mean), label: name(r.label) },
           { value: `${options.format(r.low)} to ${options.format(r.high)}`, label: "90% interval" },
-          { value: options.format(r.observed), label: "observed" },
-          { value: options.format(r.truth), label: "true rate" },
-        ]);
+        ];
+        if (r.observed !== undefined) tip.push({ value: options.format(r.observed), label: labels.observed.toLowerCase() });
+        if (r.truth !== undefined) tip.push({ value: options.format(r.truth), label: labels.truth.toLowerCase() });
+        frame.show(x(r.high), cy, tip);
+      };
       group.addEventListener("pointerenter", show);
       group.addEventListener("focus", show);
       group.addEventListener("pointerleave", () => frame.hide());
@@ -370,10 +387,24 @@ export function intervalChart(container, options) {
   return {
     update(next) {
       rows = next;
+      const hasObserved = rows.some((r) => r.observed !== undefined);
+      const hasTruth = rows.some((r) => r.truth !== undefined);
+      frame.setLegend([
+        { key: "dot", label: labels.estimate },
+        ...(hasObserved ? [{ key: "ring", label: labels.observed }] : []),
+        ...(hasTruth ? [{ key: "tick", label: labels.truth }] : []),
+      ]);
       frame.render();
       frame.setTable(
-        ["Grade", "Model", "5%", "95%", "Observed", "True"],
-        rows.map((r) => [r.label, options.format(r.mean), options.format(r.low), options.format(r.high), options.format(r.observed), options.format(r.truth)]),
+        [options.rowHeading ?? "", "Model", "5%", "95%", ...(hasObserved ? [labels.observed] : []), ...(hasTruth ? [labels.truth] : [])],
+        rows.map((r) => [
+          r.label,
+          options.format(r.mean),
+          options.format(r.low),
+          options.format(r.high),
+          ...(hasObserved ? [r.observed === undefined ? "" : options.format(r.observed)] : []),
+          ...(hasTruth ? [r.truth === undefined ? "" : options.format(r.truth)] : []),
+        ]),
       );
     },
   };

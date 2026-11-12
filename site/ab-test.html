@@ -1,0 +1,80 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>A/B test · Keanu demos</title>
+    <meta name="description" content="Decide between two versions of a page from their conversions: the chance one is better, by how much, and the risk of shipping it." />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Schibsted+Grotesk:wght@400;500;600;650;700&display=swap" rel="stylesheet" />
+    <link rel="stylesheet" href="styles.css" />
+    <script type="module" src="js/nav.js"></script>
+    <script type="module" src="js/ab-test.js"></script>
+  </head>
+  <body>
+    <div class="layout">
+      <aside class="sidebar" id="sidebar"></aside>
+      <div class="content">
+        <main>
+          <h1>Should we ship the new version?</h1>
+          <p class="lede">
+            A test splits visitors between the current page and a new one. A few more conversions on one side might be
+            luck. Keanu works out how likely the new version really is better, by how much, and what you stand to lose if
+            you ship it and it isn't.
+          </p>
+
+          <p class="answer" id="answer" data-stale aria-live="polite">
+            Version A converted
+            <label class="visually-hidden" for="conversions-a">Conversions on version A</label>
+            <input id="conversions-a" type="number" min="0" value="200" style="--chars: 5ch" /> of
+            <label class="visually-hidden" for="visitors-a">Visitors who saw version A</label>
+            <input id="visitors-a" type="number" min="1" value="4000" style="--chars: 6ch" /> visitors, and version B
+            <label class="visually-hidden" for="conversions-b">Conversions on version B</label>
+            <input id="conversions-b" type="number" min="0" value="240" style="--chars: 5ch" /> of
+            <label class="visually-hidden" for="visitors-b">Visitors who saw version B</label>
+            <input id="visitors-b" type="number" min="1" value="4000" style="--chars: 6ch" />. There is
+            <span id="better-article">a</span> <span class="figure" id="better">…</span> chance B converts better, by
+            about <span class="figure" id="lift">…</span>.
+          </p>
+          <p class="status" id="status" role="status"></p>
+
+          <dl class="facts">
+            <div><dt>Version A's conversion rate</dt><dd id="rate-a">…</dd></div>
+            <div><dt>Version B's conversion rate</dt><dd id="rate-b">…</dd></div>
+            <div><dt>Expected loss if we ship B</dt><dd id="loss-b">…</dd></div>
+            <div><dt>Expected loss if we keep A</dt><dd id="loss-a">…</dd></div>
+          </dl>
+          <p class="message" id="decision"></p>
+
+          <div id="lift-chart"></div>
+          <div id="rates-chart"></div>
+
+          <section class="method prose" aria-labelledby="method-heading">
+            <h2 id="method-heading">How Keanu answered this</h2>
+            <p>
+              Each version has an unknown conversion rate, and its conversions are what you would expect from that many
+              visitors at that rate. Before the test, every rate from 0% to 100% is equally plausible.
+            </p>
+            <pre>rate[A], rate[B] ~ Uniform(0, 1)
+conversions[v] ~ Binomial(visitors[v], rate[v])</pre>
+            <p>
+              The No-U-Turn Sampler draws 1,000 plausible pairs of rates in your browser, in a fraction of a second, so
+              the answer refits as you type. The chance B is better is the share of draws where B's rate is higher; the
+              lift is B's rate over A's.
+            </p>
+            <p>
+              The expected loss of shipping a version is the conversion rate you give up, on average, in the draws where
+              the other version is better. It weighs how likely a mistake is by how much it would cost, which a p-value
+              alone does not. A common rule is to ship once the expected loss falls below the smallest difference you
+              care about.
+            </p>
+          </section>
+        </main>
+        <footer class="site-footer">
+          Keanu is a probabilistic programming library in Rust. Results are illustrations, not professional advice.
+        </footer>
+      </div>
+    </div>
+  </body>
+</html>

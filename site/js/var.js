@@ -36,7 +36,7 @@ async function refresh() {
     $("answer").setAttribute("data-stale", "");
     return;
   }
-  state.report = await engine.report({ position: value, horizon: HORIZON });
+  state.report = await engine.report(value, HORIZON);
   render();
 }
 const requestReport = latest(refresh);
@@ -88,10 +88,11 @@ async function fit() {
   const name = state.model === "garch" ? "GARCH(1,1)" : "Stochastic volatility";
   status.progress(`Fitting ${name}`, 0);
   try {
+    const stochastic = state.model === "stochastic";
     const { seconds } = await engine.fit(
-      "volatility",
-      { returns: state.returns, stochastic: state.model === "stochastic", draws: DRAWS[state.model], seed: 1 },
-      (p) => status.progress(`Fitting ${name}`, p),
+      "VolatilityDemo",
+      [new Float64Array(state.returns), stochastic, DRAWS[state.model], 1],
+      { steps: stochastic ? 2 : 50, onProgress: (p) => status.progress(`Fitting ${name}`, p) },
     );
     state.fitted = true;
     status.done(
@@ -136,11 +137,11 @@ $("fit-returns").addEventListener("click", () => {
 });
 
 $("use-sample").addEventListener("click", async () => {
-  state.returns = await engine.sampleReturns();
+  state.returns = await engine.call("VolatilityDemo", "sampleReturns");
   $("data-message").removeAttribute("data-tone");
   $("data-message").textContent = "Back to the simulated sample.";
   fit();
 });
 
-state.returns = await engine.sampleReturns();
+state.returns = await engine.call("VolatilityDemo", "sampleReturns");
 fit();

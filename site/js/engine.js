@@ -25,22 +25,26 @@ export class Engine {
     });
   }
 
-  /** Fits a demo; resolves with { seconds } once finished. A newer fit abandons this one (it never resolves). */
-  fit(demo, args, onProgress) {
+  /**
+   * Fits the demo class `demo` (as exported by keanu_wasm) constructed with `args`, running `steps` transitions
+   * between progress reports. Resolves with { seconds } once finished; a newer fit abandons this one, which then
+   * never resolves.
+   */
+  fit(demo, args, { steps = 25, onProgress } = {}) {
     for (const [id, request] of this.pending) {
       if (request.onProgress) this.pending.delete(id);
     }
-    return this.#send({ type: "fit", demo, args }, onProgress);
+    return this.#send({ type: "fit", demo, args, steps }, onProgress ?? (() => {}));
   }
 
-  /** The fitted demo's report for `args`. */
-  report(args) {
+  /** The fitted demo's report(...args), parsed. */
+  report(...args) {
     return this.#send({ type: "report", args });
   }
 
-  /** The bundled sample of daily returns. */
-  sampleReturns() {
-    return this.#send({ type: "sample-returns" });
+  /** A static method of a demo class, such as VolatilityDemo.sampleReturns(). */
+  call(demo, method, ...args) {
+    return this.#send({ type: "call", demo, method, args });
   }
 }
 
