@@ -48,7 +48,7 @@ export const DOMAINS = [
         title: "Equipment reliability",
         question: "When will this fleet start failing?",
         summary: "Failure times learned from units that failed and units still running, and the warranty cost.",
-        ready: false,
+        ready: true,
       },
     ],
   },
