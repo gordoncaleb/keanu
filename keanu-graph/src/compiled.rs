@@ -827,19 +827,24 @@ impl<'m> CompiledModel<'m> {
                 Kernel::Unary { op, x } => {
                     let x = &registers[*x..*x + len];
                     let scratch = &mut scratch[..len];
-                    match unary_derivative_fn(*op) {
-                        Some(d) => {
+                    // one loop per op, with the derivative formed as the tensor rule forms it
+                    macro_rules! apply {
+                        ($d:expr) => {
                             for k in 0..len {
-                                scratch[k] += g[k] * d(x[k], y[k]);
+                                scratch[k] += g[k] * $d(x[k], y[k]);
                             }
-                        }
-                        None => {
-                            for k in 0..len {
-                                let d =
-                                    unary_derivative_scalar(*op, x[k], y[k]).unwrap_or(f64::NAN);
-                                scratch[k] += g[k] * d;
-                            }
-                        }
+                        };
+                    }
+                    match op {
+                        UnaryOp::Neg => apply!(|_, _| -1.0),
+                        UnaryOp::Exp => apply!(|_, y: f64| y),
+                        UnaryOp::Ln => apply!(|x: f64, _| 1.0 / x),
+                        UnaryOp::Ln1p => apply!(|x: f64, _| 1.0 / (1.0 + x)),
+                        UnaryOp::Sqrt => apply!(|_, y: f64| 0.5 / y),
+                        UnaryOp::Tanh => apply!(|_, y: f64| 1.0 - y * y),
+                        UnaryOp::Sigmoid => apply!(|_, y: f64| y * (1.0 - y)),
+                        UnaryOp::Reciprocal => apply!(|_, y: f64| -y * y),
+                        op => apply!(|x, y| unary_derivative_scalar(*op, x, y).unwrap_or(f64::NAN)),
                     }
                 }
                 Kernel::Binary { op, l, r } => {
@@ -1054,21 +1059,6 @@ fn reverse_binary(
     }
 }
 
-/// The derivative of a unary op at x (with y = f(x)), formed as the tensor rule forms it, for common ops.
-fn unary_derivative_fn(op: UnaryOp) -> Option<fn(f64, f64) -> f64> {
-    Some(match op {
-        UnaryOp::Neg => |_, _| -1.0,
-        UnaryOp::Exp => |_, y| y,
-        UnaryOp::Ln => |x, _| 1.0 / x,
-        UnaryOp::Ln1p => |x, _| 1.0 / (1.0 + x),
-        UnaryOp::Sqrt => |_, y| 0.5 / y,
-        UnaryOp::Tanh => |_, y| 1.0 - y * y,
-        UnaryOp::Sigmoid => |_, y| y * (1.0 - y),
-        UnaryOp::Reciprocal => |_, y| -y * y,
-        _ => return None,
-    })
-}
-
 /// Runs a kernel, writing the `len` registers from `out`. The results are formed in `buffer` (reading the
 /// operands as slices, which lets the loops vectorise) and then copied into place.
 fn forward(kernel: &Kernel, registers: &mut [f64], out: usize, len: usize, buffer: &mut Vec<f64>) {
@@ -1079,17 +1069,33 @@ fn forward(kernel: &Kernel, registers: &mut [f64], out: usize, len: usize, buffe
     match kernel {
         Kernel::Unary { op, x } => {
             let x = &input[*x..*x + len];
-            match unary_fn(*op) {
-                Some(f) => {
+            // one loop per op, so that each is inlined (and vectorised where it can be)
+            macro_rules! apply {
+                ($f:expr) => {
                     for (r, &x) in result.iter_mut().zip(x) {
-                        *r = f(x);
+                        *r = $f(x);
                     }
-                }
-                None => {
-                    for (r, &x) in result.iter_mut().zip(x) {
-                        *r = unary(*op, x);
-                    }
-                }
+                };
+            }
+            use keanu_tensor::special;
+            match op {
+                UnaryOp::Neg => apply!(|x: f64| -x),
+                UnaryOp::Abs => apply!(f64::abs),
+                UnaryOp::Reciprocal => apply!(|x: f64| 1.0 / x),
+                UnaryOp::Exp => apply!(f64::exp),
+                UnaryOp::ExpM1 => apply!(f64::exp_m1),
+                UnaryOp::Ln => apply!(f64::ln),
+                UnaryOp::Ln1p => apply!(f64::ln_1p),
+                UnaryOp::Sqrt => apply!(f64::sqrt),
+                UnaryOp::Sin => apply!(f64::sin),
+                UnaryOp::Cos => apply!(f64::cos),
+                UnaryOp::Tanh => apply!(f64::tanh),
+                UnaryOp::Sigmoid => apply!(|x: f64| 1.0 / (1.0 + (-x).exp())),
+                UnaryOp::LnGamma => apply!(special::ln_gamma),
+                UnaryOp::Softplus => apply!(special::softplus),
+                UnaryOp::Logit => apply!(special::logit),
+                UnaryOp::Log1mExp => apply!(special::log1mexp),
+                op => apply!(|x| unary(*op, x)),
             }
         }
         Kernel::Binary { op, l, r } => match op {
@@ -1144,34 +1150,6 @@ fn binary_kernel(
             }
         }
     }
-}
-
-/// The element function of a unary op, as the tensor op applies it, for the ops that have one plain function.
-fn unary_fn(op: UnaryOp) -> Option<fn(f64) -> f64> {
-    use keanu_tensor::special;
-    Some(match op {
-        UnaryOp::Neg => |x| -x,
-        UnaryOp::Abs => f64::abs,
-        UnaryOp::Reciprocal => |x| 1.0 / x,
-        UnaryOp::Exp => f64::exp,
-        UnaryOp::Exp2 => f64::exp2,
-        UnaryOp::ExpM1 => f64::exp_m1,
-        UnaryOp::Ln => f64::ln,
-        UnaryOp::Ln1p => f64::ln_1p,
-        UnaryOp::Log2 => f64::log2,
-        UnaryOp::Log10 => f64::log10,
-        UnaryOp::Sqrt => f64::sqrt,
-        UnaryOp::Sin => f64::sin,
-        UnaryOp::Cos => f64::cos,
-        UnaryOp::Tan => f64::tan,
-        UnaryOp::Tanh => f64::tanh,
-        UnaryOp::Sigmoid => |x| 1.0 / (1.0 + (-x).exp()),
-        UnaryOp::LnGamma => special::ln_gamma,
-        UnaryOp::Softplus => special::softplus,
-        UnaryOp::Logit => special::logit,
-        UnaryOp::Log1mExp => special::log1mexp,
-        _ => return None,
-    })
 }
 
 /// The value in the state of a node that doesn't depend on the latents, as f64.

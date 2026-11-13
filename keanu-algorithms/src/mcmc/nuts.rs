@@ -651,6 +651,23 @@ fn dot(blocks: &[usize], a: &[f64], b: &[f64]) -> f64 {
     sum
 }
 
+/// Σ aᵢ (bᵢ + cᵢ), summed block by block as [`dot`]: the dot product with the sum b + c, without forming it.
+fn dot_sum(blocks: &[usize], a: &[f64], b: &[f64], c: &[f64]) -> f64 {
+    let mut sum = 0.0;
+    let mut start = 0;
+    for &len in blocks {
+        let range = start..start + len;
+        let block: f64 = a[range.clone()]
+            .iter()
+            .zip(&b[range.clone()])
+            .zip(&c[range])
+            .fold(0.0, |acc, ((x, y), z)| acc + x * (y + z));
+        sum += block;
+        start += len;
+    }
+    sum
+}
+
 /// x + dt · v.
 fn axpy(x: &[f64], dt: f64, v: &[f64]) -> Vec<f64> {
     x.iter().zip(v).map(|(x, v)| v * dt + x).collect()
@@ -1008,6 +1025,20 @@ impl PotentialState {
         }
     }
 
+    /// x + dt · M⁻¹ p: the position after a drift of `dt` with momentum p, as `axpy(x, dt, velocity(p))` forms it
+    /// (without forming the velocity, with a diagonal metric).
+    fn drift(&self, x: &[f64], dt: f64, momentum: &[f64]) -> Vec<f64> {
+        match &self.metric {
+            InverseMetric::Diagonal { variance, .. } => x
+                .iter()
+                .zip(variance)
+                .zip(momentum)
+                .map(|((x, v), p)| (v * p) * dt + x)
+                .collect(),
+            InverseMetric::Dense { .. } => axpy(x, dt, &self.velocity(momentum)),
+        }
+    }
+
     /// M⁻¹ p: the velocity (the derivative of the position) for momentum p.
     fn velocity(&self, momentum: &[f64]) -> Vec<f64> {
         match &self.metric {
@@ -1104,9 +1135,8 @@ impl Integrator<'_, '_> {
     /// One leapfrog step of size `dt` (negative to go backwards). Leaves the state at the new position.
     fn leapfrog(&self, state: &mut State, from: &LeapfrogState, dt: f64) -> Result<LeapfrogState> {
         let half = dt / 2.0;
-        let momentum = axpy(&from.momentum, half, &from.gradient);
-        let velocity = self.potential.velocity(&momentum);
-        let position = Rc::new(axpy(&from.position, dt, &velocity));
+        let mut momentum = axpy(&from.momentum, half, &from.gradient);
+        let position = Rc::new(self.potential.drift(&from.position, dt, &momentum));
 
         let mut compiled = self.compiled.borrow_mut();
         let (log_prob, gradient) =
@@ -1115,7 +1145,10 @@ impl Integrator<'_, '_> {
             *self.in_state.borrow_mut() = Some(Rc::clone(&position));
         }
 
-        let momentum = axpy(&momentum, half, &gradient);
+        // the second half step, in place (the same sum axpy forms)
+        for (p, g) in momentum.iter_mut().zip(&gradient) {
+            *p += g * half;
+        }
         LeapfrogState::new(
             position,
             momentum,
@@ -1151,8 +1184,9 @@ fn accept_with_log_probability(log_probability: f64, rng: &mut KeanuRng) -> bool
     rng.next_f64().ln() < log_probability
 }
 
-fn is_u_turning(blocks: &[usize], forward: &[f64], backward: &[f64], rho: &[f64]) -> bool {
-    dot(blocks, forward, rho) < 0.0 || dot(blocks, backward, rho) < 0.0
+/// Whether either end's velocity points against the summed momentum rho = a + b.
+fn is_u_turning(blocks: &[usize], forward: &[f64], backward: &[f64], a: &[f64], b: &[f64]) -> bool {
+    dot_sum(blocks, forward, a, b) < 0.0 || dot_sum(blocks, backward, a, b) < 0.0
 }
 
 /// The two halves of a trajectory being merged: the subtree that was there first (`init`) and the one just built
@@ -1178,30 +1212,27 @@ impl Halves<'_> {
     /// trajectory's ends against `rho`, and then each half extended by the nearest point of the other. Without the
     /// extra checks a trajectory can run on past a U-turn when its halves together nearly complete an orbit, so
     /// that their momenta almost cancel.
-    fn u_turned(&self, blocks: &[usize], rho: &[f64]) -> bool {
-        if is_u_turning(
+    /// The merged trajectory's summed momentum is init_rho + last_rho, which is never formed: each check takes
+    /// the sum of its two parts element by element.
+    fn u_turned(&self, blocks: &[usize]) -> bool {
+        is_u_turning(
             blocks,
             &self.init_outer.velocity,
             &self.last_outer.velocity,
-            rho,
-        ) {
-            return true;
-        }
-        let init_extended = add_all(self.init_rho, &self.last_inner.momentum);
-        if is_u_turning(
+            self.init_rho,
+            self.last_rho,
+        ) || is_u_turning(
             blocks,
             &self.init_outer.velocity,
             &self.last_inner.velocity,
-            &init_extended,
-        ) {
-            return true;
-        }
-        let last_extended = add_all(self.last_rho, &self.init_inner.momentum);
-        is_u_turning(
+            self.init_rho,
+            &self.last_inner.momentum,
+        ) || is_u_turning(
             blocks,
             &self.init_inner.velocity,
             &self.last_outer.velocity,
-            &last_extended,
+            self.last_rho,
+            &self.init_inner.momentum,
         )
     }
 }
@@ -1215,8 +1246,11 @@ fn ends(tree: &Tree, direction: f64) -> (Rc<LeapfrogState>, Rc<LeapfrogState>) {
     }
 }
 
-fn add_all(a: &[f64], b: &[f64]) -> Vec<f64> {
-    a.iter().zip(b).map(|(x, y)| x + y).collect()
+/// a += b, element by element (aᵢ + bᵢ, as the sum was formed before).
+fn add_into(a: &mut [f64], b: &[f64]) {
+    for (x, y) in a.iter_mut().zip(b) {
+        *x += y;
+    }
 }
 
 impl Integrator<'_, '_> {
@@ -1295,7 +1329,6 @@ impl Integrator<'_, '_> {
             tree.diverged = extension.diverged;
             tree.u_turned = extension.u_turned;
             if extension.should_continue() {
-                let rho = add_all(&tree.sum_momentum, &extension.sum_momentum);
                 tree.u_turned = Halves {
                     init_outer: &init_outer,
                     init_inner: &init_inner,
@@ -1304,8 +1337,8 @@ impl Integrator<'_, '_> {
                     last_outer: &last_outer,
                     last_rho: &extension.sum_momentum,
                 }
-                .u_turned(&self.potential.blocks, &rho);
-                tree.sum_momentum = rho;
+                .u_turned(&self.potential.blocks);
+                add_into(&mut tree.sum_momentum, &extension.sum_momentum);
                 let total = log_sum_exp([tree.log_sum_weight, extension.log_sum_weight]);
                 tree.log_sum_weight = total;
                 if accept_with_log_probability(extension.log_sum_weight - total, rng) {
@@ -1344,7 +1377,6 @@ impl Integrator<'_, '_> {
                 tree.proposal = other.proposal;
             }
             tree.log_sum_weight = log_sum_exp([tree.log_sum_weight, other.log_sum_weight]);
-            let rho = add_all(&tree.sum_momentum, &other.sum_momentum);
             tree.u_turned = Halves {
                 init_outer: &init_outer,
                 init_inner: &init_inner,
@@ -1353,8 +1385,8 @@ impl Integrator<'_, '_> {
                 last_outer: &last_outer,
                 last_rho: &other.sum_momentum,
             }
-            .u_turned(&self.potential.blocks, &rho);
-            tree.sum_momentum = rho;
+            .u_turned(&self.potential.blocks);
+            add_into(&mut tree.sum_momentum, &other.sum_momentum);
         }
         tree.height += 1;
         Ok(())

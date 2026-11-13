@@ -137,6 +137,44 @@ impl<'a> MultivariateGaussian<'a> {
         Ok(quadratic.add(&(&log_cov_det + k_log_2pi))?)
     }
 
+    /// [`Self::log_prob`] and, unless it is −∞ (a covariance that is not positive definite), [`Self::d_log_prob`],
+    /// from one Cholesky factorisation and one solve against it: exactly the same numbers as the two calls.
+    pub fn log_prob_and_gradient(
+        &self,
+        x: &DoubleTensor,
+    ) -> Result<(f64, Option<MultivariateGaussianGradient>)> {
+        let result_shape = self.validate(x.shape())?;
+        let n = x.shape()[x.rank() - 1];
+        let cholesky = match self.covariance.cholesky() {
+            Ok(cholesky) => cholesky,
+            Err(TensorError::NotPositiveDefinite) => return Ok((f64::NEG_INFINITY, None)),
+            Err(e) => return Err(e.into()),
+        };
+        // the log density, as log_prob_summands
+        let log_cov_det = &cholesky.diag_part()?.ln().sum_axes(&[-1])? * 2.0;
+        let x_minus_mu = x.sub(&self.mu)?;
+        let column = x_minus_mu.reshape(&with_suffix(x_minus_mu.shape(), &[1]))?;
+        let z = cholesky.solve_triangular(&column, true, false)?;
+        let quadratic = z.mul(&z)?.sum_axes(&[-2, -1])?;
+        let k_log_2pi = n as f64 * (2.0 * PI).ln();
+        let log_prob = quadratic.add(&(&log_cov_det + k_log_2pi))?.sum() * -0.5;
+        // the gradient, as d_log_prob, whose first solve is z's
+        let precision_times_diff = cholesky.solve_triangular(&z, true, true)?;
+        let d_mu_batched =
+            precision_times_diff.reshape(&with_suffix(batch(&result_shape, 1), &[n]))?;
+        let cov_inv = cholesky.cholesky_inverse()?;
+        let outer = precision_times_diff.matmul_transposed(&precision_times_diff, false, true)?;
+        let d_cov_batched = &outer.sub(&cov_inv)? * 0.5;
+        Ok((
+            log_prob,
+            Some(MultivariateGaussianGradient {
+                x: sum_over_batch(&d_mu_batched, x.shape())?.neg(),
+                mu: sum_over_batch(&d_mu_batched, self.mu.shape())?,
+                covariance: sum_over_batch(&d_cov_batched, self.covariance.shape())?,
+            }),
+        ))
+    }
+
     /// The element-wise derivatives of [`Self::log_prob`] with respect to x and each parameter.
     pub fn d_log_prob(&self, x: &DoubleTensor) -> Result<MultivariateGaussianGradient> {
         let result_shape = self.validate(x.shape())?;

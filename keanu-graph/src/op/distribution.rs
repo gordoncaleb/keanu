@@ -1174,7 +1174,7 @@ distributions! {
         support = Support::CorrelationCholesky;
     MultivariateGaussian "multivariate_gaussian" (mu: F64, covariance: F64) -> F64 =>
         d::MultivariateGaussian::new(mu, covariance),
-        support = Support::Real, event_terms = log_prob_terms;
+        support = Support::Real, event_terms = log_prob_terms, fused = multivariate_gaussian_fused;
     MultivariateGaussianPrecision "multivariate_gaussian_precision" (mu: F64, precision: F64) -> F64 =>
         d::MultivariateGaussianPrecision::new(mu, precision),
         support = Support::Real, event_terms = log_prob_terms, fused = gaussian_precision_fused;
@@ -1489,6 +1489,23 @@ fn gaussian_log_prob_and_gradient(
     Ok((
         log_prob.sum(),
         (Some(g.x), smallvec::smallvec![Some(g.mu), Some(g.sigma)]),
+    ))
+}
+
+fn multivariate_gaussian_fused(
+    distribution: &d::MultivariateGaussian<'_>,
+    x: &DoubleTensor,
+) -> Result<(f64, LogProbGradientParts)> {
+    let (lp, gradient) = distribution.log_prob_and_gradient(x)?;
+    Ok((
+        lp,
+        match gradient {
+            Some(g) => (
+                Some(g.x),
+                smallvec::smallvec![Some(g.mu), Some(g.covariance)],
+            ),
+            None => (None, smallvec::smallvec![None, None]),
+        },
     ))
 }
 
