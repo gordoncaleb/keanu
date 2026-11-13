@@ -35,7 +35,7 @@ fn valid(q: f64, beta: f64) -> bool {
 }
 
 /// ln(1 − exp(−exp(log_rate))).
-fn log_one_minus_survival<const K: usize>(log_rate: Jet<K>) -> Jet<K> {
+fn log_one_minus_survival<const K: usize, const H: usize>(log_rate: Jet<K, H>) -> Jet<K, H> {
     if log_rate.v > 7.0 {
         // exp(−exp(log_rate)) is below the floating-point range.
         Jet::constant(-0.0)
@@ -44,7 +44,11 @@ fn log_one_minus_survival<const K: usize>(log_rate: Jet<K>) -> Jet<K> {
     }
 }
 
-fn evaluate<const K: usize>(k: f64, [q, beta]: [Jet<K>; 2], function: Function) -> Jet<K> {
+fn evaluate<const K: usize, const H: usize>(
+    k: f64,
+    [q, beta]: [Jet<K, H>; 2],
+    function: Function,
+) -> Jet<K, H> {
     if !valid(q.v, beta.v) {
         return Jet::constant(f64::NAN);
     }

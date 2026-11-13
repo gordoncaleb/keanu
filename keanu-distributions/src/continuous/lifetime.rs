@@ -30,7 +30,10 @@ derived_distribution! {
     log_cdf = inverse_gaussian_log_cdf,
 }
 
-fn inverse_gaussian_log_prob<const K: usize>(x: Jet<K>, [mu, lambda]: [Jet<K>; 2]) -> Jet<K> {
+fn inverse_gaussian_log_prob<const K: usize, const H: usize>(
+    x: Jet<K, H>,
+    [mu, lambda]: [Jet<K, H>; 2],
+) -> Jet<K, H> {
     if !(mu.v > 0.0 && lambda.v > 0.0) {
         return Jet::constant(f64::NAN);
     }
@@ -43,11 +46,11 @@ fn inverse_gaussian_log_prob<const K: usize>(x: Jet<K>, [mu, lambda]: [Jet<K>; 2
         - lambda * (x - mu).square() / (2.0 * mu.square() * x)
 }
 
-fn inverse_gaussian_log_cdf<const K: usize>(
-    x: Jet<K>,
-    [mu, lambda]: [Jet<K>; 2],
+fn inverse_gaussian_log_cdf<const K: usize, const H: usize>(
+    x: Jet<K, H>,
+    [mu, lambda]: [Jet<K, H>; 2],
     upper: bool,
-) -> Jet<K> {
+) -> Jet<K, H> {
     if !(mu.v > 0.0 && lambda.v > 0.0) {
         return Jet::constant(f64::NAN);
     }
@@ -115,7 +118,10 @@ derived_distribution! {
     log_cdf = half_student_t_log_cdf,
 }
 
-fn half_student_t_log_prob<const K: usize>(x: Jet<K>, [nu, sigma]: [Jet<K>; 2]) -> Jet<K> {
+fn half_student_t_log_prob<const K: usize, const H: usize>(
+    x: Jet<K, H>,
+    [nu, sigma]: [Jet<K, H>; 2],
+) -> Jet<K, H> {
     if !(nu.v > 0.0 && sigma.v > 0.0) {
         return Jet::constant(f64::NAN);
     }
@@ -131,11 +137,11 @@ fn half_student_t_log_prob<const K: usize>(x: Jet<K>, [nu, sigma]: [Jet<K>; 2]) 
         - half * (t.square() / nu).ln_1p()
 }
 
-fn half_student_t_log_cdf<const K: usize>(
-    x: Jet<K>,
-    [nu, sigma]: [Jet<K>; 2],
+fn half_student_t_log_cdf<const K: usize, const H: usize>(
+    x: Jet<K, H>,
+    [nu, sigma]: [Jet<K, H>; 2],
     upper: bool,
-) -> Jet<K> {
+) -> Jet<K, H> {
     if !(nu.v > 0.0 && sigma.v > 0.0) {
         return Jet::constant(f64::NAN);
     }
@@ -189,7 +195,10 @@ derived_distribution! {
     log_cdf = log_logistic_log_cdf,
 }
 
-fn log_logistic_log_prob<const K: usize>(x: Jet<K>, [alpha, beta]: [Jet<K>; 2]) -> Jet<K> {
+fn log_logistic_log_prob<const K: usize, const H: usize>(
+    x: Jet<K, H>,
+    [alpha, beta]: [Jet<K, H>; 2],
+) -> Jet<K, H> {
     if !(alpha.v > 0.0 && beta.v > 0.0) {
         return Jet::constant(f64::NAN);
     }
@@ -200,11 +209,11 @@ fn log_logistic_log_prob<const K: usize>(x: Jet<K>, [alpha, beta]: [Jet<K>; 2]) 
     beta.ln() - alpha.ln() + (beta - 1.0) * l - 2.0 * (beta * l).softplus()
 }
 
-fn log_logistic_log_cdf<const K: usize>(
-    x: Jet<K>,
-    [alpha, beta]: [Jet<K>; 2],
+fn log_logistic_log_cdf<const K: usize, const H: usize>(
+    x: Jet<K, H>,
+    [alpha, beta]: [Jet<K, H>; 2],
     upper: bool,
-) -> Jet<K> {
+) -> Jet<K, H> {
     if !(alpha.v > 0.0 && beta.v > 0.0) {
         return Jet::constant(f64::NAN);
     }
@@ -268,7 +277,10 @@ derived_distribution! {
     log_prob = rice_log_prob,
 }
 
-fn rice_log_prob<const K: usize>(x: Jet<K>, [nu, sigma]: [Jet<K>; 2]) -> Jet<K> {
+fn rice_log_prob<const K: usize, const H: usize>(
+    x: Jet<K, H>,
+    [nu, sigma]: [Jet<K, H>; 2],
+) -> Jet<K, H> {
     if !(nu.v >= 0.0 && sigma.v > 0.0) {
         return Jet::constant(f64::NAN);
     }
@@ -325,7 +337,10 @@ fn generalized_gamma_valid(theta: f64, k: f64, p: f64) -> bool {
     theta > 0.0 && k > 0.0 && p > 0.0
 }
 
-fn generalized_gamma_log_prob<const K: usize>(x: Jet<K>, [theta, k, p]: [Jet<K>; 3]) -> Jet<K> {
+fn generalized_gamma_log_prob<const K: usize, const H: usize>(
+    x: Jet<K, H>,
+    [theta, k, p]: [Jet<K, H>; 3],
+) -> Jet<K, H> {
     if !generalized_gamma_valid(theta.v, k.v, p.v) {
         return Jet::constant(f64::NAN);
     }
@@ -338,11 +353,11 @@ fn generalized_gamma_log_prob<const K: usize>(x: Jet<K>, [theta, k, p]: [Jet<K>;
     p.ln() - ln_x + k * power - power.exp() - k.ln_gamma()
 }
 
-fn generalized_gamma_log_cdf<const K: usize>(
-    x: Jet<K>,
-    [theta, k, p]: [Jet<K>; 3],
+fn generalized_gamma_log_cdf<const K: usize, const H: usize>(
+    x: Jet<K, H>,
+    [theta, k, p]: [Jet<K, H>; 3],
     upper: bool,
-) -> Jet<K> {
+) -> Jet<K, H> {
     if !generalized_gamma_valid(theta.v, k.v, p.v) {
         return Jet::constant(f64::NAN);
     }

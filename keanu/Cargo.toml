@@ -42,6 +42,11 @@ harness = false
 name = "models"
 harness = false
 
+[[bench]]
+name = "ppl_comparison"
+harness = false
+required-features = ["parallel"]
+
 [lints]
 workspace = true
 

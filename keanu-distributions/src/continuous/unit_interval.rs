@@ -18,7 +18,7 @@ fn interior_quantile(x: f64, p: f64) -> f64 {
 }
 
 /// The log CDF (or survival function) outside (0, 1), or None inside.
-fn unit_outside<const K: usize>(x: f64, upper: bool) -> Option<Jet<K>> {
+fn unit_outside<const K: usize, const H: usize>(x: f64, upper: bool) -> Option<Jet<K, H>> {
     if x <= 0.0 {
         Some(outside(true, upper))
     } else if x >= 1.0 {
@@ -48,7 +48,10 @@ derived_distribution! {
     log_cdf = kumaraswamy_log_cdf,
 }
 
-fn kumaraswamy_log_prob<const K: usize>(x: Jet<K>, [a, b]: [Jet<K>; 2]) -> Jet<K> {
+fn kumaraswamy_log_prob<const K: usize, const H: usize>(
+    x: Jet<K, H>,
+    [a, b]: [Jet<K, H>; 2],
+) -> Jet<K, H> {
     if !(a.v > 0.0 && b.v > 0.0) {
         return Jet::constant(f64::NAN);
     }
@@ -60,7 +63,11 @@ fn kumaraswamy_log_prob<const K: usize>(x: Jet<K>, [a, b]: [Jet<K>; 2]) -> Jet<K
     a.ln() + b.ln() + (a - 1.0) * ln_x + (b - 1.0) * (a * ln_x).log1mexp()
 }
 
-fn kumaraswamy_log_cdf<const K: usize>(x: Jet<K>, [a, b]: [Jet<K>; 2], upper: bool) -> Jet<K> {
+fn kumaraswamy_log_cdf<const K: usize, const H: usize>(
+    x: Jet<K, H>,
+    [a, b]: [Jet<K, H>; 2],
+    upper: bool,
+) -> Jet<K, H> {
     if !(a.v > 0.0 && b.v > 0.0) {
         return Jet::constant(f64::NAN);
     }
@@ -122,7 +129,10 @@ derived_distribution! {
     log_cdf = logit_normal_log_cdf,
 }
 
-fn logit_normal_log_prob<const K: usize>(x: Jet<K>, [mu, sigma]: [Jet<K>; 2]) -> Jet<K> {
+fn logit_normal_log_prob<const K: usize, const H: usize>(
+    x: Jet<K, H>,
+    [mu, sigma]: [Jet<K, H>; 2],
+) -> Jet<K, H> {
     if !(sigma.v > 0.0) {
         return Jet::constant(f64::NAN);
     }
@@ -134,11 +144,11 @@ fn logit_normal_log_prob<const K: usize>(x: Jet<K>, [mu, sigma]: [Jet<K>; 2]) ->
     -sigma.ln() - LN_SQRT_2PI - 0.5 * z.square() - ln_x - ln_1mx
 }
 
-fn logit_normal_log_cdf<const K: usize>(
-    x: Jet<K>,
-    [mu, sigma]: [Jet<K>; 2],
+fn logit_normal_log_cdf<const K: usize, const H: usize>(
+    x: Jet<K, H>,
+    [mu, sigma]: [Jet<K, H>; 2],
     upper: bool,
-) -> Jet<K> {
+) -> Jet<K, H> {
     if !(sigma.v > 0.0) {
         return Jet::constant(f64::NAN);
     }

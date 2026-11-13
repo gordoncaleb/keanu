@@ -29,7 +29,10 @@ derived_distribution! {
     log_cdf = gumbel_log_cdf,
 }
 
-fn gumbel_log_prob<const K: usize>(x: Jet<K>, [mu, beta]: [Jet<K>; 2]) -> Jet<K> {
+fn gumbel_log_prob<const K: usize, const H: usize>(
+    x: Jet<K, H>,
+    [mu, beta]: [Jet<K, H>; 2],
+) -> Jet<K, H> {
     if !(beta.v > 0.0) {
         return Jet::constant(f64::NAN);
     }
@@ -37,7 +40,11 @@ fn gumbel_log_prob<const K: usize>(x: Jet<K>, [mu, beta]: [Jet<K>; 2]) -> Jet<K>
     -beta.ln() - z - (-z).exp()
 }
 
-fn gumbel_log_cdf<const K: usize>(x: Jet<K>, [mu, beta]: [Jet<K>; 2], upper: bool) -> Jet<K> {
+fn gumbel_log_cdf<const K: usize, const H: usize>(
+    x: Jet<K, H>,
+    [mu, beta]: [Jet<K, H>; 2],
+    upper: bool,
+) -> Jet<K, H> {
     if !(beta.v > 0.0) {
         return Jet::constant(f64::NAN);
     }
@@ -74,7 +81,10 @@ impl Gumbel<'_> {
 }
 
 /// ln(1 + ξz)/ξ (z itself at ξ = 0), or None where 1 + ξz <= 0, outside the support.
-fn generalized_log<const K: usize>(z: Jet<K>, xi: Jet<K>) -> Option<Jet<K>> {
+fn generalized_log<const K: usize, const H: usize>(
+    z: Jet<K, H>,
+    xi: Jet<K, H>,
+) -> Option<Jet<K, H>> {
     let u = xi * z;
     (1.0 + u.v > 0.0).then(|| z * u.log1p_over())
 }
@@ -110,7 +120,10 @@ derived_distribution! {
     log_cdf = gev_log_cdf,
 }
 
-fn gev_log_prob<const K: usize>(x: Jet<K>, [mu, sigma, xi]: [Jet<K>; 3]) -> Jet<K> {
+fn gev_log_prob<const K: usize, const H: usize>(
+    x: Jet<K, H>,
+    [mu, sigma, xi]: [Jet<K, H>; 3],
+) -> Jet<K, H> {
     if !(sigma.v > 0.0) || xi.v.is_nan() {
         return Jet::constant(f64::NAN);
     }
@@ -121,7 +134,11 @@ fn gev_log_prob<const K: usize>(x: Jet<K>, [mu, sigma, xi]: [Jet<K>; 3]) -> Jet<
     }
 }
 
-fn gev_log_cdf<const K: usize>(x: Jet<K>, [mu, sigma, xi]: [Jet<K>; 3], upper: bool) -> Jet<K> {
+fn gev_log_cdf<const K: usize, const H: usize>(
+    x: Jet<K, H>,
+    [mu, sigma, xi]: [Jet<K, H>; 3],
+    upper: bool,
+) -> Jet<K, H> {
     if !(sigma.v > 0.0) || xi.v.is_nan() {
         return Jet::constant(f64::NAN);
     }
@@ -198,7 +215,10 @@ derived_distribution! {
     log_cdf = gpd_log_cdf,
 }
 
-fn gpd_log_prob<const K: usize>(x: Jet<K>, [mu, sigma, xi]: [Jet<K>; 3]) -> Jet<K> {
+fn gpd_log_prob<const K: usize, const H: usize>(
+    x: Jet<K, H>,
+    [mu, sigma, xi]: [Jet<K, H>; 3],
+) -> Jet<K, H> {
     if !(sigma.v > 0.0) || xi.v.is_nan() {
         return Jet::constant(f64::NAN);
     }
@@ -212,7 +232,11 @@ fn gpd_log_prob<const K: usize>(x: Jet<K>, [mu, sigma, xi]: [Jet<K>; 3]) -> Jet<
     }
 }
 
-fn gpd_log_cdf<const K: usize>(x: Jet<K>, [mu, sigma, xi]: [Jet<K>; 3], upper: bool) -> Jet<K> {
+fn gpd_log_cdf<const K: usize, const H: usize>(
+    x: Jet<K, H>,
+    [mu, sigma, xi]: [Jet<K, H>; 3],
+    upper: bool,
+) -> Jet<K, H> {
     if !(sigma.v > 0.0) || xi.v.is_nan() {
         return Jet::constant(f64::NAN);
     }

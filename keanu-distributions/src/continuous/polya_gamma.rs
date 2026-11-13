@@ -22,7 +22,10 @@ derived_distribution! {
     log_prob = polya_gamma_log_prob,
 }
 
-fn polya_gamma_log_prob<const K: usize>(x: Jet<K>, [z]: [Jet<K>; 1]) -> Jet<K> {
+fn polya_gamma_log_prob<const K: usize, const H: usize>(
+    x: Jet<K, H>,
+    [z]: [Jet<K, H>; 1],
+) -> Jet<K, H> {
     if !z.v.is_finite() || x.v.is_nan() {
         return Jet::constant(f64::NAN);
     }

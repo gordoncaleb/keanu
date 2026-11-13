@@ -301,8 +301,18 @@ fn broadcast_zip_into<A: Copy, B: Copy, C>(
         data.push_one(f(a[0], b[0]));
         return;
     }
-    let sa = shape::broadcast_strides(a_shape, out);
-    let sb = shape::broadcast_strides(b_shape, out);
+    let (out, [sa, sb]) = coalesce(
+        out,
+        [
+            shape::broadcast_strides(a_shape, out),
+            shape::broadcast_strides(b_shape, out),
+        ],
+    );
+    let out = &out[..];
+    if out.is_empty() {
+        data.push_one(f(a[0], b[0]));
+        return;
+    }
     let rank = out.len();
     let inner = out[rank - 1];
     let (step_a, step_b) = (sa[rank - 1], sb[rank - 1]);
@@ -344,6 +354,65 @@ fn broadcast_zip_into<A: Copy, B: Copy, C>(
     }
 }
 
+/// The same iteration as `shape` with the `strides` of N operands, in as few dimensions as possible: dimensions of
+/// length 1 are dropped and each dimension is merged into the next where every operand steps through both as
+/// one (its stride is the next one's stride times the next one's length, as for a contiguous or a broadcast pair),
+/// so that the kernels' inner loops run over as many elements as they can. Row-major order is unchanged.
+fn coalesce<const N: usize>(shape: &[usize], strides: [Shape; N]) -> (Shape, [Shape; N]) {
+    let mut out_shape = Shape::new();
+    let mut out_strides: [Shape; N] = std::array::from_fn(|_| Shape::new());
+    for d in 0..shape.len() {
+        let n = shape[d];
+        if n == 1 {
+            continue;
+        }
+        let mergeable = !out_shape.is_empty()
+            && (0..N).all(|k| *out_strides[k].last().unwrap() == strides[k][d] * n);
+        if mergeable {
+            *out_shape.last_mut().unwrap() *= n;
+            for k in 0..N {
+                *out_strides[k].last_mut().unwrap() = strides[k][d];
+            }
+        } else {
+            out_shape.push(n);
+            for k in 0..N {
+                out_strides[k].push(strides[k][d]);
+            }
+        }
+    }
+    (out_shape, out_strides)
+}
+
+/// [`coalesce`] for signed strides.
+fn coalesce_signed<const N: usize>(
+    shape: &[usize],
+    strides: [&[isize]; N],
+) -> (Shape, [smallvec::SmallVec<[isize; 4]>; N]) {
+    let mut out_shape = Shape::new();
+    let mut out_strides: [smallvec::SmallVec<[isize; 4]>; N] =
+        std::array::from_fn(|_| smallvec::SmallVec::new());
+    for d in 0..shape.len() {
+        let n = shape[d];
+        if n == 1 {
+            continue;
+        }
+        let mergeable = !out_shape.is_empty()
+            && (0..N).all(|k| *out_strides[k].last().unwrap() == strides[k][d] * n as isize);
+        if mergeable {
+            *out_shape.last_mut().unwrap() *= n;
+            for k in 0..N {
+                *out_strides[k].last_mut().unwrap() = strides[k][d];
+            }
+        } else {
+            out_shape.push(n);
+            for k in 0..N {
+                out_strides[k].push(strides[k][d]);
+            }
+        }
+    }
+    (out_shape, out_strides)
+}
+
 /// Copies `src` read with arbitrary strides into a contiguous row-major buffer, with the last dimension as a
 /// tight inner loop.
 pub(crate) fn gather<T: Copy>(
@@ -375,6 +444,11 @@ fn gather_into<T: Copy>(
     if n == 0 {
         return;
     }
+    if shape.is_empty() {
+        out.push_one(src[offset as usize]);
+        return;
+    }
+    let (shape, [read]) = coalesce_signed(shape, [read]);
     if shape.is_empty() {
         out.push_one(src[offset as usize]);
         return;
@@ -434,6 +508,28 @@ pub(crate) fn reduce<T: Copy, A: Copy>(
         out[0] = fold(init, data[0]);
         return (out_shape, out);
     }
+    // merge neighbouring dimensions reduced alike (dropping those of length 1), so that the inner loop is long
+    let mut merged: Shape = Shape::new();
+    let mut merged_reduce: smallvec::SmallVec<[bool; 4]> = smallvec::SmallVec::new();
+    for d in 0..rank {
+        if shape[d] == 1 {
+            continue;
+        }
+        if merged_reduce.last() == Some(&reduce[d]) {
+            *merged.last_mut().unwrap() *= shape[d];
+        } else {
+            merged.push(shape[d]);
+            merged_reduce.push(reduce[d]);
+        }
+    }
+    if merged.is_empty() {
+        out[0] = fold(init, data[0]);
+        return (out_shape, out);
+    }
+    let (shape, reduce, rank) = (&merged[..], &merged_reduce[..], merged.len());
+    let kept_shape: Shape = (0..rank)
+        .map(|i| if reduce[i] { 1 } else { shape[i] })
+        .collect();
     let out_strides = shape::broadcast_strides(&kept_shape, shape);
     let inner = shape[rank - 1];
     let reduce_last = reduce[rank - 1];

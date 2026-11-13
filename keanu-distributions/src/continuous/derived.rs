@@ -33,7 +33,10 @@ macro_rules! derived_distribution {
                 /// The element-wise derivatives of [`Self::log_cdf`] with respect to x and each parameter.
                 pub fn d_log_cdf(&self, x: &DoubleTensor) -> Result<$gradient> {
                     let [x, $($param),+] = map_n((x, $(&*self.$param),+), |(x, $($param),+)| {
-                        Self::log_cdf_derivatives(x, [$($param),+], false).gradient
+                        crate::jet::gradient(x, [$($param),+], |x, p| {
+                            crate::continuous::derived::limit_or(x, false, |x| $log_cdf(x, p, false))
+                        })
+                        .1
                     })?;
                     Ok($gradient { x, $($param),+ })
                 }
@@ -41,7 +44,10 @@ macro_rules! derived_distribution {
                 /// The element-wise derivatives of [`Self::log_ccdf`] with respect to x and each parameter.
                 pub fn d_log_ccdf(&self, x: &DoubleTensor) -> Result<$gradient> {
                     let [x, $($param),+] = map_n((x, $(&*self.$param),+), |(x, $($param),+)| {
-                        Self::log_cdf_derivatives(x, [$($param),+], true).gradient
+                        crate::jet::gradient(x, [$($param),+], |x, p| {
+                            crate::continuous::derived::limit_or(x, true, |x| $log_cdf(x, p, true))
+                        })
+                        .1
                     })?;
                     Ok($gradient { x, $($param),+ })
                 }
@@ -101,7 +107,7 @@ macro_rules! derived_distribution {
             /// The element-wise derivatives of [`Self::log_prob`] with respect to x and each parameter.
             pub fn d_log_prob(&self, x: &DoubleTensor) -> Result<$gradient> {
                 let [x, $($param),+] = map_n((x, $(&*self.$param),+), |(x, $($param),+)| {
-                    Self::log_prob_derivatives(x, [$($param),+]).gradient
+                    crate::jet::gradient(x, [$($param),+], |x, p| $log_prob(x, p)).1
                 })?;
                 Ok($gradient { x, $($param),+ })
             }
@@ -121,7 +127,10 @@ use super::*;
 
 /// ln p from ln p or ln(1 − p) computed directly, choosing whichever keeps its precision: `lower` (ln p) where
 /// p < ½, else ln(1 − e^{ln(1 − p)}).
-pub(super) fn log_from_either<const K: usize>(p: Jet<K>, complement: Jet<K>) -> Jet<K> {
+pub(super) fn log_from_either<const K: usize, const H: usize>(
+    p: Jet<K, H>,
+    complement: Jet<K, H>,
+) -> Jet<K, H> {
     if p.v < 0.5 {
         p.ln()
     } else {
@@ -131,10 +140,10 @@ pub(super) fn log_from_either<const K: usize>(p: Jet<K>, complement: Jet<K>) -> 
 
 /// A log probability in jets from the log of one probability and of its complement: the first where it is below
 /// ln ½, else ln(1 − e^{second}).
-pub(super) fn log_complement<const K: usize>(
-    log_p: Jet<K>,
-    log_q: impl FnOnce() -> Jet<K>,
-) -> Jet<K> {
+pub(super) fn log_complement<const K: usize, const H: usize>(
+    log_p: Jet<K, H>,
+    log_q: impl FnOnce() -> Jet<K, H>,
+) -> Jet<K, H> {
     if log_p.v < -std::f64::consts::LN_2 {
         log_p
     } else {
@@ -143,11 +152,11 @@ pub(super) fn log_complement<const K: usize>(
 }
 
 /// The log CDF (or, if `upper`, log survival function) at an infinite point, its limit, else `f(x)`.
-pub(super) fn limit_or<const K: usize>(
-    x: Jet<K>,
+pub(super) fn limit_or<const K: usize, const H: usize>(
+    x: Jet<K, H>,
     upper: bool,
-    f: impl FnOnce(Jet<K>) -> Jet<K>,
-) -> Jet<K> {
+    f: impl FnOnce(Jet<K, H>) -> Jet<K, H>,
+) -> Jet<K, H> {
     let (at_minus, at_plus) = if upper {
         (0.0, f64::NEG_INFINITY)
     } else {
@@ -163,7 +172,7 @@ pub(super) fn limit_or<const K: usize>(
 }
 
 /// The log CDF (or, if `upper`, log survival function) at a point below the support (`below`) or above it.
-pub(super) fn outside<const K: usize>(below: bool, upper: bool) -> Jet<K> {
+pub(super) fn outside<const K: usize, const H: usize>(below: bool, upper: bool) -> Jet<K, H> {
     Jet::constant(if below == upper {
         0.0
     } else {

@@ -22,9 +22,7 @@ pub mod hmc;
 use crate::error::{AlgorithmError, Result};
 use crate::mcmc::{SamplingAlgorithm, SamplingOptions, generate, is_impossible};
 use crate::samples::NetworkSamples;
-use crate::support::{
-    block_shapes, check_latents, check_nodes, concat, evaluate_all, split, start_point,
-};
+use crate::support::{block_shapes, check_latents, check_nodes, evaluate_all, start_point};
 use keanu_distributions::KeanuRng;
 use keanu_graph::{Graph, Model, NodeId, Parameterisation, Space, State, Value};
 use keanu_tensor::DoubleTensor;
@@ -488,29 +486,29 @@ impl Nuts {
         others: Option<Vec<NodeId>>,
         rng: &mut KeanuRng,
     ) -> Result<NutsSampler<'m>> {
-        let shapes = block_shapes(&param);
+        let blocks: Vec<usize> = block_shapes(&param)
+            .iter()
+            .map(|shape| shape.iter().product())
+            .collect();
         let z = start_point(&param, state)?;
-        let (log_prob, gradient) = log_prob_and_gradient_at(&param, &shapes, state, &z)?;
+        let (log_prob, gradient) = log_prob_and_gradient_at(&param, state, &z)?;
         if is_impossible(log_prob) {
             return Err(AlgorithmError::ImpossibleStart);
         }
         let sample_log_prob = log_prob - param.log_det_jacobian(&z)?;
-        let position = split(&z, &shapes);
 
-        let step_size = self.initial_step_size.unwrap_or_else(|| {
-            let n: usize = position.iter().map(DoubleTensor::len).sum();
-            0.25 / (n as f64).powf(0.25)
-        });
+        let step_size = self
+            .initial_step_size
+            .unwrap_or_else(|| 0.25 / (z.len() as f64).powf(0.25));
 
         let mut sampler = NutsSampler {
             param,
-            shapes,
             config: *self,
-            potential: PotentialState::new(&self.potential, self.adapt_count, &position),
+            potential: PotentialState::new(&self.potential, self.adapt_count, &blocks),
             step_size: AdaptiveStepSize::new(step_size, self.target_acceptance_prob),
             nodes: nodes.to_vec(),
             proposal: Candidate {
-                position: Rc::new(position),
+                position: Rc::new(z),
                 gradient: Rc::new(gradient),
                 log_prob,
                 energy: f64::NAN,
@@ -563,18 +561,17 @@ impl Nuts {
 }
 
 /// Sets the state to the point `z` and returns the log probability of `z` (with the Jacobian of the transforms) and
-/// its gradient, one tensor per block of `shapes`, in one pass. Where the log probability is not finite the gradient
-/// is meaningless (the trajectory diverges anyway), so zeros are used.
+/// its gradient, in one pass. Where the log probability is not finite the gradient is meaningless (the trajectory
+/// diverges anyway), so zeros are used.
 fn log_prob_and_gradient_at(
     param: &Parameterisation<'_>,
-    shapes: &[Vec<usize>],
     state: &mut State,
     z: &[f64],
-) -> Result<(f64, Vec<DoubleTensor>)> {
+) -> Result<(f64, Vec<f64>)> {
     let (log_prob, gradient) = param.log_prob_and_gradient(z, true, state)?;
     let gradient = match gradient {
-        Some(gradient) if log_prob.is_finite() => split(&gradient, shapes),
-        _ => shapes.iter().map(|s| DoubleTensor::zeros(s)).collect(),
+        Some(gradient) if log_prob.is_finite() => gradient,
+        _ => vec![0.0; z.len()],
     };
     Ok((log_prob, gradient))
 }
@@ -582,8 +579,8 @@ fn log_prob_and_gradient_at(
 /// A chosen point of a trajectory.
 #[derive(Debug, Clone)]
 struct Candidate {
-    position: Rc<Vec<DoubleTensor>>,
-    gradient: Rc<Vec<DoubleTensor>>,
+    position: Rc<Vec<f64>>,
+    gradient: Rc<Vec<f64>>,
     log_prob: f64,
     /// The Hamiltonian at this point with the momentum it was reached with (NaN until a step has given it one).
     energy: f64,
@@ -593,24 +590,24 @@ struct Candidate {
 /// candidates) through reference counting rather than copying.
 #[derive(Debug)]
 struct LeapfrogState {
-    position: Rc<Vec<DoubleTensor>>,
-    momentum: Vec<DoubleTensor>,
-    velocity: Vec<DoubleTensor>,
-    gradient: Rc<Vec<DoubleTensor>>,
+    position: Rc<Vec<f64>>,
+    momentum: Vec<f64>,
+    velocity: Vec<f64>,
+    gradient: Rc<Vec<f64>>,
     log_prob: f64,
     energy: f64,
 }
 
 impl LeapfrogState {
     fn new(
-        position: Rc<Vec<DoubleTensor>>,
-        momentum: Vec<DoubleTensor>,
-        gradient: Rc<Vec<DoubleTensor>>,
+        position: Rc<Vec<f64>>,
+        momentum: Vec<f64>,
+        gradient: Rc<Vec<f64>>,
         log_prob: f64,
         potential: &PotentialState,
     ) -> Result<Self> {
-        let velocity = potential.velocity(&momentum)?;
-        let kinetic = 0.5 * dot(&momentum, &velocity)?;
+        let velocity = potential.velocity(&momentum);
+        let kinetic = 0.5 * potential.dot(&momentum, &velocity);
         Ok(Self {
             position,
             momentum,
@@ -622,56 +619,58 @@ impl LeapfrogState {
     }
 }
 
-fn dot(a: &[DoubleTensor], b: &[DoubleTensor]) -> Result<f64> {
+/// Σ aᵢ bᵢ, summed block by block: each latent's elements in turn from zero, then the blocks' sums in order.
+fn dot(blocks: &[usize], a: &[f64], b: &[f64]) -> f64 {
     let mut sum = 0.0;
-    for (x, y) in a.iter().zip(b) {
-        sum += x.mul(y)?.sum();
+    let mut start = 0;
+    for &len in blocks {
+        let block: f64 = a[start..start + len]
+            .iter()
+            .zip(&b[start..start + len])
+            .fold(0.0, |acc, (x, y)| acc + x * y);
+        sum += block;
+        start += len;
     }
-    Ok(sum)
+    sum
 }
 
-/// x + dt · v for each latent.
-fn axpy(x: &[DoubleTensor], dt: f64, v: &[DoubleTensor]) -> Result<Vec<DoubleTensor>> {
-    x.iter().zip(v).map(|(x, v)| Ok((v * dt).add(x)?)).collect()
+/// x + dt · v.
+fn axpy(x: &[f64], dt: f64, v: &[f64]) -> Vec<f64> {
+    x.iter().zip(v).map(|(x, v)| v * dt + x).collect()
 }
 
 /// Running mean and sample variance (Welford), restarted for each slow adaptation window.
 #[derive(Debug, Clone)]
 struct VarianceEstimator {
     count: usize,
-    mean: Vec<DoubleTensor>,
-    m2: Vec<DoubleTensor>,
+    mean: Vec<f64>,
+    m2: Vec<f64>,
 }
 
 impl VarianceEstimator {
-    fn new(like: &[DoubleTensor]) -> Self {
-        let zeros: Vec<DoubleTensor> = like
-            .iter()
-            .map(|t| DoubleTensor::zeros(t.shape()))
-            .collect();
+    fn new(dimension: usize) -> Self {
         Self {
             count: 0,
-            mean: zeros.clone(),
-            m2: zeros,
+            mean: vec![0.0; dimension],
+            m2: vec![0.0; dimension],
         }
     }
 
-    fn add(&mut self, sample: &[DoubleTensor]) -> Result<()> {
+    fn add(&mut self, sample: &[f64]) {
         self.count += 1;
         let count = self.count as f64;
-        for ((x, mean), m2) in sample.iter().zip(&mut self.mean).zip(&mut self.m2) {
-            let delta = x.sub(mean)?;
-            let new_mean = mean.add(&(&delta / count))?;
-            let delta2 = x.sub(&new_mean)?;
-            *m2 = m2.add(&delta.mul(&delta2)?)?;
+        for ((&x, mean), m2) in sample.iter().zip(&mut self.mean).zip(&mut self.m2) {
+            let delta = x - *mean;
+            let new_mean = *mean + delta / count;
+            let delta2 = x - new_mean;
+            *m2 += delta * delta2;
             *mean = new_mean;
         }
-        Ok(())
     }
 
     /// The sample variance (with n − 1 in the denominator) regularised as Stan regularises it:
     /// (n / (n + 5)) · var + 10⁻³ · 5 / (n + 5). `None` with fewer than two draws.
-    fn regularised_variance(&self) -> Option<Vec<DoubleTensor>> {
+    fn regularised_variance(&self) -> Option<Vec<f64>> {
         if self.count < 2 {
             return None;
         }
@@ -681,7 +680,7 @@ impl VarianceEstimator {
         Some(
             self.m2
                 .iter()
-                .map(|m2| (m2 * (shrink / (n - 1.0))).map(|v| v + floor))
+                .map(|m2| m2 * (shrink / (n - 1.0)) + floor)
                 .collect(),
         )
     }
@@ -706,16 +705,15 @@ impl CovarianceEstimator {
         }
     }
 
-    fn add(&mut self, sample: &[DoubleTensor]) {
+    fn add(&mut self, x: &[f64]) {
         self.count += 1;
         let count = self.count as f64;
-        let x = concat(sample);
         let n = self.mean.len();
         let delta: Vec<f64> = x.iter().zip(&self.mean).map(|(x, m)| x - m).collect();
         for (m, d) in self.mean.iter_mut().zip(&delta) {
             *m += d / count;
         }
-        for ((row, x), mean) in self.m2.chunks_exact_mut(n.max(1)).zip(&x).zip(&self.mean) {
+        for ((row, x), mean) in self.m2.chunks_exact_mut(n.max(1)).zip(x).zip(&self.mean) {
             let after = x - mean;
             for (m2, d) in row.iter_mut().zip(&delta) {
                 *m2 += after * d;
@@ -823,8 +821,8 @@ impl AdaptationWindows {
 #[derive(Debug, Clone)]
 enum InverseMetric {
     Diagonal {
-        variance: Vec<DoubleTensor>,
-        standard_deviation: Vec<DoubleTensor>,
+        variance: Vec<f64>,
+        standard_deviation: Vec<f64>,
         estimator: VarianceEstimator,
     },
     Dense {
@@ -832,8 +830,6 @@ enum InverseMetric {
         matrix: Vec<f64>,
         /// The lower triangular Cholesky factor L of M⁻¹ = L Lᵀ, n × n row-major.
         cholesky: Vec<f64>,
-        /// The shape of each latent's block of the position.
-        shapes: Vec<Vec<usize>>,
         estimator: CovarianceEstimator,
     },
 }
@@ -843,24 +839,23 @@ enum InverseMetric {
 struct PotentialState {
     metric: InverseMetric,
     windows: AdaptationWindows,
+    /// The number of elements of each latent's block of the position.
+    blocks: Vec<usize>,
 }
 
 impl PotentialState {
-    fn new(settings: &QuadraticPotential, adapt_count: usize, like: &[DoubleTensor]) -> Self {
+    fn new(settings: &QuadraticPotential, adapt_count: usize, blocks: &[usize]) -> Self {
+        let n: usize = blocks.iter().sum();
         let metric = match settings.metric {
             Metric::Diagonal => {
-                let variance: Vec<DoubleTensor> = like
-                    .iter()
-                    .map(|t| DoubleTensor::full(t.shape(), settings.initial_variance))
-                    .collect();
+                let variance = vec![settings.initial_variance; n];
                 InverseMetric::Diagonal {
-                    standard_deviation: variance.iter().map(DoubleTensor::sqrt).collect(),
+                    standard_deviation: variance.iter().map(|v| v.sqrt()).collect(),
                     variance,
-                    estimator: VarianceEstimator::new(like),
+                    estimator: VarianceEstimator::new(n),
                 }
             }
             Metric::Dense => {
-                let n: usize = like.iter().map(DoubleTensor::len).sum();
                 let diagonal = |value: f64| {
                     let mut matrix = vec![0.0; n * n];
                     (0..n).for_each(|i| matrix[i * n + i] = value);
@@ -869,7 +864,6 @@ impl PotentialState {
                 InverseMetric::Dense {
                     matrix: diagonal(settings.initial_variance),
                     cholesky: diagonal(settings.initial_variance.sqrt()),
-                    shapes: like.iter().map(|t| t.shape().to_vec()).collect(),
                     estimator: CovarianceEstimator::new(n),
                 }
             }
@@ -877,13 +871,24 @@ impl PotentialState {
         Self {
             metric,
             windows: AdaptationWindows::new(settings, adapt_count),
+            blocks: blocks.to_vec(),
         }
+    }
+
+    /// The number of elements of the position.
+    fn dimension(&self) -> usize {
+        self.blocks.iter().sum()
+    }
+
+    /// Σ aᵢ bᵢ over the position's elements, block by block.
+    fn dot(&self, a: &[f64], b: &[f64]) -> f64 {
+        dot(&self.blocks, a, b)
     }
 
     /// Learns from an adaptation step's draw (Stan's `var_adaptation::learn_variance` or
     /// `covar_adaptation::learn_covariance`). Returns whether the step ended a slow window, so that the metric
     /// changed.
-    fn update(&mut self, position: &[DoubleTensor]) -> Result<bool> {
+    fn update(&mut self, position: &[f64]) -> Result<bool> {
         if self.windows.num_warmup == 0 {
             return Ok(false);
         }
@@ -899,14 +904,14 @@ impl PotentialState {
                 estimator,
             } => {
                 if in_window {
-                    estimator.add(position)?;
+                    estimator.add(position);
                 }
                 if ends_window {
                     if let Some(estimate) = estimator.regularised_variance() {
-                        *standard_deviation = estimate.iter().map(DoubleTensor::sqrt).collect();
+                        *standard_deviation = estimate.iter().map(|v| v.sqrt()).collect();
                         *variance = estimate;
                     }
-                    *estimator = VarianceEstimator::new(position);
+                    *estimator = VarianceEstimator::new(position.len());
                 }
             }
             InverseMetric::Dense {
@@ -941,12 +946,9 @@ impl PotentialState {
     /// The inverse mass matrix's diagonal, as one vector.
     fn diagonal(&self) -> Vec<f64> {
         match &self.metric {
-            InverseMetric::Diagonal { variance, .. } => variance
-                .iter()
-                .flat_map(|v| v.as_slice().iter().copied())
-                .collect(),
-            InverseMetric::Dense { matrix, shapes, .. } => {
-                let n: usize = shapes.iter().map(|s| s.iter().product::<usize>()).sum();
+            InverseMetric::Diagonal { variance, .. } => variance.clone(),
+            InverseMetric::Dense { matrix, .. } => {
+                let n = self.dimension();
                 (0..n).map(|i| matrix[i * n + i]).collect()
             }
         }
@@ -957,7 +959,7 @@ impl PotentialState {
         match &self.metric {
             InverseMetric::Diagonal { .. } => None,
             InverseMetric::Dense { matrix, .. } => {
-                let n = (matrix.len() as f64).sqrt().round() as usize;
+                let n = self.dimension();
                 DoubleTensor::new(&[n, n], matrix.clone()).ok()
             }
         }
@@ -965,19 +967,17 @@ impl PotentialState {
 
     /// A momentum drawn from N(0, M): with a diagonal metric each element's standard normal draw divided by its
     /// standard deviation, and with a dense one L⁻ᵀ u for u ~ N(0, I) and M⁻¹ = L Lᵀ (as Stan's `dense_e_metric`).
-    fn random_momentum(&self, rng: &mut KeanuRng) -> Result<Vec<DoubleTensor>> {
+    fn random_momentum(&self, rng: &mut KeanuRng) -> Vec<f64> {
         match &self.metric {
             InverseMetric::Diagonal {
                 standard_deviation, ..
             } => standard_deviation
                 .iter()
-                .map(|sd| Ok(rng.gaussian(sd.shape()).div(sd)?))
+                .map(|sd| rng.next_gaussian() / sd)
                 .collect(),
-            InverseMetric::Dense {
-                cholesky, shapes, ..
-            } => {
-                let n: usize = shapes.iter().map(|s| s.iter().product::<usize>()).sum();
-                let mut p = rng.gaussian(&[n]).as_slice().to_vec();
+            InverseMetric::Dense { cholesky, .. } => {
+                let n = self.dimension();
+                let mut p: Vec<f64> = (0..n).map(|_| rng.next_gaussian()).collect();
                 // back substitution for Lᵀ p = u
                 for i in (0..n).rev() {
                     let mut sum = p[i];
@@ -986,28 +986,24 @@ impl PotentialState {
                     }
                     p[i] = sum / cholesky[i * n + i];
                 }
-                Ok(split(&p, shapes))
+                p
             }
         }
     }
 
     /// M⁻¹ p: the velocity (the derivative of the position) for momentum p.
-    fn velocity(&self, momentum: &[DoubleTensor]) -> Result<Vec<DoubleTensor>> {
+    fn velocity(&self, momentum: &[f64]) -> Vec<f64> {
         match &self.metric {
-            InverseMetric::Diagonal { variance, .. } => variance
-                .iter()
-                .zip(momentum)
-                .map(|(v, p)| Ok(v.mul(p)?))
-                .collect(),
-            InverseMetric::Dense { matrix, shapes, .. } => {
-                let p = concat(momentum);
-                let n = p.len();
-                let v: Vec<f64> = matrix
+            InverseMetric::Diagonal { variance, .. } => {
+                variance.iter().zip(momentum).map(|(v, p)| v * p).collect()
+            }
+            InverseMetric::Dense { matrix, .. } => {
+                let n = momentum.len();
+                matrix
                     .chunks_exact(n.max(1))
                     .take(n)
-                    .map(|row| row.iter().zip(&p).map(|(m, p)| m * p).sum())
-                    .collect();
-                Ok(split(&v, shapes))
+                    .map(|row| row.iter().zip(momentum).map(|(m, p)| m * p).sum())
+                    .collect()
             }
         }
     }
@@ -1078,27 +1074,25 @@ impl AdaptiveStepSize {
 /// What a step of NUTS needs to build trajectories.
 struct Integrator<'a, 'm> {
     param: &'a Parameterisation<'m>,
-    shapes: &'a [Vec<usize>],
     potential: &'a PotentialState,
     start_energy: f64,
     max_energy_change: f64,
     /// The position the last leapfrog step left the state at, if any.
-    in_state: RefCell<Option<Rc<Vec<DoubleTensor>>>>,
+    in_state: RefCell<Option<Rc<Vec<f64>>>>,
 }
 
 impl Integrator<'_, '_> {
     /// One leapfrog step of size `dt` (negative to go backwards). Leaves the state at the new position.
     fn leapfrog(&self, state: &mut State, from: &LeapfrogState, dt: f64) -> Result<LeapfrogState> {
         let half = dt / 2.0;
-        let momentum = axpy(&from.momentum, half, &from.gradient)?;
-        let velocity = self.potential.velocity(&momentum)?;
-        let position = Rc::new(axpy(&from.position, dt, &velocity)?);
+        let momentum = axpy(&from.momentum, half, &from.gradient);
+        let velocity = self.potential.velocity(&momentum);
+        let position = Rc::new(axpy(&from.position, dt, &velocity));
 
-        let (log_prob, gradient) =
-            log_prob_and_gradient_at(self.param, self.shapes, state, &concat(&position))?;
+        let (log_prob, gradient) = log_prob_and_gradient_at(self.param, state, &position)?;
         *self.in_state.borrow_mut() = Some(Rc::clone(&position));
 
-        let momentum = axpy(&momentum, half, &gradient)?;
+        let momentum = axpy(&momentum, half, &gradient);
         LeapfrogState::new(
             position,
             momentum,
@@ -1114,7 +1108,7 @@ impl Integrator<'_, '_> {
 struct Tree {
     forward: Rc<LeapfrogState>,
     backward: Rc<LeapfrogState>,
-    sum_momentum: Vec<DoubleTensor>,
+    sum_momentum: Vec<f64>,
     proposal: Option<Candidate>,
     log_sum_weight: f64,
     diverged: bool,
@@ -1134,12 +1128,8 @@ fn accept_with_log_probability(log_probability: f64, rng: &mut KeanuRng) -> bool
     rng.next_f64().ln() < log_probability
 }
 
-fn is_u_turning(
-    forward: &[DoubleTensor],
-    backward: &[DoubleTensor],
-    rho: &[DoubleTensor],
-) -> Result<bool> {
-    Ok(dot(forward, rho)? < 0.0 || dot(backward, rho)? < 0.0)
+fn is_u_turning(blocks: &[usize], forward: &[f64], backward: &[f64], rho: &[f64]) -> bool {
+    dot(blocks, forward, rho) < 0.0 || dot(blocks, backward, rho) < 0.0
 }
 
 /// The two halves of a trajectory being merged: the subtree that was there first (`init`) and the one just built
@@ -1150,13 +1140,13 @@ struct Halves<'a> {
     /// The end of `init` that `last` was built from.
     init_inner: &'a LeapfrogState,
     /// The sum of `init`'s momenta.
-    init_rho: &'a [DoubleTensor],
+    init_rho: &'a [f64],
     /// The end of `last` next to `init`.
     last_inner: &'a LeapfrogState,
     /// The end of `last` away from `init`.
     last_outer: &'a LeapfrogState,
     /// The sum of `last`'s momenta.
-    last_rho: &'a [DoubleTensor],
+    last_rho: &'a [f64],
 }
 
 impl Halves<'_> {
@@ -1165,20 +1155,27 @@ impl Halves<'_> {
     /// trajectory's ends against `rho`, and then each half extended by the nearest point of the other. Without the
     /// extra checks a trajectory can run on past a U-turn when its halves together nearly complete an orbit, so
     /// that their momenta almost cancel.
-    fn u_turned(&self, rho: &[DoubleTensor]) -> Result<bool> {
-        if is_u_turning(&self.init_outer.velocity, &self.last_outer.velocity, rho)? {
-            return Ok(true);
-        }
-        let init_extended = add_all(self.init_rho, &self.last_inner.momentum)?;
+    fn u_turned(&self, blocks: &[usize], rho: &[f64]) -> bool {
         if is_u_turning(
+            blocks,
+            &self.init_outer.velocity,
+            &self.last_outer.velocity,
+            rho,
+        ) {
+            return true;
+        }
+        let init_extended = add_all(self.init_rho, &self.last_inner.momentum);
+        if is_u_turning(
+            blocks,
             &self.init_outer.velocity,
             &self.last_inner.velocity,
             &init_extended,
-        )? {
-            return Ok(true);
+        ) {
+            return true;
         }
-        let last_extended = add_all(self.last_rho, &self.init_inner.momentum)?;
+        let last_extended = add_all(self.last_rho, &self.init_inner.momentum);
         is_u_turning(
+            blocks,
             &self.init_inner.velocity,
             &self.last_outer.velocity,
             &last_extended,
@@ -1195,8 +1192,8 @@ fn ends(tree: &Tree, direction: f64) -> (Rc<LeapfrogState>, Rc<LeapfrogState>) {
     }
 }
 
-fn add_all(a: &[DoubleTensor], b: &[DoubleTensor]) -> Result<Vec<DoubleTensor>> {
-    a.iter().zip(b).map(|(x, y)| Ok(x.add(y)?)).collect()
+fn add_all(a: &[f64], b: &[f64]) -> Vec<f64> {
+    a.iter().zip(b).map(|(x, y)| x + y).collect()
 }
 
 impl Integrator<'_, '_> {
@@ -1275,7 +1272,7 @@ impl Integrator<'_, '_> {
             tree.diverged = extension.diverged;
             tree.u_turned = extension.u_turned;
             if extension.should_continue() {
-                let rho = add_all(&tree.sum_momentum, &extension.sum_momentum)?;
+                let rho = add_all(&tree.sum_momentum, &extension.sum_momentum);
                 tree.u_turned = Halves {
                     init_outer: &init_outer,
                     init_inner: &init_inner,
@@ -1284,7 +1281,7 @@ impl Integrator<'_, '_> {
                     last_outer: &last_outer,
                     last_rho: &extension.sum_momentum,
                 }
-                .u_turned(&rho)?;
+                .u_turned(&self.potential.blocks, &rho);
                 tree.sum_momentum = rho;
                 let total = log_sum_exp([tree.log_sum_weight, extension.log_sum_weight]);
                 tree.log_sum_weight = total;
@@ -1324,7 +1321,7 @@ impl Integrator<'_, '_> {
                 tree.proposal = other.proposal;
             }
             tree.log_sum_weight = log_sum_exp([tree.log_sum_weight, other.log_sum_weight]);
-            let rho = add_all(&tree.sum_momentum, &other.sum_momentum)?;
+            let rho = add_all(&tree.sum_momentum, &other.sum_momentum);
             tree.u_turned = Halves {
                 init_outer: &init_outer,
                 init_inner: &init_inner,
@@ -1333,7 +1330,7 @@ impl Integrator<'_, '_> {
                 last_outer: &last_outer,
                 last_rho: &other.sum_momentum,
             }
-            .u_turned(&rho)?;
+            .u_turned(&self.potential.blocks, &rho);
             tree.sum_momentum = rho;
         }
         tree.height += 1;
@@ -1352,8 +1349,6 @@ struct Block {
 #[derive(Debug)]
 pub struct NutsSampler<'m> {
     param: Parameterisation<'m>,
-    /// The shape of each latent's block of the position.
-    shapes: Vec<Vec<usize>>,
     config: Nuts,
     potential: PotentialState,
     step_size: AdaptiveStepSize,
@@ -1406,13 +1401,13 @@ impl NutsSampler<'_> {
     /// its support (or, in unconstrained space, on its boundary).
     pub fn refresh(&mut self, state: &mut State) -> Result<()> {
         let z = start_point(&self.param, state)?;
-        let (log_prob, gradient) = log_prob_and_gradient_at(&self.param, &self.shapes, state, &z)?;
+        let (log_prob, gradient) = log_prob_and_gradient_at(&self.param, state, &z)?;
         if is_impossible(log_prob) {
             return Err(AlgorithmError::ImpossibleStart);
         }
         self.sample_log_prob = log_prob - self.param.log_det_jacobian(&z)?;
         self.proposal = Candidate {
-            position: Rc::new(split(&z, &self.shapes)),
+            position: Rc::new(z),
             gradient: Rc::new(gradient),
             log_prob,
             energy: f64::NAN,
@@ -1446,9 +1441,7 @@ impl NutsSampler<'_> {
         if others_changed {
             return Ok(true);
         }
-        let position = self
-            .param
-            .to_constrained(&concat(&self.proposal.position))?;
+        let position = self.param.to_constrained(&self.proposal.position)?;
         Ok(self
             .param
             .latents()
@@ -1482,7 +1475,6 @@ impl NutsSampler<'_> {
         if step_size.is_finite() && step_size > 0.0 && step_size <= 1e7 {
             let integrator = Integrator {
                 param: &self.param,
-                shapes: &self.shapes,
                 potential: &self.potential,
                 start_energy: f64::NAN,
                 max_energy_change: self.config.max_energy_change,
@@ -1492,7 +1484,7 @@ impl NutsSampler<'_> {
             let mut log_acceptance = |step_size: f64, rng: &mut KeanuRng| -> Result<f64> {
                 let start = LeapfrogState::new(
                     Rc::clone(&proposal.position),
-                    self.potential.random_momentum(rng)?,
+                    self.potential.random_momentum(rng),
                     Rc::clone(&proposal.gradient),
                     proposal.log_prob,
                     &self.potential,
@@ -1523,7 +1515,7 @@ impl NutsSampler<'_> {
                 }
                 step_size = next;
             }
-            self.param.to_state(&concat(&proposal.position), state)?;
+            self.param.to_state(&proposal.position, state)?;
         }
         self.step_size.step_size = step_size;
         self.step_size.restart();
@@ -1536,7 +1528,7 @@ impl SamplingAlgorithm for NutsSampler<'_> {
         if self.state_changed(state)? {
             self.refresh(state)?;
         }
-        let momentum = self.potential.random_momentum(rng)?;
+        let momentum = self.potential.random_momentum(rng);
         let start = Rc::new(LeapfrogState::new(
             Rc::clone(&self.proposal.position),
             momentum,
@@ -1547,7 +1539,6 @@ impl SamplingAlgorithm for NutsSampler<'_> {
         let start_energy = start.energy;
         let integrator = Integrator {
             param: &self.param,
-            shapes: &self.shapes,
             potential: &self.potential,
             start_energy,
             max_energy_change: self.config.max_energy_change,
@@ -1581,11 +1572,11 @@ impl SamplingAlgorithm for NutsSampler<'_> {
         // is the chosen one (the same allocation, so the same values, and setting them again would cascade to the
         // same results) there is nothing to do.
         let in_state = integrator.in_state.into_inner();
-        let z = concat(&self.proposal.position);
+        let z: &[f64] = &self.proposal.position;
         if !in_state.is_some_and(|p| Rc::ptr_eq(&p, &self.proposal.position)) {
-            self.param.to_state(&z, state)?;
+            self.param.to_state(z, state)?;
         }
-        self.sample_log_prob = self.proposal.log_prob - self.param.log_det_jacobian(&z)?;
+        self.sample_log_prob = self.proposal.log_prob - self.param.log_det_jacobian(z)?;
 
         if self.config.save_statistics {
             self.statistics.step_size.push(self.step_size.step_size);
@@ -1647,10 +1638,9 @@ mod tests {
 
     /// The (0-based) adaptation steps at which the potential is updated.
     fn window_ends(settings: &QuadraticPotential, adapt_count: usize) -> Vec<usize> {
-        let like = [DoubleTensor::scalar(0.0)];
-        let mut potential = PotentialState::new(settings, adapt_count, &like);
+        let mut potential = PotentialState::new(settings, adapt_count, &[1]);
         (0..adapt_count)
-            .filter(|&i| potential.update(&[DoubleTensor::scalar(i as f64)]).unwrap())
+            .filter(|&i| potential.update(&[i as f64]).unwrap())
             .collect()
     }
 
@@ -1682,12 +1672,11 @@ mod tests {
     #[test]
     fn the_variance_is_the_regularised_sample_variance_of_the_window() {
         let settings = QuadraticPotential::default();
-        let like = [DoubleTensor::scalar(0.0)];
         // 150 steps: one slow window, steps 75 to 99
-        let mut potential = PotentialState::new(&settings, 150, &like);
+        let mut potential = PotentialState::new(&settings, 150, &[1]);
         let draws: Vec<f64> = (0..150).map(|i| ((i * 37) % 11) as f64).collect();
         for (i, &x) in draws.iter().enumerate() {
-            let updated = potential.update(&[DoubleTensor::scalar(x)]).unwrap();
+            let updated = potential.update(&[x]).unwrap();
             assert_eq!(updated, i == 99, "step {i}");
             if i < 99 {
                 assert_eq!(potential.diagonal(), [1.0]);
@@ -1706,7 +1695,7 @@ mod tests {
         else {
             unreachable!()
         };
-        let sd = standard_deviation[0].to_scalar().unwrap();
+        let sd = standard_deviation[0];
         assert!((sd - expected.sqrt()).abs() < 1e-12);
     }
 
@@ -1714,23 +1703,14 @@ mod tests {
     fn the_dense_metric_is_the_regularised_sample_covariance_of_the_window() {
         let settings = QuadraticPotential::default().with_metric(Metric::Dense);
         // two latents, a scalar and a vector of two: three elements
-        let like = [
-            DoubleTensor::scalar(0.0),
-            DoubleTensor::vector(vec![0.0, 0.0]),
-        ];
-        let mut potential = PotentialState::new(&settings, 150, &like);
+        let mut potential = PotentialState::new(&settings, 150, &[1, 2]);
         let draw = |i: usize| {
             let a = ((i * 37) % 11) as f64;
             let b = ((i * 13) % 7) as f64;
             [a, a + 0.5 * b, b - a]
         };
         for i in 0..150 {
-            let x = draw(i);
-            let position = [
-                DoubleTensor::scalar(x[0]),
-                DoubleTensor::vector(vec![x[1], x[2]]),
-            ];
-            assert_eq!(potential.update(&position).unwrap(), i == 99, "step {i}");
+            assert_eq!(potential.update(&draw(i)).unwrap(), i == 99, "step {i}");
         }
         let window: Vec<[f64; 3]> = (75..100).map(draw).collect();
         let n = window.len() as f64;
@@ -1765,8 +1745,7 @@ mod tests {
     #[test]
     fn dense_momentum_has_the_mass_matrix_as_covariance() {
         let settings = QuadraticPotential::default().with_metric(Metric::Dense);
-        let like = [DoubleTensor::vector(vec![0.0, 0.0])];
-        let mut potential = PotentialState::new(&settings, 0, &like);
+        let mut potential = PotentialState::new(&settings, 0, &[2]);
         let inverse = vec![2.0, 0.9, 0.9, 0.5];
         potential.metric = InverseMetric::Dense {
             cholesky: DoubleTensor::new(&[2, 2], inverse.clone())
@@ -1776,16 +1755,14 @@ mod tests {
                 .as_slice()
                 .to_vec(),
             matrix: inverse.clone(),
-            shapes: vec![vec![2]],
             estimator: CovarianceEstimator::new(2),
         };
         let mut rng = KeanuRng::seed_from_u64(3);
         let count = 40_000;
         let mut sums = [0.0; 4];
         for _ in 0..count {
-            let p = potential.random_momentum(&mut rng).unwrap();
-            let v = potential.velocity(&p).unwrap();
-            let v = v[0].as_slice();
+            let p = potential.random_momentum(&mut rng);
+            let v = potential.velocity(&p);
             sums[0] += v[0] * v[0];
             sums[1] += v[0] * v[1];
             sums[2] += v[1] * v[0];
@@ -1810,14 +1787,12 @@ mod tests {
         state.set(&graph, x, DoubleTensor::scalar(0.3)).unwrap();
         let model = Model::new(graph, &state).unwrap();
         let param = Parameterisation::new(&model, &state).unwrap();
-        let shapes = vec![vec![]];
-        let position = [DoubleTensor::scalar(0.3)];
-        let potential = PotentialState::new(&QuadraticPotential::default(), 0, &position);
-        let (log_prob, gradient) =
-            log_prob_and_gradient_at(&param, &shapes, &mut state, &concat(&position)).unwrap();
+        let position = vec![0.3];
+        let potential = PotentialState::new(&QuadraticPotential::default(), 0, &[1]);
+        let (log_prob, gradient) = log_prob_and_gradient_at(&param, &mut state, &position).unwrap();
         let from = LeapfrogState::new(
-            Rc::new(position.to_vec()),
-            vec![DoubleTensor::scalar(0.5)],
+            Rc::new(position),
+            vec![0.5],
             Rc::new(gradient),
             log_prob,
             &potential,
@@ -1825,7 +1800,6 @@ mod tests {
         .unwrap();
         let integrator = Integrator {
             param: &param,
-            shapes: &shapes,
             potential: &potential,
             start_energy,
             max_energy_change: 1000.0,

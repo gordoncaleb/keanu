@@ -460,7 +460,7 @@ derived_distribution! {
     log_cdf = location_scale_student_t_log_cdf,
 }
 
-fn student_t_log_normalizer<const K: usize>(nu: Jet<K>) -> Jet<K> {
+fn student_t_log_normalizer<const K: usize, const H: usize>(nu: Jet<K, H>) -> Jet<K, H> {
     if nu.v >= 1e5 {
         // The next term in the log-gamma ratio is 1/(24ν³), below f64 precision here.
         -LN_SQRT_2PI - 0.25 / nu
@@ -469,10 +469,10 @@ fn student_t_log_normalizer<const K: usize>(nu: Jet<K>) -> Jet<K> {
     }
 }
 
-fn location_scale_student_t_log_prob<const K: usize>(
-    x: Jet<K>,
-    [nu, mu, sigma]: [Jet<K>; 3],
-) -> Jet<K> {
+fn location_scale_student_t_log_prob<const K: usize, const H: usize>(
+    x: Jet<K, H>,
+    [nu, mu, sigma]: [Jet<K, H>; 3],
+) -> Jet<K, H> {
     if !(nu.v.is_finite() && nu.v > 0.0 && mu.v.is_finite() && sigma.v.is_finite() && sigma.v > 0.0)
     {
         return Jet::constant(f64::NAN);
@@ -488,11 +488,11 @@ fn location_scale_student_t_log_prob<const K: usize>(
     student_t_log_normalizer(nu) - sigma.ln() - (nu + 1.0) * 0.5 * log_kernel
 }
 
-fn location_scale_student_t_log_cdf<const K: usize>(
-    x: Jet<K>,
-    [nu, mu, sigma]: [Jet<K>; 3],
+fn location_scale_student_t_log_cdf<const K: usize, const H: usize>(
+    x: Jet<K, H>,
+    [nu, mu, sigma]: [Jet<K, H>; 3],
     upper: bool,
-) -> Jet<K> {
+) -> Jet<K, H> {
     if !(nu.v.is_finite() && nu.v > 0.0 && mu.v.is_finite() && sigma.v.is_finite() && sigma.v > 0.0)
     {
         return Jet::constant(f64::NAN);

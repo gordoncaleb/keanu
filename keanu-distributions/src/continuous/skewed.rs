@@ -33,7 +33,10 @@ derived_distribution! {
     log_cdf = skew_normal_log_cdf,
 }
 
-fn skew_normal_log_prob<const K: usize>(x: Jet<K>, [xi, omega, alpha]: [Jet<K>; 3]) -> Jet<K> {
+fn skew_normal_log_prob<const K: usize, const H: usize>(
+    x: Jet<K, H>,
+    [xi, omega, alpha]: [Jet<K, H>; 3],
+) -> Jet<K, H> {
     if !(omega.v > 0.0) || alpha.v.is_nan() {
         return Jet::constant(f64::NAN);
     }
@@ -41,11 +44,11 @@ fn skew_normal_log_prob<const K: usize>(x: Jet<K>, [xi, omega, alpha]: [Jet<K>; 
     (LN_2 - LN_SQRT_2PI) - omega.ln() - 0.5 * z.square() + (alpha * z).log_ndtr()
 }
 
-fn skew_normal_log_cdf<const K: usize>(
-    x: Jet<K>,
-    [xi, omega, alpha]: [Jet<K>; 3],
+fn skew_normal_log_cdf<const K: usize, const H: usize>(
+    x: Jet<K, H>,
+    [xi, omega, alpha]: [Jet<K, H>; 3],
     upper: bool,
-) -> Jet<K> {
+) -> Jet<K, H> {
     if !(omega.v > 0.0) || alpha.v.is_nan() {
         return Jet::constant(f64::NAN);
     }
@@ -103,11 +106,14 @@ derived_distribution! {
 }
 
 /// The parameters are valid: σ > 0 and λ > 0.
-fn ex_gaussian_valid<const K: usize>(sigma: Jet<K>, lambda: Jet<K>) -> bool {
+fn ex_gaussian_valid<const K: usize, const H: usize>(sigma: Jet<K, H>, lambda: Jet<K, H>) -> bool {
     sigma.v > 0.0 && lambda.v > 0.0
 }
 
-fn ex_gaussian_log_prob<const K: usize>(x: Jet<K>, [mu, sigma, lambda]: [Jet<K>; 3]) -> Jet<K> {
+fn ex_gaussian_log_prob<const K: usize, const H: usize>(
+    x: Jet<K, H>,
+    [mu, sigma, lambda]: [Jet<K, H>; 3],
+) -> Jet<K, H> {
     if !ex_gaussian_valid(sigma, lambda) {
         return Jet::constant(f64::NAN);
     }
@@ -118,11 +124,11 @@ fn ex_gaussian_log_prob<const K: usize>(x: Jet<K>, [mu, sigma, lambda]: [Jet<K>;
         + (u - lambda * sigma).log_ndtr()
 }
 
-fn ex_gaussian_log_cdf<const K: usize>(
-    x: Jet<K>,
-    [mu, sigma, lambda]: [Jet<K>; 3],
+fn ex_gaussian_log_cdf<const K: usize, const H: usize>(
+    x: Jet<K, H>,
+    [mu, sigma, lambda]: [Jet<K, H>; 3],
     upper: bool,
-) -> Jet<K> {
+) -> Jet<K, H> {
     if !ex_gaussian_valid(sigma, lambda) {
         return Jet::constant(f64::NAN);
     }
@@ -184,7 +190,10 @@ fn asymmetric_laplace_valid(sigma: f64, tau: f64) -> bool {
     sigma > 0.0 && tau > 0.0 && tau < 1.0
 }
 
-fn asymmetric_laplace_log_prob<const K: usize>(x: Jet<K>, [mu, sigma, tau]: [Jet<K>; 3]) -> Jet<K> {
+fn asymmetric_laplace_log_prob<const K: usize, const H: usize>(
+    x: Jet<K, H>,
+    [mu, sigma, tau]: [Jet<K, H>; 3],
+) -> Jet<K, H> {
     if !asymmetric_laplace_valid(sigma.v, tau.v) {
         return Jet::constant(f64::NAN);
     }
@@ -197,11 +206,11 @@ fn asymmetric_laplace_log_prob<const K: usize>(x: Jet<K>, [mu, sigma, tau]: [Jet
     }
 }
 
-fn asymmetric_laplace_log_cdf<const K: usize>(
-    x: Jet<K>,
-    [mu, sigma, tau]: [Jet<K>; 3],
+fn asymmetric_laplace_log_cdf<const K: usize, const H: usize>(
+    x: Jet<K, H>,
+    [mu, sigma, tau]: [Jet<K, H>; 3],
     upper: bool,
-) -> Jet<K> {
+) -> Jet<K, H> {
     if !asymmetric_laplace_valid(sigma.v, tau.v) {
         return Jet::constant(f64::NAN);
     }
@@ -283,7 +292,11 @@ fn valid_skew_t(a: f64, b: f64, mu: f64, sigma: f64) -> bool {
 }
 
 /// The beta log odds are twice asinh((x − μ) / (σ sqrt(a + b))).
-fn skew_t_half_log_odds<const K: usize>(x: Jet<K>, mu: Jet<K>, log_scale: Jet<K>) -> Jet<K> {
+fn skew_t_half_log_odds<const K: usize, const H: usize>(
+    x: Jet<K, H>,
+    mu: Jet<K, H>,
+    log_scale: Jet<K, H>,
+) -> Jet<K, H> {
     let centred = x - mu;
     let z = centred / log_scale.exp();
     if z.v.abs() <= 1e12 && (z.v != 0.0 || centred.v == 0.0) {
@@ -309,7 +322,11 @@ fn skew_t_half_log_odds<const K: usize>(x: Jet<K>, mu: Jet<K>, log_scale: Jet<K>
     }
 }
 
-fn beta_logit_density<const K: usize>(a: Jet<K>, b: Jet<K>, eta: Jet<K>) -> Jet<K> {
+fn beta_logit_density<const K: usize, const H: usize>(
+    a: Jet<K, H>,
+    b: Jet<K, H>,
+    eta: Jet<K, H>,
+) -> Jet<K, H> {
     use keanu_tensor::special::{log_beta_logit_density, trigamma};
     let value = log_beta_logit_density(a.v, b.v, eta.v);
     if K == 0 {
@@ -336,7 +353,10 @@ fn beta_logit_density<const K: usize>(a: Jet<K>, b: Jet<K>, eta: Jet<K>) -> Jet<
     )
 }
 
-fn skew_student_t_log_prob<const K: usize>(x: Jet<K>, [a, b, mu, sigma]: [Jet<K>; 4]) -> Jet<K> {
+fn skew_student_t_log_prob<const K: usize, const H: usize>(
+    x: Jet<K, H>,
+    [a, b, mu, sigma]: [Jet<K, H>; 4],
+) -> Jet<K, H> {
     if !valid_skew_t(a.v, b.v, mu.v, sigma.v) {
         return Jet::constant(f64::NAN);
     }
@@ -351,11 +371,11 @@ fn skew_student_t_log_prob<const K: usize>(x: Jet<K>, [a, b, mu, sigma]: [Jet<K>
     LN_2 - log_scale - log_cosh + beta_logit_density(a, b, eta)
 }
 
-fn skew_student_t_log_cdf<const K: usize>(
-    x: Jet<K>,
-    [a, b, mu, sigma]: [Jet<K>; 4],
+fn skew_student_t_log_cdf<const K: usize, const H: usize>(
+    x: Jet<K, H>,
+    [a, b, mu, sigma]: [Jet<K, H>; 4],
     upper: bool,
-) -> Jet<K> {
+) -> Jet<K, H> {
     use keanu_tensor::special::{log_inc_beta_logit, log_inc_beta_logit_derivatives};
     if !valid_skew_t(a.v, b.v, mu.v, sigma.v) {
         return Jet::constant(f64::NAN);

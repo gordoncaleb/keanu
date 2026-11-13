@@ -21,11 +21,15 @@ derived_distribution! {
     log_cdf = tail,
 }
 
-fn density<const K: usize>(x: Jet<K>, [b, z]: [Jet<K>; 2]) -> Jet<K> {
+fn density<const K: usize, const H: usize>(x: Jet<K, H>, [b, z]: [Jet<K, H>; 2]) -> Jet<K, H> {
     evaluate(x, b, z, None)
 }
 
-fn tail<const K: usize>(x: Jet<K>, [b, z]: [Jet<K>; 2], upper: bool) -> Jet<K> {
+fn tail<const K: usize, const H: usize>(
+    x: Jet<K, H>,
+    [b, z]: [Jet<K, H>; 2],
+    upper: bool,
+) -> Jet<K, H> {
     evaluate(x, b, z, Some(upper))
 }
 
@@ -51,7 +55,7 @@ fn moments(q: f64) -> (f64, f64) {
     (0.25 * (f / r), ((difference / r) / r) / (16.0 * r))
 }
 
-fn log_cosh<const K: usize>(r: Jet<K>) -> Jet<K> {
+fn log_cosh<const K: usize, const H: usize>(r: Jet<K, H>) -> Jet<K, H> {
     let r = if r.v < 0.0 { -r } else { r };
     r - LN_2 + (-2.0 * r).softplus()
 }
@@ -66,7 +70,10 @@ fn real_log_cosh_sqrt(q: f64) -> f64 {
 
 /// Analytic log(cosh(sqrt(q))) in the upper half plane. The imaginary part
 /// retains its winding number around each zero on the negative real axis.
-fn log_cosh_sqrt<const K: usize>(real: Jet<K>, imag: f64) -> (Jet<K>, Jet<K>) {
+fn log_cosh_sqrt<const K: usize, const H: usize>(
+    real: Jet<K, H>,
+    imag: f64,
+) -> (Jet<K, H>, Jet<K, H>) {
     let modulus = real.v.hypot(imag);
     let radius = real.chain(
         modulus,
@@ -93,7 +100,12 @@ fn log_cosh_sqrt<const K: usize>(real: Jet<K>, imag: f64) -> (Jet<K>, Jet<K>) {
     )
 }
 
-fn evaluate<const K: usize>(x: Jet<K>, b: Jet<K>, z: Jet<K>, tail: Option<bool>) -> Jet<K> {
+fn evaluate<const K: usize, const H: usize>(
+    x: Jet<K, H>,
+    b: Jet<K, H>,
+    z: Jet<K, H>,
+    tail: Option<bool>,
+) -> Jet<K, H> {
     if !valid(b.v, z.v) || x.v.is_nan() {
         return Jet::constant(f64::NAN);
     }
@@ -152,14 +164,14 @@ fn evaluate<const K: usize>(x: Jet<K>, b: Jet<K>, z: Jet<K>, tail: Option<bool>)
     }
 }
 
-fn invert<const K: usize>(
-    x: Jet<K>,
-    b: Jet<K>,
-    z: Jet<K>,
+fn invert<const K: usize, const H: usize>(
+    x: Jet<K, H>,
+    b: Jet<K, H>,
+    z: Jet<K, H>,
     q0: f64,
     qz: f64,
     tail: Option<bool>,
-) -> Jet<K> {
+) -> Jet<K, H> {
     let shift = 2.0 * (q0 - qz);
     let scale = 1.0 / (b.v * moments(q0).1).sqrt();
     if !scale.is_finite() || scale <= 0.0 || !shift.is_finite() {

@@ -7,7 +7,7 @@ use super::{
 use crate::error::{AlgorithmError, Result};
 use crate::mcmc::{SamplingAlgorithm, SamplingOptions, continuous_target, generate, latent_values};
 use crate::samples::NetworkSamples;
-use crate::support::{block_shapes, concat, split};
+use crate::support::block_shapes;
 use keanu_distributions::KeanuRng;
 use keanu_graph::{Graph, Model, NodeId, Parameterisation, Space, State};
 use std::cell::RefCell;
@@ -82,26 +82,21 @@ impl Hmc {
             ));
         }
         let (param, z) = continuous_target(model, state, nodes, self.space, rng)?;
-        let shapes = block_shapes(&param);
-        let (log_prob, gradient) = log_prob_and_gradient_at(&param, &shapes, state, &z)?;
+        let blocks: Vec<usize> = block_shapes(&param)
+            .iter()
+            .map(|shape| shape.iter().product())
+            .collect();
+        let (log_prob, gradient) = log_prob_and_gradient_at(&param, state, &z)?;
         if !log_prob.is_finite() {
             return Err(AlgorithmError::ImpossibleStart);
         }
-        if gradient
-            .iter()
-            .flat_map(|x| x.as_slice())
-            .any(|x| !x.is_finite())
-        {
+        if gradient.iter().any(|x| !x.is_finite()) {
             return Err(AlgorithmError::NonFiniteGradient);
         }
-        let position = split(&z, &shapes);
-        let potential = PotentialState::new(&QuadraticPotential::default(), 0, &position);
+        let potential = PotentialState::new(&QuadraticPotential::default(), 0, &blocks);
         let current = LeapfrogState::new(
-            Rc::new(position),
-            shapes
-                .iter()
-                .map(|s| keanu_tensor::DoubleTensor::zeros(s))
-                .collect(),
+            Rc::new(z.clone()),
+            vec![0.0; z.len()],
             Rc::new(gradient),
             log_prob,
             &potential,
@@ -112,7 +107,6 @@ impl Hmc {
             config: *self,
             left,
             param,
-            shapes,
             potential,
             current,
             sample_log_prob,
@@ -195,7 +189,6 @@ pub struct HmcSampler<'m> {
     /// The latent values this chain left in the state after its last transition.
     left: Vec<Option<keanu_tensor::DoubleTensor>>,
     param: Parameterisation<'m>,
-    shapes: Vec<Vec<usize>>,
     potential: PotentialState,
     current: LeapfrogState,
     sample_log_prob: f64,
@@ -217,18 +210,19 @@ impl HmcSampler<'_> {
         }
         let z = self.param.from_state(state)?;
         self.statistics.gradient_evaluations += 1;
-        let (log_prob, gradient) = log_prob_and_gradient_at(&self.param, &self.shapes, state, &z)?;
+        let (log_prob, gradient) = log_prob_and_gradient_at(&self.param, state, &z)?;
         if !log_prob.is_finite() {
             return Err(AlgorithmError::ImpossibleStart);
         }
+        let sample_log_prob = log_prob - self.param.log_det_jacobian(&z)?;
         self.current = LeapfrogState::new(
-            Rc::new(split(&z, &self.shapes)),
+            Rc::new(z),
             self.current.momentum.clone(),
             Rc::new(gradient),
             log_prob,
             &self.potential,
         )?;
-        self.sample_log_prob = log_prob - self.param.log_det_jacobian(&z)?;
+        self.sample_log_prob = sample_log_prob;
         Ok(())
     }
 }
@@ -258,7 +252,7 @@ impl HmcSampler<'_> {
     fn transition(&mut self, state: &mut State, rng: &mut KeanuRng) -> Result<()> {
         let mut point = LeapfrogState::new(
             Rc::clone(&self.current.position),
-            self.potential.random_momentum(rng)?,
+            self.potential.random_momentum(rng),
             Rc::clone(&self.current.gradient),
             self.current.log_prob,
             &self.potential,
@@ -266,7 +260,6 @@ impl HmcSampler<'_> {
         let start_energy = point.energy;
         let integrator = Integrator {
             param: &self.param,
-            shapes: &self.shapes,
             potential: &self.potential,
             start_energy,
             max_energy_change: 1000.0,
@@ -282,17 +275,11 @@ impl HmcSampler<'_> {
             point = match integrator.leapfrog(state, &point, dt) {
                 Ok(point) => point,
                 Err(error) => {
-                    self.param
-                        .to_state(&concat(&self.current.position), state)?;
+                    self.param.to_state(&self.current.position, state)?;
                     return Err(error);
                 }
             };
-            invalid = !point.energy.is_finite()
-                || point
-                    .gradient
-                    .iter()
-                    .flat_map(|x| x.as_slice())
-                    .any(|x| !x.is_finite());
+            invalid = !point.energy.is_finite() || point.gradient.iter().any(|x| !x.is_finite());
         }
         let log_accept = if invalid {
             f64::NEG_INFINITY
@@ -303,13 +290,11 @@ impl HmcSampler<'_> {
             self.statistics.divergences += 1;
         }
         if accept_with_log_probability(log_accept, rng) {
-            self.sample_log_prob =
-                point.log_prob - self.param.log_det_jacobian(&concat(&point.position))?;
+            self.sample_log_prob = point.log_prob - self.param.log_det_jacobian(&point.position)?;
             self.current = point;
             self.statistics.accepted += 1;
         } else {
-            self.param
-                .to_state(&concat(&self.current.position), state)?;
+            self.param.to_state(&self.current.position, state)?;
         }
         self.statistics.transitions += 1;
         if self.statistics.transitions <= self.config.adapt_count {

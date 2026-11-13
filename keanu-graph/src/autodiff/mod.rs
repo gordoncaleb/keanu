@@ -1039,7 +1039,7 @@ fn sign_of(x: f64) -> f64 {
 }
 
 /// d y / d x for a unary op at x with y = op(x), or None if the op isn't differentiable.
-fn unary_derivative_scalar(u: UnaryOp, x: f64, y: f64) -> Option<f64> {
+pub(crate) fn unary_derivative_scalar(u: UnaryOp, x: f64, y: f64) -> Option<f64> {
     use std::f64::consts::{LN_2, LN_10};
     Some(match u {
         UnaryOp::Abs => sign_of(x),
@@ -1084,7 +1084,12 @@ fn unary_derivative_scalar(u: UnaryOp, x: f64, y: f64) -> Option<f64> {
 }
 
 /// (d y / d l, d y / d r) for a binary op at (l, r) with y = op(l, r), or None if it isn't differentiable.
-fn binary_derivatives_scalar(op: BinaryOp, l: f64, r: f64, y: f64) -> Option<(f64, f64)> {
+pub(crate) fn binary_derivatives_scalar(
+    op: BinaryOp,
+    l: f64,
+    r: f64,
+    y: f64,
+) -> Option<(f64, f64)> {
     Some(match op {
         BinaryOp::Add => (1.0, 1.0),
         BinaryOp::Sub => (1.0, -1.0),

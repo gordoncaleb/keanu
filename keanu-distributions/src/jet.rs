@@ -35,12 +35,13 @@ pub struct ElementDerivatives<const N: usize> {
     pub hessian: [[f64; N]; N],
 }
 
-/// A value with its gradient `g` and (symmetric) Hessian `h` with respect to `K` variables.
+/// A value with its gradient `g` and (symmetric) Hessian `h` with respect to `K` variables. `H` is either `K` (the
+/// Hessian is carried) or 0 (first order only: the gradient path, which then skips every second derivative).
 #[derive(Debug, Clone, Copy)]
-pub(crate) struct Jet<const K: usize> {
+pub(crate) struct Jet<const K: usize, const H: usize = K> {
     pub(crate) v: f64,
     pub(crate) g: [f64; K],
-    pub(crate) h: [[f64; K]; K],
+    pub(crate) h: [[f64; H]; H],
 }
 
 /// `f` at `x` and `parameters`, with x the 0-th variable and the j-th parameter the (j + 1)-th.
@@ -64,6 +65,21 @@ pub(crate) fn derivatives<const N: usize, const P: usize>(
     }
 }
 
+/// `f` and its gradient at `x` and `parameters`, with x the 0-th variable and the j-th parameter the (j + 1)-th:
+/// [`derivatives`] without the Hessian, which is not computed.
+pub(crate) fn gradient<const N: usize, const P: usize>(
+    x: f64,
+    parameters: [f64; P],
+    f: impl Fn(Jet<N, 0>, [Jet<N, 0>; P]) -> Jet<N, 0>,
+) -> (f64, [f64; N]) {
+    debug_assert_eq!(N, P + 1);
+    let jet = f(
+        Jet::var(x, 0),
+        std::array::from_fn(|j| Jet::var(parameters[j], j + 1)),
+    );
+    (jet.v, jet.g)
+}
+
 /// `f` at `x` and `parameters`, without derivatives.
 pub(crate) fn value<const P: usize>(
     x: f64,
@@ -77,16 +93,18 @@ pub(crate) fn value<const P: usize>(
     .v
 }
 
-impl<const K: usize> Jet<K> {
+impl<const K: usize, const H: usize> Jet<K, H> {
     /// Whether derivatives are carried (false for a plain number, `Jet<0>`).
     const DIFFERENTIATED: bool = K > 0;
+    /// Whether second derivatives are carried.
+    const SECOND: bool = H > 0;
 
     /// A constant: zero derivatives.
     pub(crate) const fn constant(v: f64) -> Self {
         Self {
             v,
             g: [0.0; K],
-            h: [[0.0; K]; K],
+            h: [[0.0; H]; H],
         }
     }
 
@@ -104,7 +122,9 @@ impl<const K: usize> Jet<K> {
         let mut r = Self::constant(f0);
         for i in 0..K {
             r.g[i] = f1 * self.g[i];
-            for j in 0..K {
+        }
+        for i in 0..H {
+            for j in 0..H {
                 r.h[i][j] = f1 * self.h[i][j] + f2 * self.g[i] * self.g[j];
             }
         }
@@ -121,7 +141,9 @@ impl<const K: usize> Jet<K> {
         let mut r = Self::constant(value);
         for i in 0..K {
             r.g[i] = (0..M).map(|m| gradient[m] * args[m].g[i]).sum();
-            for j in 0..K {
+        }
+        for i in 0..H {
+            for j in 0..H {
                 let mut total = 0.0;
                 for m in 0..M {
                     total += gradient[m] * args[m].h[i][j];
@@ -173,11 +195,11 @@ impl<const K: usize> Jet<K> {
 
     /// ln Γ(self).
     pub(crate) fn ln_gamma(self) -> Self {
-        let value = keanu_tensor::special::ln_gamma(self.v);
+        let [value, first, second] = memo_ln_gamma(self.v, Self::DIFFERENTIATED, Self::SECOND);
         if !Self::DIFFERENTIATED {
             return Self::constant(value);
         }
-        self.chain(value, digamma(self.v), trigamma(self.v))
+        self.chain(value, first, second)
     }
 
     /// softplus(self) = ln(1 + e^self).
@@ -332,11 +354,15 @@ impl<const K: usize> Jet<K> {
             return Self::constant(value);
         }
         let (la, lb) = (log_inc_beta_da(av, bv, x), log_inc_beta_db(av, bv, x));
-        let (laa, lab, lbb) = (
-            log_inc_beta_da2(av, bv, x),
-            log_inc_beta_dadb(av, bv, x),
-            log_inc_beta_db2(av, bv, x),
-        );
+        let (laa, lab, lbb) = if Self::SECOND {
+            (
+                log_inc_beta_da2(av, bv, x),
+                log_inc_beta_dadb(av, bv, x),
+                log_inc_beta_db2(av, bv, x),
+            )
+        } else {
+            (0.0, 0.0, 0.0)
+        };
         let log_density = (av - 1.0) * x.ln() + (bv - 1.0) * complement.ln()
             - keanu_tensor::special::log_beta(av, bv);
         let lx = (log_density - value).exp();
@@ -365,10 +391,11 @@ impl<const K: usize> Jet<K> {
         if !Self::DIFFERENTIATED {
             return Self::constant(value);
         }
-        let (lk, lkk) = if upper {
-            (log_gamma_q_da(kv, y), log_gamma_q_da2(kv, y))
-        } else {
-            (log_gamma_p_da(kv, y), log_gamma_p_da2(kv, y))
+        let (lk, lkk) = match (upper, Self::SECOND) {
+            (true, true) => (log_gamma_q_da(kv, y), log_gamma_q_da2(kv, y)),
+            (false, true) => (log_gamma_p_da(kv, y), log_gamma_p_da2(kv, y)),
+            (true, false) => (log_gamma_q_da(kv, y), 0.0),
+            (false, false) => (log_gamma_p_da(kv, y), 0.0),
         };
         let log_density = (kv - 1.0) * y.ln() - y - keanu_tensor::special::ln_gamma(kv);
         let sign = if upper { -1.0 } else { 1.0 };
@@ -377,6 +404,62 @@ impl<const K: usize> Jet<K> {
         let lyk = ly * (y.ln() - digamma(kv) - lk);
         Self::compose(value, &[self, k], [ly, lk], [[lyy, lyk], [lyk, lkk]])
     }
+}
+
+/// A remembered argument of [`memo_ln_gamma`] and what was computed there.
+#[derive(Clone, Copy)]
+struct LnGammaEntry {
+    x: f64,
+    /// lnΓ(x), ψ(x) and ψ'(x).
+    values: [f64; 3],
+    /// Whether ψ(x) and ψ'(x) were computed.
+    computed: [bool; 2],
+}
+
+thread_local! {
+    /// The last two arguments of [`memo_ln_gamma`], most recent first.
+    static LN_GAMMA_MEMO: std::cell::Cell<[Option<LnGammaEntry>; 2]> =
+        const { std::cell::Cell::new([None; 2]) };
+}
+
+/// lnΓ(x), with ψ(x) if `first` and ψ'(x) if `second` (else 0). A family whose shape parameter is broadcast over
+/// many values (the degrees of freedom of a Student-t likelihood, say) asks for the same few arguments for every
+/// element, so the results at the last two arguments are remembered.
+fn memo_ln_gamma(x: f64, first: bool, second: bool) -> [f64; 3] {
+    LN_GAMMA_MEMO.with(|memo| {
+        let mut entries = memo.get();
+        for slot in 0..2 {
+            if let Some(entry) = entries[slot]
+                && entry.x == x
+                && (entry.computed[0] || !first)
+                && (entry.computed[1] || !second)
+            {
+                if slot == 1 {
+                    entries.swap(0, 1);
+                    memo.set(entries);
+                }
+                let [value, d1, d2] = entry.values;
+                return [
+                    value,
+                    if first { d1 } else { 0.0 },
+                    if second { d2 } else { 0.0 },
+                ];
+            }
+        }
+        let values = [
+            keanu_tensor::special::ln_gamma(x),
+            if first { digamma(x) } else { 0.0 },
+            if second { trigamma(x) } else { 0.0 },
+        ];
+        entries[1] = entries[0];
+        entries[0] = Some(LnGammaEntry {
+            x,
+            values,
+            computed: [first, second],
+        });
+        memo.set(entries);
+        values
+    })
 }
 
 /// 1 / (1 + e^−m), without overflow.
@@ -389,13 +472,15 @@ fn sigmoid(m: f64) -> f64 {
     }
 }
 
-impl<const K: usize> Add for Jet<K> {
+impl<const K: usize, const H: usize> Add for Jet<K, H> {
     type Output = Self;
     fn add(mut self, o: Self) -> Self {
         self.v += o.v;
         for i in 0..K {
             self.g[i] += o.g[i];
-            for j in 0..K {
+        }
+        for i in 0..H {
+            for j in 0..H {
                 self.h[i][j] += o.h[i][j];
             }
         }
@@ -403,7 +488,7 @@ impl<const K: usize> Add for Jet<K> {
     }
 }
 
-impl<const K: usize> Add<f64> for Jet<K> {
+impl<const K: usize, const H: usize> Add<f64> for Jet<K, H> {
     type Output = Self;
     fn add(mut self, o: f64) -> Self {
         self.v += o;
@@ -411,28 +496,28 @@ impl<const K: usize> Add<f64> for Jet<K> {
     }
 }
 
-impl<const K: usize> Add<Jet<K>> for f64 {
-    type Output = Jet<K>;
-    fn add(self, o: Jet<K>) -> Jet<K> {
+impl<const K: usize, const H: usize> Add<Jet<K, H>> for f64 {
+    type Output = Jet<K, H>;
+    fn add(self, o: Jet<K, H>) -> Jet<K, H> {
         o + self
     }
 }
 
-impl<const K: usize> Neg for Jet<K> {
+impl<const K: usize, const H: usize> Neg for Jet<K, H> {
     type Output = Self;
     fn neg(self) -> Self {
         self * -1.0
     }
 }
 
-impl<const K: usize> Sub for Jet<K> {
+impl<const K: usize, const H: usize> Sub for Jet<K, H> {
     type Output = Self;
     fn sub(self, o: Self) -> Self {
         self + -o
     }
 }
 
-impl<const K: usize> Sub<f64> for Jet<K> {
+impl<const K: usize, const H: usize> Sub<f64> for Jet<K, H> {
     type Output = Self;
     fn sub(mut self, o: f64) -> Self {
         self.v -= o;
@@ -440,22 +525,24 @@ impl<const K: usize> Sub<f64> for Jet<K> {
     }
 }
 
-impl<const K: usize> Sub<Jet<K>> for f64 {
-    type Output = Jet<K>;
-    fn sub(self, o: Jet<K>) -> Jet<K> {
+impl<const K: usize, const H: usize> Sub<Jet<K, H>> for f64 {
+    type Output = Jet<K, H>;
+    fn sub(self, o: Jet<K, H>) -> Jet<K, H> {
         let mut r = -o;
         r.v = self - o.v;
         r
     }
 }
 
-impl<const K: usize> Mul for Jet<K> {
+impl<const K: usize, const H: usize> Mul for Jet<K, H> {
     type Output = Self;
     fn mul(self, o: Self) -> Self {
         let mut r = Self::constant(self.v * o.v);
         for i in 0..K {
             r.g[i] = self.v * o.g[i] + o.v * self.g[i];
-            for j in 0..K {
+        }
+        for i in 0..H {
+            for j in 0..H {
                 r.h[i][j] = self.v * o.h[i][j]
                     + o.v * self.h[i][j]
                     + self.g[i] * o.g[j]
@@ -466,13 +553,15 @@ impl<const K: usize> Mul for Jet<K> {
     }
 }
 
-impl<const K: usize> Mul<f64> for Jet<K> {
+impl<const K: usize, const H: usize> Mul<f64> for Jet<K, H> {
     type Output = Self;
     fn mul(mut self, o: f64) -> Self {
         self.v *= o;
         for i in 0..K {
             self.g[i] *= o;
-            for j in 0..K {
+        }
+        for i in 0..H {
+            for j in 0..H {
                 self.h[i][j] *= o;
             }
         }
@@ -480,14 +569,14 @@ impl<const K: usize> Mul<f64> for Jet<K> {
     }
 }
 
-impl<const K: usize> Mul<Jet<K>> for f64 {
-    type Output = Jet<K>;
-    fn mul(self, o: Jet<K>) -> Jet<K> {
+impl<const K: usize, const H: usize> Mul<Jet<K, H>> for f64 {
+    type Output = Jet<K, H>;
+    fn mul(self, o: Jet<K, H>) -> Jet<K, H> {
         o * self
     }
 }
 
-impl<const K: usize> Div for Jet<K> {
+impl<const K: usize, const H: usize> Div for Jet<K, H> {
     type Output = Self;
     /// q = a / b from a = q b: q' = (a' − q b') / b and q'' = (a'' − q b'' − q' b'ᵀ − b' q'ᵀ) / b.
     fn div(self, o: Self) -> Self {
@@ -496,8 +585,8 @@ impl<const K: usize> Div for Jet<K> {
         for i in 0..K {
             r.g[i] = (self.g[i] - q * o.g[i]) / o.v;
         }
-        for i in 0..K {
-            for j in 0..K {
+        for i in 0..H {
+            for j in 0..H {
                 r.h[i][j] =
                     (self.h[i][j] - q * o.h[i][j] - r.g[i] * o.g[j] - o.g[i] * r.g[j]) / o.v;
             }
@@ -506,16 +595,16 @@ impl<const K: usize> Div for Jet<K> {
     }
 }
 
-impl<const K: usize> Div<f64> for Jet<K> {
+impl<const K: usize, const H: usize> Div<f64> for Jet<K, H> {
     type Output = Self;
     fn div(self, o: f64) -> Self {
         self * (1.0 / o)
     }
 }
 
-impl<const K: usize> Div<Jet<K>> for f64 {
-    type Output = Jet<K>;
-    fn div(self, o: Jet<K>) -> Jet<K> {
+impl<const K: usize, const H: usize> Div<Jet<K, H>> for f64 {
+    type Output = Jet<K, H>;
+    fn div(self, o: Jet<K, H>) -> Jet<K, H> {
         o.chain(
             self / o.v,
             -self / (o.v * o.v),

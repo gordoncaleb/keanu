@@ -83,12 +83,12 @@ impl Wiener<'_> {
     }
 }
 
-pub(super) fn log_tail<const K: usize>(
-    x: Jet<K>,
-    [a, t0, w, v, sv]: [Jet<K>; 5],
+pub(super) fn log_tail<const K: usize, const H: usize>(
+    x: Jet<K, H>,
+    [a, t0, w, v, sv]: [Jet<K, H>; 5],
     boundary: i64,
     upper: bool,
-) -> Jet<K> {
+) -> Jet<K, H> {
     if !valid(a.v, t0.v, w.v, v.v, sv.v) || !matches!(boundary, 0 | 1) || x.v.is_nan() {
         return Jet::constant(f64::NAN);
     }

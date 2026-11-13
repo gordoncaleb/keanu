@@ -433,7 +433,11 @@ fn inverse_gaussian(mean: f64, shape: f64, rng: &mut KeanuRng) -> f64 {
 
 /// The log density at the lower boundary after the reflection for the upper one, with t the decision time:
 /// −2 ln a − ½ ln(1 + sv²t) + (sv²a²w² − 2avw − v²t)/(2(1 + sv²t)) + ln f(t/a² | w), over jets of any order.
-fn log_density<const K: usize>(x: Jet<K>, [a, t0, w, v, sv]: [Jet<K>; 5], boundary: i64) -> Jet<K> {
+fn log_density<const K: usize, const H: usize>(
+    x: Jet<K, H>,
+    [a, t0, w, v, sv]: [Jet<K, H>; 5],
+    boundary: i64,
+) -> Jet<K, H> {
     if !valid(a.v, t0.v, w.v, v.v, sv.v) || !(boundary == 0 || boundary == 1) || x.v.is_nan() {
         return Jet::constant(f64::NAN);
     }

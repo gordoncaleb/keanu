@@ -45,6 +45,8 @@ pub struct OdeBody {
     /// The body nodes that depend on the time or the state, recomputed at every evaluation of f; the others depend
     /// on the parameters only and are computed once per solve.
     dynamic: Vec<bool>,
+    /// The body compiled, if it is small and simple enough.
+    tape: Option<super::element_tape::ElementTape>,
 }
 
 fn invalid(message: impl Into<String>) -> GraphError {
@@ -145,6 +147,7 @@ impl OdeBody {
             dynamic[id.0] =
                 id == time || id == state || graph[id].parents.iter().any(|p| dynamic[p.0]);
         }
+        let tape = super::element_tape::ElementTape::compile(&graph, &inputs);
         Ok(Self {
             graph,
             time,
@@ -153,6 +156,7 @@ impl OdeBody {
             output,
             options,
             dynamic,
+            tape,
         })
     }
 
@@ -513,6 +517,17 @@ struct Rhs<'a> {
     state: State,
     theta: Vec<(NodeId, DoubleTensor)>,
     p: usize,
+    /// The registers, tangents and tangent flags of the compiled body, when it has one (and then `state` is
+    /// empty).
+    fast: Option<Fast<'a>>,
+}
+
+/// The working memory of a compiled body.
+struct Fast<'a> {
+    tape: &'a super::element_tape::ElementTape,
+    registers: Vec<f64>,
+    tangents: Vec<f64>,
+    has: Vec<bool>,
 }
 
 impl<'a> Rhs<'a> {
@@ -524,6 +539,30 @@ impl<'a> Rhs<'a> {
         p: usize,
     ) -> Result<Self> {
         let graph = &body.graph;
+        if let Some(tape) = &body.tape {
+            let mut registers = tape.registers();
+            for (&id, &value) in body.parameters.iter().zip(parameters) {
+                let value = value
+                    .as_f64()
+                    .ok_or_else(|| invalid("a parameter is not f64"))?;
+                registers[tape.range(graph, id)].copy_from_slice(value.as_slice());
+            }
+            return Ok(Self {
+                body,
+                state: State {
+                    values: Vec::new(),
+                    observed: Vec::new(),
+                },
+                theta,
+                p,
+                fast: Some(Fast {
+                    tape,
+                    registers,
+                    tangents: Vec::new(),
+                    has: vec![false; graph.len()],
+                }),
+            });
+        }
         let mut values: Vec<Option<Value>> = vec![None; graph.len()];
         for (&id, &value) in body.parameters.iter().zip(parameters) {
             values[id.0] = Some(value.clone());
@@ -544,6 +583,7 @@ impl<'a> Rhs<'a> {
             state,
             theta,
             p,
+            fast: None,
         })
     }
 
@@ -551,6 +591,12 @@ impl<'a> Rhs<'a> {
     fn at(&mut self, t: f64, y: &[f64]) -> Result<()> {
         let body = self.body;
         let n = body.dimension();
+        if let Some(fast) = &mut self.fast {
+            fast.registers[fast.tape.range(&body.graph, body.time).start] = t;
+            fast.registers[fast.tape.range(&body.graph, body.state)].copy_from_slice(y);
+            fast.tape.forward(&mut fast.registers);
+            return Ok(());
+        }
         self.state.values[body.time.0] = Some(Value::F64(DoubleTensor::scalar(t)));
         self.state.values[body.state.0] = Some(Value::F64(DoubleTensor::new(&[n], y.to_vec())?));
         for id in body.graph.ids() {
@@ -562,6 +608,9 @@ impl<'a> Rhs<'a> {
     }
 
     fn output(&self) -> Result<&[f64]> {
+        if let Some(fast) = &self.fast {
+            return Ok(&fast.registers[fast.tape.range(&self.body.graph, self.body.output)]);
+        }
         self.state.values[self.body.output.0]
             .as_ref()
             .and_then(Value::as_f64)
@@ -571,11 +620,45 @@ impl<'a> Rhs<'a> {
 
     /// The tangent of the output for batched seeds, `[b, n]` row-major, zero where the output doesn't depend on them.
     fn output_tangent(
-        &self,
+        &mut self,
         seeds: Vec<(NodeId, DoubleTensor)>,
         b: usize,
         out: &mut Vec<f64>,
     ) -> Result<()> {
+        if let Some(fast) = &mut self.fast {
+            let graph = &self.body.graph;
+            fast.tangents.clear();
+            fast.tangents.resize(fast.registers.len() * b, 0.0);
+            fast.has.iter_mut().for_each(|h| *h = false);
+            for (id, seed) in &seeds {
+                // a seed is [b, node shape...]: element i of direction k goes to register i's slot k
+                let range = fast.tape.range(graph, *id);
+                let len = range.len();
+                for (i, r) in range.enumerate() {
+                    for k in 0..b {
+                        fast.tangents[r * b + k] = seed.as_slice()[k * len + i];
+                    }
+                }
+                fast.has[id.0] = true;
+            }
+            fast.tape
+                .tangents(&fast.registers, &mut fast.tangents, &mut fast.has, b);
+            out.clear();
+            let output = self.body.output;
+            if !fast.has[output.0] {
+                out.resize(b * self.body.dimension(), 0.0);
+                return Ok(());
+            }
+            let range = fast.tape.range(graph, output);
+            out.resize(b * range.len(), 0.0);
+            let n = range.len();
+            for (i, r) in range.enumerate() {
+                for k in 0..b {
+                    out[k * n + i] = fast.tangents[r * b + k];
+                }
+            }
+            return Ok(());
+        }
         let mut tangents = forward_tangents(&self.body.graph, &self.state, seeds, b)?;
         out.clear();
         match tangents[self.body.output.0].take() {
@@ -700,5 +783,86 @@ impl fmt::Debug for OdeBody {
             .field("options", &self.options)
             .field("nodes", &nodes)
             .finish()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::GraphBuilder;
+
+    /// The compiled body gives exactly the general path's solution, forward tangents and cotangents.
+    #[test]
+    fn the_element_tape_matches_the_general_path_exactly() {
+        let b = GraphBuilder::new();
+        let rates = b.constant(DoubleTensor::vector(vec![0.9, 0.55, 0.65, 0.45]));
+        let scale = b.constant(DoubleTensor::scalar(1.5));
+        let times = b.constant(DoubleTensor::vector(vec![0.5, 1.0, 2.0, 3.5]));
+        let y = b
+            .ode(
+                b.constant(DoubleTensor::vector(vec![1.2, 0.7])),
+                times,
+                b.scalar(0.0),
+                &[rates, scale],
+                crate::ode::OdeOptions::default(),
+                |body, t, z, p| {
+                    let (rates, scale) = (p[0], p[1]);
+                    let prey = z.take(&[0]);
+                    let predator = z.take(&[1]);
+                    let pressure = (predator * scale).tanh() + t * 0.01;
+                    body.stack(
+                        0,
+                        &[
+                            prey * (rates.take(&[0]) - rates.take(&[1]) * pressure),
+                            predator * (rates.take(&[3]) * prey - rates.take(&[2])) / scale,
+                        ],
+                    )
+                },
+            )
+            .id();
+        let (graph, state) = b.build().unwrap();
+        let Op::Ode(body) = graph[y].op() else {
+            panic!("expected an ODE")
+        };
+        assert!(body.tape.is_some(), "the body should compile");
+        let general = OdeBody {
+            tape: None,
+            ..(**body).clone()
+        };
+        let parents: Vec<&Value> = graph[y]
+            .parents()
+            .iter()
+            .map(|&p| state.value(p).unwrap())
+            .collect();
+        let (Value::F64(fast), Value::F64(slow)) = (
+            body.eval(&parents).unwrap(),
+            general.eval(&parents).unwrap(),
+        ) else {
+            panic!("expected f64 outputs")
+        };
+        assert_eq!(fast.as_slice(), slow.as_slice());
+        // tangents along two directions of every parent
+        let tangents: Vec<DoubleTensor> = parents
+            .iter()
+            .enumerate()
+            .map(|(j, v)| {
+                let shape = crate::autodiff::batched_shape(2, v.as_f64().unwrap().shape());
+                DoubleTensor::from_fn(&shape, |i| ((i + j) as f64 * 0.3).sin())
+            })
+            .collect();
+        let t: Vec<Option<&DoubleTensor>> = tangents.iter().map(Some).collect();
+        let fast_t = body.jvp(&parents, &fast, &t, 2).unwrap().unwrap();
+        let slow_t = general.jvp(&parents, &slow, &t, 2).unwrap().unwrap();
+        assert_eq!(fast_t.as_slice(), slow_t.as_slice());
+        let g = DoubleTensor::from_fn(&[1, 4, 2], |i| 1.0 + i as f64 * 0.1);
+        let needed = vec![true; parents.len()];
+        let fast_g = body.vjp(&parents, &fast, &g, 1, &needed).unwrap();
+        let slow_g = general.vjp(&parents, &slow, &g, 1, &needed).unwrap();
+        for (f, s) in fast_g.iter().zip(&slow_g) {
+            assert_eq!(
+                f.as_ref().map(DoubleTensor::as_slice),
+                s.as_ref().map(DoubleTensor::as_slice)
+            );
+        }
     }
 }

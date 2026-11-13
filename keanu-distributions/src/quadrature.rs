@@ -26,7 +26,11 @@ const NODES: [(f64, f64, f64); 8] = [
     (0.0, 0.209_482_141_084_727_8, 0.417_959_183_673_469_4),
 ];
 
-fn panel<const K: usize>(f: &impl Fn(f64) -> Jet<K>, lo: f64, hi: f64) -> (Jet<K>, f64) {
+fn panel<const K: usize, const H: usize>(
+    f: &impl Fn(f64) -> Jet<K, H>,
+    lo: f64,
+    hi: f64,
+) -> (Jet<K, H>, f64) {
     let half = (hi - lo) / 2.0;
     let center = lo + half;
     let mut kronrod = Jet::constant(f64::NEG_INFINITY);
@@ -45,15 +49,17 @@ fn panel<const K: usize>(f: &impl Fn(f64) -> Jet<K>, lo: f64, hi: f64) -> (Jet<K
     (kronrod + half.ln(), (kronrod.v - gauss.v).abs())
 }
 
-pub(crate) fn integrate_log<const K: usize>(f: &impl Fn(f64) -> Jet<K>) -> Jet<K> {
-    fn refine<const K: usize>(
-        f: &impl Fn(f64) -> Jet<K>,
+pub(crate) fn integrate_log<const K: usize, const H: usize>(
+    f: &impl Fn(f64) -> Jet<K, H>,
+) -> Jet<K, H> {
+    fn refine<const K: usize, const H: usize>(
+        f: &impl Fn(f64) -> Jet<K, H>,
         lo: f64,
         hi: f64,
-        (value, error): (Jet<K>, f64),
+        (value, error): (Jet<K, H>, f64),
         best: &mut f64,
         depth: usize,
-    ) -> Jet<K> {
+    ) -> Jet<K, H> {
         if error < 2e-11 + 4.0 * f64::EPSILON * value.v.abs()
             || value.v < *best - 42.0
             || !value.v.is_finite()
@@ -81,13 +87,15 @@ pub(crate) fn integrate_log<const K: usize>(f: &impl Fn(f64) -> Jet<K>) -> Jet<K
 }
 
 /// Integrates a signed function on [0, 1]. The caller scales the integrand to order one.
-pub(crate) fn integrate_signed<const K: usize>(f: &impl Fn(f64) -> Jet<K>) -> Jet<K> {
-    fn refine<const K: usize>(
-        f: &impl Fn(f64) -> Jet<K>,
+pub(crate) fn integrate_signed<const K: usize, const H: usize>(
+    f: &impl Fn(f64) -> Jet<K, H>,
+) -> Jet<K, H> {
+    fn refine<const K: usize, const H: usize>(
+        f: &impl Fn(f64) -> Jet<K, H>,
         lo: f64,
         hi: f64,
         depth: usize,
-    ) -> Jet<K> {
+    ) -> Jet<K, H> {
         let half = (hi - lo) / 2.0;
         let center = lo + half;
         let mut kronrod = Jet::constant(0.0);

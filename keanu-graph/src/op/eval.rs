@@ -12,7 +12,7 @@ fn invalid(op: &Op, message: impl Into<String>) -> GraphError {
     }
 }
 
-fn unary_f64(op: UnaryOp, x: &DoubleTensor) -> DoubleTensor {
+pub(crate) fn unary_f64(op: UnaryOp, x: &DoubleTensor) -> DoubleTensor {
     match op {
         UnaryOp::Abs => x.abs(),
         UnaryOp::Neg => x.neg(),
@@ -58,7 +58,11 @@ fn unary_f64(op: UnaryOp, x: &DoubleTensor) -> DoubleTensor {
     }
 }
 
-fn binary_f64(op: BinaryOp, a: &DoubleTensor, b: &DoubleTensor) -> Result<Option<DoubleTensor>> {
+pub(crate) fn binary_f64(
+    op: BinaryOp,
+    a: &DoubleTensor,
+    b: &DoubleTensor,
+) -> Result<Option<DoubleTensor>> {
     Ok(Some(match op {
         BinaryOp::Add => a.add(b)?,
         BinaryOp::Sub => a.sub(b)?,

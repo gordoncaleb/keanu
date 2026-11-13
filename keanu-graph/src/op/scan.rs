@@ -39,6 +39,10 @@ pub struct ScanBody {
     xs: Vec<NodeId>,
     constants: Vec<NodeId>,
     output: NodeId,
+    /// The body nodes evaluated at each step, in order: every node that is neither an input nor a constant.
+    step_nodes: Vec<NodeId>,
+    /// The body compiled, if it is all scalars.
+    tape: Option<super::scan_tape::ScalarTape>,
 }
 
 fn invalid(message: impl Into<String>) -> GraphError {
@@ -128,6 +132,11 @@ impl ScanBody {
                 super::shape::MAX_ELEMENTS
             )));
         }
+        let step_nodes: Vec<NodeId> = graph
+            .ids()
+            .filter(|&id| !is_input[id.0] && !matches!(graph[id].op, Op::Constant(_)))
+            .collect();
+        let tape = super::scan_tape::ScalarTape::compile(&graph, &step_nodes);
         Ok(Self {
             graph,
             length,
@@ -135,6 +144,8 @@ impl ScanBody {
             xs,
             constants,
             output,
+            step_nodes,
+            tape,
         })
     }
 
@@ -249,10 +260,35 @@ impl ScanBody {
         Ok((DType::F64, shape))
     }
 
-    /// The body's state at one step: every body node evaluated from the step's carry, per-step inputs and constants.
-    fn run(&self, carry: DoubleTensor, parents: &[&Value], step: usize) -> Result<State> {
+    /// A body state holding the constants (the constant parents and the body's own constant nodes), which stay the
+    /// same at every step: [`step_into`](Self::step_into) fills in the rest.
+    fn fresh_state(&self, parents: &[&Value]) -> State {
         let n = self.graph.len();
         let mut values: Vec<Option<Value>> = vec![None; n];
+        for (i, &c) in self.constants.iter().enumerate() {
+            values[c.0] = Some(parents[1 + self.xs.len() + i].clone());
+        }
+        for id in self.graph.ids() {
+            if let Op::Constant(v) = &self.graph[id].op {
+                values[id.0] = Some(v.clone());
+            }
+        }
+        State {
+            values,
+            observed: vec![false; n],
+        }
+    }
+
+    /// Evaluates the body at one step into `state` (made by [`fresh_state`](Self::fresh_state) with the same
+    /// parents): the step's carry and per-step inputs, then every other node from them and the constants.
+    fn step_into(
+        &self,
+        state: &mut State,
+        carry: DoubleTensor,
+        parents: &[&Value],
+        step: usize,
+    ) -> Result<()> {
+        let values = &mut state.values;
         values[self.carry.0] = Some(Value::F64(carry));
         for (i, &x) in self.xs.iter().enumerate() {
             let xs = f64_of(parents[1 + i])?;
@@ -264,34 +300,22 @@ impl ScanBody {
                 self.shape_of(x),
             )?));
         }
-        for (i, &c) in self.constants.iter().enumerate() {
-            values[c.0] = Some(parents[1 + self.xs.len() + i].clone());
-        }
-        for i in 0..n {
-            if values[i].is_some() {
-                continue;
-            }
-            let node = &self.graph.nodes[i];
-            let value = match &node.op {
-                Op::Constant(v) => v.clone(),
-                op => {
-                    let inputs = node
-                        .parents
-                        .iter()
-                        .map(|p| values[p.0].as_ref().ok_or(GraphError::MissingValue(*p)))
-                        .collect::<Result<smallvec::SmallVec<[&Value; 4]>>>()?;
-                    match op {
-                        Op::Proxy => inputs[0].clone(),
-                        op => eval(op, &inputs)?,
-                    }
+        for &id in &self.step_nodes {
+            let node = &self.graph.nodes[id.0];
+            let value = {
+                let inputs = node
+                    .parents
+                    .iter()
+                    .map(|p| values[p.0].as_ref().ok_or(GraphError::MissingValue(*p)))
+                    .collect::<Result<smallvec::SmallVec<[&Value; 4]>>>()?;
+                match &node.op {
+                    Op::Proxy => inputs[0].clone(),
+                    op => eval(op, &inputs)?,
                 }
             };
-            values[i] = Some(value);
+            values[id.0] = Some(value);
         }
-        Ok(State {
-            values,
-            observed: vec![false; n],
-        })
+        Ok(())
     }
 
     /// The carry into a step: the initial carry at step 0, then the previous step's output, taken from the stacked
@@ -309,9 +333,15 @@ impl ScanBody {
         }
     }
 
-    /// The body's state at a step, recomputed from the scan's parents and its stacked output.
-    fn state_at(&self, parents: &[&Value], out: &DoubleTensor, step: usize) -> Result<State> {
-        self.run(self.carry_at(parents, out, step)?, parents, step)
+    /// Recomputes the body's state at a step into `state`, from the scan's parents and its stacked output.
+    fn state_at(
+        &self,
+        state: &mut State,
+        parents: &[&Value],
+        out: &DoubleTensor,
+        step: usize,
+    ) -> Result<()> {
+        self.step_into(state, self.carry_at(parents, out, step)?, parents, step)
     }
 
     /// Evaluates the scan: runs the body `length` times and stacks the outputs.
@@ -328,17 +358,140 @@ impl ScanBody {
         shape.extend_from_slice(carry_shape);
         let total = super::shape::element_count(&shape)
             .ok_or_else(|| invalid(format!("the output shape {shape:?} has too many elements")))?;
+        if let Some(tape) = &self.tape {
+            return Ok(Value::F64(DoubleTensor::new(
+                &shape,
+                self.tape_outputs(tape, parents)?,
+            )?));
+        }
         let mut data = Vec::with_capacity(total);
         let mut carry = f64_of(parents[0])?.clone();
+        let mut state = self.fresh_state(parents);
         for step in 0..self.length {
-            let mut state = self.run(carry, parents, step)?;
-            let Some(Value::F64(next)) = state.values[self.output.0].take() else {
+            self.step_into(&mut state, carry, parents, step)?;
+            // the output is recomputed at each step unless it is an input or a constant, which must stay
+            let output = if self.step_nodes.contains(&self.output) {
+                state.values[self.output.0].take()
+            } else {
+                state.values[self.output.0].clone()
+            };
+            let Some(Value::F64(next)) = output else {
                 return Err(invalid("the body's output is not f64"));
             };
             data.extend_from_slice(next.as_slice());
             carry = next;
         }
         Ok(Value::F64(DoubleTensor::new(&shape, data)?))
+    }
+
+    /// The inputs' scalar values: the per-step inputs as slices of `length`, the constants as one value each.
+    fn scalar_inputs<'v>(&self, parents: &[&'v Value]) -> Result<(Vec<&'v [f64]>, Vec<f64>)> {
+        let xs = (0..self.xs.len())
+            .map(|i| Ok(f64_of(parents[1 + i])?.as_slice()))
+            .collect::<Result<Vec<_>>>()?;
+        let constants = (0..self.constants.len())
+            .map(|i| Ok(f64_of(parents[1 + self.xs.len() + i])?.as_slice()[0]))
+            .collect::<Result<Vec<_>>>()?;
+        Ok((xs, constants))
+    }
+
+    /// Fresh tape registers with the constant parents in place.
+    fn tape_registers(&self, tape: &super::scan_tape::ScalarTape, constants: &[f64]) -> Vec<f64> {
+        let mut registers = tape.registers();
+        for (&c, &v) in self.constants.iter().zip(constants) {
+            registers[c.0] = v;
+        }
+        registers
+    }
+
+    /// The stacked outputs of the steps, run on the tape.
+    fn tape_outputs(
+        &self,
+        tape: &super::scan_tape::ScalarTape,
+        parents: &[&Value],
+    ) -> Result<Vec<f64>> {
+        let (xs, constants) = self.scalar_inputs(parents)?;
+        let mut registers = self.tape_registers(tape, &constants);
+        let mut carry = f64_of(parents[0])?.as_slice()[0];
+        let mut data = Vec::with_capacity(self.length);
+        for step in 0..self.length {
+            registers[self.carry.0] = carry;
+            for (x, values) in self.xs.iter().zip(&xs) {
+                registers[x.0] = values[step];
+            }
+            tape.forward(&mut registers);
+            carry = registers[self.output.0];
+            data.push(carry);
+        }
+        Ok(data)
+    }
+
+    /// Reverse mode on the tape (one cotangent): as [`vjp`](Self::vjp), sweeping the steps backwards and
+    /// recomputing each step's registers.
+    fn tape_vjp(
+        &self,
+        tape: &super::scan_tape::ScalarTape,
+        parents: &[&Value],
+        out: &DoubleTensor,
+        g: &DoubleTensor,
+    ) -> Result<Vec<Option<DoubleTensor>>> {
+        let (xs, constants) = self.scalar_inputs(parents)?;
+        let (out, g) = (out.as_slice(), g.as_slice());
+        let mut registers = self.tape_registers(tape, &constants);
+        let mut adjoints = vec![0.0; registers.len()];
+        let mut touched = vec![false; registers.len()];
+        let mut xs_grads: Vec<Option<Vec<f64>>> = vec![None; self.xs.len()];
+        let mut constant_grads: Vec<Option<f64>> = vec![None; self.constants.len()];
+        let mut carry: Option<f64> = None;
+        let initial = f64_of(parents[0])?.as_slice()[0];
+        for step in (0..self.length).rev() {
+            registers[self.carry.0] = if step == 0 { initial } else { out[step - 1] };
+            for (x, values) in self.xs.iter().zip(&xs) {
+                registers[x.0] = values[step];
+            }
+            tape.forward(&mut registers);
+            let seed = match carry.take() {
+                Some(c) => g[step] + c,
+                None => g[step],
+            };
+            tape.reverse(&registers, &mut adjoints, &mut touched, self.output.0, seed);
+            // the inputs' cotangents, in decreasing id order as the general sweep emits them
+            if std::mem::take(&mut touched[self.carry.0]) {
+                carry = Some(std::mem::take(&mut adjoints[self.carry.0]));
+            }
+            for (i, x) in self.xs.iter().enumerate() {
+                if std::mem::take(&mut touched[x.0]) {
+                    let slot = xs_grads[i].get_or_insert_with(|| vec![0.0; self.length]);
+                    slot[step] = std::mem::take(&mut adjoints[x.0]);
+                }
+            }
+            for (i, c) in self.constants.iter().enumerate() {
+                if std::mem::take(&mut touched[c.0]) {
+                    let contribution = std::mem::take(&mut adjoints[c.0]);
+                    constant_grads[i] = Some(match constant_grads[i] {
+                        Some(total) => total + contribution,
+                        None => contribution,
+                    });
+                }
+            }
+            // the body's own constants may have collected cotangents: they go nowhere
+            for slot in touched.iter_mut() {
+                *slot = false;
+            }
+        }
+        let mut result = Vec::with_capacity(self.parent_count());
+        result.push(carry.map(|c| DoubleTensor::from_fn(&[1], |_| c)));
+        for grads in xs_grads {
+            result.push(
+                grads
+                    .map(|d| DoubleTensor::new(&[1, self.length], d))
+                    .transpose()?,
+            );
+        }
+        for grads in constant_grads {
+            result.push(grads.map(|c| DoubleTensor::from_fn(&[1], |_| c)));
+        }
+        Ok(result)
     }
 
     /// The forward seeds of a step: the carry's tangent and the parents' tangents for this step, `[b, input...]`.
@@ -395,12 +548,13 @@ impl ScanBody {
         })?;
         let mut result = vec![0.0; total];
         let mut carry = t[0].cloned();
+        let mut state = self.fresh_state(parents);
         for step in 0..self.length {
             let seeds = self.step_seeds(carry.take(), t, step, b)?;
             if seeds.is_empty() {
                 continue;
             }
-            let state = self.state_at(parents, out, step)?;
+            self.state_at(&mut state, parents, out, step)?;
             let mut tangents = forward_tangents(&self.graph, &state, seeds, b)?;
             carry = tangents[self.output.0].take();
             if let Some(c) = &carry {
@@ -419,16 +573,20 @@ impl ScanBody {
         g: &DoubleTensor,
         b: usize,
     ) -> Result<Vec<Option<DoubleTensor>>> {
+        if let (Some(tape), 1) = (&self.tape, b) {
+            return self.tape_vjp(tape, parents, out, g);
+        }
         let is_input = self.is_input();
         let carry_shape = crate::autodiff::batched_shape(b, self.shape_of(self.carry));
         let mut grads = Grads::new(self, parents, b);
         let mut carry: Option<DoubleTensor> = None;
+        let mut state = self.fresh_state(parents);
         for step in (0..self.length).rev() {
             let mut seed = take_step(g, b, self.length, step, &carry_shape)?;
             if let Some(c) = carry.take() {
                 seed = seed.add(&c)?;
             }
-            let state = self.state_at(parents, out, step)?;
+            self.state_at(&mut state, parents, out, step)?;
             reverse_sweep(
                 &self.graph,
                 &state,
@@ -485,6 +643,7 @@ impl ScanBody {
         let mut grads = Grads::new(self, parents, b);
         let (mut cotangent, mut derivative): (Option<DoubleTensor>, Option<DoubleTensor>) =
             (None, None);
+        let mut state = self.fresh_state(parents);
         for step in (0..self.length).rev() {
             let carry_tangent = match (step, yt) {
                 (0, _) => t[0].cloned(),
@@ -492,7 +651,7 @@ impl ScanBody {
                 (_, None) => None,
             };
             let seeds = self.step_seeds(carry_tangent, t, step, b)?;
-            let state = self.state_at(parents, out, step)?;
+            self.state_at(&mut state, parents, out, step)?;
             let tangents = forward_tangents(&self.graph, &state, seeds, b)?;
             let mut seed = take_step(g, 1, self.length, step, &carry_1)?;
             if let Some(c) = cotangent.take() {
@@ -596,12 +755,16 @@ fn take_step(
 ) -> Result<DoubleTensor> {
     let data = x.as_slice();
     let m = data.len() / (b * length).max(1);
-    let mut out = Vec::with_capacity(b * m);
-    for k in 0..b {
-        let start = (k * length + step) * m;
-        out.extend_from_slice(&data[start..start + m]);
+    if b * m != shape.iter().product::<usize>() {
+        return Err(invalid(format!(
+            "a step of {m} elements in {b} blocks doesn't fit shape {shape:?}"
+        )));
     }
-    Ok(DoubleTensor::new(shape, out)?)
+    // small steps (a scalar carry) are built in place, without allocating
+    Ok(DoubleTensor::from_fn(shape, |i| {
+        let (k, j) = (i / m.max(1), i % m.max(1));
+        data[(k * length + step) * m + j]
+    }))
 }
 
 /// Writes element `step` along axis 1 of `b` blocks of `length` equal elements.
@@ -658,6 +821,61 @@ mod tests {
         match graph[x].op() {
             Op::Scan(body) => body.clone(),
             op => panic!("expected a scan, got {op:?}"),
+        }
+    }
+
+    #[test]
+    fn the_scalar_tape_matches_the_general_path_exactly() {
+        // a scalar body using the tape's fast ops, ops it evaluates through tensors, a body constant, a constant
+        // parent and two per-step inputs, one of which the body ignores
+        let b = GraphBuilder::new();
+        let xs = b.constant(DoubleTensor::vector(
+            (0..30).map(|i| (i as f64 * 0.37).sin()).collect(),
+        ));
+        let unused = b.constant(DoubleTensor::vector(vec![1.0; 30]));
+        let rate = b.constant(DoubleTensor::scalar(0.8));
+        let h = b
+            .scan(b.scalar(0.3), &[xs, unused], &[rate], |b, h, x, c| {
+                let shock = x[0];
+                (h * c[0] + shock).tanh() + (h.exp() / 3.0).ln_1p()
+                    - b.scalar(0.1) * (h * h + 1.0).sqrt()
+            })
+            .id();
+        let (graph, state) = b.build().unwrap();
+        let Op::Scan(body) = graph[h].op() else {
+            panic!("expected a scan")
+        };
+        assert!(body.tape.is_some(), "the body should compile");
+        let general = ScanBody {
+            tape: None,
+            ..(**body).clone()
+        };
+        let parents: Vec<&Value> = graph[h]
+            .parents()
+            .iter()
+            .map(|&p| state.value(p).unwrap())
+            .collect();
+        let (Value::F64(fast), Value::F64(slow)) = (
+            body.eval(&parents).unwrap(),
+            general.eval(&parents).unwrap(),
+        ) else {
+            panic!("expected f64 outputs")
+        };
+        assert_eq!(fast.as_slice(), slow.as_slice());
+        let g =
+            DoubleTensor::new(&[1, 30], (0..30).map(|i| 1.0 + (i as f64).cos()).collect()).unwrap();
+        let fast = body.vjp(&parents, &fast, &g, 1).unwrap();
+        let slow = general.vjp(&parents, &slow, &g, 1).unwrap();
+        assert_eq!(fast.len(), slow.len());
+        for (f, s) in fast.iter().zip(&slow) {
+            match (f, s) {
+                (Some(f), Some(s)) => {
+                    assert_eq!(f.shape(), s.shape());
+                    assert_eq!(f.as_slice(), s.as_slice());
+                }
+                (None, None) => {}
+                _ => panic!("one path has a cotangent the other lacks: {f:?} {s:?}"),
+            }
         }
     }
 

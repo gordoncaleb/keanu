@@ -192,12 +192,12 @@ fn valid_widths(w: f64, sw: f64, t0: f64, st0: f64) -> bool {
     sw >= 0.0 && 0.5 * sw < w.min(1.0 - w) && st0 >= 0.0 && (t0 + st0).is_finite()
 }
 
-fn evaluate<const K: usize>(
-    x: Jet<K>,
-    [a, t0, w, v, sv, sw, st0]: [Jet<K>; 7],
+fn evaluate<const K: usize, const H: usize>(
+    x: Jet<K, H>,
+    [a, t0, w, v, sv, sw, st0]: [Jet<K, H>; 7],
     b: i64,
     event: Event,
-) -> Jet<K> {
+) -> Jet<K, H> {
     if !valid(a.v, t0.v, w.v, v.v, sv.v)
         || !valid_widths(w.v, sw.v, t0.v, st0.v)
         || !matches!(b, 0 | 1)

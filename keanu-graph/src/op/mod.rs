@@ -3,6 +3,7 @@
 pub(crate) mod bessel;
 mod distribution;
 mod distribution_hvp;
+mod element_tape;
 mod enumerate;
 pub(crate) mod eval;
 mod hmm;
@@ -13,6 +14,7 @@ mod mixture_of;
 mod nested;
 mod ode;
 mod scan;
+mod scan_tape;
 mod shape;
 mod simulator;
 mod transformed;
