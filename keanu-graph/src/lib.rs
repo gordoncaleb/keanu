@@ -34,6 +34,7 @@
 
 pub mod autodiff;
 mod builder;
+mod compiled;
 mod distributions;
 mod error;
 pub mod gp;
@@ -59,6 +60,7 @@ pub use autodiff::{
     Partials, forward_partials, is_differentiable, reverse_partials, reverse_partials_from,
 };
 pub use builder::GraphBuilder;
+pub use compiled::CompiledModel;
 pub use error::{GraphError, Result};
 pub use graph::{Graph, Node, NodeId};
 pub use impute::{Imputed, ImputedNode, MaskedObservation, observe_masked};

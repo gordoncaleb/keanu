@@ -86,7 +86,7 @@ impl Hmc {
             .iter()
             .map(|shape| shape.iter().product())
             .collect();
-        let (log_prob, gradient) = log_prob_and_gradient_at(&param, state, &z)?;
+        let (log_prob, gradient) = log_prob_and_gradient_at(&param, None, state, &z)?;
         if !log_prob.is_finite() {
             return Err(AlgorithmError::ImpossibleStart);
         }
@@ -210,7 +210,7 @@ impl HmcSampler<'_> {
         }
         let z = self.param.from_state(state)?;
         self.statistics.gradient_evaluations += 1;
-        let (log_prob, gradient) = log_prob_and_gradient_at(&self.param, state, &z)?;
+        let (log_prob, gradient) = log_prob_and_gradient_at(&self.param, None, state, &z)?;
         if !log_prob.is_finite() {
             return Err(AlgorithmError::ImpossibleStart);
         }
@@ -260,6 +260,7 @@ impl HmcSampler<'_> {
         let start_energy = point.energy;
         let integrator = Integrator {
             param: &self.param,
+            compiled: RefCell::new(None),
             potential: &self.potential,
             start_energy,
             max_energy_change: 1000.0,

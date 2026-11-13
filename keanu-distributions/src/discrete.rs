@@ -109,8 +109,7 @@ impl<'a> Binomial<'a> {
                 return f64::NEG_INFINITY;
             }
             let (k, n) = (k as f64, n as f64);
-            let log_binomial_coefficient =
-                ln_gamma(n + 1.0) - ln_gamma(k + 1.0) - ln_gamma(n - k + 1.0);
+            let log_binomial_coefficient = ln_factorial(n) - ln_factorial(k) - ln_factorial(n - k);
             log_binomial_coefficient + safe_ln_times(p, k) + safe_ln_times(1.0 - p, n - k)
         })
     }
@@ -188,9 +187,18 @@ fn binomial_inversion(n: i64, p: f64, rng: &mut KeanuRng) -> i64 {
     }
 }
 
-/// ln k!
-fn ln_factorial(k: f64) -> f64 {
-    ln_gamma(k + 1.0)
+/// ln k! = ln Γ(k + 1). Counts are usually small whole numbers, the same ones at every evaluation of a likelihood,
+/// so those below 1024 are looked up in a table of ln Γ(k + 1) (built with [`ln_gamma`] itself, so the values are
+/// the same).
+pub(crate) fn ln_factorial(k: f64) -> f64 {
+    const TABLE_SIZE: usize = 1024;
+    static TABLE: std::sync::OnceLock<Vec<f64>> = std::sync::OnceLock::new();
+    if (0.0..TABLE_SIZE as f64).contains(&k) && k.fract() == 0.0 {
+        TABLE.get_or_init(|| (0..TABLE_SIZE).map(|k| ln_gamma(k as f64 + 1.0)).collect())
+            [k as usize]
+    } else {
+        ln_gamma(k + 1.0)
+    }
 }
 
 /// Hörmann's BTRS (transformed rejection with squeeze), for p <= 0.5 and np >= 10: W. Hörmann, "The generation
@@ -315,7 +323,7 @@ impl<'a> Poisson<'a> {
             if k < 0 {
                 f64::NEG_INFINITY
             } else {
-                safe_ln_times(mu, k as f64) - mu - ln_gamma(k as f64 + 1.0)
+                safe_ln_times(mu, k as f64) - mu - ln_factorial(k as f64)
             }
         })
     }
@@ -993,8 +1001,7 @@ pub(crate) fn beta_binomial_log_pmf(k: i64, n: i64, alpha: f64, beta: f64) -> f6
         return f64::NEG_INFINITY;
     }
     let (k, n) = (k as f64, n as f64);
-    ln_gamma(n + 1.0) - ln_gamma(k + 1.0) - ln_gamma(n - k + 1.0)
-        + log_beta(k + alpha, n - k + beta)
+    ln_factorial(n) - ln_factorial(k) - ln_factorial(n - k) + log_beta(k + alpha, n - k + beta)
         - log_beta(alpha, beta)
 }
 
@@ -1155,7 +1162,7 @@ impl<'a> BinomialLogit<'a> {
                 return f64::NEG_INFINITY;
             }
             let (k, n) = (k as f64, n as f64);
-            ln_gamma(n + 1.0) - ln_gamma(k + 1.0) - ln_gamma(n - k + 1.0)
+            ln_factorial(n) - ln_factorial(k) - ln_factorial(n - k)
                 + binomial_logit_kernel(k, n, eta)
         })
     }
@@ -1222,7 +1229,7 @@ impl<'a> PoissonLog<'a> {
             } else if k == 0 {
                 -eta.exp()
             } else {
-                k as f64 * eta - eta.exp() - ln_gamma(k as f64 + 1.0)
+                k as f64 * eta - eta.exp() - ln_factorial(k as f64)
             }
         })
     }

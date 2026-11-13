@@ -51,9 +51,15 @@ impl<'a> Gaussian<'a> {
         &self,
         x: &DoubleTensor,
     ) -> Result<(DoubleTensor, GaussianGradient)> {
+        // a scale shared by every element has its logarithm taken once
+        let ln_sigma = (self.sigma.len() == 1).then(|| self.sigma.as_slice()[0].ln());
         let [log_prob, x, mu, sigma] = map_n((x, &*self.mu, &*self.sigma), |(x, mu, sigma)| {
             let [d_x, d_mu, d_sigma] = gaussian_gradient(x, mu, sigma);
-            [gaussian_log_prob(x, mu, sigma), d_x, d_mu, d_sigma]
+            let log_prob = match ln_sigma {
+                Some(ln_sigma) => gaussian_log_prob_with(x, mu, sigma, ln_sigma),
+                None => gaussian_log_prob(x, mu, sigma),
+            };
+            [log_prob, d_x, d_mu, d_sigma]
         })?;
         Ok((log_prob, GaussianGradient { x, mu, sigma }))
     }
@@ -69,7 +75,13 @@ impl<'a> Gaussian<'a> {
 
 #[inline]
 fn gaussian_log_prob(x: f64, mu: f64, sigma: f64) -> f64 {
-    -((x - mu).powi(2) / (2.0 * sigma * sigma) + sigma.ln() + LN_SQRT_2PI)
+    gaussian_log_prob_with(x, mu, sigma, sigma.ln())
+}
+
+/// [`gaussian_log_prob`] given ln σ.
+#[inline]
+fn gaussian_log_prob_with(x: f64, mu: f64, sigma: f64, ln_sigma: f64) -> f64 {
+    -((x - mu).powi(2) / (2.0 * sigma * sigma) + ln_sigma + LN_SQRT_2PI)
 }
 
 /// The derivatives of [`gaussian_log_prob`] with respect to x, mu and sigma.

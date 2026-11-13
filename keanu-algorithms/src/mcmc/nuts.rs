@@ -24,7 +24,7 @@ use crate::mcmc::{SamplingAlgorithm, SamplingOptions, generate, is_impossible};
 use crate::samples::NetworkSamples;
 use crate::support::{block_shapes, check_latents, check_nodes, evaluate_all, start_point};
 use keanu_distributions::KeanuRng;
-use keanu_graph::{Graph, Model, NodeId, Parameterisation, Space, State, Value};
+use keanu_graph::{CompiledModel, Graph, Model, NodeId, Parameterisation, Space, State, Value};
 use keanu_tensor::DoubleTensor;
 use keanu_tensor::special::log_sum_exp;
 use std::cell::RefCell;
@@ -491,7 +491,8 @@ impl Nuts {
             .map(|shape| shape.iter().product())
             .collect();
         let z = start_point(&param, state)?;
-        let (log_prob, gradient) = log_prob_and_gradient_at(&param, state, &z)?;
+        let mut compiled = param.compile(state);
+        let (log_prob, gradient) = log_prob_and_gradient_at(&param, compiled.as_mut(), state, &z)?;
         if is_impossible(log_prob) {
             return Err(AlgorithmError::ImpossibleStart);
         }
@@ -503,6 +504,7 @@ impl Nuts {
 
         let mut sampler = NutsSampler {
             param,
+            compiled,
             config: *self,
             potential: PotentialState::new(&self.potential, self.adapt_count, &blocks),
             step_size: AdaptiveStepSize::new(step_size, self.target_acceptance_prob),
@@ -560,15 +562,20 @@ impl Nuts {
     }
 }
 
-/// Sets the state to the point `z` and returns the log probability of `z` (with the Jacobian of the transforms) and
+/// Sets the state to the point `z` (unless the model is `compiled`) and returns the log probability of `z` (with the Jacobian of the transforms) and
 /// its gradient, in one pass. Where the log probability is not finite the gradient is meaningless (the trajectory
 /// diverges anyway), so zeros are used.
 fn log_prob_and_gradient_at(
     param: &Parameterisation<'_>,
+    compiled: Option<&mut CompiledModel<'_>>,
     state: &mut State,
     z: &[f64],
 ) -> Result<(f64, Vec<f64>)> {
-    let (log_prob, gradient) = param.log_prob_and_gradient(z, true, state)?;
+    let (log_prob, gradient) = match compiled {
+        // exactly the same, without setting the state
+        Some(compiled) => param.log_prob_and_gradient_compiled(compiled, z, true, state)?,
+        None => param.log_prob_and_gradient(z, true, state)?,
+    };
     let gradient = match gradient {
         Some(gradient) if log_prob.is_finite() => gradient,
         _ => vec![0.0; z.len()],
@@ -1074,10 +1081,12 @@ impl AdaptiveStepSize {
 /// What a step of NUTS needs to build trajectories.
 struct Integrator<'a, 'm> {
     param: &'a Parameterisation<'m>,
+    /// The compiled model, which evaluates without moving the state.
+    compiled: RefCell<Option<&'a mut CompiledModel<'m>>>,
     potential: &'a PotentialState,
     start_energy: f64,
     max_energy_change: f64,
-    /// The position the last leapfrog step left the state at, if any.
+    /// The position the last leapfrog step left the state at, if any (never, with a compiled model).
     in_state: RefCell<Option<Rc<Vec<f64>>>>,
 }
 
@@ -1089,8 +1098,12 @@ impl Integrator<'_, '_> {
         let velocity = self.potential.velocity(&momentum);
         let position = Rc::new(axpy(&from.position, dt, &velocity));
 
-        let (log_prob, gradient) = log_prob_and_gradient_at(self.param, state, &position)?;
-        *self.in_state.borrow_mut() = Some(Rc::clone(&position));
+        let mut compiled = self.compiled.borrow_mut();
+        let (log_prob, gradient) =
+            log_prob_and_gradient_at(self.param, compiled.as_deref_mut(), state, &position)?;
+        if compiled.is_none() {
+            *self.in_state.borrow_mut() = Some(Rc::clone(&position));
+        }
 
         let momentum = axpy(&momentum, half, &gradient);
         LeapfrogState::new(
@@ -1349,6 +1362,8 @@ struct Block {
 #[derive(Debug)]
 pub struct NutsSampler<'m> {
     param: Parameterisation<'m>,
+    /// The model compiled for the gradient, if it could be.
+    compiled: Option<CompiledModel<'m>>,
     config: Nuts,
     potential: PotentialState,
     step_size: AdaptiveStepSize,
@@ -1401,7 +1416,8 @@ impl NutsSampler<'_> {
     /// its support (or, in unconstrained space, on its boundary).
     pub fn refresh(&mut self, state: &mut State) -> Result<()> {
         let z = start_point(&self.param, state)?;
-        let (log_prob, gradient) = log_prob_and_gradient_at(&self.param, state, &z)?;
+        let (log_prob, gradient) =
+            log_prob_and_gradient_at(&self.param, self.compiled.as_mut(), state, &z)?;
         if is_impossible(log_prob) {
             return Err(AlgorithmError::ImpossibleStart);
         }
@@ -1475,6 +1491,7 @@ impl NutsSampler<'_> {
         if step_size.is_finite() && step_size > 0.0 && step_size <= 1e7 {
             let integrator = Integrator {
                 param: &self.param,
+                compiled: RefCell::new(self.compiled.as_mut()),
                 potential: &self.potential,
                 start_energy: f64::NAN,
                 max_energy_change: self.config.max_energy_change,
@@ -1537,8 +1554,10 @@ impl SamplingAlgorithm for NutsSampler<'_> {
             &self.potential,
         )?);
         let start_energy = start.energy;
+        let before = Rc::clone(&self.proposal.position);
         let integrator = Integrator {
             param: &self.param,
+            compiled: RefCell::new(self.compiled.as_mut()),
             potential: &self.potential,
             start_energy,
             max_energy_change: self.config.max_energy_change,
@@ -1573,7 +1592,13 @@ impl SamplingAlgorithm for NutsSampler<'_> {
         // same results) there is nothing to do.
         let in_state = integrator.in_state.into_inner();
         let z: &[f64] = &self.proposal.position;
-        if !in_state.is_some_and(|p| Rc::ptr_eq(&p, &self.proposal.position)) {
+        // with a compiled model the trajectory leaves the state where it was, at the step's start
+        let state_at_proposal = if self.compiled.is_some() {
+            Rc::ptr_eq(&before, &self.proposal.position)
+        } else {
+            in_state.is_some_and(|p| Rc::ptr_eq(&p, &self.proposal.position))
+        };
+        if !state_at_proposal {
             self.param.to_state(z, state)?;
         }
         self.sample_log_prob = self.proposal.log_prob - self.param.log_det_jacobian(z)?;
@@ -1789,7 +1814,8 @@ mod tests {
         let param = Parameterisation::new(&model, &state).unwrap();
         let position = vec![0.3];
         let potential = PotentialState::new(&QuadraticPotential::default(), 0, &[1]);
-        let (log_prob, gradient) = log_prob_and_gradient_at(&param, &mut state, &position).unwrap();
+        let (log_prob, gradient) =
+            log_prob_and_gradient_at(&param, None, &mut state, &position).unwrap();
         let from = LeapfrogState::new(
             Rc::new(position),
             vec![0.5],
@@ -1800,6 +1826,7 @@ mod tests {
         .unwrap();
         let integrator = Integrator {
             param: &param,
+            compiled: RefCell::new(None),
             potential: &potential,
             start_energy,
             max_energy_change: 1000.0,

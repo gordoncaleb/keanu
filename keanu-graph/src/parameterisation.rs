@@ -107,6 +107,7 @@
 //! takes the almost-everywhere value at its kink).
 //! Eigenvector derivatives assume distinct eigenvalues, as their first derivatives do.
 
+use crate::compiled::CompiledModel;
 use crate::error::{GraphError, Result};
 use crate::graph::{Graph, NodeId};
 use crate::logprob::{LogProbGradient, node_support};
@@ -611,7 +612,59 @@ impl<'m> Parameterisation<'m> {
         let Some(gradient) = gradient else {
             return Ok((log_prob, None));
         };
-        let mut flat = self.pull_back(z, &gradient)?;
+        self.with_jacobian(z, jacobian, log_prob, &gradient)
+    }
+
+    /// A [`CompiledModel`] of the joint log probability as a function of these latents, for
+    /// [`log_prob_and_gradient_compiled`](Self::log_prob_and_gradient_compiled), with the observed values (and the
+    /// values of any latents outside this parameterisation) read from `state`. None for a model the compiled
+    /// program doesn't cover (one with an observed deterministic node).
+    pub fn compile(&self, state: &State) -> Option<CompiledModel<'m>> {
+        CompiledModel::new(self.model, &self.latents, state)
+    }
+
+    /// [`log_prob_and_gradient`](Self::log_prob_and_gradient) by a [`CompiledModel`] from
+    /// [`compile`](Self::compile): exactly the same log probability and gradient, without setting the state (whose
+    /// observed values, and the values of any latents outside this parameterisation, it reads).
+    ///
+    /// Fails if `compiled` is of other latents, `z` has the wrong length or the model cannot be evaluated.
+    pub fn log_prob_and_gradient_compiled(
+        &self,
+        compiled: &mut CompiledModel<'_>,
+        z: &[f64],
+        jacobian: bool,
+        state: &State,
+    ) -> Result<(f64, Option<Vec<f64>>)> {
+        if compiled.latents() != self.latents.as_slice() {
+            return Err(GraphError::InvalidValue(
+                "the compiled model is of other latents".into(),
+            ));
+        }
+        let values = self.to_constrained(z)?;
+        let (log_prob, gradient) =
+            compiled.log_prob_and_gradient(&values, state, self.weights.as_deref())?;
+        let Some(gradient) = gradient else {
+            return Ok((log_prob, None));
+        };
+        let gradient = crate::compiled::as_log_prob_gradient(
+            &self.latents,
+            gradient,
+            self.model.graph().len(),
+        )?;
+        self.with_jacobian(z, jacobian, log_prob, &gradient)
+    }
+
+    /// The gradient with respect to `z` of the log probability `log_prob`, whose gradient with respect to the
+    /// constrained values is `gradient`, with the Jacobian's terms if `jacobian`: the end of
+    /// [`log_prob_and_gradient`](Self::log_prob_and_gradient).
+    fn with_jacobian(
+        &self,
+        z: &[f64],
+        jacobian: bool,
+        log_prob: f64,
+        gradient: &LogProbGradient,
+    ) -> Result<(f64, Option<Vec<f64>>)> {
+        let mut flat = self.pull_back(z, gradient)?;
         if !jacobian || self.space == Space::Constrained {
             return Ok((log_prob, Some(flat)));
         }

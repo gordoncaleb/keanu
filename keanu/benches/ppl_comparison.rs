@@ -668,6 +668,19 @@ fn gradient_cost(bench: &Bench) -> f64 {
     let param = Parameterisation::new(&bench.model, &bench.state).unwrap();
     let mut state = bench.state.clone();
     let z = param.from_state(&state).unwrap();
+    if std::env::var("KEANU_BENCH_USE_COMPILED").is_ok() {
+        let mut compiled = param.compile(&bench.state).unwrap();
+        let n: usize = std::env::var("KEANU_BENCH_ITERS").map_or(2000, |r| r.parse().unwrap());
+        let start = Instant::now();
+        for _ in 0..n {
+            std::hint::black_box(
+                param
+                    .log_prob_and_gradient_compiled(&mut compiled, &z, true, &bench.state)
+                    .unwrap(),
+            );
+        }
+        return start.elapsed().as_secs_f64() * 1e6 / n as f64;
+    }
     let mut times = Vec::new();
     let n: usize = std::env::var("KEANU_BENCH_ITERS").map_or(2000, |r| r.parse().unwrap());
     for _ in 0..7 {
@@ -681,7 +694,86 @@ fn gradient_cost(bench: &Bench) -> f64 {
     times[0]
 }
 
+/// Compares the compiled log probability and gradient with the general path's at a few points, and times both.
+fn check_compiled(name: &str, bench: &Bench) {
+    use keanu::graph::Parameterisation;
+    let param = Parameterisation::new(&bench.model, &bench.state).unwrap();
+    let Some(mut compiled) = param.compile(&bench.state) else {
+        println!("{name:>22}: not compiled");
+        return;
+    };
+    let mut state = bench.state.clone();
+    let start = param.from_state(&state).unwrap();
+    let mut identical = true;
+    let mut worst: f64 = 0.0;
+    for k in 0..6 {
+        let z: Vec<f64> = start
+            .iter()
+            .enumerate()
+            .map(|(i, &x)| x + 0.3 * k as f64 * ((i as f64 * 1.7 + k as f64).sin()))
+            .collect();
+        let (lp, g) = param.log_prob_and_gradient(&z, true, &mut state).unwrap();
+        let (clp, cg) = param
+            .log_prob_and_gradient_compiled(&mut compiled, &z, true, &bench.state)
+            .unwrap();
+        if lp.to_bits() != clp.to_bits() && !(lp.is_nan() && clp.is_nan()) {
+            identical = false;
+            worst = worst.max((lp - clp).abs());
+        }
+        match (&g, &cg) {
+            (Some(g), Some(cg)) => {
+                for (a, b) in g.iter().zip(cg) {
+                    if a.to_bits() != b.to_bits() {
+                        identical = false;
+                        worst = worst.max((a - b).abs() / a.abs().max(1.0));
+                    }
+                }
+            }
+            (None, None) => {}
+            _ => {
+                identical = false;
+                worst = f64::INFINITY;
+            }
+        }
+    }
+    let time = |f: &mut dyn FnMut()| {
+        let mut best = f64::INFINITY;
+        for _ in 0..5 {
+            let t = Instant::now();
+            for _ in 0..500 {
+                f();
+            }
+            best = best.min(t.elapsed().as_secs_f64() * 1e6 / 500.0);
+        }
+        best
+    };
+    let general = time(&mut || {
+        std::hint::black_box(
+            param
+                .log_prob_and_gradient(&start, true, &mut state)
+                .unwrap(),
+        );
+    });
+    let fast = time(&mut || {
+        std::hint::black_box(
+            param
+                .log_prob_and_gradient_compiled(&mut compiled, &start, true, &bench.state)
+                .unwrap(),
+        );
+    });
+    println!(
+        "{name:>22}: {} (worst {worst:.1e}); general {general:8.2} µs, compiled {fast:8.2} µs",
+        if identical { "identical" } else { "DIFFERENT" }
+    );
+}
+
 fn main() {
+    if std::env::var("KEANU_BENCH_CHECK").is_ok() {
+        for (name, build) in MODELS {
+            check_compiled(name, &build().unwrap());
+        }
+        return;
+    }
     if let Ok(filter) = std::env::var("KEANU_BENCH_GRADIENT") {
         for (name, build) in MODELS {
             if !filter.is_empty() && !filter.split(',').any(|f| f == *name) {
@@ -689,6 +781,10 @@ fn main() {
             }
             let bench = build().unwrap();
             let gradient = gradient_cost(&bench);
+            if std::env::var("KEANU_BENCH_NO_NUTS").is_ok() {
+                println!("{name:>22}: {gradient:8.2} µs per gradient");
+                continue;
+            }
             // one chain on this thread: the cost of a leapfrog step, gradient and NUTS's own work together
             let recorded: Vec<NodeId> = bench.recorded.iter().map(|(_, id)| *id).collect();
             let mut state = bench.state.clone();

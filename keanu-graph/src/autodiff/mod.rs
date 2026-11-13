@@ -786,6 +786,52 @@ fn axis_index_map(
     Ok(map)
 }
 
+/// The cotangent of a gather's input (shape `shape`, batched `[b, shape...]`) from the output's cotangent `g`: each
+/// output element's cotangent added to the input element it was taken from, in output order (as
+/// [`gather_reverse`] does with the [`axis_index_map`], without building the map).
+fn gather_cotangent(
+    shape: &[usize],
+    axis: isize,
+    indices: &Value,
+    g: &DoubleTensor,
+    b: usize,
+) -> Result<DoubleTensor> {
+    let indices = indices.as_i64().ok_or_else(|| {
+        GraphError::InvalidValue(format!("expected i64 indices, got {:?}", indices.dtype()))
+    })?;
+    let axis = resolve_axis(axis, shape.len())?;
+    let (outer, n, inner) = lanes(shape, axis);
+    let n_in: usize = shape.iter().product();
+    let n_out = outer * indices.len() * inner;
+    let g = g.as_slice();
+    let mut result = vec![0.0; b * n_in];
+    for k in 0..b {
+        let (g, result) = (
+            &g[k * n_out..(k + 1) * n_out],
+            &mut result[k * n_in..(k + 1) * n_in],
+        );
+        let mut o = 0;
+        for lane in 0..outer {
+            for &i in indices.as_slice() {
+                let i = usize::try_from(i).ok().filter(|&i| i < n).ok_or_else(|| {
+                    GraphError::InvalidValue(format!(
+                        "index {i} is out of range for an axis of length {n}"
+                    ))
+                })?;
+                let start = (lane * n + i) * inner;
+                for (r, &c) in result[start..start + inner]
+                    .iter_mut()
+                    .zip(&g[o..o + inner])
+                {
+                    *r += c;
+                }
+                o += inner;
+            }
+        }
+    }
+    batched_tensor(b, shape, result)
+}
+
 fn gather_forward(
     map: &[Option<(usize, usize)>],
     tangents: &[Option<&DoubleTensor>],
@@ -1116,7 +1162,7 @@ pub(crate) fn binary_derivatives_scalar(
 
 /// The scalar fast path of `vjp` for a cotangent of one element: contributions shaped [1] (a batch of one
 /// scalar), or None when the node isn't a scalar unary/binary op over scalar f64 parents.
-fn scalar_vjp(
+pub(crate) fn scalar_vjp(
     node: &Node,
     parents: &[&Value],
     out: &Value,
@@ -1680,7 +1726,7 @@ fn jvp(
 // ---------------------------------------------------------------------------------------------------------------
 // reverse mode rules
 
-fn vjp(
+pub(crate) fn vjp(
     graph: &Graph,
     id: NodeId,
     parents: &[&Value],
@@ -1805,10 +1851,16 @@ fn vjp(
         | Op::FillTriangular { .. }
         | Op::TrianglePart { .. } => gather_reverse(graph.index_map(id, parents)?, g, parents, b)?,
         Op::Gather { axis } => {
-            let map = axis_index_map(f64v(parents[0])?.shape(), *axis, parents[1])?;
-            let mut grads = gather_reverse(&map, g, &parents[..1], b)?;
-            grads.push(None);
-            grads
+            vec![
+                Some(gather_cotangent(
+                    f64v(parents[0])?.shape(),
+                    *axis,
+                    parents[1],
+                    g,
+                    b,
+                )?),
+                None,
+            ]
         }
         Op::ScatterAdd { axis, .. } => {
             let map = axis_index_map(&out_shape, *axis, parents[1])?;

@@ -202,7 +202,7 @@ fn node_gradient_parts(graph: &Graph, state: &State, id: NodeId) -> Result<LogPr
 }
 
 /// Sums a gradient over the dimensions that a tensor of `target` shape was broadcast along.
-fn sum_to_shape(t: DoubleTensor, target: &[usize]) -> Result<DoubleTensor> {
+pub(crate) fn sum_to_shape(t: DoubleTensor, target: &[usize]) -> Result<DoubleTensor> {
     if t.shape() == target {
         return Ok(t);
     }
@@ -237,7 +237,7 @@ pub struct LogProbGradient {
 }
 
 impl LogProbGradient {
-    fn with_capacity(nodes: usize) -> Self {
+    pub(crate) fn with_capacity(nodes: usize) -> Self {
         Self {
             gradients: vec![None; nodes],
             len: 0,
@@ -286,7 +286,7 @@ impl LogProbGradient {
             .collect()
     }
 
-    fn add(&mut self, id: NodeId, gradient: DoubleTensor) -> Result<()> {
+    pub(crate) fn add(&mut self, id: NodeId, gradient: DoubleTensor) -> Result<()> {
         if id.0 >= self.gradients.len() {
             self.gradients.resize(id.0 + 1, None);
         }
@@ -349,7 +349,10 @@ fn scale_option(t: Option<DoubleTensor>, w: f64) -> Option<DoubleTensor> {
     t.map(|t| t * w)
 }
 
-fn scale_parts((value, parameters): LogProbGradientParts, w: f64) -> LogProbGradientParts {
+pub(crate) fn scale_parts(
+    (value, parameters): LogProbGradientParts,
+    w: f64,
+) -> LogProbGradientParts {
     if w == 1.0 {
         return (value, parameters);
     }
@@ -374,16 +377,12 @@ pub(crate) fn log_prob_and_gradient(
 ) -> Result<Option<(f64, LogProbGradient)>> {
     let mut log_prob = 0.0;
     let gradient = gradient_from_parts(graph, state, of, wrt, |node| {
-        let (node_log_prob, parts) = if graph[node].is_factor() {
-            let term = factor_term(value(state, node)?)?;
-            (
-                term,
-                (term != f64::NEG_INFINITY).then(|| factor_gradient_parts(graph, node)),
-            )
-        } else {
-            kind(graph, node)?
-                .log_prob_and_gradient(value(state, node)?, &parameters(graph, state, node)?)?
-        };
+        let (node_log_prob, parts) = term_and_parts(
+            graph,
+            node,
+            value(state, node)?,
+            &parameters(graph, state, node)?,
+        )?;
         // a term that isn't finite (-∞, NaN, or a density of +∞ at a bound) makes the point impossible
         if !node_log_prob.is_finite() {
             return Ok(None);
@@ -393,6 +392,25 @@ pub(crate) fn log_prob_and_gradient(
         Ok(parts.map(|parts| scale_parts(parts, w)))
     })?;
     Ok(gradient.map(|gradient| (log_prob, gradient)))
+}
+
+/// A probabilistic node's (or factor's) term of the log probability at the value `value` with parameter values
+/// `parameters`, and its gradient parts (none for an impossible factor).
+pub(crate) fn term_and_parts(
+    graph: &Graph,
+    node: NodeId,
+    value: &Value,
+    parameters: &[&Value],
+) -> Result<(f64, Option<LogProbGradientParts>)> {
+    if graph[node].is_factor() {
+        let term = factor_term(value)?;
+        Ok((
+            term,
+            (term != f64::NEG_INFINITY).then(|| factor_gradient_parts(graph, node)),
+        ))
+    } else {
+        kind(graph, node)?.log_prob_and_gradient(value, parameters)
+    }
 }
 
 /// The gradient of [`log_prob_gradient`], given each node's gradient parts by `parts_of`. None as soon as

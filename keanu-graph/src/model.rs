@@ -458,6 +458,12 @@ impl Model {
 
     /// [`Self::log_prob_and_gradient_wrt`] without checking `wrt`, with each node's term multiplied by its weight
     /// in `weights`.
+    /// The probabilistic nodes and factors whose terms make up the joint log probability, in the order they are
+    /// summed.
+    pub(crate) fn probabilistic_joint(&self) -> &[NodeId] {
+        &self.probabilistic_joint
+    }
+
     pub(crate) fn log_prob_and_gradient_of(
         &self,
         state: &State,
