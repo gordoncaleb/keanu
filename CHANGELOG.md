@@ -25,7 +25,7 @@ tag. `RUST_MIGRATION_PLAN.md` describes the rewrite and `book/src/from-java.md` 
   and effective sample size per second with each library's NUTS. Results are in `docs/benchmarks.md`.
 - NUTS evaluates a `CompiledModel` of the log probability (`Parameterisation::compile`): the nodes that depend on
   the latents get registers reused between evaluations, element-wise ops, constant-index gathers and element moves
-  run as vectorised kernels, and Gaussian terms are computed in place. Its results are bit-for-bit those of the
+  run as vectorised kernels, and Gaussian and location-scale Student-t terms are computed in place. Its results are bit-for-bit those of the
   general path, so sampling draws exactly the same values as before, faster.
 - Scan bodies of scalars and small ODE right-hand sides run on compiled tapes (stochastic volatility gradients 12×
   and Lotka–Volterra 9× faster). First-order gradients of the jet-based families skip second derivatives, a

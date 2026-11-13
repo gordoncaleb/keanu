@@ -10,7 +10,8 @@
 //!   Element-wise unary and binary ops, gathers along constant indices and the ops that only move elements
 //!   become one instruction per element. Every other op runs through its general rules on tensors made from the
 //!   registers;
-//! - each probabilistic node's term and gradient parts come from its distribution's general code.
+//! - each Gaussian or location-scale Student-t term is computed from the registers, element by element; every
+//!   other probabilistic node's term and gradient parts come from its distribution's general code.
 //!
 //! The results are exactly the general path's: the same element functions and derivatives, the log probability
 //! summed in the same order, and each node's cotangent accumulated in the same order, including the reverse
@@ -88,15 +89,33 @@ enum Kernel {
 enum Term {
     /// By its distribution's general code.
     General(NodeId),
-    /// A Gaussian computed from the registers: the value and the parameters, broadcast to the node's shape.
-    Gaussian {
+    /// An element-wise family computed from the registers: the value and the parameters (in order), broadcast to
+    /// the node's shape.
+    Registers {
         node: NodeId,
+        family: Family,
         x: Operand,
-        mu: Operand,
-        sigma: Operand,
-        /// Whether sigma is one element (whose logarithm the family takes once).
-        single_scale: bool,
+        parameters: Vec<Operand>,
     },
+}
+
+/// The families whose terms are computed from the registers.
+#[derive(Clone, Copy, Debug)]
+enum Family {
+    /// A Gaussian; `single_scale` if sigma is one element (whose logarithm the family takes once).
+    Gaussian { single_scale: bool },
+    /// A location-scale Student-t.
+    StudentT,
+}
+
+impl Family {
+    /// The number of parameters.
+    fn arity(self) -> usize {
+        match self {
+            Family::Gaussian { .. } => 2,
+            Family::StudentT => 3,
+        }
+    }
 }
 
 /// A node that depends on the latents, computed in order.
@@ -240,7 +259,7 @@ impl<'m> CompiledModel<'m> {
         }
         for &node in model.probabilistic_joint() {
             let term = compiled.compile_term(graph, node);
-            if let Term::Gaussian { .. } = term {
+            if let Term::Registers { .. } = term {
                 // the value and parameters are read from registers
                 for p in std::iter::once(node).chain(graph[node].parents.iter().copied()) {
                     if !compiled.dynamic[p.0] {
@@ -387,7 +406,7 @@ impl<'m> CompiledModel<'m> {
         })
     }
 
-    /// How a probabilistic node's term is computed: from the registers for a Gaussian whose value and
+    /// How a probabilistic node's term is computed: from the registers for a Gaussian or Student-t whose value and
     /// parameters are f64 and broadcast to the node's shape, else by its distribution's general code.
     fn compile_term(&self, graph: &Graph, node: NodeId) -> Term {
         let general = Term::General(node);
@@ -395,9 +414,15 @@ impl<'m> CompiledModel<'m> {
         let Op::Distribution(distribution) = &n.op else {
             return general;
         };
-        if !matches!(distribution.kind, crate::op::DistributionKind::Gaussian)
-            || n.dtype != DType::F64
-            || n.parents.len() != 2
+        let family = match distribution.kind {
+            crate::op::DistributionKind::Gaussian => Family::Gaussian {
+                single_scale: n.parents.len() == 2 && self.lens[n.parents[1].0] == 1,
+            },
+            crate::op::DistributionKind::LocationScaleStudentT => Family::StudentT,
+            _ => return general,
+        };
+        if n.dtype != DType::F64
+            || n.parents.len() != family.arity()
             || !n.parents.iter().all(|&p| graph[p].dtype == DType::F64)
         {
             return general;
@@ -428,27 +453,32 @@ impl<'m> CompiledModel<'m> {
                 positions.as_slice().iter().map(|&e| e as usize).collect(),
             ))
         };
-        let (Some(mu), Some(sigma)) = (operand(n.parents[0]), operand(n.parents[1])) else {
+        let Some(parameters) = n.parents.iter().map(|&p| operand(p)).collect() else {
             return general;
         };
-        Term::Gaussian {
+        Term::Registers {
             node,
+            family,
             x: Operand::Same(NONE),
-            mu,
-            single_scale: self.lens[n.parents[1].0] == 1,
-            sigma,
+            parameters,
         }
     }
 
     /// Fills in every kernel's (and register term's) operand registers from its parents' offsets.
     fn resolve_registers(&mut self, graph: &Graph) {
         for term in &mut self.terms {
-            if let Term::Gaussian {
-                node, x, mu, sigma, ..
+            if let Term::Registers {
+                node,
+                x,
+                parameters,
+                ..
             } = term
             {
                 let parents = &graph[*node].parents;
-                for (operand, p) in [(x, *node), (mu, parents[0]), (sigma, parents[1])] {
+                let operands = std::iter::once(x).chain(parameters.iter_mut());
+                for (operand, p) in
+                    operands.zip(std::iter::once(*node).chain(parents.iter().copied()))
+                {
                     match operand {
                         Operand::Same(at) | Operand::Scalar(at) | Operand::Map(at, _) => {
                             *at = self.offsets[p.0];
@@ -617,7 +647,7 @@ impl<'m> CompiledModel<'m> {
         for t in 0..self.terms.len() {
             let term = match &self.terms[t] {
                 Term::General(node) => self.general_term(graph, state, weights, *node)?,
-                Term::Gaussian { .. } => self.gaussian_term(graph, weights, t),
+                Term::Registers { .. } => self.register_term(graph, weights, t),
             };
             match term {
                 Some(term) => log_prob += term,
@@ -708,44 +738,83 @@ impl<'m> CompiledModel<'m> {
         p.dtype == DType::F64 && !matches!(p.op, Op::Constant(_)) && self.dynamic[parent.0]
     }
 
-    /// A Gaussian term from the registers, exactly as the family's code computes it element by element: the
-    /// weighted value (None if impossible), with the gradient parts seeded.
-    fn gaussian_term(&mut self, graph: &Graph, weights: Weights<'_>, t: usize) -> Option<f64> {
-        let Term::Gaussian {
+    /// A term from the registers, exactly as the family's code computes it element by element: the weighted value
+    /// (None if impossible), with the gradient parts seeded.
+    fn register_term(&mut self, graph: &Graph, weights: Weights<'_>, t: usize) -> Option<f64> {
+        // taken out while its operands are read, and put back
+        let term = std::mem::replace(&mut self.terms[t], Term::General(NodeId(0)));
+        let Term::Registers {
             node,
+            family,
             x,
-            mu,
-            sigma,
-            single_scale,
-        } = &self.terms[t]
+            parameters,
+        } = &term
         else {
-            unreachable!("a Gaussian term")
+            unreachable!("a register term")
         };
-        let node = *node;
+        let (node, family) = (*node, *family);
         let len = self.lens[node.0];
         let registers = &self.registers;
-        let ln_single = single_scale.then(|| registers[sigma.register(0)].ln());
-        // the per-element parts with respect to x, mu and sigma, one after another
+        // the per-element parts with respect to x and each parameter, one after another
         let mut parts = std::mem::take(&mut self.scratch);
         parts.clear();
-        parts.resize(3 * len, 0.0);
+        parts.resize((1 + parameters.len()) * len, 0.0);
         let mut total = 0.0;
-        for k in 0..len {
-            let (xv, m, s) = (
-                registers[x.register(k)],
-                registers[mu.register(k)],
-                registers[sigma.register(k)],
-            );
-            let ln_s = ln_single.unwrap_or_else(|| s.ln());
-            let (lp, [dx, dm, ds]) =
-                keanu_distributions::Gaussian::element_log_prob_and_gradient(xv, m, s, ln_s);
-            total += lp;
-            parts[k] = dx;
-            parts[len + k] = dm;
-            parts[2 * len + k] = ds;
+        match family {
+            Family::Gaussian { single_scale } => {
+                let [mu, sigma] = &parameters[..] else {
+                    unreachable!("a Gaussian's parameters")
+                };
+                let ln_single = single_scale.then(|| registers[sigma.register(0)].ln());
+                for k in 0..len {
+                    let (xv, m, s) = (
+                        registers[x.register(k)],
+                        registers[mu.register(k)],
+                        registers[sigma.register(k)],
+                    );
+                    let ln_s = ln_single.unwrap_or_else(|| s.ln());
+                    let (lp, [dx, dm, ds]) =
+                        keanu_distributions::Gaussian::element_log_prob_and_gradient(
+                            xv, m, s, ln_s,
+                        );
+                    total += lp;
+                    parts[k] = dx;
+                    parts[len + k] = dm;
+                    parts[2 * len + k] = ds;
+                }
+            }
+            Family::StudentT => {
+                let [nu, mu, sigma] = &parameters[..] else {
+                    unreachable!("a Student-t's parameters")
+                };
+                use keanu_distributions::LocationScaleStudentT as T;
+                // with one nu and one sigma, the parts that depend only on them are computed once
+                let common =
+                    matches!((nu, sigma), (Operand::Scalar(_), Operand::Scalar(_))).then(|| {
+                        T::element_common(registers[nu.register(0)], registers[sigma.register(0)])
+                    });
+                for k in 0..len {
+                    let (xv, m) = (registers[x.register(k)], registers[mu.register(k)]);
+                    let (lp, [dx, dn, dm, ds]) = match &common {
+                        Some(common) => T::element_log_prob_and_gradient_with(xv, m, common),
+                        None => T::element_log_prob_and_gradient(
+                            xv,
+                            registers[nu.register(k)],
+                            m,
+                            registers[sigma.register(k)],
+                        ),
+                    };
+                    total += lp;
+                    parts[k] = dx;
+                    parts[len + k] = dn;
+                    parts[2 * len + k] = dm;
+                    parts[3 * len + k] = ds;
+                }
+            }
         }
         if !total.is_finite() {
             self.scratch = parts;
+            self.terms[t] = term;
             return None;
         }
         let w = weight_of(weights, node);
@@ -759,12 +828,8 @@ impl<'m> CompiledModel<'m> {
             self.direct[at..at + len].copy_from_slice(&parts[..len]);
             self.has_direct[i] = true;
         }
-        let operands = [
-            (mu.clone(), graph[node].parents[0]),
-            (sigma.clone(), graph[node].parents[1]),
-        ];
         let mut seed = Vec::new();
-        for (j, (operand, parent)) in operands.into_iter().enumerate() {
+        for (j, (operand, &parent)) in parameters.iter().zip(&graph[node].parents).enumerate() {
             if !self.seeds_into(graph, parent) {
                 continue;
             }
@@ -784,6 +849,7 @@ impl<'m> CompiledModel<'m> {
             }
         }
         self.scratch = parts;
+        self.terms[t] = term;
         Some(weighted_term(w, total))
     }
 

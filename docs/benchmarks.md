@@ -280,7 +280,7 @@ ESS over every parameter, by the same ArviZ code for all three. PyMC's Lotka–V
 |---|---:|---:|---:|---:|---:|---:|---:|
 | eight schools (non-centred) | 0.39 | 0.07 | 0.11 | 0.92 | 18,705 | 16,700 | 2,297 |
 | radon (centred) | 1.65 | 0.83 | 0.82 | 0.93 | 1,878 | 1,743 | 914 |
-| robust regression | 1.13 | 0.23 | 0.11 | 0.59 | 11,384 | 21,406 | 3,888 |
+| robust regression | 1.13 | 0.09 | 0.11 | 0.59 | 29,090 | 21,406 | 3,888 |
 | stochastic volatility | 58.59 | 3.92 | 2.94 | 9.08 | 282 | 380 | 70 |
 | GP regression | 4.25 | 1.48 | 1.04 | 1.24 | 1,174 | 1,640 | 1,317 |
 | Gaussian mixture | 2.05 | 1.50 | 1.23 | 0.99 | 1,598 | 1,659 | 2,501 |
@@ -298,7 +298,8 @@ What changed (the draws are bit-for-bit the same as before every change):
 
 - **Compiled log densities for NUTS** (`CompiledModel`): the nodes that depend on the latents get registers reused
   from one evaluation to the next, element-wise ops, constant-index gathers and element moves run as vectorised
-  kernels over them, Gaussian terms are computed from the registers, and everything else runs through its general
+  kernels over them, Gaussian and Student-t terms are computed from the registers (the Student-t's normaliser once
+  for a shared ν and σ: robust regression gradient 15 → 6 µs), and everything else runs through its general
   rules. Leapfrog steps no longer set the state, and the gradient is pulled back through the transforms without
   allocating.
 - **Compiled loop and ODE bodies**: a scan of scalars runs on a register tape (stochastic volatility gradient 277 →
@@ -310,8 +311,8 @@ What changed (the draws are bit-for-bit the same as before every change):
   factorisation per gradient), a direct scatter for `gather`'s reverse rule, and a table of ln k! for counts.
 - **NUTS on flat vectors**, with U-turn checks that never form summed momenta and in-place momentum updates.
 
-Still behind Stan: the robust regression (2.1× per gradient: the Student-t term still runs through the general
-code), stochastic volatility (1.4×: the scan's values cross between the compiled program and the general scan),
+Still behind Stan: stochastic volatility (1.4× per gradient: the scan's values cross between the compiled program
+and the general scan),
 the GP (1.35×: copies at the boundary of the dense linear algebra) and item response (1.25×). With chains in
 parallel Keanu also loses more than Stan to the allocator, as its remaining small allocations contend between
 threads (Stan runs chains as separate processes).

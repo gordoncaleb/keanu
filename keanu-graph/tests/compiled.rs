@@ -38,6 +38,15 @@ fn model(seed: u64) -> (Arc<Graph>, State, Model, Vec<NodeId>) {
     let guarded = b.where_(total.gt(-1e9), projected, (projected - 1e12).ln());
     let y = b.gaussian(guarded, e + total.abs() * 0.01 + 0.5);
     b.observe(y, DoubleTensor::vector(vec![0.5, -0.2]));
+    // Student-t terms from the registers: scalar parameters, a location and scale broadcast over the value, and a
+    // scale per element
+    let nu = b.log_normal(1.5, 0.5);
+    let t = b.location_scale_student_t(nu, shifted.slice(":3") * 0.5, s);
+    b.observe(t, DoubleTensor::vector(vec![0.4, -1.1, 2.5]));
+    let lt = b.location_scale_student_t_with_shape(&[2, 3], nu, a, h + 0.1);
+    b.factor(-(lt * lt).sum() * 0.05);
+    let per_element = b.location_scale_student_t(nu + e, a, (a * 0.3).exp());
+    b.observe(per_element, DoubleTensor::vector(vec![0.1, 0.7, -0.6]));
     b.factor(-(a * a).sum() * 0.1);
     let (graph, mut state) = b.build().unwrap();
     let all: Vec<_> = graph.ids().collect();

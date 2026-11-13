@@ -499,7 +499,17 @@ fn student_t_log_normalizer<const K: usize, const H: usize>(nu: Jet<K, H>) -> Je
 
 fn location_scale_student_t_log_prob<const K: usize, const H: usize>(
     x: Jet<K, H>,
+    parameters: [Jet<K, H>; 3],
+) -> Jet<K, H> {
+    location_scale_student_t_log_prob_with(x, parameters, None)
+}
+
+/// [`location_scale_student_t_log_prob`], given the normalizer and ln sigma (of these nu and sigma) if they are
+/// known.
+fn location_scale_student_t_log_prob_with<const K: usize, const H: usize>(
+    x: Jet<K, H>,
     [nu, mu, sigma]: [Jet<K, H>; 3],
+    common: Option<(Jet<K, H>, Jet<K, H>)>,
 ) -> Jet<K, H> {
     if !(nu.v.is_finite() && nu.v > 0.0 && mu.v.is_finite() && sigma.v.is_finite() && sigma.v > 0.0)
     {
@@ -513,7 +523,19 @@ fn location_scale_student_t_log_prob<const K: usize, const H: usize>(
         let magnitude = if centred.v < 0.0 { -centred } else { centred };
         (2.0 * (magnitude.ln() - sigma.ln()) - nu.ln()).softplus()
     };
-    student_t_log_normalizer(nu) - sigma.ln() - (nu + 1.0) * 0.5 * log_kernel
+    let (normalizer, ln_sigma) =
+        common.unwrap_or_else(|| (student_t_log_normalizer(nu), sigma.ln()));
+    normalizer - ln_sigma - (nu + 1.0) * 0.5 * log_kernel
+}
+
+/// The parts of a location-scale Student-t's log density that depend only on nu and sigma, for computing it at
+/// many elements that share them (see [`LocationScaleStudentT::element_log_prob_and_gradient_with`]).
+#[derive(Debug, Clone, Copy)]
+pub struct StudentTCommon {
+    nu: f64,
+    sigma: f64,
+    normalizer: Jet<4, 0>,
+    ln_sigma: Jet<4, 0>,
 }
 
 fn location_scale_student_t_log_cdf<const K: usize, const H: usize>(
@@ -556,6 +578,38 @@ fn location_scale_student_t_log_cdf<const K: usize, const H: usize>(
 }
 
 impl LocationScaleStudentT<'_> {
+    /// One element's log density and its derivatives with respect to x, nu, mu and sigma: what
+    /// [`Self::log_prob`] and [`Self::d_log_prob`] compute for each element, for callers that hold the operands
+    /// element by element.
+    #[inline]
+    pub fn element_log_prob_and_gradient(x: f64, nu: f64, mu: f64, sigma: f64) -> (f64, [f64; 4]) {
+        crate::jet::gradient(x, [nu, mu, sigma], location_scale_student_t_log_prob)
+    }
+
+    /// The parts of [`Self::element_log_prob_and_gradient`] that depend only on nu and sigma, computed once.
+    pub fn element_common(nu: f64, sigma: f64) -> StudentTCommon {
+        let (nu_jet, sigma_jet) = (Jet::var(nu, 1), Jet::var(sigma, 3));
+        StudentTCommon {
+            nu,
+            sigma,
+            normalizer: student_t_log_normalizer(nu_jet),
+            ln_sigma: sigma_jet.ln(),
+        }
+    }
+
+    /// [`Self::element_log_prob_and_gradient`] at an element whose nu and sigma are those of `common`: the same
+    /// numbers.
+    #[inline]
+    pub fn element_log_prob_and_gradient_with(
+        x: f64,
+        mu: f64,
+        common: &StudentTCommon,
+    ) -> (f64, [f64; 4]) {
+        crate::jet::gradient(x, [common.nu, mu, common.sigma], |x, p| {
+            location_scale_student_t_log_prob_with(x, p, Some((common.normalizer, common.ln_sigma)))
+        })
+    }
+
     /// Draws a sample of the requested shape, broadcast with the parameters. Degrees of freedom and scale
     /// must be positive and all parameters finite.
     pub fn sample(&self, shape: &[usize], rng: &mut KeanuRng) -> Result<DoubleTensor> {
