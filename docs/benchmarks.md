@@ -267,3 +267,51 @@ solvers reached the same log density to six decimal places on each target.
 L-BFGS reached the shared solution fastest on these two targets. They do not establish a case for adding a
 full BFGS implementation. Evaluating variational update rules would require a separate benchmark on an
 inference workload that needs them.
+
+## Keanu, Stan and PyMC
+
+Ten of the examples written for Keanu, Stan (CmdStan 2.40) and PyMC 6.4, sampled with each library's NUTS on the
+same data: 4 chains in parallel, 1000 warm-up iterations and 1000 draws each. The method, the models and how to run
+it are in [`benchmarks/ppl`](../benchmarks/ppl/README.md). Apple M1 (8 cores), 2026-11-13; the machine was shared
+with other work, so each library's time is the fastest of three interleaved runs. ESS is the minimum bulk or tail
+ESS over every parameter, by the same ArviZ code for all three. PyMC's Lotka–Volterra (`pm.ode`) was not run.
+
+| Model | Keanu before (s) | Keanu (s) | Stan (s) | PyMC (s) | Keanu ESS/s | Stan ESS/s | PyMC ESS/s |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| eight schools (non-centred) | 0.39 | 0.07 | 0.11 | 0.92 | 18,705 | 16,700 | 2,297 |
+| radon (centred) | 1.65 | 0.83 | 0.82 | 0.93 | 1,878 | 1,743 | 914 |
+| robust regression | 1.13 | 0.23 | 0.11 | 0.59 | 11,384 | 21,406 | 3,888 |
+| stochastic volatility | 58.59 | 3.92 | 2.94 | 9.08 | 282 | 380 | 70 |
+| GP regression | 4.25 | 1.48 | 1.04 | 1.24 | 1,174 | 1,640 | 1,317 |
+| Gaussian mixture | 2.05 | 1.50 | 1.23 | 0.99 | 1,598 | 1,659 | 2,501 |
+| item response | 7.52 | 2.96 | 2.39 | 3.19 | 464 | 527 | 238 |
+| hidden Markov model | 2.32 | 1.70 | 3.84 | 6.86 | 1,437 | 664 | 432 |
+| disease mapping (BYM2) | 7.88 | 2.10 | 2.17 | 7.84 | 173 | 158 | 39 |
+| Lotka–Volterra (ODE) | 83.28 | 7.65 | 12.59 | — | 126 | 63 | — |
+
+"Keanu before" is the first measurement, before the performance work below. Every model's posterior means agree with
+Stan's to within 0.1 posterior standard deviations (0.13 for PyMC's item response). Keanu and Stan take the same
+number of leapfrog steps to within a few percent (both run Stan's NUTS and adaptation), so the differences are the
+cost of a gradient.
+
+What changed (the draws are bit-for-bit the same as before every change):
+
+- **Compiled log densities for NUTS** (`CompiledModel`): the nodes that depend on the latents get registers reused
+  from one evaluation to the next, element-wise ops, constant-index gathers and element moves run as vectorised
+  kernels over them, Gaussian terms are computed from the registers, and everything else runs through its general
+  rules. Leapfrog steps no longer set the state, and the gradient is pulled back through the transforms without
+  allocating.
+- **Compiled loop and ODE bodies**: a scan of scalars runs on a register tape (stochastic volatility gradient 277 →
+  24 µs) and small ODE right-hand sides on an element tape with batched forward tangents (Lotka–Volterra 753 →
+  81 µs).
+- **Gradient-only jets** skip second derivatives (Student-t: no trigamma), and lnΓ and ψ remember their last
+  arguments, which a broadcast shape parameter repeats (Student-t regression gradient 58 → 15 µs).
+- **Merged dimensions** in broadcasting, strided reads and reductions, a fused multivariate Gaussian (one Cholesky
+  factorisation per gradient), a direct scatter for `gather`'s reverse rule, and a table of ln k! for counts.
+- **NUTS on flat vectors**, with U-turn checks that never form summed momenta and in-place momentum updates.
+
+Still behind Stan: the robust regression (2.1× per gradient: the Student-t term still runs through the general
+code), stochastic volatility (1.4×: the scan's values cross between the compiled program and the general scan),
+the GP (1.35×: copies at the boundary of the dense linear algebra) and item response (1.25×). With chains in
+parallel Keanu also loses more than Stan to the allocator, as its remaining small allocations contend between
+threads (Stan runs chains as separate processes).

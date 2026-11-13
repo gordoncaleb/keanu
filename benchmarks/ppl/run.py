@@ -3,6 +3,12 @@
     python run.py stan  [model ...]   # sample with CmdStan, write out/<model>/stan.{csv,json}
     python run.py pymc  [model ...]   # sample with PyMC,    write out/<model>/pymc.{csv,json}
     python run.py report              # print the comparison table and write out/report.{md,json}
+    python run.py all [-n N] [--libs keanu,stan,pymc] [model ...]
+                                      # run each N times, interleaved, keeping each one's fastest run
+
+The machine running the benchmarks may be busy with other work. `all` interleaves the libraries model by model and
+keeps each library's fastest of N runs (the draws are the same every time, so only the time varies), which is the
+fairest comparison on a shared machine.
 
 The Keanu side (out/<model>/data.json and keanu.{csv,json}) is written first by
 
@@ -237,7 +243,54 @@ def report():
     (OUT / "report.json").write_text(json.dumps(results, indent=2))
 
 
+def run_keanu(models):
+    import subprocess
+
+    root = HERE.parent.parent
+    for model in models:
+        subprocess.run(
+            ["cargo", "bench", "-q", "-p", "keanu", "--features", "parallel", "--bench", "ppl_comparison", "--",
+             str(OUT), model],
+            cwd=root,
+            check=True,
+        )
+
+
+def run_all(models, repeat, libs):
+    runners = {
+        lib: runner
+        for lib, runner in {"keanu": run_keanu, "stan": run_stan, "pymc": run_pymc}.items()
+        if lib in libs
+    }
+    for model in models:
+        best = {}
+        for _ in range(repeat):
+            for lib, runner in runners.items():
+                runner([model])
+                stats = json.load(open(OUT / model / f"{lib}.json"))
+                if lib not in best or stats["seconds"] < best[lib]["seconds"]:
+                    best[lib] = stats
+        for lib, stats in best.items():
+            stats["runs"] = repeat
+            with open(OUT / model / f"{lib}.json", "w") as f:
+                json.dump(stats, f, indent=2)
+        print(model, {lib: round(stats["seconds"], 3) for lib, stats in best.items()}, flush=True)
+
+
 if __name__ == "__main__":
-    cmd, *models = sys.argv[1:]
-    models = models or MODELS
-    {"stan": lambda: run_stan(models), "pymc": lambda: run_pymc(models), "report": report}[cmd]()
+    cmd, *rest = sys.argv[1:]
+    repeat, libs = 1, ["keanu", "stan", "pymc"]
+    while rest[:1] in (["-n"], ["--libs"]):
+        if rest[0] == "-n":
+            repeat = int(rest[1])
+        else:
+            libs = rest[1].split(",")
+        rest = rest[2:]
+    models = rest or MODELS
+    {
+        "stan": lambda: run_stan(models),
+        "pymc": lambda: run_pymc(models),
+        "keanu": lambda: run_keanu(models),
+        "all": lambda: run_all(models, repeat, libs),
+        "report": report,
+    }[cmd]()
