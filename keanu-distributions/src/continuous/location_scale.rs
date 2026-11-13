@@ -64,6 +64,22 @@ impl<'a> Gaussian<'a> {
         Ok((log_prob, GaussianGradient { x, mu, sigma }))
     }
 
+    /// One element's log density and its derivatives with respect to x, mu and sigma, given ln sigma: what
+    /// [`Self::log_prob_and_d_log_prob`] computes for each element (with ln sigma taken once for a single scale, and
+    /// per element otherwise), for callers that hold the operands element by element.
+    #[inline]
+    pub fn element_log_prob_and_gradient(
+        x: f64,
+        mu: f64,
+        sigma: f64,
+        ln_sigma: f64,
+    ) -> (f64, [f64; 3]) {
+        (
+            gaussian_log_prob_with(x, mu, sigma, ln_sigma),
+            gaussian_gradient(x, mu, sigma),
+        )
+    }
+
     /// Draws a sample of the given shape (broadcast with the parameters' shapes). An error unless sigma is
     /// positive.
     pub fn sample(&self, shape: &[usize], rng: &mut KeanuRng) -> Result<DoubleTensor> {

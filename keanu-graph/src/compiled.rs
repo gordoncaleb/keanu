@@ -83,6 +83,22 @@ enum Kernel {
     },
 }
 
+/// A probabilistic node's (or factor's) term of the log probability.
+#[derive(Clone, Debug)]
+enum Term {
+    /// By its distribution's general code.
+    General(NodeId),
+    /// A Gaussian computed from the registers: the value and the parameters, broadcast to the node's shape.
+    Gaussian {
+        node: NodeId,
+        x: Operand,
+        mu: Operand,
+        sigma: Operand,
+        /// Whether sigma is one element (whose logarithm the family takes once).
+        single_scale: bool,
+    },
+}
+
 /// A node that depends on the latents, computed in order.
 #[derive(Clone, Debug)]
 enum Item {
@@ -111,6 +127,7 @@ pub struct CompiledModel<'m> {
     dynamic: Vec<bool>,
     items: Vec<Item>,
     kernels: Vec<Kernel>,
+    terms: Vec<Term>,
     /// The nodes that don't depend on the latents but are read by instructions, loaded into their registers at each
     /// evaluation.
     loads: Vec<NodeId>,
@@ -122,6 +139,9 @@ pub struct CompiledModel<'m> {
     /// The values of the dependent nodes as tensors, made when general code needs them.
     values: Vec<Option<Value>>,
     scratch: Vec<f64>,
+    /// Each latent's derivative of its own term, in its registers, and whether it has one.
+    direct: Vec<f64>,
+    has_direct: Vec<bool>,
 }
 
 impl<'m> CompiledModel<'m> {
@@ -166,12 +186,15 @@ impl<'m> CompiledModel<'m> {
             dynamic,
             items: Vec::new(),
             kernels: Vec::new(),
+            terms: Vec::new(),
             loads: Vec::new(),
             registers: Vec::new(),
             adjoints: Vec::new(),
             touched: vec![false; n],
             values: vec![None; n],
             scratch: Vec::new(),
+            direct: Vec::new(),
+            has_direct: vec![false; latents.len()],
         };
         let mut registers = 0usize;
         let mut give = |offsets: &mut Vec<usize>, id: NodeId, len: usize| {
@@ -210,10 +233,26 @@ impl<'m> CompiledModel<'m> {
                 None => compiled.items.push(Item::General { node: id }),
             }
         }
+        for &node in model.probabilistic_joint() {
+            let term = compiled.compile_term(graph, node);
+            if let Term::Gaussian { .. } = term {
+                // the value and parameters are read from registers
+                for p in std::iter::once(node).chain(graph[node].parents.iter().copied()) {
+                    if !compiled.dynamic[p.0] {
+                        if compiled.offsets[p.0] == NONE {
+                            compiled.loads.push(p);
+                        }
+                        give(&mut compiled.offsets, p, compiled.lens[p.0]);
+                    }
+                }
+            }
+            compiled.terms.push(term);
+        }
         // the operands' registers are known now
         compiled.resolve_registers(graph);
         compiled.registers = vec![0.0; registers];
         compiled.adjoints = vec![0.0; registers];
+        compiled.direct = vec![0.0; registers];
         Some(compiled)
     }
 
@@ -342,8 +381,76 @@ impl<'m> CompiledModel<'m> {
         })
     }
 
-    /// Fills in every kernel's operand registers from its parents' offsets.
+    /// How a probabilistic node's term is computed: from the registers for a Gaussian whose value and
+    /// parameters are f64 and broadcast to the node's shape, else by its distribution's general code.
+    fn compile_term(&self, graph: &Graph, node: NodeId) -> Term {
+        let general = Term::General(node);
+        let n = &graph[node];
+        let Op::Distribution(distribution) = &n.op else {
+            return general;
+        };
+        if !matches!(distribution.kind, crate::op::DistributionKind::Gaussian)
+            || n.dtype != DType::F64
+            || n.parents.len() != 2
+            || !n.parents.iter().all(|&p| graph[p].dtype == DType::F64)
+        {
+            return general;
+        }
+        let operand = |p: NodeId| -> Option<Operand> {
+            let shape = graph[p].shape();
+            if shape == n.shape() {
+                return Some(Operand::Same(NONE));
+            }
+            if self.lens[p.0] == 1 {
+                return Some(Operand::Scalar(NONE));
+            }
+            // the broadcast shape must be the node's
+            if keanu_tensor::broadcast_shape(shape, n.shape())
+                .ok()?
+                .as_slice()
+                != n.shape()
+            {
+                return None;
+            }
+            let positions =
+                DoubleTensor::new(shape, (0..self.lens[p.0]).map(|i| i as f64).collect())
+                    .ok()?
+                    .broadcast_to(n.shape())
+                    .ok()?;
+            Some(Operand::Map(
+                NONE,
+                positions.as_slice().iter().map(|&e| e as usize).collect(),
+            ))
+        };
+        let (Some(mu), Some(sigma)) = (operand(n.parents[0]), operand(n.parents[1])) else {
+            return general;
+        };
+        Term::Gaussian {
+            node,
+            x: Operand::Same(NONE),
+            mu,
+            single_scale: self.lens[n.parents[1].0] == 1,
+            sigma,
+        }
+    }
+
+    /// Fills in every kernel's (and register term's) operand registers from its parents' offsets.
     fn resolve_registers(&mut self, graph: &Graph) {
+        for term in &mut self.terms {
+            if let Term::Gaussian {
+                node, x, mu, sigma, ..
+            } = term
+            {
+                let parents = &graph[*node].parents;
+                for (operand, p) in [(x, *node), (mu, parents[0]), (sigma, parents[1])] {
+                    match operand {
+                        Operand::Same(at) | Operand::Scalar(at) | Operand::Map(at, _) => {
+                            *at = self.offsets[p.0];
+                        }
+                    }
+                }
+            }
+        }
         for item in &self.items {
             let Item::Compiled { node, kernel } = item else {
                 continue;
@@ -463,40 +570,15 @@ impl<'m> CompiledModel<'m> {
         self.adjoints.fill(0.0);
         self.touched.fill(false);
         let mut log_prob = 0.0;
-        // each latent's derivative of its own term
-        let mut direct: Vec<Option<DoubleTensor>> = vec![None; self.latents.len()];
-        let joint = model.probabilistic_joint();
-        for &node in joint {
-            self.materialize(graph, node)?;
-            self.materialize_parents(graph, node)?;
-            let (term, parts) = {
-                let value = self.value_of(graph, state, node)?;
-                let parents = self.parent_values(graph, state, node)?;
-                term_and_parts(graph, node, value, &parents)?
+        self.has_direct.fill(false);
+        for t in 0..self.terms.len() {
+            let term = match &self.terms[t] {
+                Term::General(node) => self.general_term(graph, state, weights, *node)?,
+                Term::Gaussian { .. } => self.gaussian_term(graph, weights, t),
             };
-            if !term.is_finite() {
-                return Ok(None);
-            }
-            let w = weight_of(weights, node);
-            log_prob += weighted_term(w, term);
-            let Some(parts) = parts else { continue };
-            let (value_gradient, parameters) = scale_parts(parts, w);
-            if let (Some(i), Some(dx)) =
-                (self.latents.iter().position(|&l| l == node), value_gradient)
-            {
-                direct[i] = Some(dx);
-            }
-            for (&parent, dp) in graph[node].parents.iter().zip(parameters) {
-                let Some(dp) = dp else { continue };
-                let parent_node = &graph[parent];
-                if parent_node.dtype != DType::F64
-                    || matches!(parent_node.op, Op::Constant(_))
-                    || !self.dynamic[parent.0]
-                {
-                    continue;
-                }
-                let seed = sum_to_shape(dp, parent_node.shape())?;
-                self.accumulate(parent, seed.as_slice());
+            match term {
+                Some(term) => log_prob += term,
+                None => return Ok(None),
             }
         }
 
@@ -513,21 +595,152 @@ impl<'m> CompiledModel<'m> {
         // each latent's gradient: its own term's derivative, then the cotangent from the rest
         let mut gradient = Vec::with_capacity(self.latents.len());
         for (i, &id) in self.latents.iter().enumerate() {
-            let swept = self.touched[id.0].then(|| {
-                let at = self.offsets[id.0];
-                DoubleTensor::new(
-                    graph[id].shape(),
-                    self.adjoints[at..at + self.lens[id.0]].to_vec(),
-                )
-            });
-            let swept = swept.transpose()?;
-            gradient.push(match (direct[i].take(), swept) {
-                (Some(d), Some(s)) => Some(d.add(&s)?),
-                (d, None) => d,
-                (None, s) => s,
-            });
+            let range = self.offsets[id.0]..self.offsets[id.0] + self.lens[id.0];
+            let data: Option<Vec<f64>> = match (self.has_direct[i], self.touched[id.0]) {
+                (true, true) => Some(
+                    self.direct[range.clone()]
+                        .iter()
+                        .zip(&self.adjoints[range])
+                        .map(|(d, s)| d + s)
+                        .collect(),
+                ),
+                (true, false) => Some(self.direct[range].to_vec()),
+                (false, true) => Some(self.adjoints[range].to_vec()),
+                (false, false) => None,
+            };
+            gradient.push(
+                data.map(|d| DoubleTensor::new(graph[id].shape(), d))
+                    .transpose()?,
+            );
         }
         Ok(Some((log_prob, gradient)))
+    }
+
+    /// A term by its distribution's general code: its weighted value (None if it is impossible), with its gradient
+    /// parts seeded into the cotangents.
+    fn general_term(
+        &mut self,
+        graph: &Graph,
+        state: &State,
+        weights: Weights<'_>,
+        node: NodeId,
+    ) -> Result<Option<f64>> {
+        self.materialize(graph, node)?;
+        self.materialize_parents(graph, node)?;
+        let (term, parts) = {
+            let value = self.value_of(graph, state, node)?;
+            let parents = self.parent_values(graph, state, node)?;
+            term_and_parts(graph, node, value, &parents)?
+        };
+        if !term.is_finite() {
+            return Ok(None);
+        }
+        let w = weight_of(weights, node);
+        let Some(parts) = parts else {
+            return Ok(Some(weighted_term(w, term)));
+        };
+        let (value_gradient, parameters) = scale_parts(parts, w);
+        if let (Some(i), Some(dx)) = (self.latents.iter().position(|&l| l == node), value_gradient)
+        {
+            let at = self.offsets[node.0];
+            self.direct[at..at + dx.len()].copy_from_slice(dx.as_slice());
+            self.has_direct[i] = true;
+        }
+        for (&parent, dp) in graph[node].parents.iter().zip(parameters) {
+            let Some(dp) = dp else { continue };
+            if !self.seeds_into(graph, parent) {
+                continue;
+            }
+            let seed = sum_to_shape(dp, graph[parent].shape())?;
+            self.accumulate(parent, seed.as_slice());
+        }
+        Ok(Some(weighted_term(w, term)))
+    }
+
+    /// Whether a parameter's gradient part is seeded into its cotangent: as the general path, not for a constant or
+    /// a non-f64 parent, and (as it can't lead to a latent) not for one that doesn't depend on the latents.
+    fn seeds_into(&self, graph: &Graph, parent: NodeId) -> bool {
+        let p = &graph[parent];
+        p.dtype == DType::F64 && !matches!(p.op, Op::Constant(_)) && self.dynamic[parent.0]
+    }
+
+    /// A Gaussian term from the registers, exactly as the family's code computes it element by element: the
+    /// weighted value (None if impossible), with the gradient parts seeded.
+    fn gaussian_term(&mut self, graph: &Graph, weights: Weights<'_>, t: usize) -> Option<f64> {
+        let Term::Gaussian {
+            node,
+            x,
+            mu,
+            sigma,
+            single_scale,
+        } = &self.terms[t]
+        else {
+            unreachable!("a Gaussian term")
+        };
+        let node = *node;
+        let len = self.lens[node.0];
+        let registers = &self.registers;
+        let ln_single = single_scale.then(|| registers[sigma.register(0)].ln());
+        // the per-element parts with respect to x, mu and sigma, one after another
+        let mut parts = std::mem::take(&mut self.scratch);
+        parts.clear();
+        parts.resize(3 * len, 0.0);
+        let mut total = 0.0;
+        for k in 0..len {
+            let (xv, m, s) = (
+                registers[x.register(k)],
+                registers[mu.register(k)],
+                registers[sigma.register(k)],
+            );
+            let ln_s = ln_single.unwrap_or_else(|| s.ln());
+            let (lp, [dx, dm, ds]) =
+                keanu_distributions::Gaussian::element_log_prob_and_gradient(xv, m, s, ln_s);
+            total += lp;
+            parts[k] = dx;
+            parts[len + k] = dm;
+            parts[2 * len + k] = ds;
+        }
+        if !total.is_finite() {
+            self.scratch = parts;
+            return None;
+        }
+        let w = weight_of(weights, node);
+        if w != 1.0 {
+            for p in parts.iter_mut() {
+                *p *= w;
+            }
+        }
+        if let Some(i) = self.latents.iter().position(|&l| l == node) {
+            let at = self.offsets[node.0];
+            self.direct[at..at + len].copy_from_slice(&parts[..len]);
+            self.has_direct[i] = true;
+        }
+        let operands = [
+            (mu.clone(), graph[node].parents[0]),
+            (sigma.clone(), graph[node].parents[1]),
+        ];
+        let mut seed = Vec::new();
+        for (j, (operand, parent)) in operands.into_iter().enumerate() {
+            if !self.seeds_into(graph, parent) {
+                continue;
+            }
+            let part = &parts[(j + 1) * len..(j + 2) * len];
+            match operand {
+                // the part has the parameter's shape: seeded as it is
+                Operand::Same(_) => self.accumulate(parent, part),
+                // summed in order from zero, as summing it to the parameter's shape does
+                operand => {
+                    seed.clear();
+                    seed.resize(self.lens[parent.0], 0.0);
+                    for (k, &c) in part.iter().enumerate() {
+                        seed[operand.element(k)] += c;
+                    }
+                    self.accumulate(parent, &seed);
+                }
+            }
+        }
+        self.scratch = parts;
+        Some(weighted_term(w, total))
     }
 
     /// Adds a contribution to a dependent f64 node's cotangent (or sets it, if it has none yet).
