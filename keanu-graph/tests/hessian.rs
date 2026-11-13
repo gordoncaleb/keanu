@@ -2654,6 +2654,17 @@ fn distribution_cases() -> Vec<DistributionCase> {
             let y = b.hyper_geometric_with_shape(&[3], 20, 7, 5);
             b.observe(y, ints(&[0, 2, 5]));
         }),
+        case("general Pólya–Gamma", |b| {
+            let shape = positive(b, 1.6);
+            let tilt = scalar_latent(b, -1.3);
+            let p = [shape.id(), tilt.id()];
+            let y = b.polya_gamma(shape, tilt);
+            b.observe(y, DoubleTensor::scalar(0.41));
+            let clipped: DoubleVar = b.censored(K::PolyaGamma, &p, f64::NEG_INFINITY, 0.37);
+            b.observe(clipped, DoubleTensor::scalar(0.37));
+            let retained: DoubleVar = b.truncated(K::PolyaGamma, &p, 0.08, 0.7);
+            b.observe(retained, DoubleTensor::scalar(0.35));
+        }),
         case("wiener", |b| {
             // a latent response time and observed ones at both boundaries, from the small- to the large-time
             // series, with every parameter latent
@@ -2665,6 +2676,40 @@ fn distribution_cases() -> Vec<DistributionCase> {
             let y =
                 b.wiener_with_shape(&[3], a, t0, w, drift, sv, IntTensor::vector(vec![0, 1, 1]));
             b.observe(y, v(&[0.35, 0.8, 4.5]));
+            let boundary = b.int_constant(IntTensor::scalar(1));
+            let p = [a.id(), t0.id(), w.id(), drift.id(), sv.id(), boundary.id()];
+            let censored: DoubleVar = b.censored(K::Wiener, &p, f64::NEG_INFINITY, 0.8);
+            b.observe(censored, DoubleTensor::scalar(0.8));
+            let truncated: DoubleVar = b.truncated(K::Wiener, &p, 0.55, f64::INFINITY);
+            b.observe(truncated, DoubleTensor::scalar(0.8));
+        }),
+        case("full Wiener variability", |b| {
+            let (a, t0, w, drift, sv) = (
+                b.scalar(1.2),
+                b.scalar(0.2),
+                b.scalar(0.4),
+                b.scalar(0.7),
+                b.scalar(0.5),
+            );
+            let sw = positive(b, 0.18);
+            let st0 = positive(b, 0.1);
+            let boundary = b.int_constant(IntTensor::scalar(1));
+            let p = [
+                a.id(),
+                t0.id(),
+                w.id(),
+                drift.id(),
+                sv.id(),
+                sw.id(),
+                st0.id(),
+                boundary.id(),
+            ];
+            let y = b.wiener_full(a, t0, w, drift, sv, sw, st0, boundary);
+            b.observe(y, DoubleTensor::scalar(0.61));
+            let clipped: DoubleVar = b.censored(K::WienerFull, &p, f64::NEG_INFINITY, 0.65);
+            b.observe(clipped, DoubleTensor::scalar(0.65));
+            let retained: DoubleVar = b.truncated(K::WienerFull, &p, f64::NEG_INFINITY, 0.72);
+            b.observe(retained, DoubleTensor::scalar(0.5));
         }),
         case("skellam", |b| {
             let (mu1, mu2) = (positive(b, 1.4), positive(b, 0.6));

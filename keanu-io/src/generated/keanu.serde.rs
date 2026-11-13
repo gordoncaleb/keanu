@@ -2016,6 +2016,8 @@ impl serde::Serialize for DistributionKind {
             Self::DiscreteWeibull => "DISTRIBUTION_KIND_DISCRETE_WEIBULL",
             Self::SkewStudentT => "DISTRIBUTION_KIND_SKEW_STUDENT_T",
             Self::PolyaGamma1 => "DISTRIBUTION_KIND_POLYA_GAMMA1",
+            Self::WienerFull => "DISTRIBUTION_KIND_WIENER_FULL",
+            Self::PolyaGamma => "DISTRIBUTION_KIND_POLYA_GAMMA",
         };
         serializer.serialize_str(variant)
     }
@@ -2114,6 +2116,8 @@ impl<'de> serde::Deserialize<'de> for DistributionKind {
             "DISTRIBUTION_KIND_DISCRETE_WEIBULL",
             "DISTRIBUTION_KIND_SKEW_STUDENT_T",
             "DISTRIBUTION_KIND_POLYA_GAMMA1",
+            "DISTRIBUTION_KIND_WIENER_FULL",
+            "DISTRIBUTION_KIND_POLYA_GAMMA",
         ];
 
         struct GeneratedVisitor;
@@ -2241,6 +2245,8 @@ impl<'de> serde::Deserialize<'de> for DistributionKind {
                     "DISTRIBUTION_KIND_DISCRETE_WEIBULL" => Ok(DistributionKind::DiscreteWeibull),
                     "DISTRIBUTION_KIND_SKEW_STUDENT_T" => Ok(DistributionKind::SkewStudentT),
                     "DISTRIBUTION_KIND_POLYA_GAMMA1" => Ok(DistributionKind::PolyaGamma1),
+                    "DISTRIBUTION_KIND_WIENER_FULL" => Ok(DistributionKind::WienerFull),
+                    "DISTRIBUTION_KIND_POLYA_GAMMA" => Ok(DistributionKind::PolyaGamma),
                     _ => Err(serde::de::Error::unknown_variant(value, FIELDS)),
                 }
             }

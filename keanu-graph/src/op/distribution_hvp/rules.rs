@@ -21,7 +21,7 @@ use keanu_tensor::special::{
 
 /// The most inputs (value and parameters, a truncated distribution's value, base parameters and bounds, or a
 /// zero-inflated or hurdle truncated count's, with ψ) any element-wise rule has.
-pub(crate) const MAX_INPUTS: usize = 7;
+pub(crate) const MAX_INPUTS: usize = 11;
 
 /// A symmetric Hessian of one element's log density with respect to up to [`MAX_INPUTS`] inputs.
 #[derive(Debug, Clone)]
@@ -41,7 +41,7 @@ impl Hessian {
     }
 
     pub(crate) fn clear(&mut self) {
-        self.h = [0.0; MAX_INPUTS * MAX_INPUTS];
+        self.h[..self.n * self.n].fill(0.0);
     }
 
     pub(crate) fn get(&self, i: usize, j: usize) -> f64 {
@@ -241,6 +241,7 @@ pub(crate) fn density_rule(kind: &DistributionKind) -> Option<DensityRule> {
         K::NegativeBinomial => negative_binomial,
         K::NegativeBinomialLog => negative_binomial_log,
         K::SkewStudentT => |x, p, h| derived(h, d::SkewStudentT::log_prob_derivatives(x, at(p))),
+        K::PolyaGamma => |x, p, h| derived(h, d::PolyaGamma::log_prob_derivatives(x, at(p))),
         K::PolyaGamma1 => |x, p, h| derived(h, d::PolyaGamma1::log_prob_derivatives(x, at(p))),
         K::DiscreteWeibull => {
             |k, p, h| derived(h, d::DiscreteWeibull::log_prob_derivatives(k, at(p)))
@@ -293,6 +294,12 @@ pub(crate) fn density_rule(kind: &DistributionKind) -> Option<DensityRule> {
         }
         K::Skellam => |x, p, h| derived(h, d::Skellam::log_prob_derivatives(x, at(p))),
         // the boundary (input 6) is an integer: its row stays zero
+        K::WienerFull => |x, p, h| {
+            derived(
+                h,
+                d::WienerFull::log_prob_derivatives(x, at(p), p[7] as i64),
+            )
+        },
         K::Wiener => |x, p, h| derived(h, d::Wiener::log_prob_derivatives(x, at(p), p[5] as i64)),
         _ => return None,
     };
@@ -558,6 +565,18 @@ pub(crate) fn cdf_rule(kind: &DistributionKind) -> Option<CdfRule> {
         K::NegativeBinomial => negative_binomial_cdf,
         K::SkewStudentT => {
             |x, p, u, _, h| derived(h, d::SkewStudentT::log_cdf_derivatives(x, at(p), u))
+        }
+        K::PolyaGamma => {
+            |x, p, u, _, h| derived(h, d::PolyaGamma::log_cdf_derivatives(x, at(p), u))
+        }
+        K::WienerFull => |x, p, u, _, h| {
+            derived(
+                h,
+                d::WienerFull::log_tail_derivatives(x, at(p), p[7] as i64, u),
+            )
+        },
+        K::Wiener => {
+            |x, p, u, _, h| derived(h, d::Wiener::log_tail_derivatives(x, at(p), p[5] as i64, u))
         }
         K::DiscreteWeibull => {
             |k, p, u, _, h| derived(h, d::DiscreteWeibull::log_cdf_derivatives(k, at(p), u))

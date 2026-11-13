@@ -1287,6 +1287,10 @@ pub enum DistributionKind {
     SkewStudentT = 85,
     /// Shape-one Pólya–Gamma. Parameter: `z`.
     PolyaGamma1 = 86,
+    /// Wiener with uniform start and non-decision time widths.
+    WienerFull = 87,
+    /// Pólya–Gamma with real positive shape.
+    PolyaGamma = 88,
 }
 impl DistributionKind {
     /// String value of the enum field names used in the ProtoBuf definition.
@@ -1390,6 +1394,8 @@ impl DistributionKind {
             Self::DiscreteWeibull => "DISTRIBUTION_KIND_DISCRETE_WEIBULL",
             Self::SkewStudentT => "DISTRIBUTION_KIND_SKEW_STUDENT_T",
             Self::PolyaGamma1 => "DISTRIBUTION_KIND_POLYA_GAMMA1",
+            Self::WienerFull => "DISTRIBUTION_KIND_WIENER_FULL",
+            Self::PolyaGamma => "DISTRIBUTION_KIND_POLYA_GAMMA",
         }
     }
     /// Creates an enum from field names used in the ProtoBuf definition.
@@ -1496,6 +1502,8 @@ impl DistributionKind {
             "DISTRIBUTION_KIND_DISCRETE_WEIBULL" => Some(Self::DiscreteWeibull),
             "DISTRIBUTION_KIND_SKEW_STUDENT_T" => Some(Self::SkewStudentT),
             "DISTRIBUTION_KIND_POLYA_GAMMA1" => Some(Self::PolyaGamma1),
+            "DISTRIBUTION_KIND_WIENER_FULL" => Some(Self::WienerFull),
+            "DISTRIBUTION_KIND_POLYA_GAMMA" => Some(Self::PolyaGamma),
             _ => None,
         }
     }

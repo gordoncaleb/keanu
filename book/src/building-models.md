@@ -311,7 +311,26 @@ uses alternating-series rejection. In Bernoulli logistic regression, each observ
 PG(1, z) auxiliary variable with tilt equal to its current logit. Given those variables, the Gaussian
 prior yields a Gaussian full conditional for the coefficients. The `polya_gamma_logistic` example
 compares the Gibbs posterior with grid integration of the original Bernoulli-logit model.
+For other positive shapes, `polya_gamma(b, z)` provides density, log CDF, and log survival with first-
+and second-order derivatives. Small integer shapes sample by summing exact shape-one draws.
+Other shapes use 64 gamma terms and a gamma approximation to the remainder that matches its first
+two moments. The `polya_gamma_counts` example uses noninteger shapes to augment negative-binomial
+regression and compares the posterior with the original likelihood.
 [Polson, Scott, and Windle (2013)](https://arxiv.org/abs/1205.0310)
+
+## Wiener response times and deadlines
+
+`Wiener::log_cdf` and `Wiener::log_ccdf` give the joint log probabilities of reaching the specified
+boundary by or after a deadline. The CDF approaches the probability of reaching that boundary.
+For a timeout where the response is unknown, add the two survival terms with log-sum-exp. Both
+tails integrate the first-passage density in log space and expose gradients and Hessians.
+
+`wiener_full(a, t0, w, v, sv, sw, st0, boundary)` also allows the starting point to vary uniformly
+over `[w - sw/2, w + sw/2]` and non-decision time to vary uniformly over `[t0, t0 + st0]`.
+Both Wiener graph distributions support `censored` and `truncated`. Censoring retains the joint
+boundary likelihood. Truncation conditions on the specified boundary and time interval.
+The timeout example adds the two boundary survival terms in a graph factor.
+[Stan Wiener tail conventions](https://mc-stan.org/docs/functions-reference/positive_lower-bounded_distributions.html)
 
 ## Multinomial logits and Gaussian precision
 

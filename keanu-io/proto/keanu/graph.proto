@@ -689,6 +689,10 @@ enum DistributionKind {
   DISTRIBUTION_KIND_SKEW_STUDENT_T = 85;
   // Shape-one Pólya–Gamma. Parameter: `z`.
   DISTRIBUTION_KIND_POLYA_GAMMA1 = 86;
+  // Wiener with uniform start and non-decision time widths.
+  DISTRIBUTION_KIND_WIENER_FULL = 87;
+  // Pólya–Gamma with real positive shape.
+  DISTRIBUTION_KIND_POLYA_GAMMA = 88;
 }
 
 // The neighbourhood of a spatial distribution: the number of areas and the edges between them, as pairs of area

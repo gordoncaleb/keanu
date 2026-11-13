@@ -592,7 +592,7 @@ fn distribution_parameters(kind: &DistributionKind) -> Vec<Value> {
             .iter()
             .map(|&name| match name {
                 "k" if matches!(kind, ChiSquared) => int(3),
-                "v" if matches!(kind, Wiener) => scalar(0.5),
+                "v" if matches!(kind, Wiener | WienerFull) => scalar(0.5),
                 "boundary" => int(1),
                 "v" | "n" => int(3),
                 "x_min" if matches!(kind, UniformInt) => int(1),
@@ -656,6 +656,7 @@ const DISTRIBUTIONS: &[&str] = &[
     "DiscreteWeibull",
     "SkewStudentT",
     "PolyaGamma1",
+    "PolyaGamma",
     "MultivariateGaussianPrecision",
     "Poisson",
     "UniformInt",
@@ -717,6 +718,7 @@ const DISTRIBUTIONS: &[&str] = &[
     "MatrixNormal",
     "VonMisesFisher",
     "Wiener",
+    "WienerFull",
     "MixtureOf([Gamma, Censored(Weibull)])",
     "Transformed(Gaussian, Interval(-1.0, 2.0))",
     "Transformed(Gamma, Affine { loc: 1.0, scale: -2.0 })",
@@ -756,6 +758,7 @@ fn distribution_kinds() -> Vec<DistributionKind> {
         DiscreteWeibull,
         SkewStudentT,
         PolyaGamma1,
+        PolyaGamma,
         MultivariateGaussianPrecision,
         Poisson,
         UniformInt,
@@ -826,6 +829,7 @@ fn distribution_kinds() -> Vec<DistributionKind> {
         MatrixNormal,
         VonMisesFisher,
         Wiener,
+        WienerFull,
         MixtureOf(Arc::from(vec![Gamma, Censored(Arc::new(Weibull))])),
         Transformed(Arc::new(Gaussian), ElementBijector::Interval(-1.0, 2.0)),
         Transformed(

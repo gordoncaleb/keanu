@@ -223,6 +223,11 @@ fn invalid_parameters_and_times_before_t0() {
     let good = [1.0, T0, 0.5, 0.3, 0.2];
     assert_eq!(log_p(T0, good, 0), f64::NEG_INFINITY);
     assert_eq!(log_p(0.1, good, 1), f64::NEG_INFINITY);
+    assert_eq!(log_p(f64::INFINITY, good, 1), f64::NEG_INFINITY);
+    assert_eq!(
+        Wiener::log_prob_derivatives(f64::INFINITY, good, 1).value,
+        f64::NEG_INFINITY
+    );
     for bad in [
         [0.0, T0, 0.5, 0.3, 0.2],
         [1.0, -0.1, 0.5, 0.3, 0.2],
@@ -368,4 +373,195 @@ fn conditional_draws_match_the_density_at_their_boundary() {
             );
         }
     }
+}
+
+#[test]
+fn joint_tails_match_density_integrals_and_boundary_mass() {
+    for p in PARAMETER_SETS {
+        let [a, t0, w, v, sv] = p;
+        let hit_upper = upper_probability(a, w, v, sv);
+        for (boundary, hit) in [(0, 1.0 - hit_upper), (1, hit_upper)] {
+            let d = Wiener::new(s(a), s(t0), s(w), s(v), s(sv), IntTensor::scalar(boundary));
+            let x = DoubleTensor::vector(vec![
+                t0 - 0.01,
+                t0 + 0.04,
+                t0 + 0.25,
+                t0 + 1.6,
+                f64::INFINITY,
+            ]);
+            let cdf = d.log_cdf(&x).unwrap();
+            let ccdf = d.log_ccdf(&x).unwrap();
+            for (i, &deadline) in x.as_slice().iter().enumerate() {
+                let lower = cdf.as_slice()[i].exp();
+                let upper = ccdf.as_slice()[i].exp();
+                assert!(
+                    (lower + upper - hit).abs() < 2e-10,
+                    "{p:?}, {boundary}, {deadline}: {lower} + {upper} vs {hit}"
+                );
+                let expected = if deadline <= t0 {
+                    0.0
+                } else {
+                    mass(p, boundary, deadline)
+                };
+                assert!(
+                    (lower - expected).abs() < 2e-10,
+                    "{p:?}, {boundary}, {deadline}: {lower} vs {expected}"
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn joint_tails_keep_log_probabilities_below_underflow() {
+    let p = [1.0, 0.0, 0.35, 0.0, 0.0];
+    let early = 1e-5_f64;
+    let late = 400.0;
+    // At very small time the other boundary's images are negligible.
+    let small = std::f64::consts::LN_2 + keanu_tensor::special::log_ndtr(-p[2] / early.sqrt());
+    // At very large time only the first eigenfunction contributes to the integral.
+    let pi = std::f64::consts::PI;
+    let large = (2.0 * (pi * p[2]).sin() / pi).ln() - 0.5 * pi * pi * late;
+    for (deadline, upper, expected) in [(early, false, small), (late, true, large)] {
+        let tail = Wiener::log_tail_derivatives(deadline, p, 0, upper);
+        assert!(tail.value < -750.0);
+        assert!(
+            (tail.value - expected).abs() < 5e-10,
+            "{tail:?} vs {expected}"
+        );
+        let hazard = (log_p(deadline, p, 0) - expected).exp();
+        let expected_gradient = if upper { -hazard } else { hazard };
+        assert!((tail.gradient[0] / expected_gradient - 1.0).abs() < 1e-9);
+    }
+}
+
+#[test]
+fn joint_tail_hessians_match_finite_differences() {
+    let x = 0.64;
+    let p = [1.2, 0.18, 0.35, -0.8, 0.6];
+    let h = 1e-5;
+    for upper in [false, true] {
+        for boundary in [0, 1] {
+            let tail = Wiener::log_tail_derivatives(x, p, boundary, upper);
+            let rate = (log_p(x, p, boundary) - tail.value).exp();
+            let expected = if upper { -rate } else { rate };
+            assert!((tail.gradient[0] - expected).abs() < 1e-10);
+            for j in 0..6 {
+                let mut plus = p;
+                let mut minus = p;
+                let (xp, xm) = if j == 0 {
+                    (x + h, x - h)
+                } else {
+                    plus[j - 1] += h;
+                    minus[j - 1] -= h;
+                    (x, x)
+                };
+                let dp = Wiener::log_tail_derivatives(xp, plus, boundary, upper);
+                let dm = Wiener::log_tail_derivatives(xm, minus, boundary, upper);
+                let fd = (dp.value - dm.value) / (2.0 * h);
+                assert!((fd - tail.gradient[j]).abs() < 2e-6 * (1.0 + fd.abs()));
+                for i in 0..6 {
+                    let fd = (dp.gradient[i] - dm.gradient[i]) / (2.0 * h);
+                    assert!(
+                        (fd - tail.hessian[i][j]).abs() < 2e-6 * (1.0 + fd.abs()),
+                        "boundary {boundary}, upper {upper}, ({i}, {j}): {fd} vs {}",
+                        tail.hessian[i][j]
+                    );
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn tail_derivatives_remain_continuous_at_integration_splits() {
+    let p = [1.0, 0.0, 0.5, 0.0, 0.0];
+    for x in [0.25, 1.0] {
+        for upper in [false, true] {
+            let tail = Wiener::log_tail_derivatives(x, p, 0, upper);
+            let expected = (log_p(x, p, 0) - tail.value).exp();
+            assert!(
+                (tail.gradient[0].abs() - expected).abs() < 1e-10,
+                "{tail:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn joint_tail_mass_handles_a_rare_boundary_and_a_near_boundary_start() {
+    for (w, v, boundary, expected) in [
+        (0.35, 1000.0, 0, -700.0),
+        (1e-17_f64, 0.0, 0, (-1e-17_f64).ln_1p()),
+        (1e-17_f64, 0.0, 1, (1e-17_f64).ln()),
+    ] {
+        let d = Wiener::new(
+            s(1.0),
+            s(0.0),
+            s(w),
+            s(v),
+            s(0.0),
+            IntTensor::scalar(boundary),
+        );
+        let mass = d.log_ccdf(&s(0.0)).unwrap().to_scalar().unwrap();
+        assert!((mass - expected).abs() < 2e-9, "{mass} vs {expected}");
+    }
+}
+
+#[test]
+fn full_wiener_uniform_variability_matches_independent_integrals() {
+    use keanu_distributions::WienerFull;
+    let [a, t0, w, v, sv] = [1.2, 0.2, 0.43, 0.8, 0.5];
+    let (sw, st0, x, boundary) = (0.22, 0.12, 0.59, 1);
+    let b = IntTensor::scalar(boundary);
+    let full = WienerFull::new(s(a), s(t0), s(w), s(v), s(sv), s(sw), s(st0), &b);
+    // Independently integrate over starting points. For each start, use the density
+    // integral over [x - st0, x] for the uniform time convolution.
+    let expected = integrate(
+        |start| {
+            let p = [a, t0, start, v, sv];
+            (mass(p, boundary, x) - mass(p, boundary, x - st0)) / st0
+        },
+        w - sw / 2.0,
+        w + sw / 2.0,
+    ) / sw;
+    let actual = full.log_prob(&s(x)).unwrap().as_slice()[0].exp();
+    assert!((actual - expected).abs() < 2e-10, "{actual} vs {expected}");
+
+    let zero = WienerFull::new(s(a), s(t0), s(w), s(v), s(sv), s(0.0), s(0.0), &b);
+    let base = Wiener::new(s(a), s(t0), s(w), s(v), s(sv), &b);
+    assert_eq!(zero.log_prob(&s(x)).unwrap(), base.log_prob(&s(x)).unwrap());
+    assert_eq!(zero.log_cdf(&s(x)).unwrap(), base.log_cdf(&s(x)).unwrap());
+    assert_eq!(zero.log_ccdf(&s(x)).unwrap(), base.log_ccdf(&s(x)).unwrap());
+
+    // Deadlines inside the non-decision window must retain the unstarted trials.
+    let x = s(t0 + st0 / 2.0);
+    let cdf = full.log_cdf(&x).unwrap().as_slice()[0].exp();
+    let survival = full.log_ccdf(&x).unwrap().as_slice()[0].exp();
+    let hit = full.log_cdf(&s(f64::INFINITY)).unwrap().as_slice()[0].exp();
+    assert!((cdf + survival - hit).abs() < 2e-10);
+}
+
+#[test]
+fn full_wiener_samples_the_boundary_conditioned_start_distribution() {
+    use keanu_distributions::WienerFull;
+    let (a, t0, w, sw, st0) = (1.6_f64, 0.2, 0.45, 0.44, 0.18);
+    let full = WienerFull::new(
+        s(a),
+        s(t0),
+        s(w),
+        s(0.0),
+        s(0.0),
+        s(sw),
+        s(st0),
+        IntTensor::scalar(1),
+    );
+    let draws = full
+        .sample(&[15_000], &mut KeanuRng::seed_from_u64(392))
+        .unwrap();
+    // For zero drift P(B=1 | start)=start, and E[decision time | start, B=1]=a²(1-start²)/3.
+    let expected = t0 + st0 / 2.0 + a * a * (1.0 - w * w - sw * sw / 4.0) / 3.0;
+    let mean = draws.sum() / draws.len() as f64;
+    assert!(draws.as_slice().iter().all(|&x| x > t0));
+    assert!((mean - expected).abs() < 0.018, "{mean} vs {expected}");
 }

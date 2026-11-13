@@ -39,6 +39,7 @@ pub mod multivariate;
 pub mod multivariate_discrete;
 mod param;
 pub mod processes;
+mod quadrature;
 mod real;
 mod rng;
 pub mod spatial;
@@ -67,4 +68,4 @@ pub use timeseries::{
     FutureStep, HiddenMarkovChain, HiddenMarkovChainGradient, KalmanFilter, KalmanSmoother,
     LinearGaussianStateSpace, LinearGaussianStateSpaceGradient, StateSpaceForecast, StateSpacePath,
 };
-pub use wiener::{Wiener, WienerGradient, sample_wiener};
+pub use wiener::{Wiener, WienerFull, WienerFullGradient, WienerGradient, sample_wiener};

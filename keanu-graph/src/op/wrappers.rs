@@ -119,15 +119,35 @@ impl<'p, 'v> Bounds<'p, 'v> {
     }
 }
 
-/// A value of the base's type at each element of `bound + shift`, with infinite bounds replaced by 0 (the result
-/// there is overridden or unused).
-fn bound_points(bound: &DoubleTensor, shift: f64, discrete: bool) -> Value {
+/// Keep the endpoints of joint tails, where the boundary probability can depend on the parameters.
+fn bound_points(
+    base: &DistributionKind,
+    bound: &DoubleTensor,
+    shift: f64,
+    discrete: bool,
+) -> Value {
+    if base.has_joint_tails() {
+        return Value::F64(bound.clone());
+    }
     let finite = bound.map(|b| if b.is_infinite() { 0.0 } else { b + shift });
     if discrete {
         Value::I64(finite.to_int())
     } else {
         Value::F64(finite)
     }
+}
+
+fn from_cdf(base: &DistributionKind, cdf: (f64, f64), survival: (f64, f64)) -> bool {
+    if !base.has_joint_tails() {
+        return cdf.0 < -LN_2;
+    }
+    if cdf.1 == f64::NEG_INFINITY {
+        return false;
+    }
+    if survival.0 == f64::NEG_INFINITY {
+        return true;
+    }
+    cdf.0 - cdf.1 < survival.1 - survival.0
 }
 
 /// A function of the base evaluated element-wise and broadcast to the node's shape.
@@ -162,7 +182,7 @@ pub(crate) fn evaluate(
         ),
         None => (None, vec![None; parameters.len()]),
     };
-    if let Some((bound, at_infinity)) = infinite {
+    if let Some((bound, at_infinity)) = infinite.filter(|_| !base.has_joint_tails()) {
         let infinite = broadcast(
             &bound.map(|b| if b.is_infinite() { 1.0 } else { 0.0 }),
             shape,
@@ -336,8 +356,8 @@ fn normaliser(
 ) -> Result<Normaliser> {
     // P(l <= X <= u) is F(u) - F(l) for a continuous base and F(u) - F(l - 1) for a discrete one
     let shift = if bounds.discrete { -1.0 } else { 0.0 };
-    let low = bound_points(bounds.lower, shift, bounds.discrete);
-    let high = bound_points(bounds.upper, 0.0, bounds.discrete);
+    let low = bound_points(base, bounds.lower, shift, bounds.discrete);
+    let high = bound_points(base, bounds.upper, 0.0, bounds.discrete);
     let eval = |function, at: &Value, bound: &DoubleTensor, at_infinity| {
         evaluate(
             base,
@@ -365,7 +385,11 @@ fn normaliser(
     let mut upper = vec![0.0; len];
     for i in 0..len {
         // d ln Z = w_high d ln G(high) - w_low d ln G(low), with G the CDF or the survival function, w = G / Z
-        let (from_cdf, (low_g, high_g), sign) = if cdf_low.values[i] < -LN_2 {
+        let (from_cdf, (low_g, high_g), sign) = if from_cdf(
+            base,
+            (cdf_low.values[i], cdf_high.values[i]),
+            (ccdf_low.values[i], ccdf_high.values[i]),
+        ) {
             (true, (&cdf_low, &cdf_high), 1.0)
         } else {
             (false, (&ccdf_low, &ccdf_high), -1.0)
@@ -478,8 +502,8 @@ fn censored(
     // P(X <= l) at the lower bound, and P(X >= u) at the upper: S(u) for a continuous base, S(u - 1) for a
     // discrete one
     let shift = if bounds.discrete { -1.0 } else { 0.0 };
-    let low = bound_points(bounds.lower, 0.0, bounds.discrete);
-    let high = bound_points(bounds.upper, shift, bounds.discrete);
+    let low = bound_points(base, bounds.lower, 0.0, bounds.discrete);
+    let high = bound_points(base, bounds.upper, shift, bounds.discrete);
     let at_low = evaluate(
         base,
         Univariate::Cdf,
@@ -510,9 +534,9 @@ fn censored(
         .map(|i| {
             if !ordered(lower[i], upper[i]) {
                 Case::Outside
-            } else if x[i] == lower[i] {
+            } else if x[i] == lower[i] && lower[i].is_finite() {
                 Case::Lower
-            } else if x[i] == upper[i] {
+            } else if x[i] == upper[i] && upper[i].is_finite() {
                 Case::Upper
             } else if x[i] > lower[i] && x[i] < upper[i] {
                 Case::Inside
@@ -618,8 +642,8 @@ pub(crate) fn support_between(lower: DoubleTensor, upper: DoubleTensor) -> Suppo
     }
 }
 
-/// Draws a truncated value of `shape`: by inverting the base's CDF where it has a closed-form inverse, else by
-/// rejection (an error if fewer than all elements land within the bounds after a fixed number of attempts).
+/// Draws truncated values by inverting a tail when a closed-form or numerical inverse is available.
+/// Other bases use rejection with a fixed proposal limit.
 pub(crate) fn sample_truncated(
     base: &DistributionKind,
     shape: &[usize],
@@ -690,7 +714,7 @@ fn log_interpolate(w: f64, lo: f64, hi: f64) -> f64 {
 /// x = S⁻¹(u) where the lower bound is in the upper half of the distribution, so tail truncations keep their
 /// precision. Where the tail probabilities are too small to handle as plain numbers (or the closed-form inverse
 /// gives no finite value), the draw solves ln F(x) = t or ln S(x) = t in log space instead, with t interpolated in
-/// log space ([`solve_in_log_space`]). None if the base has no closed-form inverse.
+/// log space ([`solve_in_log_space`]). Joint Wiener tails always use the numerical inverse.
 fn sample_by_inverse(
     bounds: &Bounds<'_, '_>,
     base: &DistributionKind,
@@ -699,15 +723,15 @@ fn sample_by_inverse(
     upper: &[f64],
     rng: &mut KeanuRng,
 ) -> Result<Option<Value>> {
-    if base
-        .inverse_cdf(&DoubleTensor::scalar(0.5), false, bounds.base)?
-        .is_none()
+    if !base.has_joint_tails()
+        && base
+            .inverse_cdf(&DoubleTensor::scalar(0.5), false, bounds.base)?
+            .is_none()
     {
         return Ok(None);
     }
-    let z = normaliser(bounds, base, false, shape)?;
-    let low = bound_points(bounds.lower, 0.0, false);
-    let high = bound_points(bounds.upper, 0.0, false);
+    let low = bound_points(base, bounds.lower, 0.0, false);
+    let high = bound_points(base, bounds.upper, 0.0, false);
     let eval = |function, at: &Value, bound: &DoubleTensor, at_infinity| {
         evaluate(
             base,
@@ -728,30 +752,42 @@ fn sample_by_inverse(
     let u = rng.uniform(shape);
     let mut p = vec![0.5; len];
     let mut q = vec![0.5; len];
-    let mut from_cdf = vec![true; len];
+    let mut cdf_side = vec![true; len];
     // the log of the tail probability each draw is at, and whether it must be inverted in log space
     let mut targets = vec![0.0; len];
     let mut in_log_space = vec![false; len];
     for i in 0..len {
-        if z.log_z[i] == f64::NEG_INFINITY {
-            return invalid_parameter(
-                "the truncation bounds hold none of the base distribution's probability".into(),
-            );
-        }
         let u = u.as_slice()[i];
-        let (lo, hi) = if cdf_low[i] < -LN_2 {
+        let (lo, hi) = if from_cdf(base, (cdf_low[i], cdf_high[i]), (ccdf_low[i], ccdf_high[i])) {
             let (a, b) = (cdf_low[i].exp(), cdf_high[i].exp());
             p[i] = a + u * (b - a);
             (cdf_low[i], cdf_high[i])
         } else {
             let (a, b) = (ccdf_high[i].exp(), ccdf_low[i].exp());
             q[i] = a + u * (b - a);
-            from_cdf[i] = false;
+            cdf_side[i] = false;
             (ccdf_high[i], ccdf_low[i])
         };
+        if lo.partial_cmp(&hi) != Some(std::cmp::Ordering::Less) {
+            return invalid_parameter(
+                "the truncation bounds hold none of the base distribution's probability".into(),
+            );
+        }
         // the same draw as above, ln((1 − u)·eˡᵒ + u·eʰⁱ) with u replaced by 1 − u so its weight is never 0
         targets[i] = log_interpolate(1.0 - u, lo, hi);
         in_log_space[i] = hi < LOG_TINY;
+    }
+    if base.has_joint_tails() {
+        let values = solve_in_log_space(
+            bounds,
+            base,
+            shape,
+            (lower, upper),
+            &cdf_side,
+            &targets,
+            &vec![true; len],
+        )?;
+        return assemble(values, shape, false).map(Some);
     }
     let p = DoubleTensor::new(shape, p)?;
     let q = DoubleTensor::new(shape, q)?;
@@ -764,7 +800,7 @@ fn sample_by_inverse(
     let (x_cdf, x_ccdf) = (broadcast(&x_cdf, shape)?, broadcast(&x_ccdf, shape)?);
     let mut values: Vec<f64> = (0..len)
         .map(|i| {
-            let x = if from_cdf[i] { x_cdf[i] } else { x_ccdf[i] };
+            let x = if cdf_side[i] { x_cdf[i] } else { x_ccdf[i] };
             if !x.is_finite() {
                 in_log_space[i] = true;
             }
@@ -778,7 +814,7 @@ fn sample_by_inverse(
             base,
             shape,
             (lower, upper),
-            &from_cdf,
+            &cdf_side,
             &targets,
             &in_log_space,
         )?;
@@ -975,16 +1011,15 @@ pub(crate) fn second_order(
     struct Side {
         evaluated: Evaluated,
         points: Vec<f64>,
-        /// Whether the bound is finite at each element: at an infinite one the side is a constant (0 or 1), whose
-        /// derivatives are zero whatever its rule gives at the placeholder point.
-        finite: Vec<bool>,
+        /// Whether this endpoint needs its tail Hessian. Joint tails can depend on parameters at infinity.
+        use_rule: Vec<bool>,
         bound: usize,
         upper: bool,
     }
-    let finite = |bound: &DoubleTensor| -> Result<Vec<bool>> {
+    let use_rule = |bound: &DoubleTensor| -> Result<Vec<bool>> {
         Ok(broadcast(bound, shape)?
             .into_iter()
-            .map(f64::is_finite)
+            .map(|b| b.is_finite() || base.has_joint_tails())
             .collect())
     };
     let shift = if bounds.discrete { -1.0 } else { 0.0 };
@@ -997,13 +1032,13 @@ pub(crate) fn second_order(
     }
     let (sides, cases) = match wrapper {
         Wrapper::Truncated => {
-            let low = bound_points(bounds.lower, shift, bounds.discrete);
-            let high = bound_points(bounds.upper, 0.0, bounds.discrete);
+            let low = bound_points(base, bounds.lower, shift, bounds.discrete);
+            let high = bound_points(base, bounds.upper, 0.0, bounds.discrete);
             let side = |function, at: &Value, bound, upper, infinite, bound_values| {
                 Ok::<_, GraphError>(Side {
                     evaluated: eval(function, at, Some(infinite))?,
                     points: points(at)?,
-                    finite: finite(bound_values)?,
+                    use_rule: use_rule(bound_values)?,
                     bound,
                     upper,
                 })
@@ -1055,20 +1090,20 @@ pub(crate) fn second_order(
             (sides, cases)
         }
         Wrapper::Censored => {
-            let low = bound_points(bounds.lower, 0.0, bounds.discrete);
-            let high = bound_points(bounds.upper, shift, bounds.discrete);
+            let low = bound_points(base, bounds.lower, 0.0, bounds.discrete);
+            let high = bound_points(base, bounds.upper, shift, bounds.discrete);
             let sides = vec![
                 Side {
                     evaluated: eval(Univariate::Cdf, &low, None)?,
                     points: points(&low)?,
-                    finite: finite(bounds.lower)?,
+                    use_rule: use_rule(bounds.lower)?,
                     bound: lower_index,
                     upper: false,
                 },
                 Side {
                     evaluated: eval(Univariate::Ccdf, &high, None)?,
                     points: points(&high)?,
-                    finite: finite(bounds.upper)?,
+                    use_rule: use_rule(bounds.upper)?,
                     bound: upper_index,
                     upper: true,
                 },
@@ -1077,9 +1112,9 @@ pub(crate) fn second_order(
                 .map(|i| {
                     if !ordered(lower[i], upper[i]) {
                         Case::Outside
-                    } else if x[i] == lower[i] {
+                    } else if x[i] == lower[i] && lower[i].is_finite() {
                         Case::Lower
-                    } else if x[i] == upper[i] {
+                    } else if x[i] == upper[i] && upper[i].is_finite() {
                         Case::Upper
                     } else if x[i] > lower[i] && x[i] < upper[i] {
                         Case::Inside
@@ -1110,7 +1145,7 @@ pub(crate) fn second_order(
                 g[j + 1] = cdf_gradient[j + 1];
             }
             cdf.clear();
-            if e.values[i].is_finite() && side.finite[i] {
+            if e.values[i].is_finite() && side.use_rule[i] {
                 cdf_rule(side.points[i], point, side.upper, &cdf_gradient, cdf);
             }
             g
@@ -1137,8 +1172,12 @@ pub(crate) fn second_order(
                 embed(h, &cdf, side.bound, 1.0);
             }
             (Wrapper::Truncated, _) => {
-                // as in `normaliser`: from the CDF where the lower bound is in the lower half
-                let (big, small) = if sides[0].evaluated.values[i] < -LN_2 {
+                // Use the same tail as the first-order normalizer.
+                let (big, small) = if from_cdf(
+                    base,
+                    (sides[0].evaluated.values[i], sides[2].evaluated.values[i]),
+                    (sides[1].evaluated.values[i], sides[3].evaluated.values[i]),
+                ) {
                     (&sides[2], &sides[0])
                 } else {
                     (&sides[1], &sides[3])

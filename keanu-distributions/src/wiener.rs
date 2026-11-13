@@ -6,6 +6,11 @@
 // the negated comparisons (`!(a > 0.0)`) are deliberate: they also catch NaN
 #![allow(clippy::neg_cmp_op_on_partial_ord)]
 
+mod full;
+mod tails;
+
+pub use full::{WienerFull, WienerFullGradient};
+
 use crate::error::{Result, invalid_parameter};
 use crate::jet::{ElementDerivatives, Jet};
 use crate::param::{IntoParam, Param};
@@ -433,7 +438,7 @@ fn log_density<const K: usize>(x: Jet<K>, [a, t0, w, v, sv]: [Jet<K>; 5], bounda
         return Jet::constant(f64::NAN);
     }
     let t = x - t0;
-    if !(t.v > 0.0) {
+    if t.v <= 0.0 || !t.v.is_finite() {
         return Jet::constant(f64::NEG_INFINITY);
     }
     // the start's distance from the boundary (reflected for the upper one), and exactly its distance from the other
@@ -466,7 +471,7 @@ fn evaluate<const M: usize>(x: f64, [a, t0, w, v, sv]: [f64; 5], boundary: i64) 
         return (f64::NAN, [f64::NAN; 6]);
     }
     let t = x - t0;
-    if !(t > 0.0) {
+    if t <= 0.0 || !t.is_finite() {
         return (f64::NEG_INFINITY, [0.0; 6]);
     }
     // reflected for the upper boundary: d/dw and d/dv change sign; the start's distance from the other boundary is

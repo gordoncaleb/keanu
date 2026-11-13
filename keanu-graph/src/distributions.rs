@@ -1476,6 +1476,8 @@ builders! {
     skew_student_t, skew_student_t_with_shape => SkewStudentT(a: IntoDoubleVar, b: IntoDoubleVar, mu: IntoDoubleVar, sigma: IntoDoubleVar) -> DoubleVar;
     /// Shape-one Pólya–Gamma PG(1, z), with finite tilt z and positive support.
     polya_gamma1, polya_gamma1_with_shape => PolyaGamma1(z: IntoDoubleVar) -> DoubleVar;
+    /// Pólya–Gamma PG(b, z) with real positive shape and finite tilt.
+    polya_gamma, polya_gamma_with_shape => PolyaGamma(b: IntoDoubleVar, z: IntoDoubleVar) -> DoubleVar;
     /// A success count from independent Bernoulli trials, with the trial probabilities on the last axis of p.
     poisson_binomial, poisson_binomial_with_shape => PoissonBinomial(p: IntoDoubleVar) -> IntVar;
     /// A discrete Weibull count with survival P(X ≥ k) = q^(k^β) for k ≥ 0.
@@ -1504,6 +1506,13 @@ builders! {
     wiener, wiener_with_shape => Wiener(
         a: IntoDoubleVar, t0: IntoDoubleVar, w: IntoDoubleVar, v: IntoDoubleVar, sv: IntoDoubleVar,
         boundary: IntoIntVar
+    ) -> DoubleVar;
+    /// Wiener with uniform starting-point width `sw` and non-decision-time width `st0`.
+    /// See [`keanu_distributions::WienerFull`].
+    #[allow(clippy::too_many_arguments)]
+    wiener_full, wiener_full_with_shape => WienerFull(
+        a: IntoDoubleVar, t0: IntoDoubleVar, w: IntoDoubleVar, v: IntoDoubleVar, sv: IntoDoubleVar,
+        sw: IntoDoubleVar, st0: IntoDoubleVar, boundary: IntoIntVar
     ) -> DoubleVar;
     /// A Skellam node: the difference of independent Poisson(mu1) and Poisson(mu2) counts. See
     /// [`keanu_distributions::Skellam`].

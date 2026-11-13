@@ -95,7 +95,7 @@ fn truncated_inverse_gaussian(c: f64, rng: &mut KeanuRng) -> f64 {
     }
 }
 
-fn sample_polya_gamma(z: f64, rng: &mut KeanuRng) -> f64 {
+pub(super) fn sample_polya_gamma(z: f64, rng: &mut KeanuRng) -> f64 {
     let c = 0.5 * z.abs();
     let rate = RATE + (0.5 * c) * c;
     let log_right = FRAC_PI_2.ln() - rate.ln() - rate * SWITCH;
