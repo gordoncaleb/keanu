@@ -142,6 +142,9 @@ pub struct CompiledModel<'m> {
     /// Each latent's derivative of its own term, in its registers, and whether it has one.
     direct: Vec<f64>,
     has_direct: Vec<bool>,
+    /// Each latent's gradient, in its registers, and whether it has one.
+    gradient: Vec<f64>,
+    has_gradient: Vec<bool>,
 }
 
 impl<'m> CompiledModel<'m> {
@@ -195,6 +198,8 @@ impl<'m> CompiledModel<'m> {
             scratch: Vec::new(),
             direct: Vec::new(),
             has_direct: vec![false; latents.len()],
+            gradient: Vec::new(),
+            has_gradient: vec![false; latents.len()],
         };
         let mut registers = 0usize;
         let mut give = |offsets: &mut Vec<usize>, id: NodeId, len: usize| {
@@ -253,6 +258,7 @@ impl<'m> CompiledModel<'m> {
         compiled.registers = vec![0.0; registers];
         compiled.adjoints = vec![0.0; registers];
         compiled.direct = vec![0.0; registers];
+        compiled.gradient = vec![0.0; registers];
         Some(compiled)
     }
 
@@ -485,29 +491,56 @@ impl<'m> CompiledModel<'m> {
         state: &State,
         weights: Weights<'_>,
     ) -> Result<(f64, Option<Vec<Option<DoubleTensor>>>)> {
-        match self.evaluate(values, state, weights) {
-            Err(e) if e.is_impossible_point() => Ok((f64::NEG_INFINITY, None)),
-            Ok(Some((log_prob, gradient))) if log_prob.is_finite() => {
-                Ok((log_prob, Some(gradient)))
-            }
-            Ok(_) => Ok((f64::NEG_INFINITY, None)),
+        self.load_latents(values)?;
+        let Some(log_prob) = self.evaluate_loaded(state, weights)? else {
+            return Ok((f64::NEG_INFINITY, None));
+        };
+        let graph = self.model.graph();
+        let gradient = (0..self.latents.len())
+            .map(|i| {
+                self.latent_gradient(i)
+                    .map(|g| DoubleTensor::new(graph[self.latents[i]].shape(), g.to_vec()))
+                    .transpose()
+            })
+            .collect::<std::result::Result<_, _>>()?;
+        Ok((log_prob, Some(gradient)))
+    }
+
+    /// The registers holding latent `i`'s (constrained) value, for the caller to fill in before
+    /// [`evaluate_loaded`](Self::evaluate_loaded).
+    pub(crate) fn latent_registers(&mut self, i: usize) -> &mut [f64] {
+        let id = self.latents[i];
+        let at = self.offsets[id.0];
+        &mut self.registers[at..at + self.lens[id.0]]
+    }
+
+    /// The gradient with respect to latent `i` from the last [`evaluate_loaded`](Self::evaluate_loaded), or None
+    /// where the log probability doesn't depend on it.
+    pub(crate) fn latent_gradient(&self, i: usize) -> Option<&[f64]> {
+        let id = self.latents[i];
+        let at = self.offsets[id.0];
+        self.has_gradient[i].then(|| &self.gradient[at..at + self.lens[id.0]])
+    }
+
+    /// The joint log probability at the latents' values in their registers (with each latent's gradient left for
+    /// [`latent_gradient`](Self::latent_gradient)), or None where it is impossible (−∞, including where evaluating
+    /// the model fails at an impossible point).
+    pub(crate) fn evaluate_loaded(
+        &mut self,
+        state: &State,
+        weights: Weights<'_>,
+    ) -> Result<Option<f64>> {
+        match self.evaluate(state, weights) {
+            Err(e) if e.is_impossible_point() => Ok(None),
+            Ok(Some(log_prob)) if log_prob.is_finite() => Ok(Some(log_prob)),
+            Ok(_) => Ok(None),
             Err(e) => Err(e),
         }
     }
 
-    #[allow(clippy::type_complexity)]
-    fn evaluate(
-        &mut self,
-        values: &[DoubleTensor],
-        state: &State,
-        weights: Weights<'_>,
-    ) -> Result<Option<(f64, Vec<Option<DoubleTensor>>)>> {
-        let model = self.model;
-        let graph = model.graph();
-        // the forward pass
-        for v in &mut self.values {
-            *v = None;
-        }
+    /// Copies the latents' values into their registers.
+    fn load_latents(&mut self, values: &[DoubleTensor]) -> Result<()> {
+        let graph = self.model.graph();
         if values.len() != self.latents.len() {
             return Err(GraphError::InvalidValue(format!(
                 "expected {} latent values, got {}",
@@ -526,6 +559,16 @@ impl<'m> CompiledModel<'m> {
             }
             let at = self.offsets[id.0];
             self.registers[at..at + value.len()].copy_from_slice(value.as_slice());
+        }
+        Ok(())
+    }
+
+    fn evaluate(&mut self, state: &State, weights: Weights<'_>) -> Result<Option<f64>> {
+        let model = self.model;
+        let graph = model.graph();
+        // the forward pass
+        for v in &mut self.values {
+            *v = None;
         }
         for &id in &self.loads {
             let value = static_f64(state, id)?;
@@ -593,27 +636,28 @@ impl<'m> CompiledModel<'m> {
         }
 
         // each latent's gradient: its own term's derivative, then the cotangent from the rest
-        let mut gradient = Vec::with_capacity(self.latents.len());
-        for (i, &id) in self.latents.iter().enumerate() {
+        for i in 0..self.latents.len() {
+            let id = self.latents[i];
             let range = self.offsets[id.0]..self.offsets[id.0] + self.lens[id.0];
-            let data: Option<Vec<f64>> = match (self.has_direct[i], self.touched[id.0]) {
-                (true, true) => Some(
-                    self.direct[range.clone()]
-                        .iter()
+            let (direct, swept) = (self.has_direct[i], self.touched[id.0]);
+            self.has_gradient[i] = direct || swept;
+            let gradient = &mut self.gradient[range.clone()];
+            match (direct, swept) {
+                (true, true) => {
+                    for ((g, d), s) in gradient
+                        .iter_mut()
+                        .zip(&self.direct[range.clone()])
                         .zip(&self.adjoints[range])
-                        .map(|(d, s)| d + s)
-                        .collect(),
-                ),
-                (true, false) => Some(self.direct[range].to_vec()),
-                (false, true) => Some(self.adjoints[range].to_vec()),
-                (false, false) => None,
-            };
-            gradient.push(
-                data.map(|d| DoubleTensor::new(graph[id].shape(), d))
-                    .transpose()?,
-            );
+                    {
+                        *g = d + s;
+                    }
+                }
+                (true, false) => gradient.copy_from_slice(&self.direct[range]),
+                (false, true) => gradient.copy_from_slice(&self.adjoints[range]),
+                (false, false) => {}
+            }
         }
-        Ok(Some((log_prob, gradient)))
+        Ok(Some(log_prob))
     }
 
     /// A term by its distribution's general code: its weighted value (None if it is impossible), with its gradient

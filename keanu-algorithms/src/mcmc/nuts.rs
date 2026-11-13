@@ -573,7 +573,17 @@ fn log_prob_and_gradient_at(
 ) -> Result<(f64, Vec<f64>)> {
     let (log_prob, gradient) = match compiled {
         // exactly the same, without setting the state
-        Some(compiled) => param.log_prob_and_gradient_compiled(compiled, z, true, state)?,
+        Some(compiled) => {
+            let mut gradient = vec![0.0; z.len()];
+            let (log_prob, possible) = param.log_prob_and_gradient_compiled_into(
+                compiled,
+                z,
+                true,
+                state,
+                &mut gradient,
+            )?;
+            (log_prob, possible.then_some(gradient))
+        }
         None => param.log_prob_and_gradient(z, true, state)?,
     };
     let gradient = match gradient {

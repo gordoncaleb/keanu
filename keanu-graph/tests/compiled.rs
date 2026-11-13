@@ -74,6 +74,18 @@ fn assert_identical(param: &Parameterisation<'_>, state: &State, label: &str) {
                 continue;
             };
             let (lp, g, clp, cg) = (*lp, g.clone(), *clp, cg.clone());
+            // the allocation-free form gives the same numbers
+            let mut into = vec![f64::NAN; z.len()];
+            let (ilp, possible) = param
+                .log_prob_and_gradient_compiled_into(&mut compiled, &z, jacobian, state, &mut into)
+                .unwrap();
+            assert_eq!(ilp.to_bits(), clp.to_bits(), "{label} point {k}: into");
+            assert_eq!(possible, cg.is_some(), "{label} point {k}: into");
+            if let Some(cg) = &cg {
+                let cg: Vec<u64> = cg.iter().map(|x| x.to_bits()).collect();
+                let into: Vec<u64> = into.iter().map(|x| x.to_bits()).collect();
+                assert_eq!(into, cg, "{label} point {k}: into");
+            }
             assert_eq!(
                 clp.to_bits(),
                 lp.to_bits(),

@@ -122,6 +122,38 @@ pub trait Bijector: fmt::Debug + Send + Sync {
     /// gradient.
     fn forward_vjp(&self, y: &[f64], cotangent: &DoubleTensor) -> Result<Vec<f64>>;
 
+    /// [`forward`](Self::forward) written into `out` (the constrained value's elements in row-major order). The
+    /// default calls `forward`; bijectors on the hot path of samplers write directly.
+    fn forward_into(&self, y: &[f64], out: &mut [f64]) -> Result<()> {
+        let x = self.forward(y)?;
+        check_len("the output", out.len(), x.len())?;
+        out.copy_from_slice(x.as_slice());
+        Ok(())
+    }
+
+    /// [`forward_vjp`](Self::forward_vjp) with the cotangent given as the constrained value's elements, written into
+    /// `out` (of the unconstrained length). The default calls `forward_vjp`.
+    fn forward_vjp_into(&self, y: &[f64], cotangent: &[f64], out: &mut [f64]) -> Result<()> {
+        let cotangent = DoubleTensor::new(self.constrained_shape(), cotangent.to_vec())
+            .map_err(|e| transform_error(e.to_string()))?;
+        let gradient = self.forward_vjp(y, &cotangent)?;
+        check_len("the output", out.len(), gradient.len())?;
+        out.copy_from_slice(&gradient);
+        Ok(())
+    }
+
+    /// [`log_det_jacobian`](Self::log_det_jacobian) at `y`, with its [gradient](Self::log_det_jacobian_gradient)
+    /// added to `gradient` element by element. The default calls both.
+    fn add_log_det_jacobian(&self, y: &[f64], gradient: &mut [f64]) -> Result<f64> {
+        let log_det = self.log_det_jacobian(y)?;
+        let jacobian_gradient = self.log_det_jacobian_gradient(y)?;
+        check_len("the gradient", gradient.len(), jacobian_gradient.len())?;
+        for (g, j) in gradient.iter_mut().zip(jacobian_gradient) {
+            *g += j;
+        }
+        Ok(log_det)
+    }
+
     /// The derivative of [`forward_vjp`](Self::forward_vjp) at `y` along `tangent`, with the cotangent held fixed:
     /// `Σᵢ cᵢ ∇²xᵢ(y) · tangent`, where `xᵢ` are the elements of the constrained value. This is the curvature term of
     /// the chain rule when a Hessian-vector product is pulled back through the forward map.

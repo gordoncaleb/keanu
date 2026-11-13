@@ -67,6 +67,31 @@ impl Bijector for Identity {
         Ok(cotangent.as_slice().to_vec())
     }
 
+    fn forward_into(&self, y: &[f64], out: &mut [f64]) -> Result<()> {
+        check_len("the unconstrained vector", y.len(), self.len())?;
+        check_len("the output", out.len(), self.len())?;
+        out.copy_from_slice(y);
+        Ok(())
+    }
+
+    fn forward_vjp_into(&self, y: &[f64], cotangent: &[f64], out: &mut [f64]) -> Result<()> {
+        check_len("the unconstrained vector", y.len(), self.len())?;
+        check_len("the cotangent", cotangent.len(), self.len())?;
+        check_len("the output", out.len(), self.len())?;
+        out.copy_from_slice(cotangent);
+        Ok(())
+    }
+
+    fn add_log_det_jacobian(&self, y: &[f64], gradient: &mut [f64]) -> Result<f64> {
+        check_len("the unconstrained vector", y.len(), self.len())?;
+        check_len("the gradient", gradient.len(), self.len())?;
+        // adding the zero gradient, as the general path does
+        for g in gradient.iter_mut() {
+            *g += 0.0;
+        }
+        Ok(0.0)
+    }
+
     fn forward_vjp_jvp(
         &self,
         y: &[f64],

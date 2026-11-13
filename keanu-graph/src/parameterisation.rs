@@ -654,6 +654,59 @@ impl<'m> Parameterisation<'m> {
         self.with_jacobian(z, jacobian, log_prob, &gradient)
     }
 
+    /// [`log_prob_and_gradient_compiled`](Self::log_prob_and_gradient_compiled) with the gradient written into
+    /// `gradient` (of the dimension's length), without allocating: the log probability, and whether it is possible
+    /// (else the gradient is unspecified). Exactly the same values.
+    ///
+    /// Fails if `compiled` is of other latents, `z` or `gradient` has the wrong length or the model cannot be
+    /// evaluated.
+    pub fn log_prob_and_gradient_compiled_into(
+        &self,
+        compiled: &mut CompiledModel<'_>,
+        z: &[f64],
+        jacobian: bool,
+        state: &State,
+        gradient: &mut [f64],
+    ) -> Result<(f64, bool)> {
+        self.check_len(z)?;
+        self.check_len(gradient)?;
+        if compiled.latents() != self.latents.as_slice() {
+            return Err(GraphError::InvalidValue(
+                "the compiled model is of other latents".into(),
+            ));
+        }
+        for (i, slot) in self.slots.iter().enumerate() {
+            slot.bijector
+                .forward_into(&z[slot.range.clone()], compiled.latent_registers(i))?;
+        }
+        let Some(log_prob) = compiled.evaluate_loaded(state, self.weights.as_deref())? else {
+            return Ok((f64::NEG_INFINITY, false));
+        };
+        for (i, slot) in self.slots.iter().enumerate() {
+            let out = &mut gradient[slot.range.clone()];
+            match compiled.latent_gradient(i) {
+                Some(g) => slot
+                    .bijector
+                    .forward_vjp_into(&z[slot.range.clone()], g, out)?,
+                None => out.fill(0.0),
+            }
+        }
+        if !jacobian || self.space == Space::Constrained {
+            return Ok((log_prob, true));
+        }
+        let mut log_det = 0.0;
+        for slot in &self.slots {
+            log_det += slot
+                .bijector
+                .add_log_det_jacobian(&z[slot.range.clone()], &mut gradient[slot.range.clone()])?;
+        }
+        let total = log_prob + log_det;
+        if !total.is_finite() {
+            return Ok((f64::NEG_INFINITY, false));
+        }
+        Ok((total, true))
+    }
+
     /// The gradient with respect to `z` of the log probability `log_prob`, whose gradient with respect to the
     /// constrained values is `gradient`, with the Jacobian's terms if `jacobian`: the end of
     /// [`log_prob_and_gradient`](Self::log_prob_and_gradient).

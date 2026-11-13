@@ -206,6 +206,42 @@ impl Bounded {
         Ok(self.map(y, ElementBounds::log_det_jacobian_gradient))
     }
 
+    fn forward_into(&self, y: &[f64], out: &mut [f64]) -> Result<()> {
+        self.check_y(y)?;
+        check_len("the output", out.len(), self.len())?;
+        for ((o, &e), &y) in out.iter_mut().zip(&self.elements).zip(y) {
+            *o = e.forward(y);
+        }
+        Ok(())
+    }
+
+    fn forward_vjp_into(&self, y: &[f64], cotangent: &[f64], out: &mut [f64]) -> Result<()> {
+        self.check_y(y)?;
+        check_len("the cotangent", cotangent.len(), self.len())?;
+        check_len("the output", out.len(), self.len())?;
+        for (((o, &e), &y), c) in out.iter_mut().zip(&self.elements).zip(y).zip(cotangent) {
+            let d = e.derivative(y);
+            // as forward_vjp: zero where the map is flat
+            *o = if d == 0.0 { 0.0 } else { d * c };
+        }
+        Ok(())
+    }
+
+    fn add_log_det_jacobian(&self, y: &[f64], gradient: &mut [f64]) -> Result<f64> {
+        self.check_y(y)?;
+        check_len("the gradient", gradient.len(), self.len())?;
+        let log_det = self
+            .elements
+            .iter()
+            .zip(y)
+            .map(|(&e, &y)| e.log_det_jacobian(y))
+            .sum();
+        for ((g, &e), &y) in gradient.iter_mut().zip(&self.elements).zip(y) {
+            *g += e.log_det_jacobian_gradient(y);
+        }
+        Ok(log_det)
+    }
+
     fn forward_jvp(&self, y: &[f64], tangent: &[f64]) -> Result<DoubleTensor> {
         self.check_y(y)?;
         check_len("the tangent", tangent.len(), self.len())?;
@@ -295,6 +331,23 @@ macro_rules! bounded_bijector {
 
             fn forward_vjp(&self, y: &[f64], cotangent: &DoubleTensor) -> Result<Vec<f64>> {
                 self.0.forward_vjp(y, cotangent)
+            }
+
+            fn forward_into(&self, y: &[f64], out: &mut [f64]) -> Result<()> {
+                self.0.forward_into(y, out)
+            }
+
+            fn forward_vjp_into(
+                &self,
+                y: &[f64],
+                cotangent: &[f64],
+                out: &mut [f64],
+            ) -> Result<()> {
+                self.0.forward_vjp_into(y, cotangent, out)
+            }
+
+            fn add_log_det_jacobian(&self, y: &[f64], gradient: &mut [f64]) -> Result<f64> {
+                self.0.add_log_det_jacobian(y, gradient)
             }
 
             fn forward_vjp_jvp(
