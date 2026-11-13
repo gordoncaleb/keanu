@@ -43,7 +43,10 @@ Use runnable models to drive the additions. Preserve existing Rust APIs and seri
 - Poisson-binomial exposes differentiable CDF and survival methods at the distribution level. The calibration demo averages the predictive exceedance probability over posterior draws. Jones–Faddy skew Student-t adds density, sampling, log tails, exact derivatives, and serialization, with a regression example for asymmetric residuals.
 - Poisson-binomial graph censoring and truncation use exact derivatives and direct log-space interval masses. The calibration demo fits top-coded counts and predicts exceedance risk for the underlying totals.
 - Shape-one Pólya–Gamma PG(1, z) supports exact sampling, differentiable density, and saved graph models. The Bernoulli logistic Gibbs demo checks the augmented posterior against grid integration of the original model.
-- General Pólya–Gamma shape and tails, and Wiener tails and additional variability parameters remain open. Differentiable root solving and quadrature remain under evaluation.
+- Wiener exposes differentiable joint log tails for each boundary, including across-trial drift variability. The timeout demo sums the two survival probabilities for trials whose boundary is unknown.
+- Phase 6 implements graph censoring and truncation for Wiener, including the full model with uniform variability in starting point and non-decision time. The graph timeout demo fits the full model when response choices are unobserved past the deadline.
+- General Pólya–Gamma provides density and log tails with first- and second-order derivatives. Its sampler sums exact shape-one draws for small integer shapes and uses a moment-matched remainder for other shapes. The negative-binomial demo compares noninteger augmentation with the unaugmented posterior.
+- Adaptive quadrature is shared internally by the Wiener and Pólya–Gamma implementations. These models use bracketed roots for numerical inversion, where the likelihood derivatives can be evaluated without differentiating the solver. A public graph root operator, public adaptive quadrature, DAEs, and adjoint ODE sensitivities are deferred until a model needs them and can define accuracy and failure requirements.
 
 ## Reference demos
 

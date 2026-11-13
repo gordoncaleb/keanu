@@ -205,6 +205,8 @@ pub enum DistributionKind {
     /// Support: greater than `t0`. See [`keanu_distributions::Wiener`] and
     /// [`GraphBuilder::wiener`](crate::GraphBuilder::wiener).
     Wiener,
+    /// Wiener with variable starting point and non-decision time.
+    WienerFull,
     /// No parameters: a kernel density estimate from fixed samples. Support: real.
     Kde(Arc<d::Kde>),
     /// Parameters: `sigma` (a scalar); the value has one element per area of the neighbourhood, shape `[n]`: the
@@ -237,6 +239,8 @@ pub enum DistributionKind {
     SkewStudentT,
     /// Shape-one Pólya–Gamma with exponential tilt `z`. Support: positive.
     PolyaGamma1,
+    /// Pólya–Gamma with real positive shape.
+    PolyaGamma,
     /// Parameters: `mu` -> i64. Support: discrete.
     Poisson,
     /// Parameters: `mu` (mean), `alpha` (dispersion) -> i64, with variance mu + mu²/alpha. Support: discrete.
@@ -542,9 +546,14 @@ macro_rules! distributions {
             pub(crate) fn has_cdf(&self) -> bool {
                 match self {
                     $(DistributionKind::$kind => has_cdf!([$($cdf)?]),)+
-                    DistributionKind::Transformed(base, _) => base.has_cdf(),
+                    DistributionKind::Transformed(base, _) => base.has_cdf() && !base.has_joint_tails(),
                     _ => false,
                 }
+            }
+
+            /// Whether the tails sum to a response probability that depends on the parameters.
+            pub(crate) fn has_joint_tails(&self) -> bool {
+                matches!(self, DistributionKind::Wiener | DistributionKind::WienerFull)
             }
 
             /// Whether the distribution has one value per element and an element-wise log density and gradient
@@ -1217,6 +1226,8 @@ distributions! {
         support = Support::Real, cdf = rejection;
     PolyaGamma1 "polya_gamma1" (z: F64) -> F64 => d::PolyaGamma1::new(z),
         support = Support::greater_than(0.0), cdf = none;
+    PolyaGamma "polya_gamma" (b: F64, z: F64) -> F64 => d::PolyaGamma::new(b, z),
+        support = Support::greater_than(0.0), cdf = rejection;
     SkewNormal "skew_normal" (xi: F64, omega: F64, alpha: F64) -> F64 => d::SkewNormal::new(xi, omega, alpha),
         support = Support::Real,
         cdf = rejection;
@@ -1263,8 +1274,11 @@ distributions! {
     Wiener "wiener" (a: F64, t0: F64, w: F64, v: F64, sv: F64, boundary: I64) -> F64 =>
         d::Wiener::new(a, t0, w, v, sv, boundary),
         support = Support::GreaterThan(t0.clone()),
-        cdf = none,
+        cdf = rejection,
         fused = wiener_log_prob_and_gradient;
+    WienerFull "wiener_full" (a: F64, t0: F64, w: F64, v: F64, sv: F64, sw: F64, st0: F64, boundary: I64) -> F64 =>
+        d::WienerFull::new(a, t0, w, v, sv, sw, st0, boundary),
+        support = Support::GreaterThan(t0.clone()), cdf = rejection;
     MultivariateStudentT "multivariate_student_t" (nu: F64, mu: F64, scale: F64) -> F64 =>
         d::MultivariateStudentT::new(nu, mu, scale),
         support = Support::Real, event_terms = log_prob_terms;

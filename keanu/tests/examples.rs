@@ -79,6 +79,8 @@ mod occupancy;
 mod pharmacokinetics;
 #[path = "../examples/poisson_binomial_calibration.rs"]
 mod poisson_binomial_calibration;
+#[path = "../examples/polya_gamma_counts.rs"]
+mod polya_gamma_counts;
 #[path = "../examples/polya_gamma_logistic.rs"]
 mod polya_gamma_logistic;
 #[path = "../examples/precision_gaussian_denoising.rs"]
@@ -101,6 +103,8 @@ mod stochastic_volatility;
 mod structured_gp;
 #[path = "../examples/text_messaging.rs"]
 mod text_messaging;
+#[path = "../examples/wiener_timeouts.rs"]
+mod wiener_timeouts;
 
 #[path = "../examples/vector_autoregression.rs"]
 mod vector_autoregression;
@@ -1270,6 +1274,17 @@ fn drift_diffusion_recovers_the_condition_drifts_and_each_subjects_parameters() 
 }
 
 #[test]
+fn wiener_deadline_model_recovers_drift_and_timeout_probability() {
+    let (drift, observed, predicted) = wiener_timeouts::run().unwrap();
+    assert!((0.1..0.8).contains(&observed), "{observed}");
+    assert!((drift - wiener_timeouts::DRIFT).abs() < 0.3, "{drift}");
+    assert!(
+        (observed - predicted).abs() < 0.05,
+        "{observed} vs {predicted}"
+    );
+}
+
+#[test]
 fn extreme_values_recovers_the_gev_parameters_and_return_levels() {
     // sixty annual maxima simulated from a known GEV: the 90% intervals cover μ, σ, ξ and the 10-, 50- and 100-year
     // return levels, every quantity converges, and NUTS rarely meets the parameter-dependent support's edge
@@ -1559,6 +1574,13 @@ fn phase6_counts_recover_a_poisson_binomial_calibration_offset() {
     assert!((estimated - OFFSET).abs() < 0.24, "{estimated} vs {OFFSET}");
     // Independent enumeration of the 64 trial outcomes at the generating offset.
     assert!((risk - 0.199_008_131_846_656_44).abs() < 0.07, "{risk}");
+}
+
+#[test]
+fn phase6_noninteger_polya_gamma_gibbs_matches_the_count_posterior() {
+    let (gibbs, grid) = polya_gamma_counts::run(4000).unwrap();
+    assert!((gibbs[0] - grid[0]).abs() < 0.035, "{gibbs:?} vs {grid:?}");
+    assert!((gibbs[1] - grid[1]).abs() < 0.02, "{gibbs:?} vs {grid:?}");
 }
 
 #[test]

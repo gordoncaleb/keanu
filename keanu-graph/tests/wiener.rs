@@ -145,3 +145,36 @@ fn the_gradient_through_the_graph_matches_the_distribution() {
         );
     }
 }
+
+#[test]
+fn truncation_normalizes_joint_boundary_mass_and_samples_a_rare_interval() {
+    let b = GraphBuilder::new();
+    let params = parameters(&b, PARAMETERS);
+    let all: DoubleVar<'_> = b.truncated(
+        DistributionKind::Wiener,
+        &params,
+        f64::NEG_INFINITY,
+        f64::INFINITY,
+    );
+    b.observe(all, v(&TIMES));
+    let rare: DoubleVar<'_> = b.truncated(DistributionKind::Wiener, &params, 5.1, 5.2);
+    let (all, rare) = (all.id(), rare.id());
+    let (graph, mut state) = b.build().unwrap();
+    state
+        .lazy_eval(&graph, &[all, rare], &mut KeanuRng::seed_from_u64(75))
+        .unwrap();
+    assert!(
+        state
+            .f64(rare)
+            .unwrap()
+            .as_slice()
+            .iter()
+            .all(|x| (5.1..=5.2).contains(x))
+    );
+    let terms = node_log_prob_terms(&graph, &state, all).unwrap();
+    for (i, boundary) in BOUNDARIES.into_iter().enumerate() {
+        let joint = d::Wiener::log_prob_and_gradient(TIMES[i], PARAMETERS, boundary).0;
+        let hit = d::Wiener::log_tail_derivatives(f64::INFINITY, PARAMETERS, boundary, false).value;
+        assert!((terms.as_slice()[i] - joint + hit).abs() < 1e-12);
+    }
+}

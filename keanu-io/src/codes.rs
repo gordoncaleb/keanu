@@ -393,6 +393,8 @@ distribution_codes!(
     DiscreteWeibull,
     SkewStudentT,
     PolyaGamma1,
+    WienerFull,
+    PolyaGamma,
 );
 
 #[cfg(test)]
@@ -410,7 +412,7 @@ mod tests {
     }
 
     /// The number of distribution kinds in the schema.
-    const DISTRIBUTION_KINDS: i32 = 86;
+    const DISTRIBUTION_KINDS: i32 = 88;
 
     #[test]
     fn every_schema_value_has_a_variant() {

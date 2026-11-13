@@ -57,6 +57,11 @@ tag. `RUST_MIGRATION_PLAN.md` describes the rewrite and `book/src/from-java.md` 
 - Added shape-one Pólya–Gamma PG(1, z), with exact sampling, graph derivatives, saved-model support, and a
   Gibbs demo for Bernoulli logistic regression.
 
+- Added joint Wiener first-passage tails, graph censoring and truncation, and uniform variability in starting
+  point and non-decision time. The response-deadline example fits the full graph model.
+- Added real-shape Pólya–Gamma with differentiable density and tails, saved graphs, and a negative-binomial
+  augmentation example.
+
 ### Closing the feature gaps with PyMC and TensorFlow Probability
 
 Work from `docs/plans/2026-11-04-001-feat-ppl-feature-gaps-plan.md`. Java compatibility is no longer a goal, so

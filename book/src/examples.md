@@ -21,12 +21,14 @@ from, and the SMC model comparison checks its evidence against the closed form.
 | `occupancy` | Which sites does a species occupy, when surveys sometimes miss it? Occupancy latents sampled, marginalised and written as a zero-inflated binomial |
 | `disease_mapping` | Where is a disease more common than expected? A BYM2 spatial model of counts on a lattice |
 | `drift_diffusion` | How fast do people take in evidence, and does an easier task speed it up? A hierarchical drift-diffusion model of response times |
+| `wiener_timeouts` | How much does drift explain response times when a deadline leaves some choices unobserved? |
 | `extreme_values` | How high will the river rise once in a hundred years? A generalized extreme value model of annual maxima, with return levels |
 | `causal_effect` | Does a treatment work, when sicker people are more likely to take it? Conditioning against intervening, and the average treatment effect |
 | `missing_data` | What do the data say when a fifth of the outcomes and a tenth of a covariate are missing? A regression with the gaps imputed |
 | `cure_model` | What fraction of patients does a treatment cure, and how soon do the others relapse? A mixture cure model of censored survival times |
 | `skew_student_t_regression` | How does a linear trend fit when large residuals favor one direction? |
 | `poisson_binomial_calibration` | How should we calibrate individual success probabilities when only top-coded batch totals are recorded? |
+| `polya_gamma_counts` | Can noninteger Pólya–Gamma variables give a Gaussian Gibbs update for negative-binomial regression? |
 | `polya_gamma_logistic` | How can auxiliary variables turn Bernoulli logistic regression into Gibbs updates with a Gaussian slope conditional? |
 | `discrete_weibull_reliability` | How long do devices last when some are still running at the end of the test? |
 | `multinomial_logit_regression` | How does a precinct-level covariate shift votes among three candidates? |
@@ -149,6 +151,12 @@ chains of 1,000 draws) with no divergences, and that the easy condition's drift 
 ```rust,ignore
 {{#include ../../keanu/examples/drift_diffusion.rs}}
 ```
+
+The `wiener_timeouts` example fits a single drift to trials with a response deadline and variability
+in starting point and non-decision time. Each completed trial contributes the joint density of its
+response time and choice. A graph factor sums the two boundary survival probabilities for each timeout.
+The example integrates the drift posterior over a grid and checks the posterior predictive timeout rate.
+[Stan Wiener diffusion guide](https://mc-stan.org/docs/stan-users-guide/wiener_diffusion_model.html)
 
 ## Extreme values
 

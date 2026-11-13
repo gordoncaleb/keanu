@@ -96,6 +96,7 @@ operands!(A a, B b, C c, D d);
 operands!(A a, B b, C c, D d, E e);
 operands!(A a, B b, C c, D d, E e, F f);
 operands!(A a, B b, C c, D d, E e, F f, G g);
+operands!(A a, B b, C c, D d, E e, F f, G g, H h, I i);
 
 /// `f` of each element of the broadcast of the `operands`, a tuple of tensor references.
 pub(crate) fn map<'a, O: Operands<'a>>(

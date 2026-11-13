@@ -108,6 +108,7 @@ impl DistributionKind {
             | K::NegativeBinomial
             | K::SkewStudentT
             | K::PolyaGamma1
+            | K::PolyaGamma
             | K::DiscreteWeibull
             | K::NegativeBinomialLog
             | K::UniformInt
@@ -117,7 +118,8 @@ impl DistributionKind {
             | K::PoissonLog
             | K::HyperGeometric
             | K::Skellam
-            | K::Wiener => elementwise_hvp(
+            | K::Wiener
+            | K::WienerFull => elementwise_hvp(
                 self,
                 value,
                 parameters,
